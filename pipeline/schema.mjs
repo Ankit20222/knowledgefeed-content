@@ -10,6 +10,9 @@ export const CATEGORIES = [
 
 export const DIFFICULTIES = ["Beginner", "Intermediate", "Advanced"];
 
+// Editorial flavor of a post. Absent = "concept".
+export const POST_KINDS = ["concept", "paper", "release"];
+
 export const SLIDE_KINDS = [
   "cover", "problem", "solution", "architecture",
   "example", "comparison", "takeaways", "concept"
@@ -56,10 +59,15 @@ export function validatePost(p) {
   need(typeof p?.subtitle === "string" && p.subtitle.length > 0, "subtitle missing");
   need(CATEGORIES.includes(p?.category), `bad category: ${p?.category}`);
   need(DIFFICULTIES.includes(p?.difficulty), `bad difficulty: ${p?.difficulty}`);
+  need(p?.postKind === undefined || POST_KINDS.includes(p.postKind), `bad postKind: ${p?.postKind}`);
   need(Array.isArray(p?.tags), "tags must be an array");
   need(Number.isInteger(p?.estimatedMinutes) && p.estimatedMinutes > 0, "estimatedMinutes must be a positive int");
   need(typeof p?.summary === "string" && p.summary.length > 0, "summary missing");
-  need(Array.isArray(p?.slides) && p.slides.length >= 3, "need at least 3 slides");
+  need(Array.isArray(p?.slides) && p.slides.length >= 5, "need at least 5 slides (aim for depth)");
+  // Research posts must cite a source.
+  if (p?.postKind === "paper" || p?.postKind === "release") {
+    need(Array.isArray(p?.references) && p.references.length >= 1, `${p.postKind} must include a source reference`);
+  }
 
   (p?.slides ?? []).forEach((s, i) => {
     need(SLIDE_KINDS.includes(s?.kind), `slide ${i}: bad kind ${s?.kind}`);
@@ -94,21 +102,29 @@ export const POST_SCHEMA_HINT = `{
   "subtitle": "string (one vivid line)",
   "category": "one of: ${CATEGORIES.join(" | ")}",
   "difficulty": "Beginner | Intermediate | Advanced",
+  "postKind": "concept | paper | release",
   "tags": ["3-6 lowercase keywords"],
-  "estimatedMinutes": 2,
+  "estimatedMinutes": 4,
   "heroSymbol": "an SF Symbol name that fits the topic",
-  "summary": "2-sentence recap shown after finishing",
+  "summary": "2-3 sentence recap shown after finishing",
   "artPrompt": "a vivid image-generation prompt for a premium, abstract tech hero illustration (dark indigo/purple, glassy, no text)",
   "slides": [
     { "kind": "cover|problem|solution|architecture|example|comparison|takeaways|concept",
-      "title": "string",
-      "body": "optional short paragraph (<=220 chars)",
-      "bullets": ["optional 2-4 punchy points"],
+      "title": "string (a sharp, specific claim — not a generic label)",
+      "body": "optional paragraph with a real insight (<=320 chars)",
+      "bullets": ["optional 2-4 punchy points, each carrying a concrete fact, number, or tradeoff"],
       "symbol": "optional SF Symbol name",
       "table": { "headers": ["A","B"], "rows": [["...","..."]] } }
   ],
   "quiz": { "questions": [
-    { "prompt": "string", "options": ["...","...","...","..."], "correctIndex": 0, "explanation": "why" }
+    { "prompt": "string", "options": ["...","...","...","..."], "correctIndex": 0, "explanation": "why (teach something in the explanation)" }
   ]},
   "references": [ { "title": "string", "url": "https://..." } ]
-}`;
+}
+
+DEPTH BAR: aim for 6-8 substantive slides, not 5 shallow ones. Every slide must carry a
+real insight — a concrete mechanism, a number, a tradeoff, or a worked example — never
+filler. Include at least one 'example' slide with a specific, concrete scenario, and one
+slide covering tradeoffs / pitfalls / "when NOT to use it". Keep text tight and visual
+(bullets over paragraphs), but the ideas should be genuinely educational for the stated
+difficulty. estimatedMinutes should reflect the real depth (typically 3-5).`;
