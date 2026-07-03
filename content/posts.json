@@ -1,6 +1,601 @@
 {
   "posts": [
     {
+      "title": "MiniMax Sparse Attention: Cheap Million-Token Inference",
+      "subtitle": "A two-branch block-sparse design cuts attention compute 28x at 1M context without hurting quality",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "sparse-attention",
+        "llms",
+        "inference-optimization",
+        "long-context",
+        "minimax"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "gauge.with.dots.needle.67percent",
+      "summary": "MiniMax Sparse Attention (MSA) replaces full softmax attention with a two-branch block-sparse design: a lightweight Index Branch picks the top-k key-value blocks per attention group, and a Main Branch attends only to those blocks. On a 109B-parameter MoE model trained with a 3T-token budget, MSA matches dense attention quality while cutting per-token attention compute 28.4x and delivering 14.2x prefill / 7.6x decode speedups at 1M-token context on H800 GPUs.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Attention's Quadratic Wall, Solved With Blocks",
+          "body": "Agentic workflows and repo-scale coding need models to attend over hundreds of thousands to millions of tokens — but softmax attention's quadratic cost makes that brutally expensive at deployment scale. MiniMax's new paper attacks this head-on.",
+          "bullets": [],
+          "symbol": "gauge.with.dots.needle.67percent",
+          "table": null,
+          "id": "3d2cfb7f-17f7-41c7-90cf-fa45b1b333ee"
+        },
+        {
+          "kind": "problem",
+          "title": "Full Attention Doesn't Scale to 1M Tokens",
+          "body": "Every query attending to every prior token means compute grows quadratically with sequence length. At 1M tokens, that cost dominates both prefill (processing the prompt) and decoding (generating each new token).",
+          "bullets": [
+            "Ultra-long context is now table stakes: agent memory, repo-scale code reasoning, and persistent tool histories all need it",
+            "Dense attention forces a brutal tradeoff between context length and serving cost/latency",
+            "Prior sparse-attention tricks often lose quality or don't translate to real GPU speedups because of poor tensor-core utilization",
+            "The paper's target: sparsity that is both quality-neutral and actually fast on real hardware"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "fcb3ccea-4be4-4d66-a869-a1cff96b8dc7"
+        },
+        {
+          "kind": "solution",
+          "title": "Two Branches: Pick Blocks, Then Attend",
+          "body": "MSA is built on top of Grouped Query Attention (GQA). A lightweight Index Branch scores key-value blocks and selects a top-k subset per GQA group; the Main Branch then runs exact attention over only those selected blocks.",
+          "bullets": [
+            "Index Branch: cheaply scores every KV block and picks the top-k most relevant ones — independently per GQA group",
+            "Main Branch: performs exact block-sparse attention, but only over the blocks the Index Branch selected",
+            "Because selection is per-GQA-group, different groups can attend to different parts of the context",
+            "The design is co-engineered with a GPU execution path (exp-free top-k selection, KV-outer sparse attention) so sparsity turns into real wall-clock speedup, not just fewer FLOPs on paper"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null,
+          "id": "a8207b7e-19b5-4d35-b76c-1b3c693b4efa"
+        },
+        {
+          "kind": "architecture",
+          "title": "The Budget: 128-Token Blocks, Top-16 Kept",
+          "body": "MSA's default configuration fixes a hard, predictable compute budget per query regardless of total context length.",
+          "bullets": [
+            "Block size Bk = 128 tokens — the granularity at which relevance is scored and attention is computed",
+            "Each query keeps k = 16 blocks per GQA group, fixing the per-query KV budget at k×Bk = 2,048 tokens",
+            "That budget stays flat even as total context grows from 100K to 1M+ tokens — sparsity ratio increases with context length",
+            "Perplexity stays stable across block-size choices, so larger blocks can be used purely to improve kernel efficiency"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null,
+          "id": "b51d79a5-25b3-44d5-9c93-d796b7433697"
+        },
+        {
+          "kind": "comparison",
+          "title": "The Payoff at 1M-Token Context",
+          "body": "Measured on H800 GPUs against dense full attention, MSA's savings grow with context length — the whole point of a fixed per-query KV budget against a quadratically growing baseline.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Metric (at 1M context)",
+              "Dense Attention",
+              "MSA"
+            ],
+            "rows": [
+              [
+                "Per-token attention compute",
+                "baseline",
+                "28.4x lower"
+              ],
+              [
+                "Prefill wall-clock",
+                "baseline",
+                "14.2x faster"
+              ],
+              [
+                "Decode wall-clock",
+                "baseline",
+                "7.6x faster"
+              ],
+              [
+                "Per-query KV budget",
+                "grows with context",
+                "fixed at 2,048 tokens"
+              ]
+            ]
+          },
+          "id": "76dbca75-84fe-4980-85cb-6029b92b82e3"
+        },
+        {
+          "kind": "example",
+          "title": "Two Training Routes, Two Sweet Spots",
+          "body": "MiniMax tested MSA two ways on a 109B-parameter Mixture-of-Experts model trained with a 3T-token budget: training MSA in from scratch (MSA-PT) versus converting an existing dense checkpoint (MSA-CPT).",
+          "bullets": [
+            "MSA-PT (pretrained with MSA from the start): matches or slightly beats the dense Full-Attention baseline, with the biggest gains on multimodal and long-context tasks",
+            "MSA-CPT (converted from a dense checkpoint): stays close to the source model's behavior, and is strongest on text, code, and raw perplexity",
+            "Practical reading: teams with an existing dense model can adopt MSA via conversion instead of a full retrain",
+            "MiniMax used this architecture in its M3 model, which ships with a 1M-token context window and native multimodal + agentic-coding support"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "42792868-5a1c-4308-9b25-fd9f5f0e4baa"
+        },
+        {
+          "kind": "concept",
+          "title": "When MSA Isn't the Right Tool",
+          "body": "Sparsity is a bet that most of a long context is irrelevant to any given query — a bet that pays off at scale but has real costs.",
+          "bullets": [
+            "At short context (a few thousand tokens), the fixed 2,048-token KV budget and Index Branch overhead can erase any benefit over plain dense attention",
+            "Top-k block selection is a heuristic — if genuinely relevant information is scattered across many blocks instead of concentrated, forcing a fixed budget can drop it",
+            "MSA-PT requires training the sparsity pattern in from scratch to hit its best long-context numbers — MSA-CPT conversion is faster but caps quality closer to the original dense model",
+            "It's tuned for retrieval-style long-context use (agent memory, repo search) more than tasks where every token must be weighed equally, like dense summarization"
+          ],
+          "symbol": "exclamationmark.questionmark",
+          "table": null,
+          "id": "798d7ad3-9128-4e6f-8bec-a2d616680bb7"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "MSA is a two-branch block-sparse attention: an Index Branch selects top-k KV blocks per GQA group, a Main Branch attends only to those blocks",
+            "Fixed per-query budget (128-token blocks, top-16 kept = 2,048 tokens) means savings grow as context grows — 28.4x less compute at 1M tokens",
+            "Real hardware speedups, not just fewer FLOPs: 14.2x faster prefill and 7.6x faster decode on H800 GPUs at 1M context",
+            "Validated at real scale — a 109B-parameter MoE model trained with a 3T-token budget — and shipped in MiniMax's M3 model"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "b0e2d20e-e019-4467-b58b-fd48cc56d145"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does the Index Branch in MiniMax Sparse Attention actually do?",
+            "options": [
+              "It compresses the model's weights to reduce memory usage",
+              "It cheaply scores key-value blocks and selects a top-k subset per GQA group for the Main Branch to attend to",
+              "It removes the Grouped Query Attention mechanism entirely",
+              "It stores the KV cache on disk instead of GPU memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "The Index Branch is a lightweight scoring step: it ranks KV blocks and picks the top-k most relevant ones per GQA group, so the more expensive Main Branch only has to run exact attention over that small selected subset.",
+            "id": "a926c04b-a336-45fa-a425-fac8d8a4b03a"
+          },
+          {
+            "prompt": "Why does MSA's speedup advantage over dense attention grow as context length increases?",
+            "options": [
+              "MSA uses a fixed per-query KV budget (2,048 tokens) while dense attention's cost grows quadratically with context",
+              "MSA switches to a completely different model architecture at long context",
+              "Longer contexts are automatically truncated by MSA",
+              "GPUs get faster automatically at longer sequence lengths"
+            ],
+            "correctIndex": 0,
+            "explanation": "MSA keeps a constant top-k×block-size budget (2,048 tokens) per query no matter how long the total context is, while dense attention cost keeps growing quadratically — so the gap, and the 28.4x compute reduction at 1M tokens, widens with context length.",
+            "id": "bdf6ebc0-a175-48b3-9a6c-6d4fa4da2c65"
+          },
+          {
+            "prompt": "Based on the paper's results, when would MSA-CPT (converting an existing dense checkpoint) be the better choice over MSA-PT (training with MSA from scratch)?",
+            "options": [
+              "When you want the absolute best long-context and multimodal performance regardless of cost",
+              "When you already have a strong dense model and want to adopt sparsity without a full retrain, prioritizing text/code/perplexity fidelity to the original",
+              "When your context lengths are always under 1,000 tokens",
+              "MSA-CPT and MSA-PT always produce identical results"
+            ],
+            "correctIndex": 1,
+            "explanation": "MSA-CPT converts an existing dense checkpoint, staying close to its original behavior and excelling on text, code, and perplexity — a cheaper path than a full MSA-PT retrain, which instead wins on multimodal and long-context tasks.",
+            "id": "7f48fe16-15c2-4bca-a688-271ecc8930fd"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "MiniMax Sparse Attention (arXiv:2606.13392)",
+          "url": "https://arxiv.org/abs/2606.13392",
+          "id": "771a1252-84ad-4819-9512-e0f18571a241"
+        }
+      ],
+      "id": "bd4a61cd-57e9-4c26-9b0c-b81f62462eb7",
+      "publishedDate": "2026-07-03T06:39:50Z",
+      "body": null
+    },
+    {
+      "title": "Nano Banana 2 Lite & Gemini Omni Flash: Google's Fast-Lane Media Models",
+      "subtitle": "A 4-second, $0.034 image model paired with a $0.10-per-second video model built to work as one pipeline",
+      "category": "AI News",
+      "difficulty": "Beginner",
+      "postKind": "release",
+      "tags": [
+        "gemini",
+        "image-generation",
+        "video-generation",
+        "google-deepmind",
+        "genai"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "photo.stack.fill",
+      "summary": "On June 30, 2026, Google shipped Nano Banana 2 Lite (Gemini 3.1 Flash-Lite Image) to general availability and put Gemini Omni Flash into public preview. Nano Banana 2 Lite generates 1K-resolution images in about 4 seconds for $0.034 each; Gemini Omni Flash generates and conversationally edits up to 10-second videos for $0.10 per second, and the two are designed to chain together as one still-to-video pipeline.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Two New Models, Built to Work Together",
+          "body": "Google Cloud announced Nano Banana 2 Lite and Gemini Omni Flash on June 30, 2026 — a fast, cheap image model and a preview video model, explicitly designed to be chained into one generation pipeline.",
+          "bullets": [],
+          "symbol": "photo.stack.fill",
+          "table": null,
+          "id": "510a74b3-2e5a-4259-9b8e-69d10f018b91"
+        },
+        {
+          "kind": "problem",
+          "title": "High-Throughput Media Gen Needed a Cheaper Front Door",
+          "body": "The original Nano Banana (Gemini 2.5 Flash Image) covered image generation and editing, but production use cases — ad variations, catalog mockups, high-volume content pipelines — needed something faster and cheaper to run at scale, plus a credible path from a still image into video.",
+          "bullets": [
+            "High-throughput workloads (ad variant generation, localized creative, catalog images) need low per-image cost and low latency, not just quality",
+            "Turning a generated still into motion previously meant a separate, disconnected video-generation step",
+            "Google positions Nano Banana 2 Lite as the direct successor developers should switch to from the original Nano Banana model"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "1b39cc29-748e-4401-a425-3a21d72a4cb7"
+        },
+        {
+          "kind": "solution",
+          "title": "What Shipped",
+          "body": "Nano Banana 2 Lite (internally Gemini 3.1 Flash-Lite Image) reached general availability; Gemini Omni Flash entered public preview as its video counterpart.",
+          "bullets": [
+            "Nano Banana 2 Lite: text-to-image and image editing, images in as little as 4 seconds, $0.034 per 1K-resolution image — GA now",
+            "Gemini Omni Flash: video generation and conversational editing, clips up to 10 seconds, $0.10 per second of output — public preview",
+            "Gemini Omni Flash supports multimodal input (text, image, video) and native audio generation synced to on-screen action",
+            "Both are available via Agent Studio in the Gemini Enterprise Agent Platform, the Gemini API, and Google AI Studio"
+          ],
+          "symbol": "sparkles",
+          "table": null,
+          "id": "a47a4fb3-0c43-4e53-92bd-e8257749e491"
+        },
+        {
+          "kind": "example",
+          "title": "The Intended Workflow: Still, Then Motion",
+          "body": "Google frames the two models as stages of one pipeline rather than standalone tools.",
+          "bullets": [
+            "Step 1: generate a product or scene image with Nano Banana 2 Lite in ~4 seconds",
+            "Step 2: pass that image to Gemini Omni Flash as a reference to animate it into a short video clip with conversational, natural-language edits",
+            "Example use case Google calls out: rapid ad-variant generation — many still images generated cheaply, the best ones animated into video creative",
+            "Gemini Omni Flash's 'world knowledge and simulation' capability is meant to keep motion physically plausible rather than just interpolating pixels"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "56a0aa34-bf9f-44f5-80a2-75d8ece3376a"
+        },
+        {
+          "kind": "comparison",
+          "title": "Nano Banana 2 Lite vs. Gemini Omni Flash",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "Nano Banana 2 Lite",
+              "Gemini Omni Flash"
+            ],
+            "rows": [
+              [
+                "Output",
+                "Still images",
+                "Video (up to 10s) + audio"
+              ],
+              [
+                "Speed",
+                "~4 seconds per image",
+                "Not disclosed"
+              ],
+              [
+                "Price",
+                "$0.034 / 1K-res image",
+                "$0.10 / second of video"
+              ],
+              [
+                "Status",
+                "Generally available",
+                "Public preview"
+              ],
+              [
+                "Provisioned throughput",
+                "Available now",
+                "Rolling out soon"
+              ]
+            ]
+          },
+          "id": "1ee17557-fc8f-4120-bd08-9e59e5e59c57"
+        },
+        {
+          "kind": "concept",
+          "title": "Provenance Is On by Default",
+          "body": "Both models ship with content-provenance tooling enabled automatically, not as an opt-in.",
+          "bullets": [
+            "C2PA content credentials are attached to outputs by default, tagging media with tamper-evident metadata about its origin",
+            "SynthID invisible watermarking is also on by default across both models",
+            "This matters for anyone redistributing generated media — provenance travels with the file without extra integration work"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "360ef231-fdbe-498f-8810-2e2ad661df76"
+        },
+        {
+          "kind": "problem",
+          "title": "Where the Fit Breaks Down",
+          "body": "'Lite' and 'preview' are doing real work in these names — know the limits before betting a production pipeline on them.",
+          "bullets": [
+            "Nano Banana 2 Lite trades some fidelity for speed and cost — Google's own framing is throughput and scale, not maximum quality; the full (non-Lite) Nano Banana 2 line targets that instead",
+            "Gemini Omni Flash is public preview: no committed SLA yet, and provisioned throughput (needed for predictable high-volume serving) is still 'rolling out soon', not available today",
+            "10-second clip length caps it out for anything beyond short-form or preview content — it isn't a long-form video generator",
+            "$0.10/second adds up fast at scale (60s of video = $6) compared to the sub-cent economics of the image side"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "9a85f886-5b51-441e-b59d-f0ef0613cc9b"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Nano Banana 2 Lite (GA) generates 1K images in ~4s for $0.034 each — Google's recommended successor to the original Nano Banana model",
+            "Gemini Omni Flash (public preview) generates/edits up to 10-second videos with synced audio for $0.10/second",
+            "The two are designed as one pipeline: generate a still fast and cheap, then animate it conversationally",
+            "C2PA credentials and SynthID watermarks are on by default on both — provenance ships without extra setup",
+            "Provisioned throughput exists today only for the image model; the video model isn't yet ready for guaranteed-capacity production use"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "2b64af13-68e1-4056-b20d-d9b55baa1526"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the general-availability status difference between Nano Banana 2 Lite and Gemini Omni Flash as of this release?",
+            "options": [
+              "Both are in public preview",
+              "Nano Banana 2 Lite is generally available; Gemini Omni Flash is in public preview",
+              "Both are generally available",
+              "Gemini Omni Flash is generally available; Nano Banana 2 Lite is in public preview"
+            ],
+            "correctIndex": 1,
+            "explanation": "Google shipped Nano Banana 2 Lite to general availability while Gemini Omni Flash launched in public preview — meaning the video model doesn't yet carry the same production guarantees as the image model.",
+            "id": "f581478a-76db-4da3-b081-a6caca725d01"
+          },
+          {
+            "prompt": "Roughly how much would a 30-second Gemini Omni Flash video clip cost at the announced pricing?",
+            "options": [
+              "$0.34",
+              "$3.00",
+              "$0.10",
+              "$30.00"
+            ],
+            "correctIndex": 1,
+            "explanation": "Gemini Omni Flash is priced at $0.10 per second of video output, so a 30-second clip costs roughly 30 x $0.10 = $3.00.",
+            "id": "4e01f2a5-11f4-4aeb-8756-8b552a4fc915"
+          },
+          {
+            "prompt": "What content-provenance features ship enabled by default on both new models?",
+            "options": [
+              "Nothing — provenance tagging must be manually configured",
+              "Only visible watermarks in the corner of each output",
+              "C2PA content credentials and SynthID invisible watermarks",
+              "A blockchain ledger of every generation request"
+            ],
+            "correctIndex": 2,
+            "explanation": "Both Nano Banana 2 Lite and Gemini Omni Flash attach C2PA content credentials and embed SynthID watermarks by default, without requiring developers to opt in.",
+            "id": "418322a8-7336-4eb6-a53f-07283b93c80e"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Nano Banana 2 Lite and Gemini Omni Flash available — Google Cloud Blog",
+          "url": "https://cloud.google.com/blog/products/ai-machine-learning/nano-banana-2-lite-and-gemini-omni-flash-available/",
+          "id": "30b4351e-f24b-4faf-8f5d-6c4451983ace"
+        }
+      ],
+      "id": "9c884544-77ed-42fd-8b5b-141b60c62245",
+      "publishedDate": "2026-07-03T06:39:50Z",
+      "body": null
+    },
+    {
+      "title": "Tool Calling: How an LLM Actually Takes Action",
+      "subtitle": "The model never runs code — it emits a structured request and waits for your app to hand the result back",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "tool-calling",
+        "function-calling",
+        "ai-agents",
+        "llms",
+        "json-schema"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "wrench.and.screwdriver.fill",
+      "summary": "Tool calling lets an LLM trigger real actions — API calls, code execution, database lookups — without ever executing anything itself. The model just emits a structured request matching a JSON Schema you provided; your application executes it and feeds the result back into the conversation. Understanding this loop is the foundation for building any reliable AI agent.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The Model Never Presses the Button",
+          "body": "When an agent 'looks up the weather' or 'runs a query,' the LLM itself never touches an API or a database. It emits structured text describing what it wants done — your application does the rest.",
+          "bullets": [],
+          "symbol": "wrench.and.screwdriver.fill",
+          "table": null,
+          "id": "ca18b881-22ef-4d44-9158-7609d2af3ea1"
+        },
+        {
+          "kind": "problem",
+          "title": "Text Generation Alone Can't Act",
+          "body": "A raw LLM only predicts the next token. It has no live data, no ability to execute code, and no way to affect anything outside the conversation — yet agents need to check prices, query databases, and call external services.",
+          "bullets": [
+            "Training data goes stale — the model can't know today's stock price or this morning's ticket count",
+            "Free-text answers can't be validated or safely executed the way structured data can",
+            "Without a defined interface, there's no reliable way for a host application to know the model 'wants' to take an action versus just talking about one"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "74df9524-0f0b-4d6e-8d69-585391ed46dd"
+        },
+        {
+          "kind": "solution",
+          "title": "The Loop: Describe, Call, Execute, Return",
+          "body": "Tool calling fixes this with a strict protocol between the model and the application hosting it — sometimes called 'function calling.'",
+          "bullets": [
+            "You give the model a list of tools, each defined by a name, description, and a JSON Schema for its arguments",
+            "The model, mid-response, can emit a structured tool call — e.g. {\"name\": \"get_weather\", \"arguments\": {\"city\": \"Tokyo\"}} — instead of (or alongside) plain text",
+            "Your application, not the model, actually executes that call against the real API or database",
+            "The result is inserted back into the conversation as a new message, and the model continues — now with real data to reason over"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "ee6e707d-93ad-4c46-ba00-92521abd3169"
+        },
+        {
+          "kind": "architecture",
+          "title": "Multi-Turn by Default",
+          "body": "Most real tasks need more than one tool call, so the loop repeats until the model decides it has enough information to answer.",
+          "bullets": [
+            "Models can request multiple tool calls in parallel in a single turn when the calls don't depend on each other",
+            "Sequential loops (this is the core of the ReAct pattern: reason, act, observe, repeat) let the model use one tool's output to decide the next call",
+            "The loop terminates when the model responds with plain text instead of a tool call, or a host-defined limit (max turns, timeout) is hit",
+            "Every tool call and result stays in the context window — long tool chains can burn through context fast"
+          ],
+          "symbol": "repeat",
+          "table": null,
+          "id": "94be5b69-e042-4a56-b2ff-0f97328d7afd"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: \"Is it warmer in Tokyo or Berlin right now?\"",
+          "body": "A concrete trace through the loop for a question the model can't answer from training data alone.",
+          "bullets": [
+            "Turn 1 — model emits two parallel calls: get_weather(city=\"Tokyo\") and get_weather(city=\"Berlin\")",
+            "App executes both against a weather API, returns results: Tokyo 22°C, Berlin 14°C",
+            "Turn 2 — model receives both results as tool-result messages appended to the conversation",
+            "Turn 3 — model responds in plain text: \"Tokyo is warmer, at 22°C vs Berlin's 14°C\" — no further tool call needed, so the loop ends"
+          ],
+          "symbol": "location.viewfinder",
+          "table": null,
+          "id": "a6e7667a-76e8-4895-9c5d-3b99b49d7fb1"
+        },
+        {
+          "kind": "comparison",
+          "title": "Three Ways to Wire Up Tools",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Approach",
+              "How it works",
+              "Main weakness"
+            ],
+            "rows": [
+              [
+                "Native tool calling",
+                "Model trained to emit structured calls against a JSON Schema",
+                "Tied to what the provider's API supports"
+              ],
+              [
+                "ReAct-style text parsing",
+                "Model prompted to write \"Action: tool(args)\" in plain text, app regex-parses it",
+                "Brittle — malformed text breaks parsing"
+              ],
+              [
+                "MCP (Model Context Protocol)",
+                "Standardized protocol for discovering and calling tools across servers",
+                "Requires running/connecting MCP servers"
+              ]
+            ]
+          },
+          "id": "285aa334-271c-4c6e-a214-7574726a7460"
+        },
+        {
+          "kind": "problem",
+          "title": "Where Tool Calling Goes Wrong",
+          "body": "The loop looks clean in a diagram; in practice it fails in specific, recurring ways.",
+          "bullets": [
+            "Hallucinated arguments: the model can call a real tool with a plausible-looking but wrong argument (a made-up ID, a guessed date) — always validate inputs server-side",
+            "Wrong tool chosen: with dozens of similarly-named tools, models pick the wrong one — keep tool sets small and descriptions unambiguous",
+            "Runaway loops: a model that keeps calling tools without converging burns cost and context — always enforce a hard max-turns limit",
+            "Skip it for simple, self-contained Q&A — added latency and failure surface aren't worth it when the model already knows the answer"
+          ],
+          "symbol": "exclamationmark.questionmark",
+          "table": null,
+          "id": "9805dddb-2e9b-4acd-8407-d93532f6a7a2"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "The model only emits a structured request (tool name + JSON arguments) — your application executes it, never the model itself",
+            "The full loop is describe tools -> model calls -> app executes -> result returns to context -> model continues or answers",
+            "Most tasks need multiple turns; parallel calls handle independent lookups, sequential (ReAct-style) loops handle dependent ones",
+            "Validate every tool argument server-side and cap max turns — hallucinated args and runaway loops are the two most common failure modes"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "616b3d7d-dfb1-45e4-bd71-0d1fdeff224d"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "When an LLM 'calls a tool,' what actually executes the underlying API or code?",
+            "options": [
+              "The LLM itself, via a sandboxed code interpreter built into the model",
+              "The host application, after receiving a structured request from the model",
+              "A separate LLM dedicated only to execution",
+              "Nothing is executed — tool calls are purely illustrative text"
+            ],
+            "correctIndex": 1,
+            "explanation": "The model only emits a structured description of the call it wants made (name + arguments matching a JSON Schema). The host application is responsible for actually executing that call and returning the result.",
+            "id": "44e69f3c-036a-454e-b9a6-7b9ce880f0ce"
+          },
+          {
+            "prompt": "In the ReAct-style tool-calling pattern, why would a model need a sequential loop instead of firing all tool calls in parallel?",
+            "options": [
+              "Sequential loops are always faster than parallel calls",
+              "Parallel calls are not supported by any LLM provider",
+              "When one tool call's result determines the arguments or need for the next call, they must run in order",
+              "Sequential loops use less context than parallel calls"
+            ],
+            "correctIndex": 2,
+            "explanation": "Parallel calls only work when calls are independent. If the next call depends on a prior result — e.g., look up a user's ID, then use that ID to fetch their orders — the calls must happen sequentially, reasoning-act-observe style.",
+            "id": "a891940d-5993-47d5-9538-bfb7f242c49e"
+          },
+          {
+            "prompt": "What is a recommended safeguard against a tool-calling agent getting stuck in a runaway loop?",
+            "options": [
+              "Give the model more tools so it has more options",
+              "Enforce a hard maximum number of turns or a timeout at the application level",
+              "Remove all tool descriptions so the model has to guess",
+              "Let the loop run indefinitely to guarantee an eventual answer"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the model decides when to stop calling tools, a host application must enforce its own hard limit (max turns or a timeout) to prevent a model that never converges from looping indefinitely and burning cost.",
+            "id": "75319598-8538-46aa-bc6b-0b4cf377f0de"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Tool use with Claude — Anthropic Platform Docs",
+          "url": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview",
+          "id": "8620fc62-8489-4762-a3d9-94ab925da0eb"
+        }
+      ],
+      "id": "fa969b20-6a09-4e94-90e3-3b5636372585",
+      "publishedDate": "2026-07-03T06:39:50Z",
+      "body": null
+    },
+    {
       "title": "Agents' Last Exam: Where Frontier AI Agents Score 2.6%",
       "subtitle": "A 1,490-task benchmark built with 250+ industry experts finally tests agents on real jobs",
       "category": "AI Agents",
