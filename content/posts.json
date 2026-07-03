@@ -1,6 +1,199 @@
 {
   "posts": [
     {
+      "id": "c441a4d1-e740-4e0a-b469-176fe049b5a7",
+      "title": "Continuous Batching: How One GPU Serves Hundreds of Chats at Once",
+      "subtitle": "The scheduling trick that turned LLM serving from a batch job into a stream",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "vllm",
+        "pagedattention",
+        "continuous-batching",
+        "inference",
+        "gpu"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Static batching forces a GPU to wait for the slowest request in a batch before accepting new work. Continuous batching reschedules the batch after every decoding step, and PagedAttention makes that cheap by paging the KV cache like OS virtual memory — together they're why modern LLM servers stay saturated under real traffic.",
+      "publishedDate": "2026-07-03T18:40:39Z",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Continuous Batching: How One GPU Serves Hundreds of Chats at Once",
+          "body": "The scheduling trick that turned LLM serving from a batch job into a stream.",
+          "bullets": [],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "kind": "problem",
+          "title": "Static Batching Leaves the GPU Idling",
+          "body": "The naive way to serve an LLM is to group N incoming requests into one batch and run decoding step by step until every request in that batch is done — only then can new requests start.",
+          "bullets": [
+            "A batch of 8 requests waits on whichever one generates the most tokens",
+            "A 5-token \"yes/no\" answer gets held hostage by a 2,000-token essay in the same batch",
+            "As sequences finish early, their batch slots sit empty — GPU utilization drops as the batch drains"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "kind": "solution",
+          "title": "Continuous (Iteration-Level) Batching",
+          "body": "Instead of scheduling once per batch, the server re-evaluates the batch after every single decoding step: finished sequences are evicted immediately, and a queued request is admitted into the freed slot on the very next step.",
+          "bullets": [
+            "Scheduling decision happens per-token-step, not per-batch",
+            "A new request can join mid-flight, right after another one exits",
+            "First described as \"iteration-level scheduling\" (Orca, OSDI 2022); popularized in open-source serving by the vLLM project"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "kind": "architecture",
+          "title": "PagedAttention: The Memory Trick That Makes It Possible",
+          "body": "Continuous batching only works if sequences can be added and removed from a batch cheaply. PagedAttention borrows the OS's virtual-memory idea: the KV cache is split into small fixed-size blocks allocated non-contiguously, tracked per sequence by a block table — no request has to reserve one giant contiguous buffer up front.",
+          "bullets": [
+            "vLLM's design docs give a concrete block: BLOCK_SIZE=16 tokens x head_size=128 = 2,048 elements stored per block, per attention head",
+            "Blocks are allocated on demand as a sequence grows, then freed the instant it finishes",
+            "Identical blocks (e.g. a shared prompt across parallel samples) can be copy-on-write shared instead of duplicated"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "kind": "comparison",
+          "title": "Static vs. Continuous Batching",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Static batching",
+              "Continuous batching"
+            ],
+            "rows": [
+              [
+                "New request admitted",
+                "Only after the whole batch finishes",
+                "On any decoding step, as soon as a slot frees up"
+              ],
+              [
+                "GPU idle time",
+                "Grows with variance in output length",
+                "Stays low — the batch is refilled every step"
+              ],
+              [
+                "KV cache allocation",
+                "Worst-case contiguous buffer per sequence",
+                "Paged, block-level, allocated on demand"
+              ],
+              [
+                "Where it's used",
+                "Early/simple batch inference jobs",
+                "Production LLM serving (vLLM, TGI, TensorRT-LLM)"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Four Requests, Wildly Different Lengths",
+          "body": "A server caps the batch at 4 concurrent sequences. Requests arrive: A (order confirmation, ~5 tokens), B (support summary, ~40 tokens), C (draft email, ~300 tokens), D (code refactor, ~150 tokens).",
+          "bullets": [
+            "Static batching: all 4 start together, but A and B finish long before C — their slots sit idle until C finally reaches token 300",
+            "Continuous batching: the instant A finishes at step 5, request E from the queue is admitted into that slot; when B finishes at step 40, F is admitted next",
+            "Result: the batch stays near its cap of 4 active sequences for almost the entire run, instead of draining down to 1 (just C) for most of it"
+          ],
+          "symbol": "list.bullet.rectangle",
+          "table": null
+        },
+        {
+          "kind": "concept",
+          "title": "Where It Falls Short",
+          "body": "Continuous batching fixes decode-time scheduling, not everything about serving.",
+          "bullets": [
+            "Prefill (processing the input prompt) is compute-bound, not scheduling-bound — a very long prompt still spikes latency for every sequence sharing that step",
+            "Naive first-come-first-served admission can starve long generations behind a steady stream of short ones; production servers need a fairness or priority policy",
+            "When paged KV cache fills up, the server must preempt — swap out or recompute — lower-priority sequences, which reintroduces a scheduling problem at the memory level",
+            "The benefit is concurrency-dependent: a single, low-concurrency request in isolation sees none of it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Static batching wastes GPU cycles because it schedules once per batch and waits for the slowest sequence",
+            "Continuous batching reschedules after every decoding step, admitting new requests the instant a slot frees up",
+            "PagedAttention makes that affordable by paging the KV cache in fixed-size blocks instead of reserving worst-case contiguous memory",
+            "The combination is why modern LLM servers (vLLM, TGI, TensorRT-LLM) can hold high GPU utilization under bursty, variable-length traffic",
+            "It doesn't fix prefill cost, fairness, or single-request latency — those need separate policies"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "9b3c8e5d-914e-4489-92d0-26efa8102ab7",
+            "prompt": "What's the core difference between static batching and continuous batching?",
+            "options": [
+              "Continuous batching just uses a bigger batch size",
+              "Continuous batching makes an admission/eviction decision at every decoding step instead of waiting for the whole batch to finish",
+              "Continuous batching removes the need for a KV cache entirely",
+              "Continuous batching only works for single-token responses"
+            ],
+            "correctIndex": 1,
+            "explanation": "The key change is scheduling granularity: static batching commits to a batch until every member finishes, while continuous (iteration-level) batching re-evaluates who's in the batch after every single token step."
+          },
+          {
+            "id": "1a39ea33-2ffc-416d-903a-0ba631c24b6e",
+            "prompt": "What problem does PagedAttention actually solve?",
+            "options": [
+              "It compresses the model's weights to save disk space",
+              "It avoids reserving one big contiguous memory buffer per sequence by paging the KV cache into small fixed-size blocks, like OS virtual memory",
+              "It eliminates the GPU's need for a KV cache",
+              "It speeds up the tokenizer"
+            ],
+            "correctIndex": 1,
+            "explanation": "PagedAttention splits the KV cache into fixed-size blocks (vLLM's docs use a 16-token, 128-dim example = 2,048 elements per block) allocated on demand and tracked with a per-sequence block table — the same idea OS virtual memory uses for physical pages."
+          },
+          {
+            "id": "609b4dfd-fba7-45e7-bd68-75cb28362199",
+            "prompt": "Which workload benefits the least from continuous batching?",
+            "options": [
+              "A high-concurrency chat API serving thousands of simultaneous users",
+              "A single, isolated request with no other concurrent traffic",
+              "A batch of requests with highly variable output lengths",
+              "A production endpoint under bursty traffic"
+            ],
+            "correctIndex": 1,
+            "explanation": "Continuous batching's payoff comes from reshuffling a shared batch as requests arrive and finish. With no concurrent requests to backfill an emptied slot, there's nothing to schedule around — the benefit only shows up under concurrency."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "ac860b24-afa1-4f2f-80f4-3fa3c052ccf9",
+          "title": "vLLM — GitHub repository (PagedAttention, continuous batching)",
+          "url": "https://github.com/vllm-project/vllm"
+        },
+        {
+          "id": "78c1d0c6-9b07-4ed9-8d5e-dd2a0164d2ff",
+          "title": "vLLM design docs — PagedAttention (KV cache block layout)",
+          "url": "https://github.com/vllm-project/vllm/blob/main/docs/design/paged_attention.md"
+        }
+      ]
+    },
+    {
       "title": "Gemini Enterprise Ships a Fully-Managed Remote MCP Server",
       "subtitle": "Point Claude Code or any MCP client at Google Cloud — no server to host, no bridge to maintain",
       "category": "MCP",
