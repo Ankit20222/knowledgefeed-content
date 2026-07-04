@@ -1,6 +1,606 @@
 {
   "posts": [
     {
+      "id": "ab601a3e-b5b7-43c5-b66f-5605a3cb75ac",
+      "title": "Nemotron TwoTower: A Diffusion LLM With No Retraining",
+      "subtitle": "NVIDIA freezes a pretrained autoregressive model and bolts on a diffusion denoiser to generate tokens in parallel blocks.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "diffusion language models",
+        "nvidia",
+        "nemotron",
+        "inference optimization",
+        "parallel decoding"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "speedometer",
+      "summary": "Nemotron-Labs-TwoTower adapts NVIDIA's Nemotron-3-Nano-30B-A3B into a two-tower diffusion model: a frozen autoregressive tower holds context while a trainable diffusion tower denoises whole blocks of tokens in parallel. Trained on roughly 2.1T tokens (versus 25T for a from-scratch backbone), it reaches 2.42x the wall-clock throughput of standard autoregressive decoding while retaining 98.7% of baseline benchmark quality — at the cost of needing two data-center GPUs resident at once.",
+      "body": null,
+      "artPrompt": null,
+      "slides": [
+        {
+          "id": "89ce9650-5b4c-46a7-b9c7-4396218926b2",
+          "kind": "cover",
+          "title": "Turning One Frozen LLM Into a Faster One, Without Retraining It",
+          "body": "NVIDIA Research split a 30B model into two cooperating towers: one frozen, one newly trained — to generate blocks of tokens in parallel instead of one at a time.",
+          "bullets": [
+            "Built on the existing Nemotron-3-Nano-30B-A3B backbone — no from-scratch pretrain",
+            "2.42x the wall-clock generation throughput of standard autoregressive decoding",
+            "Keeps 98.7% of the original model's aggregate benchmark quality"
+          ],
+          "symbol": "speedometer",
+          "table": null
+        },
+        {
+          "id": "f473dca2-b5b4-438a-a709-fb2ed97e68c5",
+          "kind": "problem",
+          "title": "Diffusion LLMs Are Fast to Run, Brutally Expensive to Train",
+          "body": "Discrete diffusion language models can generate a whole block of tokens per step instead of one, but almost every prior one required pretraining a diffusion model from scratch — burning the same token budget as a new frontier model.",
+          "bullets": [
+            "Autoregressive decoding is proven and high-quality but strictly sequential: one token, one forward pass, every time",
+            "Diffusion LMs decode blocks in parallel, but historically needed a fresh multi-trillion-token pretrain to reach usable quality",
+            "That cost has kept diffusion decoding mostly in research demos, not production autoregressive replacements"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "61b2997d-9644-4dd3-84bb-289583178af4",
+          "kind": "solution",
+          "title": "Freeze the Brain, Train Only a Denoiser on Top of It",
+          "body": "TwoTower reuses a pretrained autoregressive model as a frozen 'context tower' and trains a much smaller 'denoiser tower' that refines noisy token blocks via cross-attention into that frozen context.",
+          "bullets": [
+            "Context tower: the original causal Nemotron-3-Nano-30B-A3B, frozen — it never sees a new gradient",
+            "Denoiser tower: a trainable tower with bidirectional block attention that mask-diffuses a block of tokens, cross-attending into the frozen context for grounding",
+            "Only the denoiser is trained — roughly 2.1T tokens, versus the ~25T-token pretrain the backbone itself required"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "3a222052-9885-4fef-a1b2-1b4b626d3f44",
+          "kind": "architecture",
+          "title": "The Shared Backbone: 52 Layers, Three Layer Types",
+          "body": "Both towers share the same base architecture: Nemotron-3-Nano-30B-A3B, a 30B-parameter hybrid model that interleaves three kinds of layers across 52 total.",
+          "bullets": [
+            "23 Mamba-2 (state-space) layers for cheap long-range mixing",
+            "6 self-attention layers for precise token-to-token routing",
+            "23 mixture-of-experts layers for capacity without paying for it on every token",
+            "Full two-tower inference needs both towers resident at once — about 59GB per GPU in BF16, typically two data-center GPUs (H100/A100-class)"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "3d964c42-14af-42c4-b395-55d09841a595",
+          "kind": "comparison",
+          "title": "Autoregressive Baseline vs. TwoTower",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Metric",
+              "Autoregressive baseline",
+              "Nemotron TwoTower"
+            ],
+            "rows": [
+              [
+                "Wall-clock throughput",
+                "1x",
+                "2.42x"
+              ],
+              [
+                "Aggregate benchmark quality",
+                "100% (baseline)",
+                "98.7%"
+              ],
+              [
+                "Extra pretraining required",
+                "n/a",
+                "~2.1T tokens (denoiser only)"
+              ],
+              [
+                "GPU memory at inference",
+                "1 GPU class",
+                "~59GB/GPU, two GPUs resident"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "5574afb0-e6d2-4c46-9f14-6d03c8fb3c2d",
+          "kind": "example",
+          "title": "Worked Example: A Coding Agent Waiting on a Long Reply",
+          "body": "A coding agent asks for a 2,000-token patch explanation plus diff. Autoregressive decoding emits it one token at a time; TwoTower's denoiser tower refines whole blocks per step while the frozen context tower supplies grounding.",
+          "bullets": [
+            "Autoregressive: ~2,000 sequential forward passes to finish the reply",
+            "TwoTower: the denoiser resolves each block in a handful of diffusion steps instead of one token per step, cutting wall-clock time to roughly 1/2.42 of the original",
+            "The frozen context tower still causally 'reads' everything generated so far, so the denoiser isn't drifting without grounding"
+          ],
+          "symbol": "chevron.left.forwardslash.chevron.right",
+          "table": null
+        },
+        {
+          "id": "e18e548a-0329-4f19-bd0c-eeee9c87c071",
+          "kind": "problem",
+          "title": "The Tradeoffs: Memory, Not Magic",
+          "body": "TwoTower is a real speed/quality tradeoff, not a free lunch — and it changes the hardware bill, not just the algorithm.",
+          "bullets": [
+            "Needs two GPUs resident simultaneously for full two-tower inference — a single-GPU deployment can't run the frozen and denoiser towers together at this size",
+            "98.7% quality retention means a small but real regression versus the untouched autoregressive baseline — not suited where every benchmark point matters",
+            "Block-wise generation trades some flexibility: the denoiser reasons over whole blocks, so mid-block token-level steering is less direct than classic next-token sampling"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "cbd6d8e0-e8e5-4838-8485-167beb457aca",
+          "kind": "takeaways",
+          "title": "The Core Idea, in One Line",
+          "body": "You don't have to choose between 'retrain a diffusion model from scratch' and 'stay purely autoregressive' — you can bolt a small trainable diffusion tower onto a frozen pretrained model and buy throughput with a modest, well-measured quality tax.",
+          "bullets": [
+            "Adapting a frozen backbone costs ~12% of the original pretraining budget, not 100%",
+            "2.42x throughput for 1.3 points of aggregate quality is a genuinely favorable trade for latency-sensitive serving",
+            "Expect more 'graft a new decoding mode onto a frozen model' research now that this pattern is validated at 30B scale"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b3754031-27c4-4f5b-ba9c-a3b31846a559",
+            "prompt": "In Nemotron-Labs-TwoTower, what does the 'context tower' do?",
+            "options": [
+              "It is frozen and causally processes already-generated tokens to ground the denoiser",
+              "It is retrained from scratch on 25T new tokens",
+              "It runs the softmax over the vocabulary at the very last step",
+              "It replaces the tokenizer with a continuous embedding scheme"
+            ],
+            "correctIndex": 0,
+            "explanation": "The context tower is the original pretrained autoregressive backbone, kept entirely frozen — it never receives a gradient update. It just causally supplies context for the denoiser tower to cross-attend into."
+          },
+          {
+            "id": "a78aaaf1-b8f8-4357-9bbf-3c08b5f908eb",
+            "prompt": "Why does TwoTower need only about 2.1T training tokens instead of a full ~25T-token pretrain?",
+            "options": [
+              "Because it uses a smaller vocabulary",
+              "Because only the new denoiser tower is trained; the backbone is reused frozen",
+              "Because diffusion models never need more than 2T tokens",
+              "Because the model has fewer total parameters than the backbone"
+            ],
+            "correctIndex": 1,
+            "explanation": "TwoTower avoids training a diffusion model from scratch by reusing an already-pretrained autoregressive model as a frozen tower and training only the new, much smaller denoiser tower on top of it."
+          },
+          {
+            "id": "6d037ca6-dd6d-458c-a826-6a56264eeb16",
+            "prompt": "What is the actual hardware tradeoff TwoTower makes for its 2.42x throughput gain?",
+            "options": [
+              "It requires a completely different tokenizer",
+              "It needs two GPUs resident at once (~59GB/GPU in BF16) since both towers run together",
+              "It only works on TPUs, not GPUs",
+              "It eliminates the need for a KV cache entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the frozen context tower and the trainable denoiser tower both need to be resident and running together, full two-tower inference needs roughly 59GB per GPU in BF16 — typically two data-center-class GPUs, not one."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "e9afea3b-f38d-402d-be8c-b09c701f6bf6",
+          "title": "Nemotron-Labs-TwoTower: Diffusion Language Modeling with Pretrained Autoregressive Context (arXiv:2606.26493)",
+          "url": "https://arxiv.org/abs/2606.26493"
+        },
+        {
+          "id": "33bd1e2d-3cd5-4479-8093-dfa17589a1c8",
+          "title": "nvidia/Nemotron-Labs-TwoTower-30B-A3B-Base-BF16 (Hugging Face model card)",
+          "url": "https://huggingface.co/nvidia/Nemotron-Labs-TwoTower-30B-A3B-Base-BF16"
+        }
+      ],
+      "publishedDate": "2026-07-04T18:43:12Z"
+    },
+    {
+      "id": "efb1e3bf-1cfd-409c-acf7-6a32b33d85be",
+      "title": "LongCat-2.0: A 1.6T-Param Coding Model Trained on No Nvidia",
+      "subtitle": "Meituan open-sources a trillion-scale MoE agentic coder trained end-to-end on domestic AI ASIC superpods, and edges past GPT-5.5 on SWE-bench Pro.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "longcat",
+        "mixture-of-experts",
+        "open source",
+        "coding agents",
+        "meituan"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "chevron.left.forwardslash.chevron.right",
+      "summary": "Meituan open-sourced LongCat-2.0 under the MIT license: a 1.6-trillion-parameter mixture-of-experts model with ~48B active parameters per token, built for agentic coding and trained entirely on domestic AI ASIC superpods rather than Nvidia or AMD GPUs. It scores 59.5 on SWE-bench Pro (versus GPT-5.5's 58.6) and ships LongCat Sparse Attention, a 135B-parameter N-gram embedding, and 3-step multi-token prediction for faster decoding.",
+      "body": null,
+      "artPrompt": null,
+      "slides": [
+        {
+          "id": "b7151af8-df25-47cc-8b33-ab3f1c5f214d",
+          "kind": "cover",
+          "title": "A Trillion-Parameter Coder Built With Zero Nvidia Chips",
+          "body": "Meituan just open-sourced LongCat-2.0 — a frontier-scale agentic coding model trained entirely on domestic accelerators, under the permissive MIT license.",
+          "bullets": [
+            "1.6 trillion total parameters, ~48B active per token (mixture-of-experts)",
+            "Trained end-to-end on domestic AI ASIC superpods — no Nvidia or AMD GPUs in the training loop",
+            "59.5 on SWE-bench Pro, edging past GPT-5.5's reported 58.6"
+          ],
+          "symbol": "chevron.left.forwardslash.chevron.right",
+          "table": null
+        },
+        {
+          "id": "fb1bc2a3-fc35-4b98-b15f-c8d63a5b5798",
+          "kind": "problem",
+          "title": "Can You Train a Frontier Model Without Frontier Chips?",
+          "body": "Export controls have cut off leading Chinese AI labs from top-tier Nvidia and AMD accelerators, raising the question of whether a trillion-parameter-class model can still be trained competitively on domestic hardware alone.",
+          "bullets": [
+            "Training runs at this scale traditionally lean on H100/A100/MI300X-class GPUs for both compute density and mature tooling",
+            "Domestic ASIC accelerators historically lagged in software maturity and interconnect bandwidth for training jobs this large",
+            "A visible, reproducible open-source release is the clearest way to demonstrate the gap has narrowed"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "b21ca283-b2b8-4650-be00-db110efacccb",
+          "kind": "solution",
+          "title": "The Architecture: Sparse, MoE, and Built for Long Codebases",
+          "body": "LongCat-2.0 pairs a large mixture-of-experts backbone with several efficiency features aimed squarely at agentic coding over huge contexts.",
+          "bullets": [
+            "LongCat Sparse Attention (LSA): streaming-aware indexing keeps attention cost manageable over very long contexts",
+            "N-gram Embedding: a 135B-parameter embedding layer that captures multi-token patterns directly, not just single-token identities",
+            "3-step Multi-Token Prediction (MTP): predicts several tokens ahead per step, used for speculative decoding to speed up generation"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "43dcb4df-bca8-4fda-9dcd-a7bcd04b355d",
+          "kind": "architecture",
+          "title": "Training Infrastructure: Millions of Accelerator-Days, No Rollbacks",
+          "body": "Meituan reports training on domestic 'AI ASIC superpods,' consuming millions of accelerator-days across more than 35 trillion training tokens.",
+          "bullets": [
+            "Trained on hundreds of billions of tokens of long-context (1M-token) data specifically",
+            "Meituan reports no rollbacks or irrecoverable loss spikes during the run — a stability claim that matters at this scale",
+            "For inference, LongCat-2.0 supports both GPU and NPU deployment via SGLang integration, decoupling training hardware from serving hardware"
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "ed8f70d9-663e-4a3f-a4ef-05081acc3508",
+          "kind": "comparison",
+          "title": "LongCat-2.0 vs. GPT-5.5 on Key Benchmarks",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Benchmark",
+              "LongCat-2.0",
+              "GPT-5.5 (reported)"
+            ],
+            "rows": [
+              [
+                "SWE-bench Pro",
+                "59.5",
+                "58.6"
+              ],
+              [
+                "SWE-bench Multilingual",
+                "77.3",
+                "—"
+              ],
+              [
+                "Terminal-Bench 2.1",
+                "70.8",
+                "—"
+              ],
+              [
+                "GPQA-diamond",
+                "88.9",
+                "—"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "881a25ed-7a04-4ab8-8eb3-82812c3bacb9",
+          "kind": "example",
+          "title": "Worked Example: A Million-Token Refactor",
+          "body": "An agent is asked to rename a widely-used interface across a codebase that doesn't fit in a normal context window.",
+          "bullets": [
+            "LongCat-2.0's context window stretches to roughly 1M tokens — enough to load the whole affected codebase at once instead of chunking it",
+            "LongCat Sparse Attention keeps the per-token attention cost from exploding as that context fills up",
+            "3-step MTP speculative decoding lets the model draft several tokens per step while emitting the hundreds of edited call sites, instead of one token at a time"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "b64ce2c3-7735-45f8-8bf4-bb84bc341a26",
+          "kind": "problem",
+          "title": "Where This Doesn't (Yet) Change the Calculus",
+          "body": "A 0.9-point SWE-bench Pro win is real but narrow, and open weights don't erase every practical cost of running a 1.6T-parameter model.",
+          "bullets": [
+            "The SWE-bench Pro margin (59.5 vs 58.6) is a lead, not a blowout — treat it as 'competitive with', not 'dominant over,' current frontier coding models",
+            "Serving a 1.6T-parameter MoE model — even with only ~48B active per token — still needs serious multi-accelerator infrastructure and SGLang-based tooling maturity",
+            "Domestic-chip training is a geopolitical and supply-chain story as much as a technical one — reproducing these training conditions outside that hardware ecosystem isn't the point"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "e0a7e496-adc4-4c83-a907-57d7ffc3df56",
+          "kind": "takeaways",
+          "title": "Why This Release Matters Beyond the Benchmark Table",
+          "body": "LongCat-2.0 is as much a proof-of-independence release as a model release: a trillion-scale, MIT-licensed coding model trained without a single Nvidia or AMD chip in the loop.",
+          "bullets": [
+            "MIT license makes the weights freely usable — a rarity at this parameter count",
+            "It's a concrete signal that domestic AI accelerators can now train, not just serve, frontier-scale MoE models",
+            "For agentic coding specifically, the 1M-token context plus sparse attention plus MTP combination is the more interesting engineering story than the single benchmark win"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2478cfaa-f96a-46e5-a5f5-771db143e347",
+            "prompt": "How many of LongCat-2.0's 1.6 trillion parameters are active per token?",
+            "options": [
+              "1.6 trillion (all of them)",
+              "~48 billion",
+              "~135 billion",
+              "~1 billion"
+            ],
+            "correctIndex": 1,
+            "explanation": "LongCat-2.0 is a mixture-of-experts model: it holds 1.6T total parameters but only routes each token through roughly 48B of them, which is what keeps inference cost far below a dense model of the same total size."
+          },
+          {
+            "id": "5c61e591-d79f-408b-a89b-6e9a6240304f",
+            "prompt": "What is the most notable claim about how LongCat-2.0 was trained?",
+            "options": [
+              "It was trained entirely on domestic AI ASIC superpods, without Nvidia or AMD GPUs",
+              "It was trained using only reinforcement learning, with no pretraining",
+              "It was trained on a single consumer GPU",
+              "It was trained exclusively on synthetic data"
+            ],
+            "correctIndex": 0,
+            "explanation": "Meituan reports training LongCat-2.0 end-to-end on domestic AI ASIC superpods rather than Nvidia H100/A100 or AMD MI300X-class GPUs — the headline infrastructure claim of the release."
+          },
+          {
+            "id": "7edd74a6-0df0-479b-8bd9-0abec5c5613d",
+            "prompt": "On SWE-bench Pro, how does LongCat-2.0 compare to GPT-5.5 as reported?",
+            "options": [
+              "It scores far lower (30 points behind)",
+              "It scores slightly higher: 59.5 vs. 58.6",
+              "It ties exactly",
+              "SWE-bench Pro wasn't run on either model"
+            ],
+            "correctIndex": 1,
+            "explanation": "LongCat-2.0 posts 59.5 on SWE-bench Pro versus GPT-5.5's reported 58.6 — a real but narrow lead, not a dominant win."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "66463b5d-eaa9-4da5-99f7-558866cf71a3",
+          "title": "meituan-longcat/LongCat-2.0 (official GitHub repository and model card)",
+          "url": "https://github.com/meituan-longcat/LongCat-2.0"
+        }
+      ],
+      "publishedDate": "2026-07-04T18:43:12Z"
+    },
+    {
+      "id": "a0e8f233-11e9-4fb1-b280-9b3ea8e13d24",
+      "title": "Self-Attention: How Every Token Learns to Look Around",
+      "subtitle": "Query, key, and value vectors let each token decide which others matter — the mechanism underneath every transformer.",
+      "category": "LLMs",
+      "difficulty": "Beginner",
+      "postKind": "concept",
+      "tags": [
+        "self-attention",
+        "transformers",
+        "attention mechanism",
+        "query key value",
+        "neural networks"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "eye.fill",
+      "summary": "Self-attention lets every token in a sequence directly weigh every other token, regardless of distance, by comparing learned Query and Key vectors and using the result to blend Value vectors. It replaced the sequential bottleneck of RNNs with a fully parallel, direct-connection mechanism — at the cost of quadratic compute in sequence length, which is exactly the problem later techniques like FlashAttention were built to solve.",
+      "body": null,
+      "artPrompt": null,
+      "slides": [
+        {
+          "id": "ca275ad9-3f94-435e-8bb3-7eeb5c90e02e",
+          "kind": "cover",
+          "title": "The Mechanism That Lets a Word 'Look At' Any Other Word",
+          "body": "Self-attention is the core operation inside every transformer — it's how a model decides which parts of the input matter to which other parts.",
+          "bullets": [
+            "Every token computes a Query, Key, and Value vector from learned weight matrices",
+            "Attention scores measure how much each token should 'listen to' every other token",
+            "Runs in parallel across the whole sequence — no step-by-step recurrence required"
+          ],
+          "symbol": "eye.fill",
+          "table": null
+        },
+        {
+          "id": "d95af8e9-40c4-4bb6-a6e1-07a1a1b5a1d0",
+          "kind": "problem",
+          "title": "Before Attention: One Token at a Time, in Order",
+          "body": "Recurrent networks (RNNs/LSTMs) processed a sequence one token at a time, carrying a single hidden state forward — which made long-range relationships hard to learn and training impossible to parallelize.",
+          "bullets": [
+            "Information from token 1 has to survive being compressed through every step up to token 1,000 to influence it — signal fades with distance",
+            "Sequential processing means you can't compute token 500 until token 499 is done, which is slow to train on modern parallel hardware",
+            "Transformers needed a mechanism where any two tokens could interact directly, in one step, regardless of how far apart they are"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "7269db4b-a6d1-4daf-976c-f9345968fcb4",
+          "kind": "concept",
+          "title": "The Mechanics: Query, Key, Value",
+          "body": "Each token's embedding is projected through three learned matrices into a Query (Q), Key (K), and Value (V) vector. Attention compares Queries against Keys to decide how much of each Value to mix in.",
+          "bullets": [
+            "Score(i, j) = Query_i · Key_j, scaled by 1/sqrt(d_k) to keep gradients stable as vector size grows",
+            "Softmax turns each token's row of scores into weights that sum to 1 across all tokens it can see",
+            "Output_i = weighted sum of every Value_j, using those softmax weights — token i now carries a blend of the whole sequence, chosen by relevance"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "d2ae7371-49ca-4a4c-97c1-bda64f74afa1",
+          "kind": "architecture",
+          "title": "Multi-Head Attention: Several Views at Once",
+          "body": "Instead of computing attention once, transformers split Q/K/V into multiple smaller 'heads,' each learning a different kind of relationship, then concatenate the results.",
+          "bullets": [
+            "A model might use 8 heads for a small transformer or 96+ for a frontier-scale one",
+            "One head might learn to track subject-verb agreement, another might track coreference (which pronoun refers to which noun)",
+            "Concatenated head outputs pass through one more learned projection before moving to the next layer"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "d687ca0b-bb60-4bb6-bb68-3f9b968a6faa",
+          "kind": "example",
+          "title": "Worked Example: Resolving 'It'",
+          "body": "\"The trophy didn't fit in the suitcase because it was too big.\" Which noun does 'it' refer to?",
+          "bullets": [
+            "The token 'it' computes a Query and compares it against the Keys for 'trophy' and 'suitcase'",
+            "Because 'too big' plausibly explains why something doesn't fit, the learned weights push the attention score between 'it' and 'trophy' higher than between 'it' and 'suitcase'",
+            "After softmax, 'it' ends up with an output vector that's mostly a blend weighted toward 'trophy' — the model has effectively resolved the reference without any explicit coreference rule"
+          ],
+          "symbol": "text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "f2d58f74-9218-4f01-9aa6-4c7e108e2b36",
+          "kind": "comparison",
+          "title": "RNNs vs. Self-Attention",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Property",
+              "RNN / LSTM",
+              "Self-Attention"
+            ],
+            "rows": [
+              [
+                "Parallelizable across the sequence?",
+                "No — strictly sequential",
+                "Yes — all tokens computed together"
+              ],
+              [
+                "Path length between two distant tokens",
+                "O(n) steps",
+                "O(1) — direct connection"
+              ],
+              [
+                "Compute cost per layer",
+                "O(n)",
+                "O(n²) in sequence length"
+              ],
+              [
+                "Needs explicit position info?",
+                "Implicit (order of processing)",
+                "Yes — added separately (e.g. RoPE)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b4c045bf-e10b-4d59-88a8-6747f6acf352",
+          "kind": "problem",
+          "title": "The Catch: Quadratic Cost and No Sense of Order",
+          "body": "Self-attention trades the RNN's sequential bottleneck for a different one: cost that grows with the square of sequence length, plus a total blindness to token order unless you fix it separately.",
+          "bullets": [
+            "Doubling sequence length quadruples the raw attention compute and memory — the exact problem FlashAttention's fused kernels were built to make cheaper, not eliminate",
+            "Raw self-attention is permutation-invariant: shuffle the tokens and the math doesn't change, so position must be injected explicitly (e.g. via rotary positional embeddings)",
+            "For very long contexts, this is why techniques like sparse attention or hybrid state-space layers get mixed in alongside plain self-attention in modern architectures"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "bbf64837-0ca7-4b78-ab53-53becc029aa6",
+          "kind": "takeaways",
+          "title": "The One-Sentence Version",
+          "body": "Self-attention lets every token directly ask every other token 'how relevant are you to me right now,' and blend their information accordingly — parallel, direct, and the reason transformers replaced RNNs.",
+          "bullets": [
+            "Query asks the question, Key advertises relevance, Value carries the content actually mixed in",
+            "Multi-head attention runs several of these comparisons at once to capture different relationship types",
+            "Its quadratic cost and order-blindness are exactly the two problems most later transformer efficiency tricks were invented to fix"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "9f49a662-0494-4605-ac39-221e5d51e301",
+            "prompt": "In self-attention, what role does the Key vector play?",
+            "options": [
+              "It's the final output blended into the next layer",
+              "It advertises what a token 'contains' so other tokens' Queries can compare against it",
+              "It stores the token's position in the sequence",
+              "It's only used during training, never at inference"
+            ],
+            "correctIndex": 1,
+            "explanation": "Query, Key, and Value each have a distinct role: the Query represents what a token is 'looking for,' the Key represents what a token 'offers' for comparison, and the Value is the actual content that gets mixed into the output once relevance is decided."
+          },
+          {
+            "id": "7655a8b0-09eb-4a69-adbf-ee94548e1e82",
+            "prompt": "Why are attention scores scaled by 1/sqrt(d_k) before the softmax?",
+            "options": [
+              "To make the model run faster on GPUs",
+              "To reduce the number of parameters",
+              "To keep dot-product magnitudes from growing too large as vector dimension increases, which would push softmax into regions with vanishing gradients",
+              "To add positional information to the scores"
+            ],
+            "correctIndex": 2,
+            "explanation": "Dot products grow roughly with the square root of vector dimension. Without scaling, large-dimension Query/Key vectors would produce very large scores, pushing softmax outputs toward one-hot vectors and stalling gradient flow during training."
+          },
+          {
+            "id": "47f94d81-fd34-474e-9d46-949e757025b6",
+            "prompt": "What core limitation of RNNs does self-attention directly solve?",
+            "options": [
+              "RNNs use too many parameters",
+              "RNNs can't be used for text at all",
+              "RNNs process tokens sequentially, so distant tokens interact only through a compressed hidden state; self-attention gives every pair of tokens a direct, one-step connection",
+              "RNNs can't be trained with backpropagation"
+            ],
+            "correctIndex": 2,
+            "explanation": "RNNs carry information forward step by step, so a signal from token 1 has to survive being compressed through every intermediate step to influence token 1,000. Self-attention connects any two tokens directly in a single computation, regardless of distance."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "5b000520-e407-4e05-98d1-024c84a7a104",
+          "title": "Attention Is All You Need (Vaswani et al., 2017, arXiv:1706.03762)",
+          "url": "https://arxiv.org/abs/1706.03762"
+        }
+      ],
+      "publishedDate": "2026-07-04T18:43:12Z"
+    },
+    {
       "title": "Constrained Decoding: Making LLMs Emit Valid JSON Every Time",
       "subtitle": "Instead of hoping the model behaves, mask every token that would break the schema before it's ever sampled.",
       "category": "LLMs",
