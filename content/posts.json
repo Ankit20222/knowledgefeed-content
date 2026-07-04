@@ -1,6 +1,193 @@
 {
   "posts": [
     {
+      "title": "Constrained Decoding: Making LLMs Emit Valid JSON Every Time",
+      "subtitle": "Instead of hoping the model behaves, mask every token that would break the schema before it's ever sampled.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "constrained decoding",
+        "structured output",
+        "tool calling",
+        "inference",
+        "json schema"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "curlybraces",
+      "summary": "Constrained decoding guarantees machine-parseable output by compiling a schema into a finite-state or pushdown automaton, then masking any token at each decode step that would leave a valid path. It fixes syntax, not semantics — the output is always well-formed JSON, but the values still need separate correctness checks. Now standard in vLLM, TensorRT-LLM, Outlines, guidance, and structured-output APIs from major model providers.",
+      "slides": [
+        {
+          "id": "4517e316-136e-4081-9ab7-5fafec321332",
+          "kind": "cover",
+          "title": "Making an LLM Emit Valid JSON, Every Single Time",
+          "body": "Agents and tool-calling pipelines need machine-parseable output, not just plausible-looking text.",
+          "bullets": [
+            "Ask a model nicely for JSON and it eventually breaks: trailing commas, stray prose, wrong field names",
+            "Constrained decoding forces validity by editing next-token probabilities before sampling, not by hoping the prompt worked",
+            "Built into vLLM, TensorRT-LLM, Outlines, guidance, and structured-output modes from major model APIs"
+          ],
+          "symbol": "curlybraces"
+        },
+        {
+          "id": "641e5f54-ae74-4f0d-abd2-7dab7e1e7a86",
+          "kind": "problem",
+          "title": "Free-Text Generation Doesn't Guarantee Structure",
+          "body": "A model trained to predict natural language has no built-in notion of 'this must be valid JSON' — validity is a side effect of training data, not a guarantee at inference time.",
+          "bullets": [
+            "Prompting alone ('respond only in JSON') fails at the tail — a small but nonzero fraction of production outputs break the parser",
+            "One wrong token — a stray quote, a trailing comma — crashes a downstream json.loads() call",
+            "Retrying on parse failure burns latency and cost; silently swallowing the error corrupts the pipeline instead"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "27eb6db3-c2fb-436a-9744-2ee0939fdaaa",
+          "kind": "solution",
+          "title": "Mask Invalid Tokens Before Sampling, at Every Step",
+          "body": "Constrained decoding compiles a schema (JSON Schema, regex, or grammar) into a state machine, then at each decoding step zeroes out the probability of any token that would make the output invalid.",
+          "bullets": [
+            "Build phase: schema → automaton, done once before generation starts",
+            "Decode phase: at each step, compute the small set of tokens the current automaton state allows, set every other logit to -infinity, then sample as normal",
+            "The model still chooses the content — which key, which value — the mask only removes syntactically invalid choices"
+          ],
+          "symbol": "checkmark.shield.fill"
+        },
+        {
+          "id": "fe14ac7b-8b03-4a20-bba8-4e9d7abbaaad",
+          "kind": "architecture",
+          "title": "The Speed Trick: Precomputed Token Masks",
+          "body": "Checking every vocabulary token — 100K or more — against the grammar at every single decode step would be far too slow for production.",
+          "bullets": [
+            "Serving stacks precompute an index mapping automaton state → allowed token ids, so masking at runtime is a lookup, not a re-parse",
+            "Runtime overhead is typically a low single-digit percent of decode time once the index exists; building the index for deeply nested schemas is the slower part",
+            "Recursive structures — nested objects and arrays — need a pushdown automaton with a stack, not just a flat finite-state machine"
+          ],
+          "symbol": "square.stack.3d.up.fill"
+        },
+        {
+          "id": "930e1868-7639-41c7-87e2-269a0ffda2e0",
+          "kind": "example",
+          "title": "Worked Example: Extracting a Structured Invoice",
+          "body": "An agent must pull {vendor, total, date, line_items} out of a scanned invoice and hand it to an accounting system that hard-crashes on malformed JSON.",
+          "bullets": [
+            "Schema requires total as a JSON number and date as YYYY-MM-DD",
+            "Unconstrained: the model writes \"total\": \"$1,204.50\" — a string with a currency symbol — and downstream validation fails",
+            "Constrained: at the position right after \"total\": , the decoder masks out every token that isn't a valid JSON number, so the model is only able to emit 1204.50"
+          ],
+          "symbol": "doc.text.magnifyingglass"
+        },
+        {
+          "id": "cdc7e5ad-ac00-426b-9d28-46adafdf774e",
+          "kind": "comparison",
+          "title": "Constrained Decoding vs. Prompting vs. Retry Loops",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Approach",
+              "Guarantees valid output?",
+              "Extra latency",
+              "Extra engineering"
+            ],
+            "rows": [
+              [
+                "Prompt-only (\"respond in JSON\")",
+                "No — fails on the tail",
+                "None",
+                "None"
+              ],
+              [
+                "Retry-until-valid",
+                "Eventually, usually",
+                "1-3x on every failure (re-generate)",
+                "Retry loop + parser + error handling"
+              ],
+              [
+                "Constrained decoding",
+                "Yes, by construction",
+                "Low single-digit % per token",
+                "Schema compiler + automaton index"
+              ]
+            ]
+          },
+          "symbol": "tablecells"
+        },
+        {
+          "id": "e1140739-50db-4b67-8c85-51aa83b38057",
+          "kind": "concept",
+          "title": "The Catch: It Fixes Syntax, Not Semantics",
+          "body": "Constrained decoding guarantees the output can be parsed — it says nothing about whether the values inside it are correct, or whether the grammar itself was a good idea.",
+          "bullets": [
+            "A well-formed but wrong total still passes — semantic validation (does 999999 make sense on a $12 receipt) still needs a separate check",
+            "Very deep or recursive schemas can blow up the automaton's state space, slowing index construction or bloating memory",
+            "Forcing the model toward tokens it wasn't heading toward can quietly lower answer quality — a grammar should describe the format, not micromanage the content",
+            "Not every serving stack supports it; confirm the feature exists before architecting an agent pipeline around it"
+          ],
+          "symbol": "exclamationmark.bubble.fill"
+        },
+        {
+          "id": "d9dfc51f-e0fa-4f83-a87e-69ba662bbaa5",
+          "kind": "takeaways",
+          "title": "When to Reach for It",
+          "body": null,
+          "bullets": [
+            "Constrained decoding masks invalid tokens at every decode step using a schema-compiled automaton — it doesn't rely on the model behaving",
+            "Cost: a schema-compilation step plus roughly single-digit percent decode overhead once the token index is built",
+            "It's now close to table-stakes for agent tool-calling and structured extraction — available in vLLM, TensorRT-LLM, Outlines, guidance, and provider structured-output APIs",
+            "It guarantees shape, not correctness — keep validating content, not just parsing it"
+          ],
+          "symbol": "flag.checkered"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does constrained decoding actually manipulate to guarantee valid output?",
+            "options": [
+              "The training data used for the model",
+              "The token probabilities (logits) at each decoding step",
+              "The user's prompt text before generation",
+              "The temperature parameter only"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding works entirely at inference time: after the model computes logits for the next token, any option that would violate the compiled grammar or automaton is masked to -infinity before sampling. Nothing about training changes."
+          },
+          {
+            "prompt": "A team constrains an LLM's output to a strict JSON Schema, and it still returns \"total\": 999999 for a $12 receipt. What does that reveal?",
+            "options": [
+              "Constrained decoding failed and produced invalid JSON",
+              "Constrained decoding only guarantees syntactic validity, not semantic correctness",
+              "The schema itself must have a syntax error",
+              "The model needs a higher temperature to fix it"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding guarantees the output parses as valid JSON matching the schema's shape — it says nothing about whether the values are factually correct. Semantic checks (does 999999 make sense here) still need to happen separately."
+          },
+          {
+            "prompt": "Why do production systems like vLLM or Outlines precompute a token-to-automaton-state index instead of checking the full vocabulary against the grammar at every decoding step?",
+            "options": [
+              "To reduce GPU memory usage during training",
+              "To avoid scanning 100K+ vocabulary tokens against the grammar on every single generated token, which would be too slow",
+              "Because the tokenizer requires a fixed index to function at all",
+              "To support multiple languages simultaneously"
+            ],
+            "correctIndex": 1,
+            "explanation": "A vocabulary can have 100K+ tokens, and a response can take dozens to thousands of decode steps; re-validating the entire vocabulary against the grammar at every step would dominate latency. Precomputing which tokens are valid from each automaton state turns that per-step check into a fast lookup instead of a re-parse."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "7116049a-d8ee-4b3a-96b7-5b75467eb7ab",
+          "title": "Efficient Guided Generation for Large Language Models (Willard & Louf, arXiv:2307.09702) — the Outlines approach to finite-state-automaton-constrained decoding",
+          "url": "https://arxiv.org/abs/2307.09702"
+        }
+      ],
+      "id": "613e44df-aa9c-4237-9e1a-0b59631b617c",
+      "publishedDate": "2026-07-04T12:40:45Z"
+    },
+    {
       "title": "ReasoningLens: X-Raying a Model's Chain of Thought",
       "subtitle": "Reasoning traces are ballooning past 10,000 tokens — this framework turns that wall of text into an auditable graph.",
       "category": "AI Innovations",
