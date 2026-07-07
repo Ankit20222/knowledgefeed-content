@@ -1,6 +1,218 @@
 {
   "posts": [
     {
+      "id": "45677d19-07fc-4fd6-9505-3b23731adf1b",
+      "title": "GRPO: Reinforcement Learning Without a Critic",
+      "subtitle": "The group-sampling trick that made DeepSeek-R1's reasoning RL cheap enough to run at scale.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "grpo",
+        "reinforcement learning",
+        "ppo",
+        "deepseek",
+        "llm training",
+        "reasoning models"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "GRPO replaces PPO's learned critic with a simple trick: sample a group of completions per prompt and normalize each one's reward against its own group's mean and standard deviation. That group-relative advantage is what powered DeepSeek's DeepSeekMath and DeepSeek-R1 reasoning models, cutting the memory and instability cost of RL fine-tuning on LLMs.",
+      "publishedDate": "2026-07-07T18:40:35Z",
+      "slides": [
+        {
+          "id": "a705ae1b-ccff-4e37-bf3b-49b747270f0f",
+          "kind": "cover",
+          "title": "The RL Algorithm Behind DeepSeek-R1",
+          "body": "Group Relative Policy Optimization (GRPO) answers one question: how do you run PPO-style reinforcement learning on an LLM without training a separate critic model to go with it?",
+          "bullets": [
+            "Introduced in DeepSeek's DeepSeekMath paper (Feb 2024), and the RL engine behind DeepSeek-R1's reasoning training (Jan 2025)",
+            "Now a default choice across open reasoning-model recipes wherever rewards are verifiable — math, code, logic puzzles",
+            "The change is narrow but consequential: it swaps a learned value function for simple group statistics"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "f7000477-540a-408d-bd11-a2c94be8fd7e",
+          "kind": "problem",
+          "title": "PPO's Critic Is Expensive and Fragile for LLMs",
+          "body": "Standard RLHF runs Proximal Policy Optimization with four models resident at once — and the fourth one is the source of most of the pain.",
+          "bullets": [
+            "Policy, reward model, reference model, and a value/critic model — often the same size as the policy itself — all in memory simultaneously",
+            "The critic has to learn to predict expected future reward for every partial sequence, from a signal that's usually noisy and only defined once generation ends",
+            "Training an accurate token-level value function for LLM outputs is notoriously unstable",
+            "That extra model's worth of memory and compute is a big reason early LLM RLHF felt expensive and finicky next to plain supervised fine-tuning"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "57d77826-3e23-41a8-8b38-2e7b2f4718fe",
+          "kind": "solution",
+          "title": "Sample a Group, Skip the Critic",
+          "body": "GRPO drops the value network entirely and replaces it with a same-prompt control group.",
+          "bullets": [
+            "For each prompt, sample a group of G completions (commonly 8–64) from the current policy",
+            "Score every completion with a reward function — a rule-based verifier (correct/incorrect) or a reward model",
+            "Normalize each completion's reward against its own group's mean and standard deviation to get its advantage",
+            "Feed that group-relative advantage into the same PPO-style clipped surrogate objective, still regularized by a KL penalty against a reference policy — no value network anywhere in the loop"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "b2b8809e-3568-449d-9cbd-3e914aa0f8f7",
+          "kind": "concept",
+          "title": "The Advantage Formula, in Plain Terms",
+          "body": "GRPO's entire innovation fits in one normalization step.",
+          "bullets": [
+            "Reward for completion i: r_i (e.g., 1 if the final answer checks out, 0 otherwise)",
+            "Group mean: mean(r_1 ... r_G); group std: std(r_1 ... r_G)",
+            "Advantage: Â_i = (r_i − mean) / (std + ε) — 'how much better than its siblings' this completion scored",
+            "Because every completion in a group answers the same prompt, this automatically cancels out prompt difficulty — something one global value function struggles to do"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "3596ec92-cb0c-4efd-a94d-cdfa5a204c95",
+          "kind": "example",
+          "title": "Working the Numbers on a Math Prompt",
+          "body": "Prompt: 'What is the derivative of x³ + 2x?' The policy samples G=8 completions; a rule-based checker compares each final answer to the ground truth (3x² + 2).",
+          "bullets": [
+            "Rewards across the 8 completions: three correct (1), five incorrect (0) → [1,1,1,0,0,0,0,0]",
+            "Group mean = 0.375, group std ≈ 0.484",
+            "Each correct completion's advantage ≈ (1 − 0.375) / 0.484 ≈ +1.29 — reinforced",
+            "Each incorrect completion's advantage ≈ (0 − 0.375) / 0.484 ≈ −0.78 — suppressed",
+            "No value network ever estimated 'how good is this partial derivation' — the group itself supplied the baseline"
+          ],
+          "symbol": "flask.fill",
+          "table": null
+        },
+        {
+          "id": "631b82d2-13ae-4693-800e-534ef5653495",
+          "kind": "comparison",
+          "title": "GRPO vs. PPO vs. DPO",
+          "body": null,
+          "bullets": [
+            "PPO stays the right call for dense, learned-reward RLHF (general chat quality, safety) where a value function smooths noisy signals",
+            "GRPO trades that critic for extra rollouts — cheaper in model memory, costlier in generation compute per update",
+            "DPO skips both the critic and the rollouts, but also skips the online exploration RL provides"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Method",
+              "Critic/value model?",
+              "Sampling per update",
+              "Best fit"
+            ],
+            "rows": [
+              [
+                "PPO (classic RLHF)",
+                "Yes — separate value network",
+                "1 rollout per prompt",
+                "Dense/learned reward, general alignment"
+              ],
+              [
+                "GRPO",
+                "No critic",
+                "G rollouts per prompt (group)",
+                "Verifiable rewards — math, code, logic"
+              ],
+              [
+                "DPO",
+                "No critic, no rollouts",
+                "0 — trains on static preference pairs",
+                "Cheap offline alignment, no exploration needed"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "edec2ab3-bce6-4526-9a49-5d6fc875d7f9",
+          "kind": "problem",
+          "title": "Where GRPO Breaks Down",
+          "body": "Removing the critic isn't free — it just moves the cost somewhere else.",
+          "bullets": [
+            "Zero-variance groups: if every sample gets the same reward (a prompt that's uniformly too easy or too hard), std = 0 and the advantage collapses — that rollout teaches the model nothing while still costing G full generations",
+            "Group size G is a real dial: too small makes the mean/std estimate noisy; too large (64+, as in the original DeepSeekMath runs) multiplies rollout cost per gradient step",
+            "With no critic to smooth over noise, GRPO leans hard on reward quality — it degrades faster than PPO when rewards come from an imperfect learned reward model rather than a rule-based verifier",
+            "Not a drop-in win for open-ended tasks where reward is dense human preference rather than a binary pass/fail signal"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "e4a5e2fc-6aa9-44db-9eab-e713f050005d",
+          "kind": "takeaways",
+          "title": "Key Takeaways",
+          "body": "GRPO didn't reinvent PPO's RL loop — it reinvented where the advantage comes from.",
+          "bullets": [
+            "Core trick: replace a learned value function with the empirical mean/std of a group of same-prompt rollouts",
+            "It cut RL training cost enough to make DeepSeek-R1's large-scale reasoning RL practical",
+            "Still uses PPO's clipped objective and a KL penalty against a reference policy — only the advantage estimation changed",
+            "Shines with cheap, reliable verifiers (math checkers, unit tests); trade a trained critic for extra rollout compute, and watch for zero-variance groups"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "78642818-4bcb-468d-a121-29a74c898c20",
+            "prompt": "What does GRPO remove from the standard PPO-based RLHF pipeline for LLMs?",
+            "options": [
+              "The reward model",
+              "The KL penalty against a reference policy",
+              "The critic/value network",
+              "The policy model itself"
+            ],
+            "correctIndex": 2,
+            "explanation": "GRPO's central change is eliminating the value/critic network. It still uses a reward signal, a reference policy for the KL penalty, and PPO's clipped objective — it just estimates advantage from a group of rollouts instead of a learned value function."
+          },
+          {
+            "id": "92c6d327-c89d-46b6-8eb5-adf28919be8a",
+            "prompt": "In a GRPO group of 8 completions for one prompt, all 8 end up with the exact same reward. What happens to their advantages?",
+            "options": [
+              "They become more negative",
+              "They're unchanged from a normal group",
+              "They collapse toward zero because the group has no variance to normalize against",
+              "They become positive"
+            ],
+            "correctIndex": 2,
+            "explanation": "When every sample in a group gets an identical reward, the group's standard deviation is zero, so the normalized advantage collapses. That rollout produces no learning signal even though it still cost G full generations — a known failure mode on prompts that are uniformly too easy or too hard."
+          },
+          {
+            "id": "b9f4c787-1651-482c-8443-3dfa9c95c0a0",
+            "prompt": "GRPO tends to work best when rewards come from...",
+            "options": [
+              "A noisy learned reward model trained on human preference pairs",
+              "A cheap, reliable verifier like a math answer checker or unit tests",
+              "Random sampling with no reward signal",
+              "Human raters grading each completion live during training"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because GRPO has no critic to smooth over noisy rewards, it leans hard on reward quality. It shines on tasks with verifiable, low-variance rewards — exactly the setting DeepSeekMath and DeepSeek-R1 used it for."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "0907f1e1-7891-4f77-bcb2-ef7ce20fed3c",
+          "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models (arXiv:2402.03300)",
+          "url": "https://arxiv.org/abs/2402.03300"
+        },
+        {
+          "id": "14d025c7-d7d9-448a-a72a-e8b67468827f",
+          "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (arXiv:2501.12948)",
+          "url": "https://arxiv.org/abs/2501.12948"
+        }
+      ]
+    },
+    {
       "id": "51abcbd6-3a24-4782-8a82-4ba4ffcfe286",
       "title": "HNSW: The Graph That Makes Vector Search Fast",
       "subtitle": "Why your RAG pipeline can search 50 million embeddings in single-digit milliseconds.",
@@ -11166,180 +11378,6 @@
       "id": "02ba75f3-3637-4ccd-8395-26fbe3fb0672",
       "publishedDate": "2026-07-02T12:26:40Z",
       "postKind": "release"
-    },
-    {
-      "title": "MCP Goes Stateless: The July RC Rewrite",
-      "subtitle": "No more sticky sessions — MCP servers finally play nice with load balancers",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "tags": [
-        "mcp",
-        "protocol",
-        "stateless",
-        "load-balancing",
-        "remote-servers"
-      ],
-      "estimatedMinutes": 2,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "The July 2026 MCP release candidate strips session state out of the protocol, so any server instance can answer any request. That means remote MCP servers can finally sit behind a plain load balancer before the spec locks on July 28.",
-      "slides": [
-        {
-          "id": "ac1e5329-dd75-4afd-9d97-f4e7ad7eafe1",
-          "kind": "cover",
-          "title": "MCP Goes Stateless",
-          "body": "A protocol-level rewrite lands this week — and it changes how you'll deploy every remote MCP server you run.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "a91a797b-a1f3-4f88-bc38-6df513a0ae4b",
-          "kind": "problem",
-          "title": "The old MCP had a sticky problem",
-          "body": null,
-          "bullets": [
-            "Sessions lived inside one server process",
-            "Load balancers had to pin you to that exact instance",
-            "Scale out = session affinity hacks everywhere",
-            "One instance dies, your whole session dies with it"
-          ],
-          "symbol": "bolt.slash",
-          "table": null
-        },
-        {
-          "id": "8ae635a0-3bb5-448c-9bf5-f27104870f42",
-          "kind": "concept",
-          "title": "What 'stateless' actually removes",
-          "body": "The RC deletes session state from the protocol layer. The server no longer remembers you between calls — the client carries the context instead.",
-          "bullets": [],
-          "symbol": "tray.and.arrow.up",
-          "table": null
-        },
-        {
-          "id": "28f13d06-05f5-4cf3-a1e0-bda270b31ad6",
-          "kind": "architecture",
-          "title": "Before vs. after, structurally",
-          "body": null,
-          "bullets": [
-            "Before: client → LB → pinned server → in-memory session",
-            "After: client → LB → any healthy server → context in the request",
-            "Server pool becomes fully interchangeable",
-            "Crashes just mean a retry, not a lost session"
-          ],
-          "symbol": "server.rack",
-          "table": null
-        },
-        {
-          "id": "7bf3ce3b-e64e-460b-b65b-9bcac97f37bc",
-          "kind": "comparison",
-          "title": "Stateful vs. stateless MCP",
-          "body": null,
-          "bullets": [],
-          "symbol": "scalemass",
-          "table": {
-            "headers": [
-              "Stateful MCP",
-              "Stateless MCP"
-            ],
-            "rows": [
-              [
-                "Session pinned to one instance",
-                "Any instance handles any request"
-              ],
-              [
-                "Needs sticky-session LB config",
-                "Works behind a plain round-robin LB"
-              ],
-              [
-                "Instance crash = lost context",
-                "Instance crash = simple retry"
-              ],
-              [
-                "Hard to autoscale mid-session",
-                "Scales horizontally at will"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "98c558c8-090d-4663-916e-fc8b5f53ed6b",
-          "kind": "example",
-          "title": "Deploying a remote server this week",
-          "body": "Drop server replicas behind nginx or an ALB with no session affinity rule. Any node can pick up the next request — no shared session store required.",
-          "bullets": [],
-          "symbol": "shippingbox",
-          "table": null
-        },
-        {
-          "id": "0ba70c8b-2903-4da0-b114-1beecf91f401",
-          "kind": "takeaways",
-          "title": "Before July 28",
-          "body": null,
-          "bullets": [
-            "Audit servers for in-memory session assumptions",
-            "Remove sticky-session config from your LB",
-            "Push per-call context into the request payload",
-            "Re-test failover — a dead node should now be a non-event"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "fec7f2b7-f2d8-4e45-9684-5c4bcb296385",
-            "prompt": "What does the July 2026 MCP RC remove at the protocol level?",
-            "options": [
-              "Tool call authentication",
-              "Session state",
-              "JSON-RPC message framing",
-              "Resource discovery"
-            ],
-            "correctIndex": 1,
-            "explanation": "The rewrite removes protocol-level session state, so no single server instance owns a client's context anymore."
-          },
-          {
-            "id": "f0ff974d-3f20-4533-ac7d-990c43afe956",
-            "prompt": "Why did stateful MCP servers struggle behind load balancers?",
-            "options": [
-              "They required sticky sessions pinned to one instance",
-              "They couldn't use HTTPS",
-              "They didn't support JSON",
-              "They required a database"
-            ],
-            "correctIndex": 0,
-            "explanation": "Since session data lived in one process's memory, the load balancer had to route every request from a client back to that same instance."
-          },
-          {
-            "id": "e961789d-860d-4ccb-aca3-388738079e9a",
-            "prompt": "In the stateless model, where does per-call context now live?",
-            "options": [
-              "In a shared server-side cache only",
-              "It's discarded between calls",
-              "Carried in the request itself",
-              "In the load balancer's memory"
-            ],
-            "correctIndex": 2,
-            "explanation": "The client includes the necessary context with each request, so any healthy server instance can process it independently."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "e8dd8409-f870-4101-a6b6-35a8a6d638eb",
-          "title": "Model Context Protocol — Specification",
-          "url": "https://modelcontextprotocol.io/specification"
-        },
-        {
-          "id": "eb436777-7261-43c1-92e0-2b81d4c5c5b1",
-          "title": "Model Context Protocol — GitHub",
-          "url": "https://github.com/modelcontextprotocol"
-        }
-      ],
-      "id": "e2bd4974-3830-472b-9910-3274b758533d",
-      "publishedDate": "2026-07-02T05:20:06Z",
-      "postKind": "concept"
     }
   ]
 }
