@@ -1,6 +1,214 @@
 {
   "posts": [
     {
+      "id": "51abcbd6-3a24-4782-8a82-4ba4ffcfe286",
+      "title": "HNSW: The Graph That Makes Vector Search Fast",
+      "subtitle": "Why your RAG pipeline can search 50 million embeddings in single-digit milliseconds.",
+      "category": "RAG",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "vector search",
+        "hnsw",
+        "rag",
+        "ann",
+        "embeddings",
+        "vector databases"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind nearly every production vector database. Instead of scanning every vector, it builds layered 'skip list'-style graphs and greedily walks toward the nearest neighbors, trading a small, tunable amount of recall for orders-of-magnitude faster search.",
+      "publishedDate": "2026-07-07T12:46:56Z",
+      "slides": [
+        {
+          "id": "0da90854-4092-4b52-83c3-f1d493722d48",
+          "kind": "cover",
+          "title": "One Graph, Millions of Vectors, Milliseconds",
+          "body": "Every RAG pipeline eventually hits the same wall: once you have millions of embeddings, finding the nearest ones to a query vector by brute force gets too slow to serve live traffic. HNSW is the algorithm that almost every vector database (FAISS, Qdrant, Pinecone, Weaviate, pgvector) uses to fix that.",
+          "bullets": [
+            "Powers approximate nearest-neighbor (ANN) search in FAISS, Qdrant, Pinecone, Weaviate, and pgvector's 'hnsw' index",
+            "Introduced by Malkov & Yashunin (2016/2018) — still the default ANN index a decade later",
+            "Turns an O(n) linear scan into an expected O(log n) graph walk"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "86548cb4-bb57-42a2-b22b-2d984c8437d9",
+          "kind": "problem",
+          "title": "Brute-Force Search Doesn't Survive Scale",
+          "body": "Exact nearest-neighbor search means computing a distance from the query to every stored vector, then sorting. That's fine at 10,000 vectors and painful at 10 million — and RAG corpora routinely land in the tens of millions of chunks.",
+          "bullets": [
+            "Exact k-NN cost scales linearly: 2x the vectors = 2x the query time, every query",
+            "A 50M-chunk knowledge base means 50M distance computations per single query",
+            "GPUs can brute-force small collections fast, but CPU-served, cost-sensitive RAG backends can't afford it at scale",
+            "Sorting/ranking on top of the scan adds further overhead as corpus size grows"
+          ],
+          "symbol": "tortoise.fill",
+          "table": null
+        },
+        {
+          "id": "d63558aa-a2c0-4cbf-a3a1-3c5741339d0f",
+          "kind": "solution",
+          "title": "Stack Sparse Graphs on Top of a Dense One",
+          "body": "HNSW builds several layers of graphs, like a skip list. The top layer has very few nodes and long-range links; each layer down gets denser, until the bottom layer connects every vector. A query starts at a single entry point on the sparse top layer and greedily hops to whichever neighbor is closer to the query — descending a layer each time it can't get closer.",
+          "bullets": [
+            "Layer assignment is randomized (exponentially decaying), so higher layers are exponentially sparser",
+            "Search = greedy best-first walk: always move to the neighbor closest to the query, drop a layer when stuck",
+            "Top layer gives huge jumps across the whole space; bottom layer gives fine-grained precision",
+            "Net effect: expected logarithmic hops instead of a linear scan"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "26ffb79c-715b-40bd-bff0-f05cf850abc5",
+          "kind": "concept",
+          "title": "Three Knobs Trade Recall for Speed and Memory",
+          "body": "HNSW's behavior is controlled by a small set of build-time and query-time parameters. Getting these wrong is the most common reason teams see either bad recall or bloated latency in production.",
+          "bullets": [
+            "M — max neighbors per node (typically 12–48). Higher M = better recall, more memory, slower inserts",
+            "efConstruction — how many candidates are explored while building each node's links (typically 100–200). Higher = better graph quality, much slower indexing",
+            "efSearch — how many candidates are explored per query (typically 50–200+). Higher = better recall, higher query latency — this one you can tune live, per query, without rebuilding",
+            "efSearch is the dial to turn at request time: bump it for a 'high recall' endpoint, drop it for a 'fast autocomplete' endpoint against the same index"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "7f86b07a-1e3d-462c-b793-0c8b5f1025d4",
+          "kind": "comparison",
+          "title": "HNSW vs. the Other Standard ANN Approaches",
+          "body": null,
+          "bullets": [
+            "Flat/brute-force stays the right choice under ~100K vectors, or whenever 100% exact recall is a hard requirement",
+            "IVF trades some accuracy for much lower memory and is common when RAM is the bottleneck, not latency",
+            "HNSW is the default for read-heavy, latency-sensitive search — most vector DBs ship it as the out-of-the-box index"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Index",
+              "Query time",
+              "Memory overhead",
+              "Typical use"
+            ],
+            "rows": [
+              [
+                "Flat (brute-force)",
+                "Linear, exact",
+                "Lowest (just the vectors)",
+                "Small corpora, or exactness required"
+              ],
+              [
+                "IVF (inverted file)",
+                "Sub-linear, needs a trained clustering step",
+                "Low-moderate",
+                "Huge, memory-constrained, mostly-static corpora"
+              ],
+              [
+                "HNSW",
+                "Expected logarithmic, approximate",
+                "Higher — graph edges add ~1.5–2x the raw vector size",
+                "Live, read-heavy RAG and semantic search"
+              ],
+              [
+                "LSH",
+                "Sub-linear, approximate",
+                "Moderate",
+                "Very high-dimensional dedup/similarity at massive scale"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "3edcc130-6a98-4e71-81e5-06b7724492c0",
+          "kind": "example",
+          "title": "Walking a Query Through a 50M-Chunk Index",
+          "body": "A support-bot RAG system embeds 50 million document chunks into an HNSW index built with M=16, efConstruction=200. A user asks a question; here's what happens before the LLM ever sees a chunk.",
+          "bullets": [
+            "1. The query is embedded, then search enters at the single top-layer entry point",
+            "2. On the sparse top layers, a handful of greedy hops jump across huge regions of the vector space",
+            "3. Descending each layer, the search keeps a growing candidate list of size efSearch (say, 100)",
+            "4. At layer 0 (every vector included), the algorithm returns the top-k closest candidates from that list",
+            "Result: sub-10ms retrieval touching only a few hundred vectors out of 50 million — not a 50M-way scan"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "77a38d78-33b3-479b-8e02-b06b900e2c76",
+          "kind": "problem",
+          "title": "Where HNSW Breaks Down",
+          "body": "HNSW is not free lunch — its weaknesses are exactly what its speed trades away, and they bite hardest in write-heavy or memory-constrained systems.",
+          "bullets": [
+            "Approximate, not exact — recall is typically 95–99%, tunable but never guaranteed 100%",
+            "Deletes are awkward: HNSW graphs are usually built for inserts, so most engines 'tombstone' deleted vectors instead of truly removing them, letting stale nodes accumulate",
+            "Heavy write workloads degrade graph quality over time, eventually requiring a full rebuild",
+            "Memory-hungry: the graph links roughly double per-vector overhead versus a flat index, which matters at billions of vectors",
+            "Don't reach for HNSW for a small, static lookup table (<100K vectors) — a flat index is simpler, exact, and often just as fast there"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "da596fad-5029-41a2-9ad4-589022e7c84d",
+          "kind": "takeaways",
+          "title": "Key Takeaways",
+          "body": "HNSW is the default answer to 'how do vector databases search millions of embeddings so fast' — understanding its knobs is what separates a RAG system that's fast AND accurate from one that's just fast.",
+          "bullets": [
+            "HNSW trades a small amount of recall for a huge speedup by searching a layered graph instead of scanning every vector",
+            "M controls graph density (memory + recall), efConstruction controls build quality, efSearch controls query-time recall/latency — tune efSearch first",
+            "It's the right default for live, read-heavy semantic search; prefer flat indexes for small/static data and IVF when memory is the binding constraint",
+            "Frequent deletes and heavy write churn are HNSW's weak spot — plan for periodic rebuilds in high-churn systems"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "16fea6b8-8dc0-4a53-bca4-f8873c4b1484",
+            "prompt": "Why is HNSW dramatically faster than brute-force nearest-neighbor search at scale?",
+            "options": [
+              "It compresses vectors to lower precision before comparing them",
+              "It walks a layered graph greedily, needing only expected logarithmic hops instead of scanning every vector",
+              "It only searches vectors uploaded in the last 24 hours",
+              "It runs exclusively on GPUs, which are inherently faster"
+            ],
+            "correctIndex": 1,
+            "explanation": "HNSW's speed comes from its structure, not from hardware or compression: a sparse top layer lets search take huge jumps across the space, and each layer down refines the answer, so total work grows roughly with log(n) instead of n."
+          },
+          {
+            "id": "01841250-d963-4946-a9ef-16488675a885",
+            "prompt": "You're serving both a 'fast autocomplete' endpoint and a 'high-accuracy search' endpoint off the same HNSW index. What should you change between them?",
+            "options": [
+              "Rebuild the whole index with a different M for each endpoint",
+              "Nothing — HNSW indexes can't support different quality targets from one index",
+              "Change efSearch at query time — higher for the accuracy endpoint, lower for autocomplete",
+              "Switch to brute-force for the accuracy endpoint only"
+            ],
+            "correctIndex": 2,
+            "explanation": "efSearch is a query-time parameter — it doesn't require touching the index at all, so the same HNSW graph can serve a low-latency, lower-recall path and a slower, higher-recall path just by varying efSearch per request."
+          },
+          {
+            "id": "fd62a264-2850-4981-83b0-91e62dd839c2",
+            "prompt": "Your corpus is a 40,000-row static lookup table that almost never changes. What's the better choice than HNSW here?",
+            "options": [
+              "HNSW is still strictly better regardless of corpus size",
+              "A flat/brute-force index — at this scale it's simple, exact, and the graph's memory overhead buys you nothing",
+              "LSH, because it's always more memory-efficient than any alternative",
+              "IVF, because clustering is required for correctness below 100K vectors"
+            ],
+            "correctIndex": 1,
+            "explanation": "HNSW's value proposition is speed at scale in exchange for approximate results and extra memory. Below roughly 100K vectors, a flat index is often just as fast in wall-clock terms, is exact, and skips the graph's construction and memory overhead entirely."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "OrbitQuant: 4-Bit Diffusion Models, No Calibration Data",
       "subtitle": "A rotation trick lets one quantizer serve every checkpoint, prompt, and timestep.",
       "category": "AI Innovations",
@@ -11131,179 +11339,6 @@
       ],
       "id": "e2bd4974-3830-472b-9910-3274b758533d",
       "publishedDate": "2026-07-02T05:20:06Z",
-      "postKind": "concept"
-    },
-    {
-      "title": "Context Engineering: Why Agents Fail",
-      "subtitle": "The model didn't get dumber. Its window got messier.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "tags": [
-        "context-engineering",
-        "ai-agents",
-        "llm",
-        "agentic-ai",
-        "context-window"
-      ],
-      "estimatedMinutes": 2,
-      "heroSymbol": "brain.head.profile",
-      "summary": "As agents run longer, the context window fills with stale tool outputs, contradictions, and irrelevant history — and that clutter, not the model's intelligence, is what breaks reasoning. Great agent builders now spend most of their effort curating what enters the window at each step, not wordsmithing the initial prompt.",
-      "slides": [
-        {
-          "id": "dc0f8543-9425-4457-b802-417f2bd7e5b4",
-          "kind": "cover",
-          "title": "Context Engineering",
-          "body": "Why agents fail long before the model does.",
-          "bullets": [],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "66529288-a7f9-42d1-8b5e-806516d0a2f9",
-          "kind": "problem",
-          "title": "The Model Isn't The Bottleneck Anymore",
-          "body": null,
-          "bullets": [
-            "Same model, wildly different agent results",
-            "The real variable: what's IN the context window",
-            "Bad context in → bad output out, every time"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "7a49ce3d-a14a-4b67-80f6-d2e28e2c5ce1",
-          "kind": "concept",
-          "title": "What Is Context Engineering?",
-          "body": "Not how you phrase one prompt — the ongoing discipline of deciding what enters the window at every single step of an agent's run.",
-          "bullets": [],
-          "symbol": "square.stack.3d.up",
-          "table": null
-        },
-        {
-          "id": "55aecd7a-62d2-497d-b627-0b02e3633ec5",
-          "kind": "architecture",
-          "title": "Four Ways Context Breaks",
-          "body": null,
-          "bullets": [
-            "Poisoning — one bad fact gets referenced forever",
-            "Distraction — too much history buries the signal",
-            "Confusion — irrelevant tools/docs mislead the model",
-            "Clash — conflicting facts fight each other"
-          ],
-          "symbol": "line.3.horizontal.decrease.circle",
-          "table": null
-        },
-        {
-          "id": "ac1bb0ea-dcbf-4bf8-9ec4-f9f520689e08",
-          "kind": "comparison",
-          "title": "Prompt Engineering vs. Context Engineering",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "Prompt Engineering",
-              "Context Engineering"
-            ],
-            "rows": [
-              [
-                "Optimizes the wording of one message",
-                "Optimizes what's loaded at each step"
-              ],
-              [
-                "One-shot, static",
-                "Continuous, evolves per turn"
-              ],
-              [
-                "Focus: instructions",
-                "Focus: memory, tools, retrieved docs, history"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "9f2a72df-d0c1-4f15-8a03-7f3d82c2c76f",
-          "kind": "example",
-          "title": "A Real Agent Loop, Turn By Turn",
-          "body": null,
-          "bullets": [
-            "Step 1: task + 3 relevant files — clean",
-            "Step 12: + 40 tool outputs, stack traces, dead plans",
-            "Step 20: model 'forgets' the goal — it's buried"
-          ],
-          "symbol": "tray.full",
-          "table": null
-        },
-        {
-          "id": "ff6955da-9f23-4fb1-8004-a5c41b4dc5d7",
-          "kind": "takeaways",
-          "title": "Engineer The Window, Not Just The Words",
-          "body": null,
-          "bullets": [
-            "Prune aggressively after every tool call",
-            "Compress and summarize instead of appending forever",
-            "Retrieve just-in-time, not just-in-case",
-            "Isolate sub-tasks into fresh sub-agent contexts"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a32c05e8-3ec8-4c99-80f1-85006d1fb299",
-            "prompt": "In mature 2026 agentic frameworks, what has become the primary bottleneck for agent reliability?",
-            "options": [
-              "The model's raw reasoning ability",
-              "What gets loaded into the context window at each step",
-              "The programming language used to build the agent",
-              "GPU inference speed"
-            ],
-            "correctIndex": 1,
-            "explanation": "Model capability has plateaued relative to agent failures — the deciding factor is now what content the agent stuffs into its own context at every turn."
-          },
-          {
-            "id": "84950d2f-decd-4c55-913d-10a5da8b8a25",
-            "prompt": "What is 'context poisoning'?",
-            "options": [
-              "When a hallucinated or wrong fact from an earlier step keeps getting referenced in later steps",
-              "When the model is prompted in an unsupported language",
-              "When the context window exceeds the token limit",
-              "When two agents share the same API key"
-            ],
-            "correctIndex": 0,
-            "explanation": "Once an error enters the window, the model treats it as established fact and builds on it, compounding the mistake across subsequent steps."
-          },
-          {
-            "id": "8b044f3b-899a-4e7d-9828-997aa0d9d15b",
-            "prompt": "What's a practical fix for context distraction?",
-            "options": [
-              "Add more tool descriptions to the system prompt",
-              "Compress and prune history, and retrieve just-in-time instead of dumping everything upfront",
-              "Increase the model's temperature",
-              "Switch to a smaller, cheaper model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Distraction happens when accumulated history drowns out the actual task — active pruning and lazy retrieval keep the signal-to-noise ratio high."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "2023db5e-38a4-411a-9f7f-718873970090",
-          "title": "Effective context engineering for AI agents",
-          "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
-        },
-        {
-          "id": "1cbeb39e-a22b-4c2f-852c-3faf4a4b6997",
-          "title": "Anthropic Engineering Blog",
-          "url": "https://www.anthropic.com/engineering"
-        }
-      ],
-      "id": "c4a50833-dde1-420b-a147-95010130d442",
-      "publishedDate": "2026-07-02T05:21:04Z",
       "postKind": "concept"
     }
   ]
