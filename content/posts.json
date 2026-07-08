@@ -1,6 +1,223 @@
 {
   "posts": [
     {
+      "id": "91f325bf-d2d6-4562-9644-7b9cf93d1034",
+      "title": "Grouped-Query Attention: The KV Cache Diet",
+      "subtitle": "Why nearly every serving-optimized LLM now shares key/value heads across groups of query heads instead of giving every head its own.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "gqa",
+        "kv cache",
+        "llm architecture",
+        "inference optimization",
+        "transformers"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Grouped-Query Attention (GQA) splits a transformer's query heads into groups that each share a single key/value head, shrinking the KV cache by a factor of (heads / groups) with only a small quality cost. It's why Llama 2 70B, Llama 3, and Mistral ship with 8 KV heads instead of 64 or 32 — and it fixes the memory-bandwidth bottleneck that dominates autoregressive decoding, not compute.",
+      "publishedDate": "2026-07-08T00:46:48Z",
+      "slides": [
+        {
+          "id": "ff76af02-2179-47a5-97e0-c579f27d9826",
+          "kind": "cover",
+          "title": "The KV Cache Problem Hiding in Every Attention Head",
+          "body": "Standard multi-head attention gives every head its own key/value projection. That's fine for compute — but during decoding, all of those K/V vectors have to sit in memory and get re-read on every single new token.",
+          "bullets": [
+            "Grouped-Query Attention (GQA) is now the default in serving-optimized open LLMs: Llama 2 34B/70B, Llama 3, Mistral 7B, and most models since",
+            "It's a training-time architecture decision with a serving-time payoff: smaller KV cache, faster decoding, higher batch throughput",
+            "Introduced by Ainslie et al. (Google, 2023) as a middle ground between two older extremes"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "8da26654-9a4d-490c-b660-ab74476483ff",
+          "kind": "problem",
+          "title": "More Heads, More Cache, More Bandwidth",
+          "body": "In autoregressive decoding, the KV cache for every past token has to be re-read from memory to generate each new token — the bottleneck is memory bandwidth, not FLOPs.",
+          "bullets": [
+            "With H attention heads, standard multi-head attention (MHA) stores H separate key and value vectors per token, per layer",
+            "KV cache size scales as: 2 (K and V) × layers × heads × head_dim × sequence length × batch size — heads is a direct multiplier",
+            "For large models with long context and big batch sizes, the KV cache can rival or exceed the size of the model weights themselves",
+            "Decoding spends more time moving KV cache through memory than computing attention scores — classic memory-bandwidth-bound workload"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d8a7364a-385a-46d0-a012-27db9bcdd762",
+          "kind": "solution",
+          "title": "Group the Query Heads, Share the K/V",
+          "body": "GQA sits between two earlier extremes: full multi-head attention (every head gets its own K/V) and multi-query attention (Shazeer, 2019 — every head shares one K/V).",
+          "bullets": [
+            "Split H query heads into G groups; every query head inside a group reads from the same single shared K/V head",
+            "G = H recovers standard MHA (no sharing at all); G = 1 recovers MQA (maximum sharing, one KV head total)",
+            "KV cache shrinks by a factor of H/G versus full MHA — G is a dial between memory savings and quality",
+            "Existing MHA checkpoints can be 'uptrained' into GQA by mean-pooling each group's original per-head K/V projections, then briefly fine-tuning — no pretraining from scratch required"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "152ac0ba-038b-4f95-9b80-9aaaf597f176",
+          "kind": "concept",
+          "title": "Why the Savings Are Real, Not Just on Paper",
+          "body": "The reduction is structural, not a compression trick applied after the fact.",
+          "bullets": [
+            "KV cache bytes are proportional to G, not H — fewer distinct K/V vectors means less memory allocated and less traffic per decoding step",
+            "Ainslie et al.'s results showed GQA lands close to full-MHA quality while approaching MQA's cache size and speed",
+            "Because it changes the architecture itself, the saving applies to every request automatically — no per-request tuning needed",
+            "It composes with other memory tricks: KV cache quantization and paged KV cache both stack on top of GQA's savings rather than compete with them"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "c25372e7-daba-4211-a0de-c560decc0115",
+          "kind": "example",
+          "title": "Llama 2 70B's Real Numbers",
+          "body": "Meta's own architecture choices make the tradeoff concrete.",
+          "bullets": [
+            "Llama 2 34B and 70B use 64 query heads but only 8 KV heads — 8 groups of 8 query heads each sharing one K/V head",
+            "That's an 8x smaller KV cache than a hypothetical 64-KV-head MHA version at the same head count and hidden size",
+            "Llama 2 7B and 13B kept standard MHA — small enough that KV cache wasn't yet the bottleneck worth the added complexity",
+            "The pattern: GQA earns its keep once model size, context length, or serving batch size makes KV cache memory the real cost"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "574cd568-407a-474c-b4d3-aeed3e9a5805",
+          "kind": "comparison",
+          "title": "MHA vs. GQA vs. MQA",
+          "body": "One knob — the number of KV head groups — moves you along this whole spectrum.",
+          "bullets": [
+            "GQA is the practical sweet spot chosen by most current open-weight models — enough sharing to matter, not so much quality is visibly hurt",
+            "MQA saves the most memory but is now rarely chosen alone for large models because the quality gap is easier to notice at scale",
+            "MHA is still fine for small models where KV cache was never the bottleneck"
+          ],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "",
+              "MHA",
+              "GQA",
+              "MQA"
+            ],
+            "rows": [
+              [
+                "KV heads",
+                "= H (one per query head)",
+                "G, where 1 < G < H",
+                "1"
+              ],
+              [
+                "KV cache size",
+                "Largest",
+                "Smaller by a factor of H/G",
+                "Smallest"
+              ],
+              [
+                "Quality vs. full MHA",
+                "Baseline",
+                "Close to baseline",
+                "Noticeably lower"
+              ],
+              [
+                "Seen in",
+                "Llama 2 7B/13B",
+                "Llama 2 34B/70B, Llama 3, Mistral 7B",
+                "Early efficiency-focused models"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "694bf888-665a-4dea-be71-961b78c29482",
+          "kind": "concept",
+          "title": "When GQA Isn't the Answer",
+          "body": "It is a fix for a specific bottleneck — not a free upgrade for every model.",
+          "bullets": [
+            "Small models with short context rarely hit a KV-cache memory wall; the added complexity buys little",
+            "G is fixed at training time — you can't change the grouping later without uptraining and fine-tuning again",
+            "GQA reduces memory traffic, not the FLOPs spent computing attention scores — compute-bound workloads see a smaller benefit than bandwidth-bound decoding does",
+            "It doesn't replace quantization or paged attention — production stacks typically layer all three for compounding savings"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "a339d814-c1d7-4726-bf13-9e0c274e4580",
+          "kind": "takeaways",
+          "title": "Key Takeaways",
+          "body": null,
+          "bullets": [
+            "GQA groups query heads so several share one K/V head, shrinking the KV cache by a factor of H/G versus full multi-head attention",
+            "G = H is MHA (no sharing); G = 1 is MQA (max sharing); GQA picks a middle G to trade a little quality for a lot of memory",
+            "Llama 2 70B ships 64 query heads with just 8 KV heads — an 8x smaller cache, adopted only once the model was large enough to need it",
+            "It fixes memory bandwidth during decoding, not compute — pair it with KV cache quantization or paged attention for further serving gains"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "04df9c82-f380-486a-8200-c51095ce6462",
+            "prompt": "What does Grouped-Query Attention primarily reduce?",
+            "options": [
+              "The number of transformer layers",
+              "The size of the KV cache needed during decoding",
+              "The size of the vocabulary embedding table",
+              "The total number of query heads"
+            ],
+            "correctIndex": 1,
+            "explanation": "GQA shares key/value projections across groups of query heads, so fewer distinct K/V vectors need to be stored and read — directly shrinking KV cache memory and the bandwidth spent moving it."
+          },
+          {
+            "id": "cb5bc05e-b0d7-4a38-b9bf-aa30a2aa4db7",
+            "prompt": "In GQA with H query heads split into G groups, what does G = 1 correspond to?",
+            "options": [
+              "Standard multi-head attention (MHA)",
+              "Multi-query attention (MQA)",
+              "No attention at all",
+              "Doubling the KV cache size"
+            ],
+            "correctIndex": 1,
+            "explanation": "G = 1 means every query head shares the same single K/V head — that's exactly multi-query attention, the maximal-sharing extreme GQA generalizes from."
+          },
+          {
+            "id": "daaec5ab-8a6b-4c6e-9676-4f429af29aa1",
+            "prompt": "Why is autoregressive decoding typically memory-bandwidth-bound rather than compute-bound?",
+            "options": [
+              "Because generating each new token requires re-reading the entire KV cache from memory",
+              "Because attention has quadratic FLOPs in sequence length",
+              "Because GPUs lack tensor cores for attention",
+              "Because tokens must be generated in parallel batches"
+            ],
+            "correctIndex": 0,
+            "explanation": "Each decoding step reads the full KV cache accumulated so far to compute attention for one new token — with a tiny batch of new compute per step, the GPU spends most of its time moving cache through memory rather than doing math, which is exactly the bottleneck GQA targets."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "8e90c3d3-b6bc-4129-ad3d-ac97e431ee86",
+          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)",
+          "url": "https://arxiv.org/abs/2305.13245"
+        },
+        {
+          "id": "d3ab9212-bdb6-4939-b9ef-7fe7424a7983",
+          "title": "Llama 2: Open Foundation and Fine-Tuned Chat Models (Touvron et al., 2023)",
+          "url": "https://arxiv.org/abs/2307.09288"
+        }
+      ]
+    },
+    {
       "id": "45677d19-07fc-4fd6-9505-3b23731adf1b",
       "title": "GRPO: Reinforcement Learning Without a Critic",
       "subtitle": "The group-sampling trick that made DeepSeek-R1's reasoning RL cheap enough to run at scale.",
@@ -11197,186 +11414,6 @@
       ],
       "id": "bf99dd36-ac4d-4502-ada7-2c9787f66630",
       "publishedDate": "2026-07-02T12:26:39Z",
-      "postKind": "release"
-    },
-    {
-      "title": "Flagship, Mid, Economy: AI Labs Now Ship 3 Model Tiers",
-      "subtitle": "Picking the right-sized model is now a real cost lever, not an afterthought",
-      "category": "AI News",
-      "difficulty": "Beginner",
-      "tags": [
-        "ai-news",
-        "llms",
-        "model-selection",
-        "cost",
-        "product"
-      ],
-      "estimatedMinutes": 2,
-      "heroSymbol": "newspaper.fill",
-      "summary": "Frontier labs increasingly ship a flagship, mid, and economy model side by side. Choosing the cheapest tier that clears your accuracy bar is now core to building AI products profitably.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Model No Longer Fits All",
-          "body": "This week's frontier releases arrived in three tiers, not one — a flagship for hard agentic work, a mid-tier for everyday business tasks, and a budget tier for high-volume, latency-sensitive jobs.",
-          "bullets": [],
-          "symbol": "newspaper.fill",
-          "table": null,
-          "id": "3dd45140-c3e1-4c7f-95ef-f40b51a93b33"
-        },
-        {
-          "kind": "problem",
-          "title": "The One-Model Trap",
-          "body": "Routing every request to the biggest, most expensive model wastes money on tasks that don't need frontier reasoning — and can even be slower.",
-          "bullets": [
-            "Flagship models cost far more per token",
-            "Not every task needs top-tier reasoning",
-            "Latency-sensitive apps suffer from oversized models"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "707df63b-2cb4-4f7b-8af1-2fdd9172a469"
-        },
-        {
-          "kind": "concept",
-          "title": "The Three-Tier Pattern",
-          "body": "Labs now typically ship a flagship for complex agentic and coding work, a mid-tier matching last generation's flagship at a fraction of the cost, and a fast, cheap tier for simple, high-volume tasks.",
-          "bullets": [
-            "Flagship: hardest reasoning, coding, agentic tasks",
-            "Mid-tier: strong general performance, lower cost",
-            "Economy: speed and cost above all"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "id": "64616cdf-f60c-4e78-92f4-33f9e1d7c52c"
-        },
-        {
-          "kind": "comparison",
-          "title": "Which Tier for Which Job",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Tier",
-              "Best For",
-              "Cost"
-            ],
-            "rows": [
-              [
-                "Flagship",
-                "Complex agents, coding, research",
-                "Highest"
-              ],
-              [
-                "Mid-tier",
-                "Everyday business workflows",
-                "Moderate"
-              ],
-              [
-                "Economy",
-                "High-volume, latency-sensitive tasks",
-                "Lowest"
-              ]
-            ]
-          },
-          "id": "702c8131-b813-4b87-8713-0d79a01f3510"
-        },
-        {
-          "kind": "example",
-          "title": "This Week's Lineup",
-          "body": "OpenAI's July releases illustrate the pattern: a flagship built for agentic coding and science tasks, a mid-tier matching prior flagship quality at half the price, and a low-latency budget option.",
-          "bullets": [
-            "Flagship priced for the hardest agentic workloads",
-            "Mid-tier: prior-gen flagship quality, lower cost",
-            "Economy: optimized for speed and volume"
-          ],
-          "symbol": "dollarsign.circle.fill",
-          "table": null,
-          "id": "5f49464a-f3ec-4924-9b0d-b742198ceddb"
-        },
-        {
-          "kind": "solution",
-          "title": "How to Choose",
-          "body": "Benchmark your actual task against the cheapest tier first. Only escalate to a pricier tier when accuracy, not cost, becomes the bottleneck.",
-          "bullets": [
-            "Start cheap, measure quality against your bar",
-            "Reserve flagship calls for genuinely hard steps",
-            "Mix tiers within one agentic pipeline"
-          ],
-          "symbol": "target",
-          "table": null,
-          "id": "5c900ff9-0cc3-4215-86c7-8557059ce3cd"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Frontier labs now ship flagship/mid/economy tiers, not one model",
-            "Matching task difficulty to tier is a real cost lever",
-            "Mid-tier models often match last year's flagship for far less",
-            "Multi-tier routing inside one pipeline is increasingly standard"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "156c755d-1ddc-47d0-8e4d-c5c1316e95fe"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why do AI labs increasingly release multiple model tiers instead of one flagship model?",
-            "options": [
-              "To confuse competitors",
-              "Different tasks need different tradeoffs between cost, speed, and reasoning depth",
-              "Regulations require at least three models",
-              "Smaller models are always more accurate"
-            ],
-            "correctIndex": 1,
-            "explanation": "Not every task needs frontier-level reasoning; tiered releases let developers match cost and latency to what each task actually requires.",
-            "id": "5b7b3e24-9fbb-4338-b958-72a2876874e7"
-          },
-          {
-            "prompt": "What's a smart strategy for choosing which model tier to use for a given task?",
-            "options": [
-              "Always use the flagship model for consistency",
-              "Start with the cheapest tier and escalate only if quality falls short",
-              "Always use the cheapest tier regardless of accuracy",
-              "Randomly alternate between tiers"
-            ],
-            "correctIndex": 1,
-            "explanation": "Benchmarking against the cheapest tier first and escalating only when needed keeps costs down without sacrificing quality where it matters.",
-            "id": "c196975b-dd60-491a-ae6d-818451897519"
-          },
-          {
-            "prompt": "In a multi-step agentic pipeline, what does 'mixing tiers' mean?",
-            "options": [
-              "Using a different vendor for each step",
-              "Routing easy steps to cheaper models and hard steps to the flagship model",
-              "Running every step twice for verification",
-              "Only using the economy tier for all steps"
-            ],
-            "correctIndex": 1,
-            "explanation": "Multi-tier routing sends simple or high-volume steps to cheaper/faster models while reserving the flagship model for the hardest reasoning steps, optimizing cost across the whole pipeline.",
-            "id": "3b8565b6-26fb-40e4-8bc7-ce4b24aad963"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "AI Updates Today (July 2026)",
-          "url": "https://llm-stats.com/llm-updates",
-          "id": "3ee4bcc3-16c0-4e83-916a-7f2d274af010"
-        },
-        {
-          "title": "OpenAI News",
-          "url": "https://openai.com/news/",
-          "id": "05c0c881-032f-451e-9701-6796a991aaaa"
-        }
-      ],
-      "id": "02ba75f3-3637-4ccd-8395-26fbe3fb0672",
-      "publishedDate": "2026-07-02T12:26:40Z",
       "postKind": "release"
     }
   ]
