@@ -1,6 +1,211 @@
 {
   "posts": [
     {
+      "id": "590ca6a3-45c0-4aab-a652-e15a6185eb61",
+      "title": "Mixture of Experts: How a 1T-Parameter Model Runs Like a 32B One",
+      "subtitle": "The router decides which slice of a trillion-parameter model actually does the work.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mixture of experts",
+        "sparse models",
+        "llm architecture",
+        "routing",
+        "deepseek"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "Mixture-of-Experts (MoE) replaces a transformer's single feed-forward block with many parallel expert FFNs and a lightweight router that activates only the top few per token. This lets models like DeepSeek-V3 (671B total, 37B active) and Kimi K2.7 (1T total, 32B active) grow knowledge capacity far faster than compute cost — at the price of needing every expert resident in memory and careful load-balancing to avoid routing collapse.",
+      "publishedDate": "2026-07-08T12:41:00Z",
+      "slides": [
+        {
+          "id": "1bd806c9-82d8-49cb-a31a-55adfcae80c4",
+          "kind": "cover",
+          "title": "How a 1-Trillion-Parameter Model Runs Like a 32B One",
+          "body": "MoE swaps one giant feed-forward layer for many small ones and a router that only wakes up a few of them per token — trading a fixed compute bill for a much bigger, sparser one.",
+          "bullets": [
+            "Kimi K2.7, DeepSeek-V3, and Mixtral all use it to separate 'how much the model knows' from 'how much compute answering costs'",
+            "Total parameters can be 10-30x larger than the parameters actually used per token",
+            "The core idea: specialize instead of generalize — different experts handle different kinds of tokens"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "60ce408e-d34e-4b64-aff8-2302aa5efe2a",
+          "kind": "problem",
+          "title": "Dense Transformers Charge Full Price on Every Token",
+          "body": null,
+          "bullets": [
+            "In a dense model, every parameter in every feed-forward layer multiplies against every token — a 70B model spends 70B parameters' worth of FLOPs per token, always",
+            "Scaling up quality means scaling up total parameters, which scales up compute and memory cost in lockstep",
+            "Capacity and cost are welded together: there's no way to add 'more knowledge' without also paying 'more compute per token'"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d63434ee-cfff-4398-9b16-1a3931bd66a4",
+          "kind": "solution",
+          "title": "Replace One FFN With Many, Then Only Wake a Few",
+          "body": "Mixture-of-Experts (MoE) swaps the single feed-forward block in a transformer layer for N parallel expert FFNs plus a small router network.",
+          "bullets": [
+            "The router scores all N experts for each token and picks the top-k (commonly k=2 or k=8)",
+            "Only the selected experts run their forward pass; their outputs are combined weighted by the router's scores",
+            "Everything else in the layer — attention, normalization — stays dense and shared across all tokens"
+          ],
+          "symbol": "shuffle",
+          "table": null
+        },
+        {
+          "id": "1372e8dd-680f-4f8c-95a1-946fc550f40e",
+          "kind": "concept",
+          "title": "The Router Is a Softmax Over Experts, With a Capacity Limit",
+          "body": "Each token's hidden state passes through a tiny linear layer that scores every expert; softmax turns those scores into routing weights.",
+          "bullets": [
+            "Top-k experts get selected; their outputs are summed, weighted by the router's softmax scores",
+            "Each expert has a fixed capacity (max tokens it can accept per batch) so memory stays bounded — tokens that overflow capacity get dropped or passed through unmodified",
+            "DeepSeek-V3 also runs one always-on shared expert that processes every token in addition to the 8 routed experts, to capture common patterns without routing overhead"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "22f9c737-b7eb-48fd-bac4-d54562b560d0",
+          "kind": "comparison",
+          "title": "Same Idea, Wildly Different Sparsity Ratios",
+          "body": "Total parameters set a model's knowledge capacity; active parameters set its per-token compute cost. The gap between the two is the entire point of MoE.",
+          "bullets": [
+            "The lower the active/total ratio, the cheaper each token is to generate relative to how much the model knows"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Model",
+              "Total Params",
+              "Active / Token",
+              "Routing"
+            ],
+            "rows": [
+              [
+                "Mixtral 8x7B",
+                "46.7B",
+                "12.9B (~28%)",
+                "Top-2 of 8 experts"
+              ],
+              [
+                "DeepSeek-V3",
+                "671B",
+                "37B (~5.5%)",
+                "Top-8 of 256 + 1 shared expert"
+              ],
+              [
+                "Kimi K2.7",
+                "1T",
+                "32B (~3.2%)",
+                "Sparse MoE, 256K context"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "73775dd1-f0dd-45d0-aa69-c04d550c64fe",
+          "kind": "example",
+          "title": "Worked Example: One Token Through a DeepSeek-V3 Layer",
+          "body": "Trace what actually computes when the model processes the token 'recursion' inside a coding question.",
+          "bullets": [
+            "The router scores all 256 experts for this token's hidden state, then softmax + top-8 selection picks the 8 highest-scoring ones",
+            "The always-on shared expert also processes the token, regardless of what the router picks",
+            "9 experts execute (8 routed + 1 shared) out of 257 available — the other 248 sit completely idle for this token",
+            "A different token later in the same sequence, like 'the', can route to a totally different set of 8 experts"
+          ],
+          "symbol": "target",
+          "table": null
+        },
+        {
+          "id": "ae5ec20f-ff44-4878-bcda-6af0784ecbc2",
+          "kind": "concept",
+          "title": "Where Mixture of Experts Falls Short",
+          "body": null,
+          "bullets": [
+            "Sparsity doesn't shrink the memory bill: every expert must still be loaded into GPU memory even if only a few fire per token — a 671B MoE model needs 671B parameters' worth of VRAM, not 37B's",
+            "Serving at scale requires all-to-all communication to ship tokens to whichever GPU holds their chosen experts; this cross-GPU traffic can dominate latency",
+            "Naive auxiliary losses that force balanced routing can hurt quality by injecting interference gradients; DeepSeek-V3's auxiliary-loss-free strategy adjusts per-expert bias terms instead",
+            "Fine-tuning is trickier: gradient updates only hit the experts a given batch happened to route to, so rarely-used experts can undertrain"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "ca457345-a2bf-4f0f-b8ad-121d339041af",
+          "kind": "takeaways",
+          "title": "Capacity and Compute, Decoupled",
+          "body": null,
+          "bullets": [
+            "MoE lets total parameters (knowledge capacity) grow much faster than active parameters (per-token compute)",
+            "The router — a tiny learned gate — decides which slice of the model answers each token",
+            "The real engineering fight isn't the routing math; it's memory footprint and cross-GPU communication at serving time",
+            "When a model card says 'X total / Y active,' that ratio tells you how aggressively it's using this trick"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4aee3215-db96-480c-a273-a326bc85cf0f",
+            "prompt": "In an MoE layer with 8 experts and top-2 routing, how many experts actually run their forward pass for a given token?",
+            "options": [
+              "All 8",
+              "Exactly 2, chosen by the router",
+              "4, always the same 4",
+              "1, whichever has the highest average usage"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-k routing with k=2 (as in Mixtral 8x7B) means the router picks exactly 2 experts per token — the rest sit idle for that token, which is the entire source of the compute savings."
+          },
+          {
+            "id": "370d708a-bf04-4356-abe9-519e8d9e3954",
+            "prompt": "Why does a 671B-parameter MoE model still need close to 671B parameters' worth of GPU memory, even though only 37B are 'active' per token?",
+            "options": [
+              "Because the router itself is enormous",
+              "Because every expert must be resident in memory since any token could route to any of them",
+              "Because active parameters are recomputed from scratch every step",
+              "Because MoE models don't actually save any memory over dense models of the same active size"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sparsity reduces compute per token, not storage. Since different tokens (and different requests) can route to different experts, every expert must be loaded and ready, so memory scales with total parameters, not active parameters."
+          },
+          {
+            "id": "0634d22d-f498-498d-8566-d3fb55f5d615",
+            "prompt": "What problem does DeepSeek-V3's 'auxiliary-loss-free' load balancing solve?",
+            "options": [
+              "It removes the need for a router entirely",
+              "It balances expert usage without adding an interference gradient to the main training loss",
+              "It guarantees every expert gets exactly the same number of tokens",
+              "It increases the number of active experts per token"
+            ],
+            "correctIndex": 1,
+            "explanation": "Standard load-balancing uses an auxiliary loss term to discourage routing collapse, but that loss's gradient can fight the main training objective. DeepSeek-V3 instead adjusts per-expert bias terms directly, steering routing without polluting the loss."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "52f4f903-42e5-4c8b-abd2-8c508d69a309",
+          "title": "Mixtral of Experts (arXiv:2401.04088)",
+          "url": "https://arxiv.org/abs/2401.04088"
+        },
+        {
+          "id": "b53a88a1-c0fb-4c60-a90a-eb6178350943",
+          "title": "DeepSeek-V3 Technical Report (arXiv:2412.19437)",
+          "url": "https://arxiv.org/abs/2412.19437"
+        }
+      ]
+    },
+    {
       "id": "7f663fb5-79b8-49f7-8152-f1f7f0d83346",
       "title": "MrFlow: Skip the Expensive Resolution, Keep the Detail",
       "subtitle": "A training-free trick cuts diffusion image generation time by up to 25x.",
@@ -11272,177 +11477,6 @@
         }
       ],
       "postKind": "paper"
-    },
-    {
-      "id": "f60a6e01-fe38-497b-8e7c-4df1b9bbd31a",
-      "title": "Claude Science: An AI Workbench for Researchers",
-      "subtitle": "One workspace, 60+ scientific databases, and code you can actually audit",
-      "category": "AI News",
-      "difficulty": "Beginner",
-      "tags": [
-        "ai-news",
-        "anthropic",
-        "claude",
-        "science",
-        "drug-discovery"
-      ],
-      "estimatedMinutes": 2,
-      "heroSymbol": "cross.vial.fill",
-      "summary": "Anthropic launched Claude Science, a Claude-based workbench preloaded with 60+ scientific databases and tools for genomics, structural biology, and cheminformatics. It ships alongside an internal drug-discovery program and a $30K research-credit program for outside scientists.",
-      "publishedDate": "2026-07-02T12:40:34Z",
-      "slides": [
-        {
-          "id": "0f9f0aeb-4af7-4f7f-8f0a-883a139db130",
-          "kind": "cover",
-          "title": "A Lab Bench Made of Software",
-          "body": "On June 30, 2026, Anthropic shipped Claude Science — a version of Claude built to live inside a researcher's actual workflow, not just answer questions about it.",
-          "bullets": [],
-          "symbol": "cross.vial.fill",
-          "table": null
-        },
-        {
-          "id": "cdeb8667-b166-473e-a612-727bbe5ec359",
-          "kind": "problem",
-          "title": "Research Tools Don't Talk to Each Other",
-          "body": "A single research question can require switching between a dozen separate databases and pipelines — UniProt for proteins, Ensembl for genomes, PDB for structures — each with its own interface.",
-          "bullets": [
-            "Constant context-switching between tools",
-            "No shared workspace across databases",
-            "Hard to reproduce exactly how a figure was made"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9c3071f0-543d-42bd-9945-613b3e17f9f1",
-          "kind": "solution",
-          "title": "One Workbench, 60+ Databases",
-          "body": "Claude Science comes preloaded with access to 60+ scientific databases and tools — including UniProt, Ensembl, and the Protein Data Bank — inside a single conversational workspace.",
-          "bullets": [
-            "Genomics, structural biology, proteomics, cheminformatics",
-            "CRISPR screen design and single-cell RNA-seq analysis",
-            "3D protein structures and genome browser tracks rendered inline"
-          ],
-          "symbol": "square.grid.2x2.fill",
-          "table": null
-        },
-        {
-          "id": "670dd2ef-7987-444b-9dd9-71066f1c8c97",
-          "kind": "architecture",
-          "title": "Built to Be Auditable",
-          "body": "Every figure Claude Science generates ships with the exact code and environment that produced it, plus a plain-language description and the full message history.",
-          "bullets": [
-            "Reproducible by design, not just by request",
-            "Chemistry diagrams and 3D structures with source code attached",
-            "Full message history travels with every output"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        },
-        {
-          "id": "4fcf1c92-b37f-4533-b737-5db995391211",
-          "kind": "example",
-          "title": "The Drug Discovery Push",
-          "body": "Alongside the product, Anthropic is running an internal drug-discovery program targeting neglected diseases, and offering up to $30,000 in research credits and compute to 50 selected outside projects.",
-          "bullets": [
-            "Internal program targets neglected-disease treatments",
-            "$30K in credits plus compute for 50 selected projects",
-            "A deliberate bet on learning by actually doing pharma R&D"
-          ],
-          "symbol": "dollarsign.circle.fill",
-          "table": null
-        },
-        {
-          "id": "72efd57c-d62a-435d-881c-7d757c5a1f29",
-          "kind": "comparison",
-          "title": "What Changes for a Researcher",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Before Claude Science",
-              "With Claude Science"
-            ],
-            "rows": [
-              [
-                "Switch between 10+ separate tools",
-                "One workspace for genomics, structure, chemistry"
-              ],
-              [
-                "Hard to prove how a figure was made",
-                "Code and environment shipped with every figure"
-              ],
-              [
-                "General-purpose Claude with no domain presets",
-                "60+ databases and domain functions preloaded"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e8703861-cacd-4aad-9ac9-9960e7dace03",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Claude Science bundles 60+ scientific databases into one Claude workspace",
-            "Every generated figure comes with its exact reproducing code",
-            "Anthropic paired the launch with its own drug-discovery program",
-            "$30K research-credit grants extend the bet to outside labs"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "22136d42-a6a4-471e-ae8b-534e92bda7d1",
-            "prompt": "What is Claude Science, in one line?",
-            "options": [
-              "A general chatbot with no domain specialization",
-              "A Claude-based workbench preloaded with 60+ scientific databases and research tools",
-              "A standalone drug that Anthropic is developing",
-              "A hardware lab instrument"
-            ],
-            "correctIndex": 1,
-            "explanation": "Claude Science integrates dozens of scientific databases and domain tools (genomics, structural biology, cheminformatics) into one Claude workspace."
-          },
-          {
-            "id": "b9a53048-15d8-47b7-8351-c671185c8ff0",
-            "prompt": "What makes Claude Science's outputs auditable?",
-            "options": [
-              "They can't be edited",
-              "Every figure ships with the exact code and environment that produced it",
-              "It refuses to generate visualizations",
-              "It only outputs plain text"
-            ],
-            "correctIndex": 1,
-            "explanation": "Generated figures come with the reproducing code, environment, a plain-language description, and the full message history."
-          },
-          {
-            "id": "8167dff2-3599-4bc6-9b40-2d2825064c86",
-            "prompt": "What did Anthropic launch alongside Claude Science to extend its impact beyond internal use?",
-            "options": [
-              "A hardware lab kit for universities",
-              "A $30,000 research-credit and compute program for 50 selected projects",
-              "A free unlimited-use tier for all users",
-              "A partnership requiring exclusive publishing rights"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic is offering up to $30,000 in research credits and dedicated compute to 50 selected outside scientific projects."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "fd785546-da60-4603-9871-d5997317aefc",
-          "title": "Claude Science, an AI workbench for scientists",
-          "url": "https://www.anthropic.com/news/claude-science-ai-workbench"
-        }
-      ],
-      "postKind": "release"
     }
   ]
 }
