@@ -1,6 +1,590 @@
 {
   "posts": [
     {
+      "id": "db9dbc75-1b2e-4ceb-afa4-1d30f3b7a8c8",
+      "publishedDate": "2026-07-09T12:43:44Z",
+      "title": "MIPU: Fixing the Policy You Deploy, Not the One You Train",
+      "subtitle": "Why LLM RL quietly optimizes the wrong policy — and a two-step fix that targets the one users actually get",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "reinforcement-learning",
+        "llm-training",
+        "policy-optimization",
+        "training-inference-mismatch",
+        "rlhf"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Every LLM RL pipeline runs two different engines: a training engine that computes gradients and an inference engine that generates rollouts, and the two compute slightly different token probabilities for the same weights. This paper shows that standard RL objectives optimize the training engine's policy while implicitly assuming that also improves the inference engine's policy — an assumption that breaks under high mismatch. Its fix, MIPU, only accepts updates it can verify actually improve the deployed policy, trading some throughput for training runs that don't quietly collapse.",
+      "slides": [
+        {
+          "id": "d9dab419-21bf-49c1-9730-32930a47df6d",
+          "kind": "cover",
+          "title": "Two engines, one model, two different sets of probabilities",
+          "body": "Modern LLM RL pipelines split work across a training engine (PyTorch/Megatron-style, optimized for backprop) and an inference engine (vLLM/SGLang-style, optimized for fast rollout generation). Both load the same weights, but different kernels, batching, and numerical precision mean they don't compute identical token probabilities for the same sequence.",
+          "bullets": [
+            "Training engine: generates gradients, prioritizes backprop throughput",
+            "Inference engine: generates rollouts, prioritizes serving throughput",
+            "Same weights, different numerics — a small but persistent probability gap"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "f5bfa9e9-e622-442d-bb90-c6f8b2f833a2",
+          "kind": "problem",
+          "title": "That gap quietly breaks the on-policy assumption RL depends on",
+          "body": "RL algorithms like PPO and GRPO assume the rollouts they're learning from came from the current policy. But the rollouts actually came from the inference engine's slightly different distribution. The paper calls this a special kind of off-policyness — not from stale data, but from two engines disagreeing about the same live policy.",
+          "bullets": [
+            "Off-policyness here comes from engine mismatch, not from delayed/stale rollouts",
+            "The mismatch compounds over training steps",
+            "Under high mismatch, it can destabilize or collapse long RL runs"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "223ce8d3-2860-45ed-b003-65d7c586f17b",
+          "kind": "concept",
+          "title": "The mirage: a 'better' training policy isn't always a better deployed policy",
+          "body": "Standard objectives measure improvement inside the training engine and assume that improvement transfers to the inference engine, since it's 'the same model.' The paper's core claim: under mismatch, an update that looks like a clear win in the training engine can leave the actual deployed (inference) policy unchanged, or worse. Optimizing the wrong proxy is the mirage in the title.",
+          "bullets": [
+            "Existing RL objectives target the training policy's improvement",
+            "But users only ever interact with the inference policy",
+            "The two can diverge exactly when mismatch is highest — i.e. exactly when you'd most want a safety check"
+          ],
+          "symbol": "eye.trianglebadge.exclamationmark"
+        },
+        {
+          "id": "f45a5b7f-5a2f-4ca3-8fa1-3482cf6ffe8f",
+          "kind": "solution",
+          "title": "MIPI: make 'improve the inference policy' the actual objective",
+          "body": "The paper proposes Monotonic Inference Policy Improvement (MIPI) — a policy optimization objective defined directly in terms of the inference-side policy's expected improvement, not the training-side proxy. It's a reframing: stop optimizing what's convenient to compute and start optimizing what's actually deployed.",
+          "bullets": [
+            "Reframes the objective around the inference policy, not the training policy",
+            "Aims for monotonic (never-worse) improvement of what ships",
+            "Sets up a concrete algorithm (MIPU) to realize it in practice"
+          ],
+          "symbol": "target"
+        },
+        {
+          "id": "229780cb-127b-4dfd-bdb6-806fec94e2ad",
+          "kind": "architecture",
+          "title": "MIPU: propose, then gate on an inference-side gap proxy",
+          "body": "Monotonic Inference Policy Update (MIPU) is a two-step framework. Step 1: construct sampler-referenced candidate updates — proposed weight updates anchored to what the actual inference sampler would produce, not just the training engine's local gradient view. Step 2: selectively accept only the candidates whose estimated inference-side gap proxy indicates the update is safe (i.e., genuinely improves the deployed policy); reject or roll back the rest.",
+          "bullets": [
+            "Step 1 — candidate construction is referenced against the real inference sampler",
+            "Step 2 — an inference-side gap proxy gates which candidates are accepted",
+            "Net effect: updates are synchronized to what's actually deployed, not just what the training engine computed"
+          ],
+          "symbol": "checkmark.shield.fill"
+        },
+        {
+          "id": "9c6ec400-979b-4d32-a356-11cf04c5da0d",
+          "kind": "example",
+          "title": "Why gating matters: a candidate update that looks good and isn't",
+          "body": "Picture a training step where the training engine's loss drops sharply — a clear 'improvement' by the usual metric. Under high mismatch, that same update evaluated through the inference engine's actual distribution might barely move the deployed policy, or even degrade it on the tokens where the two engines disagreed most. A standard RL loop accepts the update because it only ever looks at the training-engine view. MIPU's gap proxy is built specifically to catch this case and reject the update before it ships.",
+          "bullets": [
+            "Training-engine loss improving is necessary but not sufficient",
+            "The gap proxy checks the update against inference-engine behavior specifically",
+            "Updates that fail the check are rejected rather than silently accumulating drift"
+          ],
+          "symbol": "text.magnifyingglass"
+        },
+        {
+          "id": "6fbcab7c-ad7a-47ae-af49-769e5055593c",
+          "kind": "comparison",
+          "title": "Standard on-policy RL vs. MIPU",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Standard PPO/GRPO-style RL",
+              "MIPU"
+            ],
+            "rows": [
+              [
+                "What's optimized",
+                "Training-engine policy",
+                "Inference-engine (deployed) policy"
+              ],
+              [
+                "Mismatch handling",
+                "Assumed negligible / ignored",
+                "Explicitly measured via a gap proxy"
+              ],
+              [
+                "Update acceptance",
+                "Every gradient step applied",
+                "Candidates gated — unsafe updates rejected"
+              ],
+              [
+                "Failure mode addressed",
+                "Silent drift, possible collapse under high mismatch",
+                "Reduced by verifying inference-side improvement first"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "3558f97b-c68f-4c30-92e8-dbd0b31c5266",
+          "kind": "problem",
+          "title": "The cost: extra verification, and it matters most exactly when mismatch is high",
+          "body": "MIPU's gating step isn't free — it requires computing and checking an inference-side gap proxy on top of the normal training step, adding overhead. In regimes where training and inference engines already agree closely (low mismatch), that overhead buys little, since standard RL objectives already behave reasonably there.",
+          "bullets": [
+            "Extra compute/engineering for the gap-proxy check and candidate gating",
+            "Diminishing returns when train/inference mismatch is already small",
+            "Reported experiments target the regime where mismatch is high — that's where it's designed to help most"
+          ],
+          "symbol": "hourglass"
+        },
+        {
+          "id": "290addc7-0334-4881-8408-b0a7e1710742",
+          "kind": "takeaways",
+          "title": "Optimize what you ship, not what's convenient to compute",
+          "body": null,
+          "bullets": [
+            "LLM RL pipelines run separate training and inference engines that compute slightly different probabilities for the same policy",
+            "Standard RL objectives optimize the training engine's policy and assume that improves the deployed inference policy — that assumption can fail under high mismatch",
+            "MIPI reframes the objective around the inference policy directly; MIPU realizes it via sampler-referenced candidates gated by an inference-side gap proxy",
+            "Evaluated on Qwen3-4B and Qwen3-1.7B under high-mismatch conditions, MIPU showed better average reasoning performance and more stable training than standard baselines",
+            "The lesson generalizes beyond this paper: any two-system pipeline (train vs. serve) can silently diverge — verify the thing you actually ship, not just its proxy"
+          ],
+          "symbol": "flag.checkered"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "777e7bc3-7d0f-4417-8914-b40fe14674fb",
+            "prompt": "What specific kind of off-policyness does this paper focus on?",
+            "options": [
+              "Off-policyness from using old rollouts collected many steps ago",
+              "Off-policyness caused by the training engine and inference engine computing different probabilities for the same policy weights",
+              "Off-policyness from training on data generated by a completely different model",
+              "Off-policyness caused by using a replay buffer"
+            ],
+            "correctIndex": 1,
+            "explanation": "The paper isolates a specific mismatch source: separate training and inference engines (different kernels/batching/precision) disagree on token probabilities even though they share the same weights — this induces off-policyness distinct from the usual staleness problem."
+          },
+          {
+            "id": "cdb9d292-9e6c-48f7-8ea7-dcfe5dd3e968",
+            "prompt": "What is the 'mirage' the paper's title refers to?",
+            "options": [
+              "That RL for LLMs doesn't actually work",
+              "That larger models always need more RL steps",
+              "That optimizing the training-engine policy's objective looks like progress but doesn't guarantee the deployed inference-engine policy actually improves",
+              "That reward models are unreliable"
+            ],
+            "correctIndex": 2,
+            "explanation": "The core claim is an objective-misalignment mirage: standard methods optimize and measure improvement in the training engine, silently assuming it transfers to the inference engine — under high mismatch, that assumption can fail."
+          },
+          {
+            "id": "39fbb90a-db5d-45d1-8449-d22d9efb73f7",
+            "prompt": "How does MIPU decide whether to accept a candidate policy update?",
+            "options": [
+              "It always accepts the update with the lowest training loss",
+              "It constructs sampler-referenced candidates and only accepts those whose inference-side gap proxy shows they actually improve the deployed policy",
+              "It randomly samples updates and averages them",
+              "It retrains the inference engine to match the training engine exactly before every step"
+            ],
+            "correctIndex": 1,
+            "explanation": "MIPU's two-step design builds candidates referenced against the real inference sampler, then gates acceptance on an inference-side gap proxy — so an update must show it helps the policy that's actually deployed, not just the training engine's view of it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "66ff0c07-a83b-49e1-b7db-b85a4d47130d",
+          "title": "The Mirage of Optimizing Training Policies: Monotonic Inference Policies as the Real Objective for LLM Reinforcement Learning (arXiv)",
+          "url": "https://arxiv.org/abs/2606.29526"
+        },
+        {
+          "id": "09fc782b-8f03-4c8e-9c72-e27f418f4e93",
+          "title": "Paper page on Hugging Face Daily Papers",
+          "url": "https://huggingface.co/papers/2606.29526"
+        }
+      ]
+    },
+    {
+      "id": "bbd5e61c-3dd0-48ca-9375-2503ae77b9a6",
+      "publishedDate": "2026-07-09T12:43:44Z",
+      "title": "AlphaEvolve Graduates From Lab Demo to Google Infra",
+      "subtitle": "DeepMind's evolutionary coding agent is now shaving compute, errors, and training time across data centers, chips, and science",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "alphaevolve",
+        "google-deepmind",
+        "gemini",
+        "algorithm-discovery",
+        "ai-for-science"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "atom",
+      "summary": "Google DeepMind's AlphaEvolve — a Gemini-powered coding agent that evolves algorithms and grades them with automated evaluators — has moved from research pilot to a standing part of Google's production infrastructure. It now recovers 0.7% of Google's worldwide compute via a Borg scheduling fix, cut errors 30% in a DNA sequencing model used by PacBio, cut error 10x in quantum circuits run on the Willow chip, and even sped up the training of newer Gemini models.",
+      "slides": [
+        {
+          "id": "527e0c31-a789-4c46-8624-bde447ba8c10",
+          "kind": "cover",
+          "title": "An AI that writes and evolves its own algorithms is now running inside Google's core systems",
+          "body": "AlphaEvolve pairs Gemini's code generation with an evolutionary loop: it proposes code mutations, automated evaluators score each candidate against a real objective, and only the improvements survive to the next generation. DeepMind's new post marks its shift from a research pilot into a standing part of Google's production infrastructure.",
+          "bullets": [
+            "Built on Gemini for the code-generation step",
+            "An evolutionary loop keeps only verifiably-better candidates",
+            "Now deployed continuously in production, not a one-off demo"
+          ],
+          "symbol": "atom"
+        },
+        {
+          "id": "ae32f054-73cf-476d-9b65-32361e429e8c",
+          "kind": "architecture",
+          "title": "How it actually works: propose, verify, evolve",
+          "body": "AlphaEvolve doesn't invent problems from scratch — it takes an existing piece of code or algorithm plus an automated evaluator (a checker/scorer that can grade any candidate), then Gemini proposes mutations to the code. Each candidate is run through the evaluator; the evolutionary framework keeps the strongest performers and mutates them further over many generations, converging on solutions humans hadn't found.",
+          "bullets": [
+            "Requires a well-specified, automatically-gradeable objective — not open-ended judgment",
+            "Gemini supplies creative code mutations; the evaluator supplies the selection pressure",
+            "Iterates over many generations, similar to genetic algorithms but with an LLM as the mutation operator"
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "97436643-2e06-4331-b544-c5ea72fdc79a",
+          "kind": "example",
+          "title": "Case: fixing 'stranded resources' in Google's data centers",
+          "body": "Google's cluster manager, Borg, schedules jobs across machines with limited CPU and memory. A common inefficiency is a 'stranded resource': a machine runs out of one resource type (say, memory) while other resources (say, CPU) sit unused, because no waiting job's request fits the shape of what's left. AlphaEvolve discovered a scheduling heuristic that better packs jobs to avoid this. It's been in production for over a year and continuously recovers 0.7% of Google's worldwide compute — DeepMind reports the resulting savings at tens of millions of dollars.",
+          "bullets": [
+            "Problem: machines with leftover CPU or memory that no job's shape fits",
+            "Fix: a discovered heuristic that packs jobs to reduce stranding",
+            "Result: 0.7% of Google's worldwide compute recovered continuously, in production over a year"
+          ],
+          "symbol": "server.rack"
+        },
+        {
+          "id": "4f46269d-c847-438c-82b5-b2e76972903e",
+          "kind": "example",
+          "title": "Case: an AI speeding up the training of the next AI",
+          "body": "AlphaEvolve has also been turned on Google's own model training stack. It rewrote a critical training kernel to run 23% faster, trimming roughly one percentage point off the total time needed to train new Gemini models — and separately produced a 32.5% speedup on a FlashAttention kernel. It's a self-referential loop: an AI system optimizing the infrastructure that trains the next generation of AI systems.",
+          "bullets": [
+            "23% faster on a critical kernel rewrite",
+            "~1 percentage point cut from total Gemini training time",
+            "32.5% speedup reported on a FlashAttention kernel specifically"
+          ],
+          "symbol": "cpu.fill"
+        },
+        {
+          "id": "3fd4dafd-d0c5-4315-bd33-a86413544a50",
+          "kind": "comparison",
+          "title": "Impact across domains",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Domain",
+              "What AlphaEvolve did",
+              "Reported result"
+            ],
+            "rows": [
+              [
+                "Data centers (Borg)",
+                "New job-scheduling heuristic for stranded resources",
+                "0.7% of worldwide compute recovered, tens of millions in savings"
+              ],
+              [
+                "Genomics",
+                "Improved DeepConsensus DNA sequencing error correction",
+                "30% reduction in variant-detection errors, used by PacBio"
+              ],
+              [
+                "Quantum computing",
+                "Optimized circuits for the Willow quantum chip",
+                "10x lower error than conventionally optimized baselines"
+              ],
+              [
+                "Hardware (TPU)",
+                "Proposed a circuit design refinement",
+                "Integrated into a next-generation TPU"
+              ],
+              [
+                "Gemini training",
+                "Rewrote a training kernel",
+                "23% faster kernel; ~1pp off total training time"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "4b8c5efe-9204-4ae9-94d8-808102a8a71a",
+          "kind": "problem",
+          "title": "Where this approach doesn't apply",
+          "body": "AlphaEvolve's whole loop depends on being able to automatically grade a candidate solution — no evaluator, no selection pressure, no evolution. That constrains it to well-specified, verifiable problems.",
+          "bullets": [
+            "Needs an automated evaluator: if a human has to judge quality subjectively, the loop breaks down",
+            "It mutates and improves existing code/algorithms — it's not zero-to-one invention of a new approach",
+            "Evolutionary search means running and scoring many candidates, which costs real compute",
+            "Best suited to narrow, measurable objectives (latency, error rate, resource usage) rather than open-ended tasks"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "dee64ce8-b8ac-41cb-b32f-16c7262d7ff0",
+          "kind": "takeaways",
+          "title": "From lab demo to standing infrastructure",
+          "body": null,
+          "bullets": [
+            "AlphaEvolve combines Gemini-generated code mutations with an evolutionary loop gated by automated evaluators",
+            "It's no longer a one-off research result — DeepMind reports it running continuously across Google's own infrastructure",
+            "Concrete, cited results span data centers (0.7% compute recovered), genomics (30% fewer errors), quantum computing (10x lower error), TPU design, and even Gemini's own training speed",
+            "The catch: it only works where you can automatically verify a candidate solution's quality — that's the real bottleneck to applying this pattern elsewhere"
+          ],
+          "symbol": "flag.checkered"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "967e06cd-6139-4949-83d3-1ed4f0697e28",
+            "prompt": "What is the core mechanism that lets AlphaEvolve improve on existing algorithms?",
+            "options": [
+              "It fine-tunes Gemini's weights on each new problem",
+              "It generates code mutations with Gemini, scores each candidate with an automated evaluator, and keeps only the improvements across many generations",
+              "It searches a fixed database of known algorithms and picks the closest match",
+              "It asks human engineers to vote on the best candidate"
+            ],
+            "correctIndex": 1,
+            "explanation": "AlphaEvolve is an evolutionary coding agent: Gemini proposes mutations, an automated evaluator grades each candidate against a real objective, and only verified improvements survive to the next generation — no human-in-the-loop judgment required."
+          },
+          {
+            "id": "1a06b63a-1281-4021-be80-a13c3e65b183",
+            "prompt": "What problem did AlphaEvolve's Borg scheduling heuristic address?",
+            "options": [
+              "Network latency between data centers",
+              "'Stranded resources' — machines left with unused CPU or memory because no waiting job's resource shape fits what's available",
+              "Power consumption during idle periods",
+              "Security vulnerabilities in the scheduler"
+            ],
+            "correctIndex": 1,
+            "explanation": "The heuristic targets stranded resources: machines that have exhausted one resource type while other resources sit unused, because no job in the queue matches the leftover shape. Better packing recovers that capacity — reported at 0.7% of Google's worldwide compute, continuously, in production."
+          },
+          {
+            "id": "62b7d6bf-c95c-490e-b61f-ad4d86f869b8",
+            "prompt": "Why can't AlphaEvolve be pointed at just any open-ended problem?",
+            "options": [
+              "It only works on problems written in Python",
+              "It requires access to Google's private infrastructure",
+              "Its evolutionary loop needs an automated evaluator to grade candidates — without a way to verify quality automatically, there's no selection pressure to evolve toward",
+              "It can only optimize code, never hardware designs"
+            ],
+            "correctIndex": 2,
+            "explanation": "The whole approach depends on scoring candidates automatically so evolution can select the best ones. Tasks that require subjective human judgment rather than an automatic checker/scorer don't fit this pattern, which is why AlphaEvolve's wins cluster around measurable objectives like latency, error rate, and resource usage."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "aa7eae4f-8654-42ce-ab93-54d3b4547527",
+          "title": "AlphaEvolve: Gemini-powered coding agent scaling impact across fields (Google DeepMind)",
+          "url": "https://deepmind.google/blog/alphaevolve-impact/"
+        },
+        {
+          "id": "1ffa97cf-ea2a-4845-a0b7-90809a38205f",
+          "title": "AlphaEvolve, 1 year later: Impact on science, technology (Google Cloud Blog)",
+          "url": "https://blog.google/innovation-and-ai/infrastructure-and-cloud/google-cloud/alphaevolve-updates/"
+        }
+      ]
+    },
+    {
+      "id": "ac678713-676f-4665-9869-908dae7d0c84",
+      "publishedDate": "2026-07-09T12:43:44Z",
+      "title": "Hybrid Search: Fusing Keyword and Vector Search With RRF",
+      "subtitle": "Two retrievers fail in different places — Reciprocal Rank Fusion merges their rankings without ever comparing incompatible scores",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "hybrid-search",
+        "rag",
+        "bm25",
+        "vector-search",
+        "reciprocal-rank-fusion",
+        "retrieval"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.merge",
+      "summary": "Dense vector search and sparse keyword search (BM25) fail on opposite kinds of queries: vectors blur exact terms like error codes or IDs, keyword search misses paraphrases. Hybrid search runs both and fuses their rankings — and Reciprocal Rank Fusion (RRF) does that fusion using only rank position, sidestepping the fact that BM25 scores and cosine similarities live on totally different, incompatible scales.",
+      "slides": [
+        {
+          "id": "c094b61e-d35b-4e2e-bb37-8d30201911ab",
+          "kind": "cover",
+          "title": "Your retriever is only as good as the query type it was built for",
+          "body": "Dense vector search embeds queries and documents into the same space and ranks by similarity — great at paraphrase and semantic meaning, weak at exact tokens. BM25 keyword search ranks by term overlap and frequency — great at exact tokens, weak at paraphrase. Most RAG pipelines need both.",
+          "bullets": [
+            "Vector search: strong on meaning/paraphrase, weak on exact tokens",
+            "BM25: strong on exact tokens, weak on paraphrase/semantics",
+            "Hybrid search runs both retrievers and merges their results"
+          ],
+          "symbol": "arrow.triangle.merge"
+        },
+        {
+          "id": "14adef6c-bd62-4adc-b602-7903c5acedf7",
+          "kind": "problem",
+          "title": "Two concrete failure modes",
+          "body": "A query like 'error code E4021' is a near-exact-match problem: BM25 nails it instantly because the token overlaps directly with the document. A dense embedding can smear that specific code into a neighborhood of generic 'error'/'failure' vectors and rank the exact match lower than it deserves. Flip it: a query like 'how do I make my API calls faster' has no token overlap with a doc titled 'Reducing request latency' — BM25 scores it near zero, while a dense embedding finds it immediately because the meanings align.",
+          "bullets": [
+            "Exact match (IDs, codes, rare terms) → BM25 wins, vectors can blur it",
+            "Semantic/paraphrase match → vectors win, BM25 sees zero overlap",
+            "Real user queries mix both patterns, often in the same session"
+          ],
+          "symbol": "xmark.octagon"
+        },
+        {
+          "id": "d97d326e-03d1-45ac-83c0-d0c0c87750e5",
+          "kind": "solution",
+          "title": "Run both retrievers, get two ranked lists, fuse them",
+          "body": "Hybrid search issues the same query to a BM25 index and a vector index in parallel, producing two independently-ranked candidate lists. The hard part isn't retrieving twice — it's combining two rankings that come from fundamentally incompatible scoring systems (a BM25 score and a cosine similarity aren't on the same scale and don't mean the same thing).",
+          "bullets": [
+            "Same query → BM25 index and vector index, in parallel",
+            "Two ranked lists come back, typically top-k each",
+            "The fusion step decides the final order — this is where RRF comes in"
+          ],
+          "symbol": "arrow.branch"
+        },
+        {
+          "id": "9a1a98b2-eecd-444b-a843-ddf7e7ff02fe",
+          "kind": "concept",
+          "title": "Reciprocal Rank Fusion: score by rank position, not raw score",
+          "body": "RRF computes a fused score for each document as the sum, across all retriever lists it appears in, of 1/(k + rank), where rank is its position in that list (1-indexed) and k is a constant, typically 60. Because it only ever looks at rank position — never the raw BM25 score or cosine similarity — RRF sidesteps the incompatible-scale problem entirely, with no normalization step required.",
+          "bullets": [
+            "score(d) = Σ over lists of 1/(k + rank(d))",
+            "k=60 is the empirical default from Cormack et al.'s 2009 TREC study",
+            "Documents that rank reasonably well in multiple lists beat a single list's #1 hit"
+          ],
+          "symbol": "function"
+        },
+        {
+          "id": "6faf1dfb-77a0-4620-a6ea-109419c75e17",
+          "kind": "example",
+          "title": "Working the formula",
+          "body": "Suppose document D ranks #3 in the BM25 list and #7 in the vector list, with k=60: RRF(D) = 1/(60+3) + 1/(60+7) = 1/63 + 1/67 ≈ 0.0159 + 0.0149 = 0.0308. Compare a document that's #1 in BM25 but absent from the vector list entirely: RRF = 1/61 ≈ 0.0164 — lower than D's fused score, even though it was the single best keyword match. RRF is explicitly rewarding consistency across both retrievers over a single list's top spot.",
+          "bullets": [
+            "D (rank 3 + rank 7): 1/63 + 1/67 ≈ 0.0308",
+            "Keyword-only #1 hit, missing from vector list: 1/61 ≈ 0.0164",
+            "Appearing in both lists, even at moderate rank, beats a lone top-1"
+          ],
+          "symbol": "number"
+        },
+        {
+          "id": "9b35fec0-304d-4b73-8c1d-4c8ae92dd67c",
+          "kind": "comparison",
+          "title": "RRF vs. weighted score normalization",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "RRF",
+              "Weighted score normalization"
+            ],
+            "rows": [
+              [
+                "Input",
+                "Rank position only",
+                "Raw scores, min-max (or similar) normalized"
+              ],
+              [
+                "Tuning",
+                "One constant, k (default 60)",
+                "Per-retriever weights need tuning per corpus"
+              ],
+              [
+                "Robustness",
+                "Stable — BM25 score spread varies wildly by query, ranks don't",
+                "Sensitive — BM25 scores for rare-term queries can dwarf common-term queries"
+              ],
+              [
+                "Default in",
+                "OpenSearch, Elasticsearch, Azure AI Search, MongoDB Atlas, Weaviate",
+                "Custom pipelines that need finer control"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e7789268-8e41-492c-81c1-c7627110808f",
+          "kind": "problem",
+          "title": "Where RRF falls short",
+          "body": "RRF's simplicity is also its blind spot: by discarding raw scores, it discards confidence. A vector match at 0.95 cosine similarity and one that barely cleared the threshold get treated identically if they land at the same rank. It also doesn't fix a bad retriever — if your embedding model is poor for your domain, hybrid search just averages that weakness in rather than correcting it. And the default k=60 is tuned for large, TREC-scale corpora; for a small knowledge base (100-300 documents), a smaller k (10-20) is usually recommended since rank differences carry more signal at that scale.",
+          "bullets": [
+            "Discards match confidence/magnitude — same rank treated as same quality",
+            "Doesn't compensate for a genuinely weak retriever in the mix",
+            "Default k=60 needs retuning down for small corpora",
+            "Requires maintaining two indexes (keyword + vector), not one"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "53dbdc2a-254a-4b87-a9c9-f614eac8215f",
+          "kind": "takeaways",
+          "title": "Fuse ranks, not scores",
+          "body": null,
+          "bullets": [
+            "Vector search and BM25 fail on opposite query types — hybrid search runs both instead of picking one",
+            "RRF fuses their rankings using only rank position: score(d) = Σ 1/(k + rank(d)), sidestepping incompatible score scales",
+            "k=60 is the standard default (Cormack et al., TREC 2009); shrink it toward 10-20 for small corpora",
+            "It's the default hybrid ranking method in OpenSearch, Elasticsearch, Azure AI Search, MongoDB Atlas, and Weaviate",
+            "It rewards consistency across retrievers over a single list's top hit — but discards confidence and can't fix a genuinely weak retriever"
+          ],
+          "symbol": "flag.checkered"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "701408b9-7e56-422e-8292-382611365c0c",
+            "prompt": "Why does RRF use rank position instead of the raw BM25 score and cosine similarity directly?",
+            "options": [
+              "Rank position is faster to compute than raw scores",
+              "BM25 scores and cosine similarities live on incompatible scales, so combining raw scores directly would require careful, query-dependent normalization; rank position sidesteps that entirely",
+              "Raw scores are not available from most vector databases",
+              "Rank position always produces better search results than raw scores"
+            ],
+            "correctIndex": 1,
+            "explanation": "BM25 score magnitudes swing wildly by query (rare terms produce huge scores, common terms small ones), while cosine similarity is bounded differently. RRF avoids the normalization problem entirely by only ever looking at each document's rank in each list."
+          },
+          {
+            "id": "7bebbb0f-18d0-4637-8271-86d9e12f5c1e",
+            "prompt": "A document ranks #1 in the BM25 list but doesn't appear in the vector list's results at all. Another document ranks #4 in BM25 and #5 in vector. With k=60, which tends to score higher under RRF, and why?",
+            "options": [
+              "The #1-only document always wins because rank 1 is unbeatable",
+              "The document appearing in both lists, since its fused score sums contributions from two lists (1/64 + 1/65 ≈ 0.031) versus one list's single contribution (1/61 ≈ 0.016)",
+              "They always tie regardless of how many lists a document appears in",
+              "Neither — RRF requires raw scores to compute, so this can't be determined from rank alone"
+            ],
+            "correctIndex": 1,
+            "explanation": "RRF sums 1/(k+rank) across every list a document appears in. Being present in both lists, even at moderate rank, typically outscores a single list's #1 position — RRF is explicitly designed to reward cross-retriever consistency."
+          },
+          {
+            "id": "5d46cd79-9d9d-4c94-abf7-9293d08bc8e7",
+            "prompt": "What's a real limitation of RRF, not just a tuning inconvenience?",
+            "options": [
+              "It cannot be used with more than two retrievers",
+              "It only works with dense vector search, not BM25",
+              "By discarding raw score magnitude, it treats a barely-passing match and a highly confident match at the same rank as equally strong — and it can't compensate for a genuinely weak retriever in the mix",
+              "It requires GPU acceleration to compute"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because RRF only looks at rank, it throws away information about how confident each retriever was. It also doesn't correct a weak retriever's poor rankings — it just blends them in at whatever rank they land, so a bad embedding model still drags down the fused results."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "5de5d826-9dad-4bf5-9083-c3e87f4a2640",
       "publishedDate": "2026-07-09T06:40:39Z",
       "title": "Speculative Decoding: Draft Fast, Verify Once",
@@ -10909,578 +11493,6 @@
       ],
       "id": "13ea4101-7665-4628-9159-8f38d42fca12",
       "publishedDate": "2026-07-03T00:42:10Z"
-    },
-    {
-      "title": "Reranking: The Second Pass That Fixes RAG's Blind Spots",
-      "subtitle": "Your vector search found 50 candidates — reranking figures out which ones actually answer the question",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "reranking",
-        "cross-encoder",
-        "retrieval",
-        "vector-search"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.up.arrow.down.circle.fill",
-      "summary": "Bi-encoder vector search is fast but blind to how a query and document actually interact. Reranking adds a second, slower pass with a cross-encoder that scores each query-document pair jointly, reordering the top candidates for much better precision — at the cost of extra latency.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Vector Search Gets You Close, Not Right",
-          "body": "Retrieval-augmented generation pipelines often nail topical similarity but miss precise relevance — that's the gap a reranking stage is built to close.",
-          "bullets": [],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null,
-          "id": "6ea3f725-ddbc-4db7-bda6-23733acc0c74"
-        },
-        {
-          "kind": "problem",
-          "title": "Bi-Encoders Are Fast but Blind",
-          "body": "Standard vector search encodes the query and every document independently into embeddings, then ranks by cosine similarity. That's what makes it fast enough for millions of documents — and also its core weakness.",
-          "bullets": [
-            "Query and document embeddings are computed separately, with no interaction between them",
-            "Two passages can look 'similar' by embedding distance while differing in what actually answers the query",
-            "Errors surface as topically-relevant-but-wrong-answer chunks ranked above the correct one"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "dc94ffb2-2f22-432c-973a-befc96f2f545"
-        },
-        {
-          "kind": "concept",
-          "title": "Cross-Encoders Score the Pair Together",
-          "body": "A cross-encoder reranker feeds the query and a candidate document into the model together, in a single forward pass, so attention can compare them token by token — producing a far more accurate relevance score than comparing two independent embeddings.",
-          "bullets": [
-            "Bi-encoder: encode query and doc separately, then compare via cosine similarity (fast, ANN-indexable)",
-            "Cross-encoder: encode query and doc jointly, output one relevance score (slow, can't be pre-indexed)",
-            "The joint pass is what lets it catch relevance signals a separate-embedding comparison misses"
-          ],
-          "symbol": "arrow.triangle.merge",
-          "table": null,
-          "id": "bff961b9-4d63-44e1-ad22-4381747c05a4"
-        },
-        {
-          "kind": "architecture",
-          "title": "The Two-Stage Pipeline",
-          "body": "Because cross-encoders are too slow to run over an entire corpus, production RAG systems use them only on a narrowed shortlist.",
-          "bullets": [
-            "Stage 1 (bi-encoder): retrieve the top 50-100 candidates from the full corpus via ANN search",
-            "Stage 2 (cross-encoder): rerank just those candidates, keep the top 5-10 for the LLM's context",
-            "This keeps overall latency low while fixing precision exactly where it's needed"
-          ],
-          "symbol": "list.number",
-          "table": null,
-          "id": "1c57e72f-2157-4af2-8fbd-e8301025116d"
-        },
-        {
-          "kind": "example",
-          "title": "Same Query, Different Order",
-          "body": "A user asks a support bot: 'Can I cancel my subscription after the trial ends?' Bi-encoder search might rank a general 'About our subscription plans' passage above the specific 'Cancellation policy' passage, since both discuss subscriptions similarly. A cross-encoder reranker, scoring the query against each passage jointly, recognizes that only the cancellation-policy passage actually answers the question — and moves it to #1.",
-          "bullets": [],
-          "symbol": "magnifyingglass",
-          "table": null,
-          "id": "14c7ebf6-965c-40ec-9b9a-3d8e8dd1dec0"
-        },
-        {
-          "kind": "comparison",
-          "title": "What Reranking Costs vs. Buys You",
-          "body": "Reranking doesn't replace vector search — it corrects its ordering on a shortlist small enough to afford the extra compute.",
-          "bullets": [],
-          "symbol": "gauge",
-          "table": {
-            "headers": [
-              "Stage",
-              "Speed",
-              "What it optimizes"
-            ],
-            "rows": [
-              [
-                "Bi-encoder retrieval",
-                "Milliseconds, ANN-indexed",
-                "Broad recall across millions of docs"
-              ],
-              [
-                "Cross-encoder reranking",
-                "Tens to hundreds of ms per shortlist",
-                "Precision on a small candidate set"
-              ],
-              [
-                "No reranking",
-                "Fastest",
-                "Relies entirely on embedding similarity"
-              ]
-            ]
-          },
-          "id": "80bc69d8-57bc-435b-9c79-f265b6d18dc9"
-        },
-        {
-          "kind": "concept",
-          "title": "When Reranking Isn't Worth It",
-          "body": "Reranking is a precision tool, not a free lunch — it adds a model call and latency to every query.",
-          "bullets": [
-            "Ultra-low-latency use cases (sub-100ms budgets) may not be able to afford a second model pass",
-            "If your corpus is small enough to rerank everything directly, you may not need a separate fast retrieval stage at all",
-            "A cross-encoder can't fix retrieval that missed the right document entirely — it only reorders what stage 1 already surfaced",
-            "It's an extra model to host, monitor, and pay for in your pipeline"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "be158f10-e563-445e-ae88-719dc0cc4272"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Bi-encoders retrieve fast by comparing independent embeddings; cross-encoders rerank accurately by scoring query and document jointly",
-            "The standard pattern: retrieve top 50-100 with a bi-encoder, rerank down to top 5-10 with a cross-encoder",
-            "Reranking fixes ordering, not recall — if the right document never makes the shortlist, reranking can't rescue it",
-            "Skip it when latency budgets are extremely tight or your corpus is small enough to score directly"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "fa98b653-1327-427c-9bc2-2ff0c36f20bf"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why is a bi-encoder used for the first retrieval stage instead of a cross-encoder?",
-            "options": [
-              "Bi-encoders are more accurate",
-              "Bi-encoder document embeddings can be precomputed and searched via ANN, making them fast enough for large corpora",
-              "Cross-encoders can't process text",
-              "Bi-encoders require no training"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because a bi-encoder embeds the query and documents independently, document embeddings can be precomputed and indexed for fast approximate nearest-neighbor search — something a cross-encoder can't do, since it needs the query at scoring time.",
-            "id": "41a80e4f-dacf-429c-a025-28cc19f09771"
-          },
-          {
-            "prompt": "What does a cross-encoder reranker do differently from a bi-encoder?",
-            "options": [
-              "It skips the query entirely",
-              "It encodes the query and each candidate document together in one forward pass, letting them attend to each other",
-              "It only works on images",
-              "It replaces the need for any retrieval step"
-            ],
-            "correctIndex": 1,
-            "explanation": "A cross-encoder processes the query-document pair jointly, so the model can directly compare tokens between them — producing a more precise relevance score than comparing two separately-computed embeddings.",
-            "id": "5413f9c0-204c-4ae1-8292-f6ecc0dbd7d3"
-          },
-          {
-            "prompt": "If the correct document is never retrieved in stage 1, what can reranking do about it?",
-            "options": [
-              "It will still surface the correct document from the rest of the corpus",
-              "Nothing — reranking can only reorder documents that stage 1 already retrieved",
-              "It automatically expands the search to the full corpus",
-              "It replaces stage 1 with a full corpus scan"
-            ],
-            "correctIndex": 1,
-            "explanation": "Reranking only reorders the shortlist that the first retrieval stage already produced — it can't recover documents that were never retrieved in the first place, which is why recall at stage 1 still matters.",
-            "id": "e90841eb-1502-44a6-93aa-f1057fa94bc6"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "How Using a Reranking Microservice Can Improve Accuracy and Costs of Information Retrieval (NVIDIA)",
-          "url": "https://developer.nvidia.com/blog/how-using-a-reranking-microservice-can-improve-accuracy-and-costs-of-information-retrieval/",
-          "id": "295708fd-8140-4942-a157-fd0093941243"
-        }
-      ],
-      "id": "91003be0-4ebe-49b9-b5a3-a8a640fd841d",
-      "publishedDate": "2026-07-03T00:42:10Z"
-    },
-    {
-      "title": "OPID: Teaching AI Agents From Their Own Past Mistakes",
-      "subtitle": "A hindsight-skill trick that turns finished agent runs into denser training signal",
-      "category": "AI Agents",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "reinforcement-learning",
-        "ai-agents",
-        "skill-distillation",
-        "llm-agents",
-        "credit-assignment"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "OPID (On-Policy Skill Distillation) is a June 2026 training technique that mines completed agent trajectories for hierarchical hindsight skills — episode-level workflow rules and step-level decision fixes — then folds them back in as dense, token-level training signal. It improves over outcome-only RL and prior skill-distillation baselines on ALFWorld, WebShop, and Search-based QA, without adding any retrieval or analysis step at inference time.",
-      "slides": [
-        {
-          "id": "d6c3d25f-7565-40b5-a47f-4ae9fe1b7453",
-          "kind": "cover",
-          "title": "When Agents Only Learn From Win or Lose",
-          "body": "An LLM agent might take 20+ steps — plan, tool call, observe, replan — before a task resolves. Standard RL only tells it whether the ending was good. OPID asks: what if, after the fact, we extracted lessons from every step in between?",
-          "bullets": [],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "ee913338-5b97-4e14-8531-a98c4a7d0594",
-          "kind": "problem",
-          "title": "Outcome Rewards Are Too Sparse to Teach Anything",
-          "body": "Outcome-only RL (plain GRPO/PPO-style training over a full rollout) assigns one reward to an entire trajectory and spreads it across every token equally.",
-          "bullets": [
-            "A successful ALFWorld/WebShop/Search-QA trajectory can span dozens of tool calls — some useful, many wasted",
-            "A single end-of-trajectory reward can't tell a sharp decision from a wandering one; both get the same credit",
-            "Prior skill-distillation fixes exist, but need a retrieval step or privileged context AT INFERENCE time — added latency baked into every deployed call"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9562a940-3fc8-49dd-8e11-3bd7c1484802",
-          "kind": "solution",
-          "title": "Hindsight Skills, Extracted After the Trajectory Ends",
-          "body": "Once a rollout finishes, an LLM analyzer looks back over the whole trajectory and distills two kinds of skills from it — no privileged information, just hindsight.",
-          "bullets": [
-            "Episode-level skills: global workflow or failure-avoidance rules ('check the room map before searching')",
-            "Step-level skills: local decision knowledge tied to one specific, critical timestep",
-            "Critical-first routing: step-level skills fire only at identified critical decisions; everywhere else, the episode-level skill is the default guidance"
-          ],
-          "symbol": "wand.and.stars",
-          "table": null
-        },
-        {
-          "id": "1f754fae-c81a-4b5e-b29c-73f140a5a4d0",
-          "kind": "architecture",
-          "title": "Turning Hindsight Into a Token-Level Signal",
-          "body": "The extracted skill text is injected into the interaction history, and the OLD policy re-scores the exact same sampled response under both the original and the skill-augmented context.",
-          "bullets": [
-            "The resulting log-probability shift becomes a token-level self-distillation advantage",
-            "That advantage is combined with the standard outcome advantage during policy optimization",
-            "Because skills only ever touch the training-time re-scoring step, the deployed policy needs no analyzer, retrieval, or extra context at inference"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "3ea2d184-ed24-4a27-854e-cbf827e5926f",
-          "kind": "comparison",
-          "title": "OPID vs. What Came Before",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Approach",
-              "Credit assignment",
-              "Inference-time cost"
-            ],
-            "rows": [
-              [
-                "Outcome-only RL",
-                "One reward for the whole trajectory",
-                "None"
-              ],
-              [
-                "Prior skill distillation",
-                "Skills applied per-trajectory",
-                "Needs retrieval / privileged context"
-              ],
-              [
-                "OPID",
-                "Token-level, via critical-first hindsight skills",
-                "None — skills only used during training"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "b2fcbc9f-05dd-4c9d-8fac-b1d5cb257d76",
-          "kind": "example",
-          "title": "Worked Example: The Wandering Apple",
-          "body": "Task: 'put a hot apple on the counter.' The agent picks up the apple correctly, then spends 6 extra steps searching the wrong room for a microwave before finally succeeding.",
-          "bullets": [
-            "Outcome-only RL sees a success and reinforces the ENTIRE trajectory equally — including the 6 wasted steps",
-            "OPID's analyzer flags the wrong-room search as a step-level lesson ('check the room map before searching') at that critical timestep",
-            "It still credits the correct apple-heating sequence at the episode level, so the fix is targeted, not blanket"
-          ],
-          "symbol": "map.fill",
-          "table": null
-        },
-        {
-          "id": "d6e6e3e6-9f79-4d37-9d5b-5644971c1a15",
-          "kind": "problem",
-          "title": "Where OPID Costs You",
-          "body": "The gains come with real constraints, not a free lunch.",
-          "bullets": [
-            "Needs an LLM analyzer to generate hindsight skills during training, adding compute/API cost to the training loop itself",
-            "Validated on three tool-use environments — ALFWorld, WebShop, Search-based QA — not yet shown on open-ended agentic coding or long-horizon tasks",
-            "It's a training-time fix: a bad base policy or a badly shaped environment reward isn't solved by better hindsight alone"
-          ],
-          "symbol": "minus.circle.fill",
-          "table": null
-        },
-        {
-          "id": "d093fa6c-8f56-4ee6-834d-33ff1c10dcb6",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Hindsight skill extraction turns one sparse outcome reward into dense, token-level supervision",
-            "Critical-first routing keeps the analyzer's attention on the decisions that actually mattered",
-            "All the extra machinery lives in training — the deployed policy runs exactly as before, with no added latency",
-            "Code (MIT-licensed) and an ALFWorld checkpoint are public, released alongside the paper on 2026-06-25"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "9a4fa8b6-056a-4c23-80af-40470d844dbf",
-            "prompt": "What signal does outcome-only RL give an agent across a multi-step trajectory?",
-            "options": [
-              "A separate reward at every single token",
-              "One reward for the whole trajectory, applied equally to every step",
-              "Human feedback on each tool call",
-              "No reward — only imitation learning"
-            ],
-            "correctIndex": 1,
-            "explanation": "Outcome-only RL gives one success/fail signal per rollout, spread evenly across every step — which is exactly what OPID's hindsight skills are designed to sharpen."
-          },
-          {
-            "id": "34b87cf0-a821-4921-be34-7d33f4f1b741",
-            "prompt": "What is a 'step-level' skill in OPID?",
-            "options": [
-              "A global rule about the whole episode's workflow",
-              "Local decision knowledge extracted at one specific, critical timestep",
-              "A retrieval index queried at inference time",
-              "A learning-rate schedule"
-            ],
-            "correctIndex": 1,
-            "explanation": "Step-level skills capture what should have happened at one critical decision point; critical-first routing applies them only there, falling back to episode-level skills elsewhere."
-          },
-          {
-            "id": "59a0d4f6-bb04-4d6c-9245-6ecdda360b97",
-            "prompt": "Why doesn't OPID slow down inference, unlike some earlier skill-distillation methods?",
-            "options": [
-              "It quantizes the model",
-              "Skills are only used during training to reshape the learning signal, never injected at inference",
-              "It uses a smaller model at inference",
-              "It removes the reward model entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "Earlier skill-distillation approaches need an analyzer or retrieval step at inference time; OPID folds skill use entirely into training via a token-level self-distillation advantage, so the deployed policy is unchanged."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "4231c9c1-2801-4f9f-a451-19047b42214a",
-          "title": "OPID: On-Policy Skill Distillation for Agentic Reinforcement Learning (arXiv:2606.26790)",
-          "url": "https://arxiv.org/abs/2606.26790"
-        },
-        {
-          "id": "6d5635e4-a7aa-45b8-95d5-9244957a56f8",
-          "title": "jinyangwu/OPID — official code and ALFWorld checkpoint",
-          "url": "https://github.com/jinyangwu/OPID"
-        }
-      ],
-      "id": "8935af7e-5597-482e-8a78-7411acacff55",
-      "publishedDate": "2026-07-02T20:07:50Z"
-    },
-    {
-      "title": "FlashAttention: Rewriting Attention for the Memory Wall",
-      "subtitle": "Same math, computed so the full attention matrix never has to touch slow memory",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "flash-attention",
-        "transformers",
-        "gpu-optimization",
-        "inference",
-        "llm-internals"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "bolt.fill",
-      "summary": "FlashAttention computes the exact same attention output as standard implementations, but restructures the computation around the GPU memory hierarchy — tiling Q/K/V into blocks and using a running softmax so the full N x N score matrix never gets written to slow HBM. That IO-awareness, not a new approximation, is what let context windows grow from a few thousand tokens to well past 100K without a proportional memory blowup.",
-      "slides": [
-        {
-          "id": "28c1dc7f-4d88-4325-b7b0-0a1d7d213694",
-          "kind": "cover",
-          "title": "The Bottleneck Was Never the Math",
-          "body": "Standard self-attention is exact — the slowdown doesn't come from the floating-point operations. It comes from writing a giant intermediate matrix to memory and reading it straight back.",
-          "bullets": [],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "5643618b-3942-4f3d-81ad-8d062a90e2d1",
-          "kind": "problem",
-          "title": "Attention's Real Cost Is Memory Traffic, Not FLOPs",
-          "body": "Self-attention computes an N x N score matrix (QK^T), applies softmax, then multiplies by V.",
-          "bullets": [
-            "For N = 8,000 tokens, that's a 64-million-entry matrix — per head, per layer",
-            "GPU compute (FLOPs) has scaled far faster than GPU memory bandwidth (HBM), so attention is memory-bound, not compute-bound",
-            "A naive implementation writes the full N x N matrix to slow HBM, then reads it back twice more — once for softmax, once for the final matmul"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "eef7006b-9a7c-4585-82d2-d73b98412da5",
-          "kind": "solution",
-          "title": "Tiling + Online Softmax: Never Materialize the Full Matrix",
-          "body": "FlashAttention splits Q, K, and V into small blocks that fit in the GPU's fast on-chip SRAM, and computes attention block-by-block.",
-          "bullets": [
-            "A running ('online') softmax rescales partial sums as each new block arrives, so no block ever needs the full row of scores at once",
-            "The full N x N matrix is never written to HBM — only O(N) memory is needed instead of O(N^2)",
-            "This is an IO-aware algorithm redesign, not a lower-precision or sparse approximation — the output is bit-for-bit the same attention computation"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "c25ccc9f-0bc5-46cf-b239-0b59924833e1",
-          "kind": "architecture",
-          "title": "One Fused Kernel Instead of Three Separate Passes",
-          "body": "QK^T, the softmax rescaling, and the PV matmul all happen inside a single CUDA kernel per tile, keeping intermediate results resident in SRAM the whole time.",
-          "bullets": [
-            "Fusing the three steps avoids the extra HBM round-trips a naive, op-by-op implementation pays for",
-            "The backward pass recomputes attention on the fly instead of storing it — classic gradient-checkpointing, applied specifically to the attention matrix",
-            "Recomputing is cheap on a GPU with FLOPs to spare; storing an O(N^2) matrix in HBM and reading it back is the expensive part"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "d4aa944f-45a3-449c-9433-5c718940f045",
-          "kind": "comparison",
-          "title": "Standard Attention vs. FlashAttention",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Aspect",
-              "Standard attention",
-              "FlashAttention"
-            ],
-            "rows": [
-              [
-                "Memory for scores",
-                "O(N^2) — full matrix written to HBM",
-                "O(N) — running softmax, no full matrix stored"
-              ],
-              [
-                "HBM read/write passes",
-                "Multiple passes over an O(N^2) matrix",
-                "One fused pass per tile, mostly in SRAM"
-              ],
-              [
-                "FLOPs performed",
-                "Exact attention math",
-                "Same exact attention math — no approximation"
-              ],
-              [
-                "Backward pass",
-                "Stores the full attention matrix",
-                "Recomputes attention on the fly"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "81463026-34f8-4c29-b8fc-3446da422ce3",
-          "kind": "example",
-          "title": "Worked Example: A 32K-Token Context",
-          "body": "N = 32,768 tokens means N^2 ≈ 1.07 billion score matrix entries.",
-          "bullets": [
-            "At fp16 (2 bytes each), that's ~2.1GB for ONE attention matrix — per head, per layer — far too big to keep in SRAM and expensive to shuttle through HBM repeatedly",
-            "Tiling into, say, 128-token blocks means only a 128 x 128 tile (16,384 entries, 32KB) is resident at any moment",
-            "That tile comfortably fits in the GPU's on-chip SRAM, which is exactly why the full matrix never needs to leave fast memory"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "e4c76d31-2375-4bbd-bbd6-c2be67b33705",
-          "kind": "problem",
-          "title": "When It Doesn't Help",
-          "body": "FlashAttention is not a universal speedup button.",
-          "bullets": [
-            "It doesn't reduce FLOPs — on short sequences (a few hundred tokens) where compute already dominates, the memory-traffic savings barely register",
-            "It needs custom, low-level kernels tuned per GPU architecture, so support can lag on new or non-NVIDIA hardware",
-            "It's exact-attention only — it won't help if what you actually need is a sparse or linear-attention approximation for better asymptotic scaling",
-            "Gains shrink if the model is bottlenecked elsewhere — small batch sizes, CPU-bound data loading, or a memory-bound decode step"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "97b785af-ff3c-4fcb-96f7-8cab8c3ad93b",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "FlashAttention is exact, not approximate — identical output to standard attention, just computed IO-aware",
-            "Tiling + online softmax + recomputation together target the GPU memory hierarchy, not the underlying math",
-            "It's a big reason context windows could grow from ~2-4K tokens to 100K+ without a proportional memory blowup",
-            "Later versions (FlashAttention-2, -3) push the same idea further: better GPU occupancy and newer hardware support (H100 tensor cores, FP8)"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "1dc44ded-14bb-491f-bef6-5e844fcdc313",
-            "prompt": "What is the main bottleneck FlashAttention targets?",
-            "options": [
-              "The number of floating-point operations in attention",
-              "Memory traffic between GPU HBM and on-chip SRAM",
-              "The size of the model's vocabulary",
-              "Network latency between GPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Attention is memory-bound on modern GPUs — FLOPs have scaled faster than memory bandwidth, so cutting HBM read/writes matters more than cutting compute."
-          },
-          {
-            "id": "23ef1b64-e54b-46a8-870a-af046896beae",
-            "prompt": "How does FlashAttention avoid ever storing the full N x N attention matrix?",
-            "options": [
-              "It approximates attention with a sparse pattern",
-              "It processes Q/K/V in small tiles and maintains a running 'online' softmax",
-              "It reduces the sequence length before computing attention",
-              "It uses fewer attention heads"
-            ],
-            "correctIndex": 1,
-            "explanation": "Tiling plus an online (running) softmax lets FlashAttention compute exact attention block-by-block in fast SRAM, rescaling partial results as each new tile arrives."
-          },
-          {
-            "id": "442c2621-e552-4c64-a5bf-fa0b85a1040e",
-            "prompt": "Why does FlashAttention recompute attention scores during the backward pass instead of storing them?",
-            "options": [
-              "Recomputing is mathematically required for correctness",
-              "It trades cheap extra compute for avoiding an expensive O(N^2) memory store",
-              "Storage isn't supported during training",
-              "It only applies to inference, not training"
-            ],
-            "correctIndex": 1,
-            "explanation": "GPUs are compute-rich but memory-bandwidth-constrained, so recomputing the attention matrix on the fly during backprop beats paying the HBM cost of storing and re-reading it — classic gradient checkpointing applied to attention."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "615161fd-0dba-41c3-933e-2b8eeaf6889a",
-          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (arXiv:2205.14135)",
-          "url": "https://arxiv.org/abs/2205.14135"
-        }
-      ],
-      "id": "006be8f0-cb39-4cab-a58e-8e38fe510494",
-      "publishedDate": "2026-07-02T20:07:50Z"
     }
   ]
 }
