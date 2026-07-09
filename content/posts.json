@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "id": "5de5d826-9dad-4bf5-9083-c3e87f4a2640",
+      "publishedDate": "2026-07-09T06:40:39Z",
+      "title": "Speculative Decoding: Draft Fast, Verify Once",
+      "subtitle": "How a tiny model guessing ahead lets a giant model check its work in one shot",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "speculative-decoding",
+        "inference-optimization",
+        "llm-serving",
+        "kv-cache",
+        "sampling"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding speeds up autoregressive generation by having a small draft model propose several tokens at once, then letting the large target model verify them all in a single parallel forward pass. Rejection sampling guarantees the output distribution is mathematically identical to running the big model alone — you get 2-3x lower latency for free, no quality tradeoff, as long as the draft model guesses well.",
+      "slides": [
+        {
+          "id": "20db4275-fcce-4f9e-86a1-2fbb44e0e6f9",
+          "kind": "cover",
+          "title": "Autoregressive decoding is one token at a time — and that's the bottleneck",
+          "body": "Every token an LLM generates requires a full forward pass through every layer. For a 70B model, that's one massive matrix multiply per token, and the GPU spends most of that time waiting on memory bandwidth, not compute.",
+          "bullets": [
+            "Generation is inherently sequential: token N needs token N-1",
+            "Modern GPUs are compute-rich but memory-bandwidth-starved during decode",
+            "This mismatch is exactly what speculative decoding exploits"
+          ],
+          "symbol": "hare.fill"
+        },
+        {
+          "id": "0c5b5127-c7c2-4f0a-b507-02ce69da5d41",
+          "kind": "problem",
+          "title": "The GPU is idle-ish during decode, not during prefill",
+          "body": "During prompt processing (prefill), the GPU processes thousands of tokens in parallel and is compute-bound — near 100% utilization. During generation (decode), it processes one token at a time and is memory-bound — utilization can drop to single digits, because loading the model weights dominates the single small matmul.",
+          "bullets": [
+            "Prefill: parallel, compute-bound, GPU-saturated",
+            "Decode: sequential, memory-bound, GPU mostly idle",
+            "If decode could process multiple tokens per pass like prefill does, you'd reclaim that idle compute"
+          ],
+          "symbol": "gauge.with.needle"
+        },
+        {
+          "id": "48282788-25b8-4437-aa32-6facb5f3bdf8",
+          "kind": "solution",
+          "title": "Let a small draft model guess K tokens, verify all K in one big-model pass",
+          "body": "A cheap draft model (often 10-50x smaller, sharing the target's tokenizer) autoregressively proposes K candidate tokens. The large target model then runs ONE forward pass over the prompt plus all K drafted tokens — the same trick that makes prefill fast — and computes the true next-token probabilities at every position simultaneously.",
+          "bullets": [
+            "Draft model proposes tokens 1..K sequentially (cheap, fast)",
+            "Target model scores all K positions in parallel (one expensive pass, not K)",
+            "Rejection sampling accepts/rejects each drafted token against the target's real distribution"
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "2b6ba1cc-59b8-4965-aa4e-6f51ac0f5dad",
+          "kind": "concept",
+          "title": "Rejection sampling is why quality never degrades",
+          "body": "For each drafted token x with draft probability q(x) and target probability p(x): accept it with probability min(1, p(x)/q(x)). If rejected, sample a corrected token from the residual distribution max(0, p(x)-q(x)), renormalized. This is provably identical in distribution to sampling from the target model alone, token by token.",
+          "bullets": [
+            "Accept prob = min(1, p(x)/q(x)) — good guesses almost always survive",
+            "On rejection, the first bad token is resampled from p-q (renormalized), everything after it is discarded",
+            "Net effect: output distribution == running the target model solo, zero quality loss"
+          ],
+          "symbol": "checkmark.seal.fill"
+        },
+        {
+          "id": "bc3eb01a-3bdd-47c1-9c90-5a353041b278",
+          "kind": "example",
+          "title": "Walking through a 4-token draft",
+          "body": "Target model: Llama-70B. Draft model: Llama-1B (about 40x smaller, same tokenizer). K=4 tokens drafted per round.",
+          "bullets": [
+            "Draft proposes: 'the', 'cat', 'sat', 'quietly' (4 tiny forward passes)",
+            "Target verifies all 4 in one pass: accepts 'the', 'cat', 'sat', rejects 'quietly' (target preferred 'down')",
+            "Result: 3 tokens accepted + 1 resampled ('down') = 4 tokens produced for the cost of ~1 target pass + 4 cheap draft passes",
+            "Next round starts drafting after 'down', not after 'quietly'"
+          ],
+          "symbol": "text.append"
+        },
+        {
+          "id": "1341d1c0-3344-4b97-a8c3-ab6afd8462d7",
+          "kind": "comparison",
+          "title": "Speedup depends entirely on draft acceptance rate",
+          "body": "The expected tokens-per-target-pass is roughly (1-alpha^(K+1))/(1-alpha), where alpha is the average per-token acceptance rate. Easy, predictable text (code boilerplate, common phrases) has high alpha; creative or technical text has lower alpha.",
+          "table": {
+            "headers": [
+              "Acceptance rate (alpha)",
+              "K (drafted)",
+              "Avg tokens/target pass",
+              "Rough speedup"
+            ],
+            "rows": [
+              [
+                "0.9 (predictable text)",
+                "5",
+                "~3.7",
+                "~3.5x"
+              ],
+              [
+                "0.7 (typical prose)",
+                "5",
+                "~2.7",
+                "~2.5x"
+              ],
+              [
+                "0.4 (novel/creative text)",
+                "5",
+                "~1.6",
+                "~1.4x"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis"
+        },
+        {
+          "id": "19bb8655-1be4-4681-b06f-7e7689f556ee",
+          "kind": "problem",
+          "title": "When it stops paying off",
+          "body": "Speculative decoding trades extra draft-model compute and engineering complexity for latency, not throughput at any batch size.",
+          "bullets": [
+            "Low acceptance rate (alpha < ~0.3) — draft overhead can net you nothing or a slowdown",
+            "Already-saturated large batch serving — decode is compute-bound there too, so there's no idle capacity to reclaim",
+            "No good small model sharing the target's vocabulary/tokenizer — mismatched tokenizers break the verify step",
+            "Extra KV-cache and scheduling complexity — must maintain draft model state and manage speculative branches"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "f6ee9cf8-ca7d-4afb-980c-73db46a5c4d9",
+          "kind": "takeaways",
+          "title": "The core trade: cheap sequential guesses, one expensive parallel check",
+          "bullets": [
+            "Speculative decoding turns decode's idle compute into free speedup by borrowing prefill's parallelism trick",
+            "Rejection sampling makes the output distribution mathematically identical to the target model alone — no quality tradeoff",
+            "Real speedup is 1.5-3.5x depending on draft acceptance rate, not a fixed number",
+            "Best fit: low-batch, latency-sensitive serving (chat, agents) with a well-matched small draft model",
+            "Poor fit: large-batch throughput serving where the GPU is already compute-saturated"
+          ],
+          "symbol": "flag.checkered"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "02c350ff-eff8-4ca0-a709-0c81dfd1b939",
+            "prompt": "Why does speculative decoding speed up generation without changing the output distribution?",
+            "options": [
+              "It uses a smaller, less accurate model to approximate the output",
+              "Rejection sampling accepts drafted tokens with probability min(1, p/q) and resamples from the residual on rejection, which is provably equivalent to sampling from the target model directly",
+              "It caches previous outputs and reuses them when the prompt is similar",
+              "It rounds the target model's probabilities to reduce computation"
+            ],
+            "correctIndex": 1,
+            "explanation": "The math of rejection sampling guarantees the final accepted sequence has exactly the same distribution as autoregressive sampling from the target model alone — the draft model only affects speed, never correctness."
+          },
+          {
+            "id": "c06dce70-ede4-4620-96ab-8c5d49e3ef69",
+            "prompt": "Why is decode-phase generation a good target for this optimization in the first place?",
+            "options": [
+              "Because decode is compute-bound and the GPU has no spare capacity",
+              "Because decode processes one token at a time and is memory-bandwidth-bound, leaving compute capacity idle that a parallel verify pass can reclaim",
+              "Because decode always uses a different, faster model",
+              "Because decode requires no matrix multiplications"
+            ],
+            "correctIndex": 1,
+            "explanation": "Single-token decode barely uses the GPU's compute throughput because it's bottlenecked on loading weights from memory — verifying several tokens at once fills that idle compute the same way prefill does."
+          },
+          {
+            "id": "b8a83e4d-a870-466b-b2e7-a903ab5fbcf2",
+            "prompt": "A team sees only a 1.1x speedup after adding speculative decoding to their large-batch throughput-serving deployment. What's the most likely cause?",
+            "options": [
+              "Their draft model's tokenizer doesn't matter for throughput",
+              "Speculative decoding only works for chat applications",
+              "At large batch sizes decode is already compute-bound, so there's little idle GPU capacity left for the draft/verify trick to reclaim",
+              "They set K (drafted tokens) too high, which is mathematically impossible"
+            ],
+            "correctIndex": 2,
+            "explanation": "Speculative decoding's gains come from reclaiming idle compute during memory-bound, low-batch decode. Once batch size grows enough that decode itself is compute-bound, that idle capacity disappears and the extra draft-model overhead can erase most of the benefit."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "187de1bc-1fec-4556-b128-e2779c072597",
       "publishedDate": "2026-07-09T00:42:25Z",
       "title": "Nemotron-Labs-Diffusion: One Model, Three Ways to Decode",
@@ -11297,188 +11481,6 @@
       ],
       "id": "006be8f0-cb39-4cab-a58e-8e38fe510494",
       "publishedDate": "2026-07-02T20:07:50Z"
-    },
-    {
-      "title": "SelfCompact: Let the Agent Decide When to Forget",
-      "subtitle": "A rubric-driven compaction tool beats fixed-interval summarization at a fraction of the tokens",
-      "category": "AI Agents",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "context-engineering",
-        "long-horizon-agents",
-        "context-window",
-        "token-efficiency",
-        "research"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "SelfCompact is a June 2026 scaffold that lets an LLM agent decide, mid-trajectory, when its own context should be compacted rather than relying on a fixed token-count trigger. By pairing a compaction tool with a rubric for when to fire versus suppress, it matches or beats fixed-interval summarization while cutting token usage 30-70% and lifting accuracy up to 18.1 points on math tasks.",
-      "slides": [
-        {
-          "id": "fa57a17b-e78d-49ca-a0a7-3b04f2afecc0",
-          "kind": "cover",
-          "title": "An Agent's Context Window Is a Leaky Bucket",
-          "body": "Long agent trajectories — chains of thought interleaved with tool calls — pile up stale content fast. A June 2026 paper asks: instead of a timer deciding when to clean up, why not let the model decide?",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "5254c0e3-e8df-4468-9833-0bb3e4f07689",
-          "kind": "problem",
-          "title": "Fixed-Interval Compaction Cuts at the Wrong Moments",
-          "body": "Most agent scaffolds compact context whenever token count crosses a threshold — say, every 20k tokens. That trigger knows nothing about what the agent is actually doing.",
-          "bullets": [
-            "A threshold can fire mid-derivation, discarding a partial proof or half-finished search before it resolves",
-            "It can also fire mid-tool-call-chain, losing the exact state needed to interpret the next tool result",
-            "Stale content that never gets compacted keeps 'anchoring' generation — the model keeps attending to context that no longer matters",
-            "Eventually the trajectory just outgrows the context window and the run fails outright"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f237a5d3-92ab-4d63-a0a8-822a2d5749d3",
-          "kind": "solution",
-          "title": "SelfCompact: A Tool Plus a Rubric",
-          "body": "SelfCompact gives the model two things instead of a timer: a tool it can call to summarize its own accumulated context, and a lightweight rubric for when that's a good idea.",
-          "bullets": [
-            "Compaction tool: the model itself invokes it to compress the trajectory so far into a summary",
-            "Fire condition: a sub-task has just resolved, or the trajectory is visibly converging on an answer",
-            "Suppress condition: the model is mid-derivation or currently stuck — compacting here would erase exactly the state it needs",
-            "Net effect: compaction becomes a decision tied to task structure, not to a token counter"
-          ],
-          "symbol": "wand.and.rays",
-          "table": null
-        },
-        {
-          "id": "cacb5901-3fb1-4451-8c70-56309d21c07a",
-          "kind": "architecture",
-          "title": "Why Structure-Awareness Matters",
-          "body": "The key insight isn't the summarization step itself — every scaffold can summarize. It's giving the model the judgment call about timing, which only the agent tracking its own reasoning actually has access to.",
-          "bullets": [
-            "A fixed-interval trigger is blind to task boundaries; SelfCompact's rubric is built around them",
-            "Because the model chooses when to fire, most trajectories need far fewer compaction calls overall",
-            "Fewer, better-timed compactions mean less redundant re-summarization of content that was about to become irrelevant anyway"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "c72b3da0-7aba-4c4e-8cc2-ad118df9c58a",
-          "kind": "comparison",
-          "title": "The Numbers, Against a No-Summarization Baseline",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Setup",
-              "Accuracy vs. baseline",
-              "Token cost"
-            ],
-            "rows": [
-              [
-                "No summarization (baseline)",
-                "0 pts",
-                "1x"
-              ],
-              [
-                "Fixed-interval summarization",
-                "Comparable to SelfCompact",
-                "Higher"
-              ],
-              [
-                "SelfCompact (math tasks)",
-                "Up to +18.1 pts",
-                "30-70% lower"
-              ],
-              [
-                "SelfCompact (agentic search)",
-                "+5 to +9 pts",
-                "30-70% lower"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "be211009-e83b-4b37-a572-565fe9047b6b",
-          "kind": "example",
-          "title": "Worked Example: A Multi-Step Math Proof",
-          "body": "Picture an agent working a multi-lemma proof. A fixed-interval scaffold hits its 20k-token threshold right after lemma 2 is half-derived — and compacts, losing the intermediate algebra.",
-          "bullets": [
-            "SelfCompact's rubric recognizes 'lemma 2 not yet resolved' and suppresses compaction there",
-            "It fires instead right after lemma 2 closes cleanly, folding it into a short summary before starting lemma 3",
-            "The agent never re-derives lost work, and the context stays small enough to reach lemma 4 and 5 without truncation"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "1811c9c1-2d60-4a98-9dfc-c2167d7e64eb",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Fixed-interval context compaction is structurally blind — it can't tell mid-derivation from a clean stopping point",
-            "Giving the model a compact tool plus a fire/suppress rubric turns compaction into a task-aware decision",
-            "Result: up to 18.1 points higher accuracy on math and 5-9 on agentic search, at 30-70% lower token cost than no summarization",
-            "This is a scaffold-level fix, not a model-level one — it's addable to any agent loop that already supports tool calls"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e2e7938e-919d-4254-bd26-6c669d9f785d",
-            "prompt": "What's the core problem with fixed-interval context compaction in long agent trajectories?",
-            "options": [
-              "It uses too much GPU memory",
-              "It triggers based on token count, not task structure, so it can fire mid-derivation and discard needed state",
-              "It only works for coding agents",
-              "It requires a second, larger model to run"
-            ],
-            "correctIndex": 1,
-            "explanation": "A token-count trigger has no idea whether the agent is mid-proof or between sub-tasks — it can wipe out exactly the state the next step depends on."
-          },
-          {
-            "id": "713be821-d658-461b-a3b1-2a021d670211",
-            "prompt": "What two components make up SelfCompact?",
-            "options": [
-              "A bigger context window and a faster tokenizer",
-              "A separate summarization model and a retry loop",
-              "A compaction tool the model can invoke, plus a rubric for when to fire vs. suppress it",
-              "A vector database that stores old context externally"
-            ],
-            "correctIndex": 2,
-            "explanation": "SelfCompact pairs an inference-time tool call with a rubric tied to task state (resolved sub-task or convergence = fire; mid-derivation or stuck = suppress)."
-          },
-          {
-            "id": "bd9a264f-b69f-496e-a2b0-4460b404829e",
-            "prompt": "Roughly how does SelfCompact's token cost compare to fixed-interval summarization, while matching or beating its accuracy?",
-            "options": [
-              "About the same token cost",
-              "2-3x higher token cost",
-              "30-70% lower token cost",
-              "It eliminates token cost entirely by skipping summarization"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because the model only compacts at well-timed moments instead of on every threshold crossing, it needs far fewer (and more useful) summarization calls."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1bc8a2db-cdec-4c9f-a857-f8ad53adb473",
-          "title": "Self-Compacting Language Model Agents (arXiv:2606.23525)",
-          "url": "https://arxiv.org/abs/2606.23525"
-        }
-      ],
-      "id": "9b05d7cc-d22b-448a-8e7d-25c3f043f568",
-      "publishedDate": "2026-07-02T18:38:49Z"
     }
   ]
 }
