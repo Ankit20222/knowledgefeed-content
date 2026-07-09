@@ -1,6 +1,568 @@
 {
   "posts": [
     {
+      "id": "187de1bc-1fec-4556-b128-e2779c072597",
+      "publishedDate": "2026-07-09T00:42:25Z",
+      "title": "Nemotron-Labs-Diffusion: One Model, Three Ways to Decode",
+      "subtitle": "NVIDIA's tri-mode LLM switches between autoregressive, diffusion, and self-speculative decoding without retraining.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "inference optimization",
+        "diffusion models",
+        "decoding",
+        "nvidia",
+        "llm architecture"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "NVIDIA's Nemotron-Labs-Diffusion trains a single 3B/8B/14B model family to run in three decoding modes — pure autoregressive, block-diffusion, and a self-speculative hybrid — by switching the attention pattern at inference time, not by retraining. The 8B variant decodes roughly 5.9x more tokens per forward pass than Qwen3-8B while matching or beating it on GSM8K and MATH-500.",
+      "slides": [
+        {
+          "id": "c3068b8f-02c5-4a3a-b7d8-017ba7341e1f",
+          "body": "NVIDIA's Nemotron-Labs-Diffusion is trained once and can run autoregressively, as a block-diffusion model, or as a self-speculative hybrid — the choice is made at inference, not training.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "Same Weights, Three Decoding Strategies"
+        },
+        {
+          "id": "1e5648c9-5d8f-4091-8983-9127be141b22",
+          "body": null,
+          "bullets": [
+            "AR decoding emits one token per forward pass, so a GPU built for parallel matrix math sits mostly idle waiting on the next token.",
+            "Diffusion LMs generate blocks in parallel but have historically trailed AR models on accuracy and require a separate model trained from scratch.",
+            "Teams end up shipping two different models to cover 'high quality' and 'high throughput' — doubling training and maintenance cost."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "problem",
+          "title": "Autoregressive Decoding Wastes GPU Parallelism"
+        },
+        {
+          "id": "7523ba88-67f3-4554-8de8-113d2326fb90",
+          "body": null,
+          "bullets": [
+            "AR mode: standard causal decoding via model.ar_generate(), one token at a time, for max quality when latency doesn't matter.",
+            "DLM mode: block-diffusion sampling with confidence-thresholded unmasking — the model commits first to the tokens it's most sure of, then iterates on the rest of the block.",
+            "Linear Spec mode: a diffusion pass drafts a block of tokens in parallel, then an AR pass verifies them in one forward step using a shared KV cache — self-speculation with no separate draft model."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "solution",
+          "title": "One Model, Three Attention Patterns"
+        },
+        {
+          "id": "f12c5496-f312-4138-9b2b-7c6a7b49d03c",
+          "body": null,
+          "bullets": [
+            "Classic speculative decoding needs a smaller, separate draft model; Linear Spec reuses the SAME weights in diffusion mode to draft, then verifies with the AR mode against a shared KV cache.",
+            "A LoRA-enhanced variant fine-tunes just the draft path, trading a little extra memory for a better acceptance rate.",
+            "Because drafting and verifying share one model, there's no second model to version, quantize, or keep in sync."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "architecture",
+          "title": "Self-Speculation: The Model Drafts For Itself"
+        },
+        {
+          "id": "e1afd54a-e31f-4099-8624-1503585831c3",
+          "body": "Figures are from NVIDIA's published benchmarks for the 8B variant.",
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Metric",
+              "Nemotron-Labs-Diffusion-8B",
+              "Qwen3-8B"
+            ],
+            "rows": [
+              [
+                "Tokens decoded per forward pass",
+                "~5.9x more",
+                "1x (baseline)"
+              ],
+              [
+                "GSM8K accuracy",
+                "~93.8%",
+                "strong AR baseline"
+              ],
+              [
+                "Throughput on SPEED-Bench (GB200, SGLang)",
+                "~4x higher",
+                "1x (baseline)"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Tri-Mode vs. a Fixed-Decoder Baseline"
+        },
+        {
+          "id": "e8833bda-d36f-4bd5-8c78-86679179d547",
+          "body": null,
+          "bullets": [
+            "Drafting boilerplate or long lists: switch to DLM mode and get several tokens committed per step.",
+            "Final correctness-critical output, like the code being committed: fall back to AR mode for maximum reliability.",
+            "Interactive chat under latency pressure: use Linear Spec mode to get AR-level quality at a fraction of the forward passes, since the diffusion draft is usually right and only needs verification."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "example",
+          "title": "A Coding Agent Picks Its Mode Per Task"
+        },
+        {
+          "id": "ccca6586-19dd-491a-bf70-d29f39f8b5a6",
+          "body": null,
+          "bullets": [
+            "DLM's confidence-thresholded unmasking can commit to a wrong token early in a block and never revisit it, unlike AR's strictly left-to-right correction.",
+            "Self-speculation only pays off when the draft's acceptance rate is high; on unpredictable text (novel code, obscure facts) the AR pass ends up verifying almost every token, erasing the speedup.",
+            "Switching modes isn't a free 'always faster' button — it's a knob teams still have to tune per workload."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "concept",
+          "title": "Where the Tri-Mode Trick Falls Short"
+        },
+        {
+          "id": "51f18c50-b784-4fe5-9d47-8a4ae3ea0d18",
+          "body": null,
+          "bullets": [
+            "One set of weights, three decoding modes: AR for quality, block-diffusion (DLM) for throughput, Linear Spec for AR-quality at diffusion-speed.",
+            "The trick is a shared KV cache: the diffusion pass drafts, the AR pass verifies — no second model to maintain.",
+            "Reported gains: ~5.9x more tokens per forward pass and ~4x higher throughput than Qwen3-8B on GB200, at comparable or better accuracy on math benchmarks."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2c0580c7-e800-4d18-8dae-da0f6a962894",
+            "explanation": "Unlike classic speculative decoding, Linear Spec self-speculates: the same model drafts (in diffusion mode) and verifies (in AR mode) via a shared KV cache, so there's no second model to train or maintain.",
+            "prompt": "What does Nemotron-Labs-Diffusion's 'Linear Spec' mode actually do?",
+            "options": [
+              "Trains a smaller separate draft model to propose tokens",
+              "Uses the same weights in diffusion mode to draft a block, then verifies it with an AR pass sharing the same KV cache",
+              "Runs two independent full autoregressive passes and picks the faster one",
+              "Skips verification entirely and always accepts the diffusion draft"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "276305c5-92ae-4439-8b34-deaad4e3132a",
+            "explanation": "DLM commits first to the tokens it's most confident about; if that early commitment is wrong, there's no left-to-right correction like standard AR decoding provides.",
+            "prompt": "Why does DLM (block-diffusion) mode risk lower quality than AR decoding?",
+            "options": [
+              "It uses fewer parameters than the AR pass",
+              "Confidence-thresholded unmasking can lock in a wrong token early in a block without revisiting it",
+              "It can only generate one token at a time",
+              "It doesn't use a KV cache at all"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "848ef523-fa19-4451-9dc1-420f997f099d",
+            "explanation": "Self-speculation's speedup comes from the AR pass accepting most of the diffusion draft. On unpredictable text, acceptance rate drops and the model ends up doing nearly as much verification work as plain AR decoding.",
+            "prompt": "When does self-speculative decoding stop paying off?",
+            "options": [
+              "When the text is highly predictable, like boilerplate",
+              "When the draft's acceptance rate is high",
+              "When the output is very unpredictable, so the AR pass has to correct most of the draft's tokens",
+              "When running on a GPU"
+            ],
+            "correctIndex": 2
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "325b7a7b-b12e-4549-87d9-ccbc101bb8c5",
+          "title": "Nemotron-Labs-Diffusion (NVlabs, GitHub)",
+          "url": "https://github.com/NVlabs/Nemotron-Labs-Diffusion"
+        },
+        {
+          "id": "31f6cc46-1066-42a5-902a-95cfa796f9a1",
+          "title": "NVIDIA AI Releases Nemotron-Labs-Diffusion (MarkTechPost)",
+          "url": "https://www.marktechpost.com/2026/05/20/nvidia-ai-releases-nemotron-labs-diffusion-a-tri-mode-language-model-with-6x-tokens-per-forward-over-qwen3-8b/"
+        }
+      ]
+    },
+    {
+      "id": "23032a1b-dc7c-4ceb-adca-e56fddb1776e",
+      "publishedDate": "2026-07-09T00:42:25Z",
+      "title": "Grok 4.5: xAI's Opus-Class Model, Trained With Cursor",
+      "subtitle": "SpaceXAI's 1.5T-parameter V9 model splits benchmarks with Claude Opus 4.8 — and undercuts it hard on price.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "grok",
+        "xai",
+        "llm release",
+        "coding models",
+        "benchmarks"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "xAI, now operating under the SpaceXAI brand, shipped Grok 4.5 on July 8-9, 2026: a 1.5-trillion-parameter mixture-of-experts model built on its new V9 foundation, trained in part on Cursor coding-session data. It beats Claude Opus 4.8 on two coding benchmarks and trails it on two others, but ships at a fraction of the price.",
+      "slides": [
+        {
+          "id": "884daf59-bba3-4633-a4f8-c4f6c4428655",
+          "body": "Elon Musk confirmed the public release on July 8 after 'strong positive feedback' from xAI's beta program — a day ahead of the original plan.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "xAI Ships Grok 4.5, Built on a New 1.5T-Parameter Foundation"
+        },
+        {
+          "id": "50fa0960-8180-4c15-b77e-6a584695c1ea",
+          "body": null,
+          "bullets": [
+            "Grok's earlier models lagged behind Claude and GPT on agentic coding benchmarks, its weakest category against competitors.",
+            "SpaceX's $60B acquisition of Cursor's parent company gave xAI something it didn't have before: real developer session data at scale.",
+            "Grok 4.5 is the first model trained jointly with that Cursor data, aimed squarely at closing the coding gap."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "problem",
+          "title": "Why This Release Matters: Grok Needed a Coding Story"
+        },
+        {
+          "id": "8bdebeb3-a884-409d-bcd7-84528d5284b4",
+          "body": null,
+          "bullets": [
+            "V9 is a mixture-of-experts foundation model at roughly 1.5 trillion parameters — about 3x the scale of the V8-small architecture behind Grok 4.3.",
+            "Trained on Blackwell-generation GPUs via xAI's Colossus cluster.",
+            "Training data included trillions of tokens of real Cursor IDE session data, capturing how developers actually interact with codebases and tools — not just static code corpora."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "architecture",
+          "title": "V9: A Ground-Up Redesign, Not a Fine-Tune"
+        },
+        {
+          "id": "17ac177f-5f3c-4c2d-9040-2301ce43f0d6",
+          "body": "Benchmark figures as reported by xAI and independent coverage at launch.",
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Grok 4.5",
+              "Claude Opus 4.8"
+            ],
+            "rows": [
+              [
+                "DeepSWE 1.0",
+                "62.0%",
+                "55.75%"
+              ],
+              [
+                "Terminal-Bench 2.1",
+                "83.3%",
+                "78.9%"
+              ],
+              [
+                "DeepSWE 1.1",
+                "53%",
+                "59%"
+              ],
+              [
+                "SWE-Bench Pro",
+                "64.7%",
+                "69.2%"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Split Decision Against Claude Opus 4.8"
+        },
+        {
+          "id": "fdce7d95-350c-4c09-b2b2-8ea9fd4a4de9",
+          "body": null,
+          "bullets": [
+            "Available immediately outside the EU: in Grok Build as the default model, inside Cursor on all plans, and via the SpaceXAI API console.",
+            "EU availability is delayed to mid-July pending regulatory review.",
+            "API pricing: $2 per million input tokens, $6 per million output tokens — positioned as sharply cheaper than comparable frontier models."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "example",
+          "title": "Where It Ships on Day One"
+        },
+        {
+          "id": "bba3eebe-18b2-4cbf-9fda-c7f492e7409b",
+          "body": null,
+          "bullets": [
+            "Grok 4.5 wins 2 of 4 headline coding benchmarks against Opus 4.8 and loses the other 2 — a lateral move, not a clean state-of-the-art claim.",
+            "Musk described it as an 'Opus-class model, but faster, more token-efficient, and lower cost' — a positioning statement about class parity, not a benchmark sweep win.",
+            "Heavy reliance on Cursor-specific training data raises the question of whether the coding gains generalize beyond Cursor's own IDE workflows."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "concept",
+          "title": "A Faster, Cheaper Model — Not a Strictly Better One"
+        },
+        {
+          "id": "7887e048-61f8-4fab-8d44-6bccbb948426",
+          "body": null,
+          "bullets": [
+            "Grok 4.5 runs on V9, a new 1.5T-parameter MoE foundation trained partly on Cursor developer-session data — xAI's first real bet on proprietary coding telemetry.",
+            "It splits four major coding benchmarks with Claude Opus 4.8: ahead on DeepSWE 1.0 and Terminal-Bench 2.1, behind on DeepSWE 1.1 and SWE-Bench Pro.",
+            "The real pitch is economics — $2/$6 per million tokens and higher throughput — not an outright quality crown."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "eb73c3ee-9a59-47f1-a129-c9d3e1d22766",
+            "explanation": "The $60B Cursor acquisition gave xAI access to real developer session data, which it used to supplement Grok 4.5's training specifically to improve coding and agentic performance.",
+            "prompt": "What primarily differentiates Grok 4.5's training from earlier Grok releases?",
+            "options": [
+              "It was trained entirely on synthetic data",
+              "It incorporated real Cursor IDE developer-session data at scale, following SpaceX's acquisition of Cursor's parent company",
+              "It removed all coding-related training data",
+              "It was trained without any GPUs"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "1f737e94-8549-4189-92d2-81e95dc9d1ca",
+            "explanation": "Public benchmark numbers show a mixed result: Grok 4.5 leads on DeepSWE 1.0 and Terminal-Bench 2.1 but trails on DeepSWE 1.1 and SWE-Bench Pro — a lateral move rather than a clean win.",
+            "prompt": "How does Grok 4.5 compare to Claude Opus 4.8 on coding benchmarks?",
+            "options": [
+              "It beats Opus 4.8 on all four headline benchmarks",
+              "It loses to Opus 4.8 on all four headline benchmarks",
+              "It's a split decision — ahead on two benchmarks (DeepSWE 1.0, Terminal-Bench 2.1), behind on two others (DeepSWE 1.1, SWE-Bench Pro)",
+              "The two models were never benchmarked against each other"
+            ],
+            "correctIndex": 2
+          },
+          {
+            "id": "2b39ea7c-acf1-4385-a2d5-4aa6d06d58d3",
+            "explanation": "At $2/$6 per million tokens with higher throughput, xAI is positioning Grok 4.5 as the cost-efficient choice rather than an outright benchmark leader.",
+            "prompt": "What is xAI's main pitch for Grok 4.5 beyond raw benchmark scores?",
+            "options": [
+              "It is the only model that supports coding at all",
+              "Cost and throughput — it's priced well below comparable frontier models while running faster",
+              "It has no API access, only a consumer chat app",
+              "It was trained without any human feedback"
+            ],
+            "correctIndex": 1
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "ad26dc3c-597e-46d8-9b36-9615e7b2e8a9",
+          "title": "Introducing Grok 4.5 (xAI/SpaceXAI official announcement)",
+          "url": "https://x.ai/news/grok-4-5"
+        },
+        {
+          "id": "a753fc4c-b0bf-4af8-8ba1-aa5e9dd11033",
+          "title": "Introducing Grok 4.5 (Cursor blog)",
+          "url": "https://cursor.com/blog/grok-4-5"
+        }
+      ]
+    },
+    {
+      "id": "5fcc115d-89ac-4ae5-af33-116834ca584a",
+      "publishedDate": "2026-07-09T00:42:25Z",
+      "title": "KV Cache Quantization: More Context, Same VRAM",
+      "subtitle": "Compressing the key-value cache to 8 or 4 bits lets you serve longer context and bigger batches on the same GPU.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "kv cache",
+        "quantization",
+        "inference optimization",
+        "llm serving",
+        "memory"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "The KV cache — not the model weights — is what usually caps how much context and how many concurrent requests a GPU can serve. Quantizing it to INT8 or INT4 can cut its memory footprint 2-4x, but keys and values behave differently under quantization, and pushing too far causes an accuracy cliff.",
+      "slides": [
+        {
+          "id": "396c423e-62a7-47fc-ac2b-b41a262b4810",
+          "body": "At long context and high concurrency, the memory used to cache past keys and values dwarfs the model weights themselves — quantizing that cache is one of the highest-leverage tricks in LLM serving.",
+          "bullets": [],
+          "symbol": "memorychip.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "The KV Cache, Not the Weights, Is What Runs Out of Memory"
+        },
+        {
+          "id": "34157703-1429-41d7-ac63-e5bdd7e5585f",
+          "body": null,
+          "bullets": [
+            "Cache size scales with 2 x layers x KV heads x head_dim x 2 bytes (FP16) x sequence length x batch size — it grows LINEARLY with both context length and batch size, unlike the fixed cost of the weights.",
+            "A model with 32 layers, 8 KV heads, and head_dim 128 needs roughly 1MB of KV cache per token in FP16; at 128K context that's over 130GB for a single sequence before any optimization.",
+            "Because the cache — not raw compute — is usually the binding constraint, it directly limits how many requests a server can batch together, which is what determines real-world throughput."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "problem",
+          "title": "Why the KV Cache Explodes at Long Context"
+        },
+        {
+          "id": "5c31e6c5-e12a-4d83-8c5a-a7a4935e024d",
+          "body": null,
+          "bullets": [
+            "Store cached keys and values as INT8 or INT4 with a scale (and sometimes a zero-point) per group of channels, instead of full FP16 — attention dequantizes on the fly before the dot product.",
+            "This is independent of weight quantization: a model can run its weights in FP16/BF16 while its KV cache runs in INT8, since the cache is just stored activations, not learned parameters.",
+            "Widely supported in production serving stacks (vLLM, TensorRT-LLM) as an opt-in flag, not a retraining step."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "solution",
+          "title": "Quantize the Cache Instead of Just the Weights"
+        },
+        {
+          "id": "112d153e-4fd3-4842-abce-f033ce87e0c2",
+          "body": null,
+          "bullets": [
+            "Key vectors have large outlier channels — a few dimensions with much bigger magnitude than the rest — so per-channel scaling (a separate scale per dimension) preserves accuracy far better than one scale for the whole vector.",
+            "Value vectors are comparatively smooth across channels but vary more token-to-token, so per-token scaling fits them better.",
+            "This asymmetric key/value treatment (channel-wise for keys, token-wise for values) is the core idea behind tuning-free methods like KIVI, and is why naively quantizing both the same way underperforms."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "architecture",
+          "title": "Keys and Values Don't Quantize the Same Way"
+        },
+        {
+          "id": "9df3f7cc-df94-4583-90d0-d77a380224e9",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Precision",
+              "Relative KV Memory",
+              "Typical Quality Impact"
+            ],
+            "rows": [
+              [
+                "FP16 (baseline)",
+                "1x",
+                "None"
+              ],
+              [
+                "INT8 (per-channel/per-token)",
+                "~0.5x",
+                "Usually near-lossless"
+              ],
+              [
+                "INT4 (asymmetric, e.g. KIVI-style)",
+                "~0.25x",
+                "Small but measurable perplexity/accuracy drop"
+              ],
+              [
+                "INT2 (naive)",
+                "~0.125x",
+                "Often a sharp accuracy cliff"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Precision vs. Memory vs. Quality"
+        },
+        {
+          "id": "9604ceb0-4279-499d-b500-d1639afa7d7e",
+          "body": null,
+          "bullets": [
+            "Serving a 70B-class model at 128K context per request: an FP16 KV cache alone can run tens of gigabytes per sequence, capping you to single-digit concurrent long-context requests per GPU.",
+            "Dropping the cache to INT8 roughly halves that footprint, which can double the number of concurrent long-context sessions a GPU can hold — without touching the model weights.",
+            "Teams often combine this with GQA/MQA (fewer KV heads) AND cache quantization together, since the two savings multiply rather than overlap."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "example",
+          "title": "Sizing a Long-Context Deployment"
+        },
+        {
+          "id": "e624632f-2556-4f5f-a965-cda65ad3768e",
+          "body": null,
+          "bullets": [
+            "Push below INT4 without careful per-channel handling and certain attention heads — often ones tracking rare or long-range dependencies — degrade sharply while aggregate benchmarks still look fine.",
+            "Quantizing and dequantizing on every attention step adds a small compute/latency overhead, so on short-context, low-batch workloads (where memory was never the bottleneck) it can be a net loss.",
+            "Not every serving framework applies the key/value asymmetry correctly — a 'just quantize both to INT8 uniformly' implementation gives up most of the achievable quality."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "concept",
+          "title": "Where This Breaks Down"
+        },
+        {
+          "id": "87ac6f79-6e0b-4b28-881a-f4f49d0caabf",
+          "body": null,
+          "bullets": [
+            "The KV cache, not the weights, is usually what caps context length and batch size in production LLM serving.",
+            "INT8 cache quantization is close to a free lunch (near-lossless, ~2x memory savings); INT4 needs asymmetric per-channel (keys) vs per-token (values) scaling to avoid an accuracy cliff.",
+            "It composes with architectural cache reductions like GQA/MLA — quantize AND shrink the number of cached heads for compounding savings."
+          ],
+          "symbol": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "bfe0630e-af63-4c87-963e-ba8ad52e3610",
+            "explanation": "Weight memory is constant no matter how long the input is or how many requests you batch. The KV cache grows with both, so at long context or high concurrency it quickly dwarfs the weights.",
+            "prompt": "What makes the KV cache the binding memory constraint at long context, rather than the model weights?",
+            "options": [
+              "The weights double in size at long context",
+              "KV cache size scales linearly with both sequence length and batch size, while weight memory is fixed regardless of context or batch",
+              "The KV cache is always stored on a separate, smaller GPU",
+              "Model weights are deleted once inference starts"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "4f0afae7-453f-4083-8f39-38967b8dd840",
+            "explanation": "Key vectors have outlier dimensions that need their own scale factor (per-channel), while value vectors are smoother across channels but shift more from token to token — so per-token scaling fits them better. Methods like KIVI exploit this asymmetry.",
+            "prompt": "Why do keys and values typically use different quantization schemes?",
+            "options": [
+              "Values are never quantized",
+              "Keys have large outlier channels best handled with per-channel scaling, while values vary more per-token and suit per-token scaling",
+              "Keys are always stored in FP32 for legal reasons",
+              "There's no difference; both are always quantized identically in practice"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "d08233eb-8df7-42cc-a5d5-1a985985a22b",
+            "explanation": "Aggregate metrics can mask localized damage — specific heads handling rare or long-range signal are often the first to break down, which is why aggressive low-bit quantization needs careful, often per-channel, handling.",
+            "prompt": "What's the main pitfall of pushing KV cache quantization to very low bit-widths (e.g., INT2) naively?",
+            "options": [
+              "It always makes inference slower with no memory benefit",
+              "Certain attention heads tracking rare or long-range dependencies can degrade sharply even when aggregate benchmark scores look fine",
+              "It becomes incompatible with GPUs entirely",
+              "It requires full model retraining"
+            ],
+            "correctIndex": 1
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "Why a Better Training Reward Can Still Ship a Worse Model",
       "subtitle": "Tianjin University and Alibaba show LLM RL can optimize the wrong policy entirely — and fix it with an inference-aware update rule.",
       "category": "AI Innovations",
@@ -10917,566 +11479,6 @@
       ],
       "id": "9b05d7cc-d22b-448a-8e7d-25c3f043f568",
       "publishedDate": "2026-07-02T18:38:49Z"
-    },
-    {
-      "title": "Claude Fable 5: Anthropic's Mythos-Class Model Goes Public",
-      "subtitle": "The safeguarded flagship tier finally ships to everyone, with SWE-Bench Pro at 80.3%",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "claude",
-        "anthropic",
-        "model-release",
-        "swe-bench",
-        "frontier-models"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "sparkles",
-      "summary": "On July 1, 2026, Anthropic made Claude Fable 5 generally available — the first public release from its more capable 'Mythos-class' tier, alongside a restricted sibling, Claude Mythos 5, for vetted cyber-defense use. Fable 5 posts state-of-the-art results across coding, knowledge work, and document reasoning, while routing a small fraction of sensitive queries to Opus 4.8 as a safety measure.",
-      "slides": [
-        {
-          "id": "b8c7c2d8-054e-4070-9f12-2577622ddafd",
-          "kind": "cover",
-          "title": "A New Tier Above Opus, Finally Public",
-          "body": "Anthropic has run a more powerful 'Mythos-class' model internally and under export controls since June. On July 1, the safeguarded public version — Claude Fable 5 — opened up to everyone.",
-          "bullets": [],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "9ba7e181-17f3-4f86-841f-555685f45d56",
-          "kind": "problem",
-          "title": "Why It Wasn't Available Sooner",
-          "body": "Mythos-class models were held back by a US export-control order issued in mid-June, which pulled the model family offline for roughly three weeks before restrictions were lifted on June 30.",
-          "bullets": [
-            "Claude Mythos 5 — the same underlying model with more safeguards lifted — stays restricted to a small group of vetted cyber-defenders and infrastructure providers",
-            "Claude Fable 5 is the generally-available sibling: same capability tier, extra guardrails for the public API and Claude.ai",
-            "This two-tier release pattern (broad model + restricted sibling) is new territory for how frontier labs ship their most capable systems"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "16de4530-2012-4871-b159-35e7bacfeff7",
-          "kind": "solution",
-          "title": "What Actually Shipped",
-          "body": "Fable 5 is available across the Claude Platform, Claude.ai, Claude Code, and Claude Cowork, positioned as Anthropic's most capable generally-available model to date.",
-          "bullets": [
-            "Software engineering, knowledge work, vision, and scientific-research tasks all see meaningful jumps over Opus 4.8",
-            "Pro, Max, Team, and select Enterprise plans got Fable 5 at up to 50% of weekly usage limits through July 7, then usage-credit pricing after",
-            "Safety routing: queries on certain sensitive topics are silently redirected to Opus 4.8 instead of Fable 5, triggering in under 5% of sessions"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "3b737c0b-b407-4808-bfb0-a1c178553418",
-          "kind": "comparison",
-          "title": "Fable 5 vs. the Field",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Claude Fable 5",
-              "Claude Opus 4.8",
-              "GPT-5.5"
-            ],
-            "rows": [
-              [
-                "SWE-Bench Pro",
-                "80.3%",
-                "—",
-                "58.6%"
-              ],
-              [
-                "FrontierCode Diamond",
-                "29.3%",
-                "13.4%",
-                "5.7%"
-              ],
-              [
-                "GDPval-AA (knowledge work)",
-                "1932",
-                "1890",
-                "1769"
-              ],
-              [
-                "GDPpdf (document reasoning, no tools)",
-                "29.8%",
-                "22.5%",
-                "24.9%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "f7eba8cb-08b5-4232-9b51-7244b642f7eb",
-          "kind": "example",
-          "title": "Where the Gain Shows Up Day-to-Day",
-          "body": "Anthropic's own comparison highlights everyday spreadsheet work, not just headline coding benchmarks.",
-          "bullets": [
-            "Fable 5 beats Opus 4.8 on spreadsheet tasks at every effort level tested",
-            "It does so in fewer turns — finishing runs 25-30% faster than Opus 4.8 on the same tasks",
-            "Combined with the SWE-Bench Pro jump, the pitch is less 'smarter' and more 'finishes real multi-step work with fewer retries'"
-          ],
-          "symbol": "tablecells",
-          "table": null
-        },
-        {
-          "id": "f00203cb-1d45-4b59-8a6b-46128007e82b",
-          "kind": "concept",
-          "title": "Trade-offs and Open Questions",
-          "body": "A safeguarded public tier plus a restricted sibling model is a genuinely new distribution pattern, and it comes with caveats worth tracking.",
-          "bullets": [
-            "Export-control exposure: the model was pulled offline once already; availability isn't guaranteed to be stable long-term",
-            "Safety routing means the model you get is sometimes silently swapped to Opus 4.8 — behavior can vary run to run on sensitive prompts",
-            "Promotional usage limits (50% of weekly cap through July 7) are temporary; budget for standard usage-credit pricing after",
-            "Benchmark numbers above come from Anthropic's own release plus independent outlets — treat exact percentages as vendor-reported until third-party evals catch up"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "6dcf408a-e588-40be-a53a-78b83d641b47",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Claude Fable 5 is Anthropic's first generally-available model from its Mythos-class tier, live since July 1, 2026",
-            "It leads on SWE-Bench Pro (80.3% vs. GPT-5.5's 58.6%) and several knowledge-work and document-reasoning benchmarks",
-            "A more capable sibling, Mythos 5, stays restricted to vetted cyber-defense use — capability and access are now being split, not just capability tiers",
-            "Try it via Claude Code, Claude.ai, or the Claude Platform API; expect occasional silent routing to Opus 4.8 on sensitive queries"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "be704f5a-509e-4498-8149-7bc35040ba60",
-            "prompt": "What distinguishes Claude Mythos 5 from Claude Fable 5?",
-            "options": [
-              "Mythos 5 is an older, smaller model",
-              "They're unrelated models from different training runs",
-              "Same underlying Mythos-class model, but Mythos 5 has more safeguards lifted and stays restricted to vetted cyber-defense use",
-              "Fable 5 is text-only while Mythos 5 adds vision"
-            ],
-            "correctIndex": 2,
-            "explanation": "Fable 5 and Mythos 5 share the same capability tier; Mythos 5 is the less-restricted variant limited to a small vetted group rather than the general public."
-          },
-          {
-            "id": "76cf7e77-d718-40d4-837d-cbf80aea2fe4",
-            "prompt": "On SWE-Bench Pro, roughly how much higher did Claude Fable 5 score than GPT-5.5?",
-            "options": [
-              "About 2 points higher",
-              "Roughly 22 points higher (80.3% vs 58.6%)",
-              "They scored identically",
-              "GPT-5.5 scored higher"
-            ],
-            "correctIndex": 1,
-            "explanation": "Fable 5 reached 80.3% versus GPT-5.5's 58.6% on SWE-Bench Pro — a large gap on this software-engineering benchmark, per Anthropic's release comparison."
-          },
-          {
-            "id": "3b4299c2-6938-4097-8d15-860d76fce111",
-            "prompt": "What safety mechanism does Anthropic use with Fable 5's public deployment?",
-            "options": [
-              "It refuses all sensitive queries outright",
-              "It silently routes some sensitive-topic queries to Claude Opus 4.8 instead, in under 5% of sessions",
-              "It requires manual human approval for every response",
-              "It disables tool use for all users"
-            ],
-            "correctIndex": 1,
-            "explanation": "Rather than a hard refusal, Fable 5 routes a small fraction of queries on sensitive topics to Opus 4.8 — a behind-the-scenes swap that triggers in less than 5% of sessions."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "fcdd7adc-10ad-459c-beb9-93f6ee494554",
-          "title": "Claude Fable 5 and Claude Mythos 5 — Anthropic",
-          "url": "https://www.anthropic.com/news/claude-fable-5-mythos-5"
-        },
-        {
-          "id": "ebda2b71-33a0-4193-826f-85dd484b32c8",
-          "title": "Redeploying Claude Fable 5 — Anthropic",
-          "url": "https://www.anthropic.com/news/redeploying-fable-5"
-        }
-      ],
-      "id": "206b09f9-cddc-49ec-a930-2d15fb94ca19",
-      "publishedDate": "2026-07-02T18:38:49Z"
-    },
-    {
-      "title": "Rotary Positional Embeddings: How LLMs Know Word Order",
-      "subtitle": "RoPE encodes position as a rotation, not an addition — and that's why it extrapolates",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "rope",
-        "positional-encoding",
-        "transformers",
-        "attention",
-        "context-length"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath.circle.fill",
-      "summary": "Attention has no built-in sense of word order — every token looks the same regardless of position unless you tell it otherwise. Rotary Positional Embeddings (RoPE) inject position by rotating query and key vectors, so relative distance falls naturally out of the dot product. It's why most modern open LLMs (LLaMA, Mistral, Qwen) extrapolate to longer contexts far better than older absolute-position schemes.",
-      "slides": [
-        {
-          "id": "3c0d9175-8280-47b6-b9ab-45675616311e",
-          "kind": "cover",
-          "title": "Attention Is Order-Blind by Default",
-          "body": "Self-attention computes a weighted sum over all tokens using dot products. Shuffle the input tokens and, without positional information, you'd get the exact same output — a transformer literally cannot tell 'dog bites man' from 'man bites dog'.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath.circle.fill",
-          "table": null
-        },
-        {
-          "id": "4524abb4-b4d5-40a7-b9d9-c429625dedff",
-          "kind": "problem",
-          "title": "Early Fixes Didn't Generalize",
-          "body": "The original Transformer added fixed sinusoidal position vectors to token embeddings. Later models learned absolute position embeddings from scratch instead.",
-          "bullets": [
-            "Absolute embeddings tie a token's representation to its exact index — position 500 has a totally different vector than position 5,000",
-            "A model trained on 2k-token sequences has never seen a 'position 5,000' embedding at all, so it can't extrapolate past training length",
-            "What actually matters for meaning is usually relative distance between tokens ('3 words apart'), not their absolute index — absolute schemes don't encode that directly"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "7ddbe4c9-a513-4b21-8ee0-788aa0bd7bda",
-          "kind": "solution",
-          "title": "RoPE's Idea: Encode Position as a Rotation",
-          "body": "RoPE (Su et al., 2021) doesn't add a position vector to the embedding. It rotates the query and key vectors by an angle proportional to their position, in pairs of dimensions, before the dot product is taken.",
-          "bullets": [
-            "Each pair of dimensions in Q and K gets rotated by θ·position, where θ varies by dimension pair (like the frequencies in sinusoidal encoding)",
-            "The rotation is applied at attention time, not baked into the token embedding itself",
-            "Crucially, rotating both Q and K means their dot product depends only on the relative rotation — i.e., the distance between the two positions — not on either absolute position"
-          ],
-          "symbol": "arrow.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "2d18b654-1a08-4164-9996-b57c4e90a120",
-          "kind": "architecture",
-          "title": "Why the Rotation Trick Actually Works",
-          "body": "Rotation matrices compose by addition of angles: rotating by θ·m then θ·n is equivalent to a rotation by θ·(m-n) in the dot product. That algebraic property is the whole mechanism.",
-          "bullets": [
-            "query at position m, key at position n → their dot product after rotation is a function of (m − n) alone",
-            "This gives relative position 'for free' out of an operation that only ever sees absolute positions m and n",
-            "No extra parameters are learned — the rotation angles are fixed by a formula, same family as the original sinusoidal scheme"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "b4c43cfe-2fc8-4126-a10b-ef1e781bd602",
-          "kind": "comparison",
-          "title": "Absolute vs. Learned-Relative vs. RoPE",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Scheme",
-              "Encodes",
-              "Extrapolates past training length?"
-            ],
-            "rows": [
-              [
-                "Absolute (learned)",
-                "Exact index",
-                "Poorly — unseen indices have no embedding"
-              ],
-              [
-                "Sinusoidal (original Transformer)",
-                "Exact index, fixed formula",
-                "Somewhat, but attention still position-sensitive in absolute terms"
-              ],
-              [
-                "RoPE",
-                "Relative distance via rotation",
-                "Reasonably, and extendable further with scaling tricks"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "5f58201e-6e0b-46e0-9411-7c304ae414e8",
-          "kind": "example",
-          "title": "Worked Example: A 4,000-Token Prompt on a 2k-Trained Model",
-          "body": "Take a model pretrained with a 2k-token context using RoPE. Feed it a 4,000-token prompt.",
-          "bullets": [
-            "With learned absolute embeddings, tokens past position 2,048 simply have no trained embedding — quality degrades sharply or the model errors out",
-            "With RoPE, the model has still only 'seen' relative distances up to ~2,048 during training, so accuracy still degrades past that — but gracefully, because the mechanism generalizes the same rotation formula to unseen distances",
-            "This gap is exactly why techniques like Position Interpolation and YaRN exist: they rescale RoPE's rotation frequencies so a model trained at 2k can be adapted to 32k+ context with modest fine-tuning"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "4d90b09e-a4cf-40db-8e74-0694e7a86783",
-          "kind": "concept",
-          "title": "Trade-offs and Pitfalls",
-          "body": "RoPE isn't free of downsides, and swapping it in isn't always the right call.",
-          "bullets": [
-            "Raw extrapolation still degrades beyond trained context length — RoPE helps, but doesn't solve long-context for free; scaling methods (YaRN, NTK-aware scaling) are usually still needed",
-            "The rotation is applied per-attention-head at every layer, which is a bit more compute than a one-time embedding addition (though the cost is small in practice)",
-            "For short, fixed-length sequences (e.g., a classifier with a hard 128-token cap), simpler absolute or learned embeddings can be perfectly fine — RoPE's benefit is specifically about relative structure and length generalization"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "d463e5dd-3530-4612-ba91-a161f7263ea2",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Self-attention has no inherent sense of order — position must be injected explicitly, and how you do it shapes how well the model generalizes",
-            "RoPE rotates query/key vectors by an angle proportional to position, so their dot product depends only on relative distance",
-            "That relative-distance property is why LLaMA, Mistral, Qwen, and most modern open LLMs extrapolate to longer contexts better than absolute-position predecessors",
-            "RoPE alone doesn't solve long-context — pair it with scaling techniques like YaRN when you need to push well past the trained length"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "63943727-345d-4f76-ae38-3f83a426a803",
-            "prompt": "Why does raw self-attention need an explicit positional encoding scheme at all?",
-            "options": [
-              "Because attention layers are too slow without it",
-              "Because attention's dot-product weighting is order-blind — shuffling tokens gives the same output without positional info",
-              "Because GPUs can't process sequences in parallel otherwise",
-              "Because the softmax function requires sorted input"
-            ],
-            "correctIndex": 1,
-            "explanation": "Self-attention computes weighted sums over all tokens via dot products; with no positional signal, 'dog bites man' and 'man bites dog' would look identical to the mechanism."
-          },
-          {
-            "id": "27a0e333-8aa1-431e-98a6-f305e3cb079b",
-            "prompt": "What does RoPE actually do to encode position?",
-            "options": [
-              "It adds a learned vector to each token embedding",
-              "It appends a position index as an extra token",
-              "It rotates the query and key vectors by an angle proportional to position before the dot product",
-              "It sorts tokens by position before attention"
-            ],
-            "correctIndex": 2,
-            "explanation": "RoPE rotates Q and K in pairs of dimensions by θ·position. Because rotation angles compose by subtraction, the resulting dot product depends only on relative distance (m − n)."
-          },
-          {
-            "id": "8998c12d-ea25-4c9b-8e61-2487dd31df75",
-            "prompt": "Why do RoPE-based models generally extrapolate to longer contexts better than models with learned absolute position embeddings?",
-            "options": [
-              "RoPE models use more parameters overall",
-              "Learned absolute embeddings have no representation at all for indices past the trained length; RoPE's rotation formula still generalizes to unseen relative distances",
-              "RoPE disables attention for tokens past the trained length",
-              "There's no real difference — both extrapolate equally well"
-            ],
-            "correctIndex": 1,
-            "explanation": "An absolute embedding for position 5,000 simply doesn't exist if training only went to 2,048 — there's nothing to look up. RoPE's rotation is a formula, not a lookup table, so it degrades more gracefully (though scaling tricks like YaRN are still typically needed for large jumps)."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "2ff2449a-c17c-4dd9-92ee-11baea2d801f",
-          "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding (Su et al., 2021)",
-          "url": "https://arxiv.org/abs/2104.09864"
-        }
-      ],
-      "id": "c010bad2-d101-43e9-8c6f-4dfc68ee4691",
-      "publishedDate": "2026-07-02T18:38:49Z"
-    },
-    {
-      "title": "Libra: Fixing the GPU Waste in Agent Training",
-      "subtitle": "A scheduler that stops one slow tool call from stalling 48 GPUs",
-      "category": "AI Agents",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "agentic-rl",
-        "reinforcement-learning",
-        "llm-training",
-        "gpu-scheduling",
-        "research"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Libra is a resource-management system for agentic RL post-training that jointly schedules GPUs across the rollout and training stages. By replacing fragile length-based scheduling with a causality-driven queue and letting GPUs move fluidly between stages, it reports up to 3.0x higher throughput and 2.5x faster reward convergence on a 48-GPU cluster.",
-      "slides": [
-        {
-          "id": "7c0ce85b-bc9e-42a2-b0d3-e0ff905284f4",
-          "symbol": "cpu.fill",
-          "body": "Reinforcement learning has become the standard way to turn a base LLM into a capable agent. A June 2026 paper argues the infrastructure underneath that process is badly underutilized — and shows a fix.",
-          "bullets": [],
-          "table": null,
-          "kind": "cover",
-          "title": "Training an Agent Wastes Most of Its GPUs"
-        },
-        {
-          "id": "51bce7c9-829b-4349-969a-4294ca3e0bdc",
-          "symbol": "exclamationmark.triangle.fill",
-          "body": "In agentic RL, the 'rollout' stage has the model call real tools — search, code execution, browsers — to generate training trajectories. Tool calls don't take a fixed amount of time.",
-          "bullets": [
-            "Rollout workloads are long-tailed: a small fraction of trajectories dominates total rollout time",
-            "Sequence lengths drift continuously as the policy improves, so static length predictions go stale",
-            "Rollout and training stages have different compute, memory, and sequence-length needs, but share the same fixed GPU pool"
-          ],
-          "table": null,
-          "kind": "problem",
-          "title": "One Slow Trajectory Stalls the Whole Batch"
-        },
-        {
-          "id": "731e9522-1304-42f2-870b-62ea7c03b35b",
-          "symbol": "square.split.2x1",
-          "body": "Most agentic RL setups statically partition GPUs between rollout and training. That split can't adapt when rollout suddenly needs more capacity because of a few slow trajectories, or when training temporarily idles waiting on rollout to finish.",
-          "bullets": [
-            "Cross-stage imbalance in compute pattern and memory footprint",
-            "Fixed partitioning can't react to workload drift within a single training run",
-            "The bottleneck isn't the model — it's the scheduler underneath it"
-          ],
-          "table": null,
-          "kind": "concept",
-          "title": "Two Stages, One Rigid GPU Split"
-        },
-        {
-          "id": "cedf9d93-f92b-4770-bd3a-524621d894a5",
-          "symbol": "gearshape.2.fill",
-          "body": "Libra pairs a global resource planner with a new scheduling policy built around cause, not just predicted length.",
-          "bullets": [
-            "Global resource planner jointly optimizes GPU allocation across rollout and training clusters",
-            "An elastic hybrid pool lets workers move between stages without blocking the run",
-            "A causality-driven multilevel feedback queue (C-MLFQ) routes trajectories to fast/slow buckets using signals from actual tool-return outcomes",
-            "That replaces brittle length-prediction heuristics, which break down as the policy — and its outputs — keep changing"
-          ],
-          "table": null,
-          "kind": "solution",
-          "title": "Libra's Two Mechanisms"
-        },
-        {
-          "id": "04a02ce0-f4e8-4a9d-8ba1-a28ad7826721",
-          "symbol": null,
-          "body": null,
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Metric",
-              "Baseline Scheduler",
-              "Libra"
-            ],
-            "rows": [
-              [
-                "Rollout + training throughput",
-                "1x",
-                "Up to 3.0x higher"
-              ],
-              [
-                "Time to reach a target reward",
-                "1x",
-                "Up to 2.5x faster"
-              ],
-              [
-                "GPU allocation between stages",
-                "Static partition",
-                "Elastic, reallocated live"
-              ],
-              [
-                "Trajectory routing signal",
-                "Predicted sequence length",
-                "Causal tool-return outcome"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "The Payoff, on 48 A800 GPUs"
-        },
-        {
-          "id": "b7d2a766-480d-4ca8-9cb2-43dd7c4b2aaa",
-          "symbol": "hammer.fill",
-          "body": "Picture a batch of 256 rollout trajectories where a coding agent triggers a full test suite on 10 of them. Under static, length-based scheduling, the batch waits on those 10 slow test runs before training can start.",
-          "bullets": [
-            "C-MLFQ detects the causal pattern — 'tool call returned late' — and demotes those trajectories to a slow-lane bucket",
-            "Fast trajectories keep flowing into training instead of queuing behind slow ones",
-            "The elastic pool can temporarily hand idle rollout GPUs to the training stage while the slow lane catches up"
-          ],
-          "table": null,
-          "kind": "example",
-          "title": "Why a Coding Agent Benefits Most"
-        },
-        {
-          "id": "86a8cbcd-ef72-4348-99fb-569fc6a9a097",
-          "symbol": "checklist",
-          "body": null,
-          "bullets": [
-            "Agentic RL's real bottleneck is often GPU scheduling, not model architecture",
-            "Static rollout/training GPU splits can't react to workload drift as the policy evolves",
-            "Libra routes work by causal signals (why a trajectory is slow) instead of fragile length predictions",
-            "Reported gains: up to 3.0x throughput and 2.5x faster convergence on 48 A800 GPUs"
-          ],
-          "table": null,
-          "kind": "takeaways",
-          "title": "Takeaways"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "d7b94ff6-dba8-46d5-9548-d4a8225c0aeb",
-            "prompt": "What specific problem does Libra target in agentic RL post-training?",
-            "options": [
-              "Poor tokenizer efficiency",
-              "GPU scheduling imbalance between the rollout and training stages",
-              "A lack of labeled training data",
-              "Slow gradient descent convergence in supervised fine-tuning"
-            ],
-            "correctIndex": 1,
-            "explanation": "Libra is a resource-management system: it targets the mismatch in compute, memory, and timing needs between the rollout stage (tool-calling trajectory generation) and the training stage, which share a fixed GPU pool in most setups."
-          },
-          {
-            "id": "321f7c0d-ce1f-4337-985f-e89a12c82ea8",
-            "prompt": "Why does Libra avoid scheduling trajectories by predicted sequence length?",
-            "options": [
-              "Sequence length is impossible to measure",
-              "Length predictions go stale because sequence-length distribution drifts as the policy evolves during training",
-              "Length-based scheduling is illegal under most cluster policies",
-              "GPUs cannot process variable-length sequences"
-            ],
-            "correctIndex": 1,
-            "explanation": "As the policy being trained changes, so does the distribution of trajectory lengths it produces — a length predictor calibrated early in training becomes unreliable later, which is why Libra's C-MLFQ scheduler instead uses causal signals from tool-return outcomes."
-          },
-          {
-            "id": "871f1687-9ddb-41ab-86de-3823c47b6e02",
-            "prompt": "On a 48 A800 GPU cluster, what throughput and convergence gains does the paper report for Libra versus baseline schedulers?",
-            "options": [
-              "1.2x throughput, no change in convergence speed",
-              "Up to 3.0x higher throughput and up to 2.5x faster reward convergence",
-              "10x throughput but slower convergence",
-              "No measurable throughput change, only lower memory usage"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper reports up to 3.0x higher throughput and up to 2.5x faster convergence in reward compared to baseline schedulers, evaluated on a 48 A800 GPU cluster."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "ff28d8bc-ba92-4c1d-ad73-e4bd9295635d",
-          "title": "Libra: Efficient Resource Management for Agentic RL Post-Training (arXiv:2606.03077)",
-          "url": "https://arxiv.org/abs/2606.03077"
-        }
-      ],
-      "id": "00accd1c-be57-4c63-bebe-f6fbaef39905",
-      "publishedDate": "2026-07-02T13:00:09Z"
     }
   ]
 }
