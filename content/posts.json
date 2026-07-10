@@ -1,6 +1,220 @@
 {
   "posts": [
     {
+      "id": "ae0d024b-cb94-43f1-a73a-c40f6f59e9a9",
+      "title": "LoRA: Fine-Tuning a 70B Model by Training 0.1% of It",
+      "subtitle": "Freeze the base weights, learn two skinny matrices, and merge them back in for free at inference.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "peft",
+        "quantization",
+        "qlora"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.on.rectangle",
+      "summary": "LoRA freezes a pretrained model's weights and injects a trainable low-rank update (two small matrices, B and A) into each target layer instead of updating every parameter. The original paper reports up to a 10,000x cut in trainable parameters and 3x less GPU memory versus full fine-tuning GPT-3 175B — and because the update can be merged back into the base weights, it adds zero inference latency. QLoRA extends the trick to 4-bit-quantized base models, making 65B-class fine-tuning possible on a single GPU.",
+      "slides": [
+        {
+          "id": "3c7cdb9f-da6d-4d95-adc5-79b4eb9fa319",
+          "kind": "cover",
+          "title": "Full Fine-Tuning Doesn't Scale",
+          "body": "Fine-tuning every parameter of a large model means storing a full second copy of the weights plus Adam's momentum and variance terms — often 3-4x the model's own size in optimizer state alone.",
+          "bullets": [
+            "A 70B model in fp16 is ~140GB of weights before you even add gradients or optimizer state",
+            "Every downstream task traditionally meant its own full-size checkpoint",
+            "LoRA asks: what if we froze the base model and only trained a tiny update?"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "4d28906f-f6f4-4813-aaba-3056990f3486",
+          "kind": "problem",
+          "title": "Earlier Fixes Were Slow or Shallow",
+          "body": "Before LoRA, the two dominant lightweight fine-tuning tricks each traded away something important.",
+          "bullets": [
+            "Adapter layers (Houlsby et al., 2019) insert small bottleneck layers into the forward pass — cheap to train, but they add sequential compute, so every inference call gets slower",
+            "Prompt/prefix tuning trains a soft prompt prepended to the input — near-zero parameters, but it eats into your context window and often underperforms on smaller base models",
+            "Neither approach lets you get back to a model that's architecturally identical to the original at inference time"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "34ccc216-21ee-405a-93d0-bb43a44d1b04",
+          "kind": "solution",
+          "title": "Freeze the Weights, Learn a Low-Rank Update",
+          "body": "LoRA (Hu et al., 2021) freezes the pretrained weight matrix W0 and represents the fine-tuning update as a product of two small matrices: ΔW = B · A.",
+          "bullets": [
+            "W0 is d×k; B is d×r and A is r×k, where the rank r (commonly 4-64) is far smaller than d or k",
+            "Only B and A are trained — W0 never receives a gradient update",
+            "Applied mainly to the attention projection matrices (query and value); the paper's GPT-3 experiments needed as little as r=1 or r=2 on some tasks to match full fine-tuning"
+          ],
+          "symbol": "square.stack.3d.down.forward.fill",
+          "table": null
+        },
+        {
+          "id": "2aca7429-0a9b-47f1-a00d-0a18932a8152",
+          "kind": "concept",
+          "title": "The Merge Trick: Zero Extra Inference Cost",
+          "body": "Because ΔW = B·A has the exact same shape as W0, you can just add them together once training is done.",
+          "bullets": [
+            "W' = W0 + B·A — a single matrix addition, computed once, folded back into the base model",
+            "The served model has the identical architecture and identical latency as the original — unlike adapter layers, LoRA adds nothing to the forward pass",
+            "Keep B and A separate instead of merging, and you can hot-swap tiny per-task adapters (often tens of MB) against one shared frozen base — the trick modern multi-tenant LoRA-serving systems rely on"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "f98a6f7d-b5c2-4641-9b4d-40b76924056d",
+          "kind": "example",
+          "title": "Worked Example: A 7B Support-Bot Fine-Tune",
+          "body": "Turning a general 7B chat model into a customer-support specialist.",
+          "bullets": [
+            "Full fine-tuning: update all ~7B params, store fp32 Adam momentum + variance for each — memory footprint balloons to several times the base weights, usually forcing multi-GPU training",
+            "LoRA at rank 16 on the query/value projections across every transformer block: trainable parameters land around a few million — well under 1% of the 7B total",
+            "Result: training fits on a single high-memory consumer GPU, and the saved adapter is tens of MB instead of the ~14GB fp16 checkpoint a full fine-tune would produce"
+          ],
+          "symbol": "person.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "74b887f0-fb98-43fa-b9a6-4b4806811dc8",
+          "kind": "comparison",
+          "title": "LoRA vs. the Alternatives",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Method",
+              "Trainable Params",
+              "Adds Inference Latency?",
+              "Notes"
+            ],
+            "rows": [
+              [
+                "Full fine-tuning",
+                "100%",
+                "No",
+                "Best ceiling, most memory/compute to train"
+              ],
+              [
+                "Adapter layers",
+                "~2-4%",
+                "Yes — extra sequential layers",
+                "Cheap to train, slower to serve"
+              ],
+              [
+                "Prompt/prefix tuning",
+                "<0.1%",
+                "Slight — longer effective sequence",
+                "Weak on smaller base models"
+              ],
+              [
+                "LoRA",
+                "~0.1-1%",
+                "No — merges back into W0",
+                "Sweet spot: cheap to train, free to serve"
+              ],
+              [
+                "QLoRA",
+                "Same as LoRA, on a 4-bit frozen base",
+                "No — merges after dequant",
+                "Fits 65B-class fine-tunes on one 48GB GPU"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "a944ce09-0f5b-48dd-a20d-a3d4be9e5c39",
+          "kind": "takeaways",
+          "title": "Tradeoffs and When Not to Use It",
+          "body": "LoRA is not a free lunch — it trades ceiling for efficiency.",
+          "bullets": [
+            "Too low a rank underfits tasks that need substantial new knowledge (a new language, a large factual domain) — those often still need full fine-tuning or a larger rank",
+            "LoRA only reduces training cost, not inference compute — the merged model runs at exactly the same FLOPs as the dense base model",
+            "QLoRA's 4-bit base adds a small quantization-error floor and dequantization overhead during training versus full 16-bit LoRA — the tradeoff for fitting a much bigger model on one GPU",
+            "It can't add new vocabulary or architectural capacity — if the task needs a bigger tokenizer or new layers, LoRA can't help"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "ddcb94f6-6dad-4844-acef-0921b2e67d99",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "LoRA freezes the pretrained weights and learns a low-rank update ΔW = B·A instead of updating every parameter",
+            "The original paper reports up to 10,000x fewer trainable parameters and 3x less GPU memory versus full fine-tuning GPT-3 175B",
+            "Because ΔW merges back into the base weight matrix, LoRA adds zero inference latency — unlike adapter layers",
+            "QLoRA combines LoRA with a 4-bit quantized frozen base, making it possible to fine-tune 65B-class models on a single GPU"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "e9ef2682-16bf-46ae-83dd-e111bf653e55",
+            "prompt": "What does LoRA actually train?",
+            "options": [
+              "All of the pretrained model's weights, at a lower learning rate",
+              "Two small matrices (B and A) whose product approximates the fine-tuning update, while the base weights stay frozen",
+              "A new tokenizer and embedding table",
+              "A separate reward model used only at inference time"
+            ],
+            "correctIndex": 1,
+            "explanation": "LoRA freezes the pretrained weight matrix W0 entirely and represents the task-specific update as ΔW = B·A, where B and A are much smaller than W0. Only B and A receive gradient updates."
+          },
+          {
+            "id": "df7f0da2-63b1-41eb-8b23-ef8d3621104a",
+            "prompt": "Why doesn't a merged LoRA adapter add any inference latency, unlike bottleneck adapter layers?",
+            "options": [
+              "Because LoRA runs on a separate, faster chip",
+              "Because ΔW = B·A has the same shape as W0, so it can be added directly into the base weight matrix before serving — the forward pass is architecturally unchanged",
+              "Because LoRA skips the attention layers entirely",
+              "Because LoRA reduces the model's total parameter count"
+            ],
+            "correctIndex": 1,
+            "explanation": "B·A produces a matrix the exact same shape as the original W0, so W0 + B·A can be computed once and folded back in. The served model has identical architecture and cost to the original — unlike adapter layers, which insert new layers into the sequential forward pass and add latency."
+          },
+          {
+            "id": "178e1925-c7e8-4333-be0c-7395e1c91aa1",
+            "prompt": "What does QLoRA add on top of standard LoRA?",
+            "options": [
+              "A larger rank r for every layer",
+              "A second, larger LoRA adapter for redundancy",
+              "4-bit quantization of the frozen base model, so far larger models fit on a single GPU during fine-tuning",
+              "Removal of the attention mechanism"
+            ],
+            "correctIndex": 2,
+            "explanation": "QLoRA keeps the LoRA idea (frozen base + trainable low-rank update) but quantizes the frozen base weights to 4-bit precision, dramatically cutting the memory needed to hold the base model during training — enough to fine-tune 65B-class models on one 48GB GPU."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "c269c42b-b6e7-4167-9b8f-7cf7a7af05b9",
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+          "url": "https://arxiv.org/abs/2106.09685"
+        },
+        {
+          "id": "86b90c8d-db64-401d-b348-22c77b6a2871",
+          "title": "QLoRA: Efficient Finetuning of Quantized LLMs",
+          "url": "https://arxiv.org/abs/2305.14314"
+        }
+      ],
+      "publishedDate": "2026-07-10T12:40:20Z"
+    },
+    {
       "id": "db814dcc-e5c7-4afe-b3a5-0a278d44e114",
       "title": "Gemma 4: One Model Family, No Separate Encoders",
       "subtitle": "Google DeepMind's new open-weight line drops the vision/audio encoder entirely for its 12B model — and still tops the open leaderboard.",
@@ -11245,191 +11459,6 @@
       ],
       "id": "b8a901a4-0ac3-4633-98d8-84d43848cdf8",
       "publishedDate": "2026-07-04T00:43:27Z"
-    },
-    {
-      "title": "Jalapeño: OpenAI's First Purpose-Built Inference Chip",
-      "subtitle": "A blank-slate ASIC with Broadcom and Celestica, taped out in nine months for one job: serving LLMs.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "hardware",
-        "inference",
-        "openai",
-        "broadcom",
-        "asic"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "OpenAI, Broadcom, and Celestica unveiled Jalapeño — OpenAI's first custom silicon, a 3nm ASIC designed from scratch around the specific memory, compute, and networking patterns of LLM inference. It went from initial design to tape-out in about nine months and is already running production-target workloads in the lab, with deployment planned for late 2026 as the first chip in a multi-generation compute platform.",
-      "slides": [
-        {
-          "id": "062f476b-f405-4b2b-8217-20ac465bca48",
-          "kind": "cover",
-          "title": "OpenAI Ships Its First Chip",
-          "body": "Jalapeño isn't a GPU with tweaks — it's a ground-up ASIC built only to serve LLM inference, co-developed with Broadcom and Celestica.",
-          "bullets": [
-            "Announced by OpenAI, Broadcom, and Celestica",
-            "Design-to-tape-out in about nine months",
-            "First step in a planned multi-generation compute platform"
-          ],
-          "symbol": "cpu.fill"
-        },
-        {
-          "id": "8c93d379-e5bc-416e-9b62-f30d3793371d",
-          "kind": "problem",
-          "title": "General-Purpose GPUs Weren't Built for This",
-          "body": "Merchant GPUs carry silicon for graphics and general ML training that LLM inference never touches — while inference at OpenAI's scale is dominated by narrow, repetitive memory-movement and batched-decode patterns.",
-          "bullets": [
-            "Inference workloads look nothing like the training/graphics workloads GPUs were originally designed for",
-            "Serving trillion-token volumes means even small per-token inefficiencies compound into large power and cost differences",
-            "OpenAI's own roadmap of models, kernels, and serving systems gave it a specific enough target to design silicon around"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "03009e46-1e4c-4c6e-a0d0-a3640219d27f",
-          "kind": "solution",
-          "title": "A Blank-Slate ASIC, Not a Repurposed GPU",
-          "body": "Jalapeño is built from scratch on a 3nm process, tailored to the exact memory movement, compute, and networking patterns of LLM inference — with each partner handling a distinct layer.",
-          "bullets": [
-            "OpenAI: architecture and vision, informed by its models/kernels/serving roadmap",
-            "Broadcom: silicon implementation",
-            "Celestica: board, rack, and system integration for production",
-            "OpenAI's own models were used to help accelerate parts of the chip design and optimization process"
-          ],
-          "symbol": "square.stack.3d.up.fill"
-        },
-        {
-          "id": "539e8fed-e35f-4c83-aae2-bc47a234a851",
-          "kind": "example",
-          "title": "Already Running Real Workloads in the Lab",
-          "body": "This isn't a paper chip — engineering samples are running at production target frequency and power today.",
-          "bullets": [
-            "Engineering samples are executing ML workloads at production target frequency and power",
-            "One tested workload: GPT-5.3-Codex-Spark",
-            "Deployment is planned to begin in late 2026"
-          ],
-          "symbol": "arrow.triangle.2.circlepath"
-        },
-        {
-          "id": "1b30d65f-534d-4cef-84ff-65d839e24a2e",
-          "kind": "comparison",
-          "title": "Merchant GPU vs. Purpose-Built Inference ASIC",
-          "table": {
-            "headers": [
-              "Aspect",
-              "Merchant GPU",
-              "Jalapeño"
-            ],
-            "rows": [
-              [
-                "Design origin",
-                "Adapted from graphics/training architectures",
-                "Built from scratch for LLM inference"
-              ],
-              [
-                "Target workload",
-                "Broad: graphics, training, inference",
-                "Narrow: LLM inference only"
-              ],
-              [
-                "Process node",
-                "Varies by vendor/generation",
-                "3nm, purpose-tailored"
-              ],
-              [
-                "Dev cycle for this use case",
-                "Bought off-the-shelf",
-                "~9 months, design to tape-out"
-              ]
-            ]
-          },
-          "bullets": [
-            "The tradeoff for narrowness is faster iteration and claimed efficiency — at the cost of general-purpose flexibility"
-          ],
-          "symbol": "chart.bar.xaxis"
-        },
-        {
-          "id": "44d61799-239d-4099-af0e-493af205dbd7",
-          "kind": "concept",
-          "title": "Why This Is a Bet, Not a Guaranteed Win",
-          "body": "Custom silicon is a multi-year, capital-intensive wager — and first-generation chips often ship behind mature GPU software ecosystems.",
-          "bullets": [
-            "No independent benchmarks exist yet — deployment doesn't begin until late 2026",
-            "First-gen ASICs typically lack the years of compiler/kernel maturity that CUDA has on Nvidia GPUs",
-            "OpenAI now depends on Broadcom's and Celestica's execution for part of its own inference roadmap",
-            "A single-customer chip program carries real schedule and yield risk at advanced nodes like 3nm"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "f331bb79-4329-4576-8dc6-e95ac29e24cb",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "bullets": [
-            "OpenAI, Broadcom, and Celestica built an LLM-only ASIC from scratch in about 9 months — reportedly one of the fastest advanced-node ASIC cycles ever",
-            "It's meant to be the first of a multi-generation compute platform, not a one-off chip",
-            "Engineering samples already run production-target workloads, but real-world efficiency numbers won't be public until deployment begins in late 2026",
-            "Watch for independent performance-per-watt benchmarks once the chip actually ships"
-          ],
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "530af460-b6d8-471f-b905-8f08c77d9c26",
-            "prompt": "What makes Jalapeño different from a typical GPU used for LLM inference?",
-            "options": [
-              "It's a repurposed graphics chip with new firmware",
-              "It was designed from scratch specifically for LLM inference's memory, compute, and networking patterns",
-              "It only runs training workloads, not inference",
-              "It's a software-only optimization layer"
-            ],
-            "correctIndex": 1,
-            "explanation": "OpenAI describes Jalapeño as a blank-slate design built only around LLM inference patterns, not a general-purpose accelerator adapted from earlier workloads."
-          },
-          {
-            "id": "30f929f7-d334-49a6-ae48-0b7c9357c6d2",
-            "prompt": "Which company handles board, rack, and system-level integration for Jalapeño?",
-            "options": [
-              "Broadcom",
-              "Celestica",
-              "Nvidia",
-              "TSMC"
-            ],
-            "correctIndex": 1,
-            "explanation": "Broadcom does the silicon implementation while Celestica integrates the board, rack, and system-level production — a three-way split with OpenAI providing the architecture and vision."
-          },
-          {
-            "id": "6885aa61-0487-448c-8ce5-0d03cd6b7299",
-            "prompt": "As of the announcement, what is true about Jalapeño's real-world performance?",
-            "options": [
-              "Independent benchmarks show it beats all GPUs",
-              "It's already deployed at scale across OpenAI's production fleet",
-              "Engineering samples run production-target workloads in the lab, but deployment doesn't begin until late 2026",
-              "It has been cancelled due to yield issues"
-            ],
-            "correctIndex": 2,
-            "explanation": "The chip is at the engineering-sample stage, running workloads like GPT-5.3-Codex-Spark at production target frequency and power — but broad deployment is planned to start in late 2026, so independent performance numbers aren't public yet."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "fde2f53f-0c88-43a4-af69-3abe578770ea",
-          "title": "OpenAI and Broadcom unveil LLM-optimized inference chip",
-          "url": "https://openai.com/index/openai-broadcom-jalapeno-inference-chip/"
-        },
-        {
-          "id": "2d4599cb-f200-4a20-b0bb-a9b31c47778d",
-          "title": "OpenAI and Broadcom Unveil LLM-Optimized Intelligence Processor (Broadcom)",
-          "url": "https://www.broadcom.com/company/news/product-releases/64506"
-        }
-      ],
-      "id": "d79c4154-4a8d-4143-932d-ba6c1ed18a31",
-      "publishedDate": "2026-07-04T00:42:27Z"
     }
   ]
 }
