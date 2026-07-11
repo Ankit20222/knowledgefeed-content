@@ -1,6 +1,205 @@
 {
   "posts": [
     {
+      "title": "MCP Sampling & Elicitation: When the Server Gets to Ask",
+      "subtitle": "Most of MCP is the server answering — these two primitives let it ask instead",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "model-context-protocol",
+        "agentic-workflows",
+        "human-in-the-loop"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "Sampling (sampling/createMessage) lets an MCP server borrow the client's LLM mid-task, and elicitation (elicitation/create) lets it pause to ask the user a structured question — both are nested JSON-RPC requests that flip MCP's usual client-to-server direction of control.",
+      "body": null,
+      "slides": [
+        {
+          "id": "43f1e7a0-9ac3-45ab-90ac-90e9dfb89525",
+          "kind": "cover",
+          "title": "MCP Sampling & Elicitation: When the Server Gets to Ask",
+          "body": "Most of MCP is the server answering the client's requests. Sampling and elicitation flip that: the server can ask the client for a model completion, or ask the user for missing input, in the middle of handling a call.",
+          "bullets": [],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "cf02b36c-566b-4936-a9e1-1316056bae56",
+          "kind": "problem",
+          "title": "Tools and Resources Only Flow One Way",
+          "body": "A standard MCP tool call is client to server to result. That breaks down the moment a server needs to reason mid-task or needs information the original call never included.",
+          "bullets": [
+            "A summarization server wants to condense scraped text before returning it — but it has no LLM of its own",
+            "A bug-filing tool gets a description with no severity, and guessing wrong creates a bad ticket",
+            "Forcing every server to hold its own API key, or every client to guess all inputs upfront, doesn't scale"
+          ],
+          "symbol": "arrow.left.arrow.right",
+          "table": null
+        },
+        {
+          "id": "c3c6674f-49f4-455d-aaae-8cf2fc28623c",
+          "kind": "solution",
+          "title": "Sampling: sampling/createMessage Borrows the Client's Model",
+          "body": "Sampling is a server-to-client JSON-RPC request sent while the server is still handling the client's original call. It hands over a messages array, an optional system prompt, and model preferences — the client's host actually runs the inference and returns the completion.",
+          "bullets": [
+            "Request carries messages[], an optional systemPrompt, and maxTokens — the server never needs its own model or API key",
+            "The client's host decides which model actually answers; the server only expresses preferences",
+            "It's nested inside the in-flight tool call, so the server can act on the completion before returning its final result"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "1576d89e-4318-486f-a8f8-b652ade1fecc",
+          "kind": "concept",
+          "title": "Elicitation: elicitation/create Pauses to Ask the User",
+          "body": "Elicitation lets a server request specific structured input mid-operation. It sends a human-readable message plus a requestedSchema, the client renders a small form, and the user can accept, decline, or cancel.",
+          "bullets": [
+            "Three response states: accept (data provided), decline (explicit no), cancel (dismissed without choosing)",
+            "requestedSchema is intentionally limited to flat primitives — string, number, boolean, enum — no nested objects or arrays",
+            "That limit keeps every MCP client's form-renderer simple: no client has to build a general JSON Schema UI engine"
+          ],
+          "symbol": "checklist",
+          "table": null
+        },
+        {
+          "id": "328e3af0-9725-42d2-84ca-81623e572936",
+          "kind": "architecture",
+          "title": "The Flow Runs Server, Then Client, Then Human, Then Back",
+          "body": "Both features are nested requests: they happen inside the lifetime of the tool call the client already made, not as a separate exchange.",
+          "bullets": [
+            "1. Client calls tools/call on the server",
+            "2. Mid-execution, the server sends sampling/createMessage or elicitation/create back to the client",
+            "3. The client's host surfaces it — runs the model, or shows the user a form",
+            "4. The result flows back as the response to that nested request, and the server resumes and finishes the original tool call"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "e3e373d9-6cc2-4de0-9a70-c8bc50f98027",
+          "kind": "example",
+          "title": "Worked Example: A Bug-Filing Server That's Missing a Priority",
+          "body": "An MCP server exposes a file_bug tool. The client calls it with just a description — no severity field. Instead of guessing or erroring out, the server elicits the missing piece.",
+          "bullets": [
+            "Server sends elicitation/create: message 'What priority should this bug have?', schema = enum [low, medium, high, critical]",
+            "Client renders a small form; the user picks 'high'",
+            "Server receives { action: 'accept', content: { priority: 'high' } } and finishes filing the ticket with a complete payload",
+            "If the user hits cancel instead, the server can fall back to a sane default rather than failing the whole call"
+          ],
+          "symbol": "list.bullet.clipboard",
+          "table": null
+        },
+        {
+          "id": "e931e886-2827-4dae-ae6f-2aad3783f165",
+          "kind": "comparison",
+          "title": "Four MCP Primitives, Four Directions of Control",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Primitive",
+              "Who initiates",
+              "What it does"
+            ],
+            "rows": [
+              [
+                "Tools",
+                "Client calls",
+                "Server performs an action or computation"
+              ],
+              [
+                "Resources",
+                "Client reads",
+                "Server exposes data or context"
+              ],
+              [
+                "Sampling",
+                "Server asks (nested)",
+                "Client's LLM completes a request for the server"
+              ],
+              [
+                "Elicitation",
+                "Server asks (nested)",
+                "User fills a small form for the server"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e4448541-3d7b-4b70-8510-f724aa82e246",
+          "kind": "takeaways",
+          "title": "The Catch: Both Require a Client That Opted In",
+          "body": "Sampling and elicitation only work if the client declares support for them during initialization — plenty of MCP clients still support neither, and a server can't force the issue.",
+          "bullets": [
+            "A server must gracefully degrade if the client never advertised sampling/elicitation capabilities",
+            "Elicitation must never be used to request passwords, tokens, or other sensitive data — the spec calls this out explicitly",
+            "A trustworthy host always shows WHICH server is asking before a sampling or elicitation prompt reaches the user",
+            "Because both are nested inside a live tool call, a slow or unresponsive user turns into a hung call — servers should set sane timeouts"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "93dfeb5f-1ce8-4870-97c9-9b8940d935ad",
+            "prompt": "What does an MCP server actually receive back after sending an elicitation/create request that the user approves?",
+            "options": [
+              "Just an \"ok\" boolean",
+              "An object with action: \"accept\" and a content field matching the requested schema",
+              "The raw HTML of the rendered form",
+              "Nothing — elicitation is fire-and-forget"
+            ],
+            "correctIndex": 1,
+            "explanation": "Accept responses always include a content field shaped by the schema the server requested — that's what lets the server resume with real structured data instead of a guess."
+          },
+          {
+            "id": "596e0351-0dc3-4d4b-954a-ac99df8bac81",
+            "prompt": "Why can't an elicitation requestedSchema include a nested object or an array of objects?",
+            "options": [
+              "JSON-RPC doesn't support nested objects",
+              "It's a deliberate limit to keep every client's form-rendering UI simple",
+              "MCP servers aren't allowed to define custom schemas",
+              "Nested schemas would leak into the tool's return value"
+            ],
+            "correctIndex": 1,
+            "explanation": "The spec intentionally restricts elicitation schemas to flat primitives and enums so any client can render a basic form without implementing a full JSON Schema UI engine."
+          },
+          {
+            "id": "75e746b5-93c7-4c58-b43a-b5a33df1f588",
+            "prompt": "What's the key structural difference between a sampling/createMessage request and a normal tools/call?",
+            "options": [
+              "Sampling is initiated by the SERVER, nested inside a tool call already in progress",
+              "Sampling always costs more tokens than a tool call",
+              "Sampling can only be used by resources, never by tools",
+              "Sampling responses are cached but tool call responses are not"
+            ],
+            "correctIndex": 0,
+            "explanation": "Direction is the whole point: tools/call flows client-to-server, but sampling/createMessage flows server-to-client, asking the host's own model to do work on the server's behalf."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Model Context Protocol — Specification (2025-06-18): Schema Reference",
+          "url": "https://modelcontextprotocol.io/specification/2025-06-18/schema"
+        },
+        {
+          "title": "Model Context Protocol — Official Site",
+          "url": "https://modelcontextprotocol.io"
+        }
+      ],
+      "id": "1f341ebb-cbf4-4dae-ad09-666db5bf5762",
+      "publishedDate": "2026-07-11T12:41:00Z",
+      "heroImageURL": null
+    },
+    {
       "id": "4ede7dcf-d7d9-45ff-989d-ac8fd3204543",
       "title": "LingBot-Video: A 30B MoE Brain Built to Move Robots",
       "subtitle": "Why a video model trained to look pretty makes a bad robot simulator — and how sparse experts fix it",
@@ -11196,200 +11395,6 @@
           "id": "76df1c64-6333-43fd-b1d9-5c5276d466ab",
           "title": "microsoft/Memora — official code",
           "url": "https://github.com/microsoft/Memora"
-        }
-      ],
-      "publishedDate": "2026-07-05T00:41:55Z"
-    },
-    {
-      "id": "a50e2a38-b42e-4f17-aee0-12c87192ace6",
-      "title": "Gemini 3.5 Flash Gets Computer Use Built In",
-      "subtitle": "Google folds its standalone screen-control model into the mainline Flash — matching GPT-5.5 at a third of the price.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "gemini",
-        "computer use",
-        "ai agents",
-        "google",
-        "agentic automation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cursorarrow.click",
-      "summary": "Google has made computer use — the ability to see a screen and click, type, and scroll to complete tasks — a native, built-in tool in Gemini 3.5 Flash instead of a separate model. It's priced at roughly a third of GPT-5.5 per token and lands within 0.3 points of it on OSWorld-Verified, alongside new prompt-injection safeguards for enterprise deployments.",
-      "slides": [
-        {
-          "id": "f35d2d80-940b-4512-8e42-ed693d5782d9",
-          "kind": "cover",
-          "title": "Google's Flash Model Can Now Drive Your Screen",
-          "body": "Computer use — reading a screenshot, then clicking, typing, or scrolling to act — used to require a separate standalone model. It's now a built-in tool in Gemini 3.5 Flash.",
-          "bullets": [
-            "Available via the Gemini API and Gemini Enterprise Agent Platform",
-            "Replaces the standalone Gemini 2.5 computer-use model",
-            "Ships with new enterprise safety controls"
-          ],
-          "symbol": "display",
-          "table": null
-        },
-        {
-          "id": "fcda6830-c1d4-449c-af67-82b85bf2d82f",
-          "kind": "problem",
-          "title": "Bolt-On Computer-Use Models Don't Scale to Real Workflows",
-          "body": "Treating screen control as a separate model meant extra integration work and weaker performance on the long, multi-step tasks enterprises actually need.",
-          "bullets": [
-            "Long-horizon tasks like continuous software testing need consistent action-taking across dozens of steps",
-            "Enterprise knowledge work spans professional apps that were never built with agent APIs in mind",
-            "A standalone model adds a routing and integration tax before an agent can even start acting"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "04de27c6-9423-48fd-b997-e879a2c25265",
-          "kind": "architecture",
-          "title": "The Agent Loop: See, Reason, Act, Repeat",
-          "body": "Computer use runs as a tight perception-action loop, now natively inside 3.5 Flash's own reasoning.",
-          "bullets": [
-            "Model receives a screenshot of the current browser, mobile, or desktop state",
-            "It reasons about the goal and emits a concrete action: click coordinates, typed text, scroll, or key press",
-            "The environment executes the action and returns a fresh screenshot — the loop repeats until the task is done"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "6e99e70b-0e7d-48b3-bc31-19823f6432b1",
-          "kind": "comparison",
-          "title": "Near Parity With GPT-5.5, At a Third of the Cost",
-          "table": {
-            "headers": [
-              "Model",
-              "OSWorld-Verified score",
-              "Relative per-token price"
-            ],
-            "rows": [
-              [
-                "Gemini 3.5 Flash (computer use)",
-                "78.4",
-                "~1/3 of GPT-5.5"
-              ],
-              [
-                "GPT-5.5",
-                "78.7",
-                "baseline"
-              ]
-            ]
-          },
-          "bullets": [
-            "A 0.3-point benchmark gap at roughly a third of the price is the actual pitch — not raw capability leadership"
-          ],
-          "symbol": "chart.bar.fill",
-          "body": null
-        },
-        {
-          "id": "f0f699d1-7973-4dcc-b4cc-eb6ef37eec33",
-          "kind": "concept",
-          "title": "Prompt Injection Is the Named Risk, Not an Afterthought",
-          "body": "An agent that can click and type on live pages is also an agent a malicious webpage can try to hijack.",
-          "bullets": [
-            "Google applied targeted adversarial training specifically against prompt injection for computer use",
-            "Two optional enterprise safeguards ship alongside it: require explicit user confirmation before sensitive or irreversible actions",
-            "...and automatically stop a task if an indirect prompt injection is detected mid-run",
-            "Google's own guidance: pair this with sandboxing, human-in-the-loop checks, and strict access controls"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "40a84df6-8cc8-4c1b-be93-c7ad478f3ae9",
-          "kind": "example",
-          "title": "A Concrete Enterprise Task",
-          "body": "An IT team points the agent at an internal expense-reporting web app with no API.",
-          "bullets": [
-            "Agent takes a screenshot, locates the \"New Expense\" button, clicks it",
-            "Types the vendor name and amount into the right form fields based on visual layout alone",
-            "Because filing an expense is a real financial action, the confirmation safeguard pauses and asks a human to approve before final submit"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "ada120fa-8832-4a07-9cd2-718be8faf51e",
-          "kind": "problem",
-          "title": "When Not to Turn This On",
-          "body": "Built-in doesn't mean unconditionally safe to deploy.",
-          "bullets": [
-            "Untrusted or public websites remain the highest-risk surface for indirect prompt injection, even with adversarial training",
-            "Irreversible actions (payments, deletions, sending messages) should keep the confirmation safeguard on, not rely on model judgment alone",
-            "It's still 0.3 points behind GPT-5.5 on OSWorld-Verified — pick it for cost-sensitive, high-volume automation, not for squeezing out the last bit of raw accuracy"
-          ],
-          "symbol": "hand.raised.fill",
-          "table": null
-        },
-        {
-          "id": "a9c22130-9574-49eb-8319-173375a423fd",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Computer use moved from a bolt-on model to a native capability of Google's mainline Flash model",
-            "It's a cost play: near-parity accuracy with GPT-5.5 at roughly a third of the per-token price",
-            "Safety is explicit, not implicit: adversarial training plus opt-in confirmation and auto-stop safeguards for real deployments"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "body": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4187d1d1-7dbc-41ef-9719-7ec48c81cddf",
-            "prompt": "On the OSWorld-Verified benchmark, how does Gemini 3.5 Flash's computer use compare to GPT-5.5?",
-            "options": [
-              "It scores far higher",
-              "It scores 78.4 vs. GPT-5.5's 78.7 — a 0.3-point gap",
-              "It cannot be benchmarked",
-              "It only works on mobile"
-            ],
-            "correctIndex": 1,
-            "explanation": "The two are nearly tied on raw capability (78.4 vs 78.7); the differentiator Google leads with is price, at roughly a third of GPT-5.5's per-token cost."
-          },
-          {
-            "id": "993f49b7-f33f-4272-a377-cd22ccb167f0",
-            "prompt": "What is the purpose of the two optional enterprise safeguards released alongside computer use in Gemini 3.5 Flash?",
-            "options": [
-              "To make the model respond faster",
-              "To require user confirmation for sensitive actions and auto-stop on detected prompt injection",
-              "To translate screenshots into other languages",
-              "To reduce the API price further"
-            ],
-            "correctIndex": 1,
-            "explanation": "One safeguard requires explicit human confirmation before sensitive or irreversible actions; the other automatically halts a task if an indirect prompt injection is identified mid-run."
-          },
-          {
-            "id": "383af9fa-5d74-4762-863b-1ffc97cdba08",
-            "prompt": "What changed structurally about computer use in this release?",
-            "options": [
-              "It moved from a separate Gemini 2.5 computer-use model into a built-in tool of Gemini 3.5 Flash",
-              "It was removed from the Gemini API entirely",
-              "It became available only through a browser extension",
-              "It was merged into Google Search"
-            ],
-            "correctIndex": 0,
-            "explanation": "Previously computer use required a standalone model; it's now natively built into Gemini 3.5 Flash, accessible via the Gemini API and Gemini Enterprise Agent Platform."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "74a63448-38b2-4b18-a714-2bf6a5db6b97",
-          "title": "Introducing computer use in Gemini 3.5 Flash — Google",
-          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-computer-use-gemini-3-5-flash/"
-        },
-        {
-          "id": "650e41ba-7361-40df-9854-ef89051c3fbe",
-          "title": "Computer use — Gemini API docs",
-          "url": "https://ai.google.dev/gemini-api/docs/computer-use"
         }
       ],
       "publishedDate": "2026-07-05T00:41:55Z"
