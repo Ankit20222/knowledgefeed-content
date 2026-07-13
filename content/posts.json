@@ -1,6 +1,194 @@
 {
   "posts": [
     {
+      "id": "bc2825c5-a6ab-4109-81ec-a20eb3b0a724",
+      "title": "Prompt Caching: Reusing the Prefix to Cut LLM Costs 90%",
+      "subtitle": "Your system prompt doesn't need to be recomputed and rebilled on every single call.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "prompt-caching",
+        "llm-costs",
+        "inference-optimization",
+        "kv-cache",
+        "api-pricing",
+        "agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.on.doc.fill",
+      "summary": "Prompt caching lets a provider skip recomputing (and re-billing at full price for) a prefix it has already processed — the transformer's key/value attention state for that prefix is stored server-side and reused on the next matching call. Anthropic charges a 1.25x-2x write premium for a 90%-cheaper read; OpenAI caches automatically above 1024 tokens with no write premium at all. Done right, on a repeated-prefix workload it can cut input costs by 80-90%; done on one-off calls, the write premium can make it a net loss.",
+      "slides": [
+        {
+          "id": "8531fe49-529d-4836-aa74-ce71ba2170ca",
+          "kind": "cover",
+          "title": "Every API Call Re-Reads Your Entire System Prompt",
+          "body": "A coding agent's system prompt plus tool schemas can easily run 5,000-10,000 tokens — and by default, that exact same block gets sent and billed again on every single turn of a conversation.",
+          "bullets": [
+            "APIs are stateless: the model has no memory of a prefix it just processed a second ago",
+            "A 20-turn agent session can bill the same static system prompt twenty separate times",
+            "Prompt caching lets the provider recognize 'I've seen this exact prefix before' and skip most of the cost"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "226d3d82-8082-4732-ac37-1436cd3fdd5a",
+          "kind": "problem",
+          "title": "The Waste Is Compute, Not Just a Bill",
+          "body": "Every forward pass recomputes the key/value (KV) projections for every token in the prompt, prefix included — that's the actual FLOPs cost being repeated, not just a line item.",
+          "bullets": [
+            "Attention cost scales with sequence length, so a long static prefix dominates cost on short-answer calls",
+            "Time-to-first-token also suffers — the model can't produce a single output token until it's finished attending over the whole prefix",
+            "For agents and RAG pipelines, the 'boilerplate' (system prompt, tool definitions, retrieved documents) is often the majority of total input tokens, not the user's actual message"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "548b252b-dde0-4205-9187-208d10e35d3b",
+          "kind": "solution",
+          "title": "Cache the KV State of a Matching Prefix",
+          "body": "Instead of recomputing attention over a prefix it has already seen, the provider stores the computed KV tensors for that exact prefix and reuses them on the next request.",
+          "bullets": [
+            "Matching is exact-prefix, not semantic — a single character changed anywhere before the cache boundary invalidates the whole cache for everything after it",
+            "Anthropic requires an explicit cache_control breakpoint marking where the reusable prefix ends",
+            "OpenAI does this automatically for any prompt over 1,024 tokens, matching the longest previously-seen prefix in 128-token increments — no code changes required"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "9632cc5b-2212-4f5d-97e5-47edd00cdd9f",
+          "kind": "comparison",
+          "title": "Two Very Different Pricing Models",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Provider",
+              "How it triggers",
+              "Write cost",
+              "Read cost",
+              "Default retention"
+            ],
+            "rows": [
+              [
+                "Anthropic (Claude)",
+                "Explicit cache_control breakpoint",
+                "1.25x base price (5-min TTL) or 2.0x (1-hour TTL)",
+                "0.1x base price (90% off)",
+                "5 min, or 1 hour opt-in"
+              ],
+              [
+                "OpenAI (GPT-5.x)",
+                "Automatic above 1,024 tokens",
+                "No premium — billed at normal rate",
+                "Up to ~90% off on cache hits",
+                "24 hours (since May 29, 2026, for orgs without Zero Data Retention)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "29d6b22e-f7e4-4603-af31-e3f916f08702",
+          "kind": "example",
+          "title": "Worked Example: A 20-Turn Coding Agent",
+          "body": "Assume a 6,000-token system prompt plus tool schemas, reused across 20 calls in one session, at an illustrative $3 per million input tokens.",
+          "bullets": [
+            "No caching: 6,000 tokens x 20 calls = 120,000 billed tokens -> 120,000 x $3/1M = $0.36",
+            "With Anthropic-style 5-min caching: call 1 writes the cache (6,000 x 1.25 x $3/1M = $0.0225); calls 2-20 read it (19 x 6,000 x 0.1 x $3/1M = $0.0342)",
+            "Total with caching: ~$0.057 versus $0.36 uncached -> roughly an 84% reduction in input cost for that prefix",
+            "The saving compounds with every additional turn in the session, since only the write is expensive"
+          ],
+          "symbol": "list.bullet.rectangle",
+          "table": null
+        },
+        {
+          "id": "2eb1b171-fe24-4963-94bf-91ba1753b8c0",
+          "kind": "concept",
+          "title": "When Caching Backfires",
+          "body": "Prompt caching is a bet that the prefix will be reused before the TTL expires — lose that bet and you pay a premium for nothing.",
+          "bullets": [
+            "A single one-off call pays the full write premium (up to 2x on Anthropic's 1-hour tier) with no read to amortize it against — strictly worse than not caching",
+            "Putting anything dynamic (today's date, a random request ID, per-user data) before the cache breakpoint silently kills the cache hit rate for everyone",
+            "It's exact-match, not semantic — this is not a substitute for semantic caching (matching by meaning) used to dedupe similar-but-not-identical queries",
+            "Structure prompts static-content-first, dynamic-content-last, so the reusable prefix stays untouched call to call"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "9883f3bf-2d65-44e5-885b-ffda131e93d1",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Prompt caching reuses a provider's already-computed KV attention state for an exact-match prefix instead of recomputing it on every call",
+            "Anthropic: opt-in via cache_control breakpoints, 1.25x-2x write premium, 90% off on reads",
+            "OpenAI: fully automatic above 1,024 tokens, no write premium, up to ~90% off reads, 24-hour default retention as of May 2026",
+            "Order prompts static-first, dynamic-last, and only cache prefixes you expect to actually reuse within the TTL"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "28691707-727c-48eb-b497-c232933bbee9",
+            "prompt": "What actually determines whether a prompt-cache hit occurs?",
+            "options": [
+              "The new prompt is semantically similar enough to a previous one",
+              "An exact match of the token prefix up to a cache boundary — any earlier change invalidates it",
+              "The request comes from the same logged-in user",
+              "The model version is identical across calls"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prompt caching matches on the literal token prefix, not meaning. Anthropic uses an explicit cache_control breakpoint; OpenAI automatically matches the longest previously-seen prefix over 1,024 tokens. Changing even one token before that boundary breaks the match for everything after it."
+          },
+          {
+            "id": "3979770c-bfb6-4975-9983-b10430a5dcab",
+            "prompt": "Why can enabling prompt caching make a single, non-repeated API call more expensive on Anthropic's API?",
+            "options": [
+              "Caching always adds a flat monthly fee",
+              "The cache write itself costs a 1.25x-2x premium over the normal input price, and with no follow-up read there's nothing to offset it",
+              "Cached calls use a slower, more expensive model",
+              "It doubles the output token count"
+            ],
+            "correctIndex": 1,
+            "explanation": "Anthropic charges more to write a prefix into the cache (1.25x for 5-minute TTL, 2x for 1-hour TTL) than a normal, uncached call. That premium only pays off once later calls read the cache at the 90%-off rate — a one-off call just eats the premium."
+          },
+          {
+            "id": "df15c5eb-8d0f-434e-89ef-c4a0e74ddadc",
+            "prompt": "What is actually being stored and reused by a prompt cache?",
+            "options": [
+              "A compressed text summary of the prompt",
+              "The transformer's computed key/value (KV) attention tensors for the prefix tokens",
+              "A fine-tuned copy of the model weights for that user",
+              "The final output tokens from the previous response"
+            ],
+            "correctIndex": 1,
+            "explanation": "The cache holds the KV projections computed during attention for the prefix's tokens. On a hit, the model reuses those tensors instead of recomputing attention over the same tokens again, which is what saves both compute and time-to-first-token."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "f61f0499-29f2-456e-9c93-0c3bf3c768aa",
+          "title": "Prompt caching - Claude Docs",
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+        },
+        {
+          "id": "0755ba7e-90ce-47e2-8a14-6b8e5207f9fb",
+          "title": "Prompt Caching in the API - OpenAI",
+          "url": "https://openai.com/index/api-prompt-caching/"
+        }
+      ],
+      "publishedDate": "2026-07-13T06:51:23Z"
+    },
+    {
       "title": "GPT-5.6: OpenAI Ships Three Models, One Family",
       "subtitle": "Sol, Terra, and Luna trade price for speed across a shared 1.05M-token context window.",
       "category": "AI News",
@@ -11178,210 +11366,6 @@
         }
       ],
       "publishedDate": "2026-07-06T18:42:29Z"
-    },
-    {
-      "id": "88894861-a2d5-420e-b0f5-1c47cbf99726",
-      "title": "SkillOpt: Training the Skill Doc, Not the Model",
-      "subtitle": "Microsoft Research's text-space optimizer edits a single skill file until it wins on 52 out of 52 benchmark cells — with zero extra inference cost.",
-      "category": "AI Agents",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "agent-skills",
-        "arxiv",
-        "microsoft-research",
-        "textual-optimization",
-        "agentic-ai"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "pencil.and.outline",
-      "summary": "SkillOpt (arXiv:2605.23904, Microsoft Research with SJTU/Tongji/Fudan) treats an agent's natural-language skill document as the thing you optimize, not the model weights: a separate optimizer model proposes bounded edits from scored rollouts, and an edit only survives if it strictly improves a held-out validation score. Across 6 benchmarks, 7 target models, and 3 execution harnesses, it was best-or-tied on all 52 cells, lifting GPT-5.5's average accuracy by up to +24.8 points with zero added inference-time cost.",
-      "body": null,
-      "slides": [
-        {
-          "id": "6f661fc5-0aba-4b89-98eb-44f034881736",
-          "kind": "cover",
-          "title": "What If the Skill File Were the Thing You Trained?",
-          "body": "Posted to arXiv in May 2026 (arXiv:2605.23904), SkillOpt comes from Microsoft Research with SJTU, Tongji, and Fudan. It treats a frozen agent's natural-language skill document as external, trainable state — optimized with the same discipline as weight-space training, but without touching a single weight.",
-          "bullets": [
-            "arXiv:2605.23904 — 'SkillOpt: Executive Strategy for Self-Evolving Agent Skills'",
-            "Core idea: a separate optimizer model edits a skill markdown file based on scored rollouts",
-            "Headline result: best-or-tied on all 52 of 52 (model, benchmark, harness) cells tested"
-          ],
-          "symbol": "pencil.and.outline",
-          "table": null
-        },
-        {
-          "id": "87103d1b-6ea7-4a74-8aa3-822d363325d6",
-          "kind": "problem",
-          "title": "Today's Agent Skills Are Written Once and Hoped For",
-          "body": "Agent 'skills' — the instructions/playbooks an agent reads before acting — are usually hand-written, generated once by an LLM, or loosely self-revised. None of that behaves like a real optimizer: there's no guarantee a revision actually helps, and no principled way to know when to stop.",
-          "bullets": [
-            "Hand-crafted skills don't adapt to where the agent is actually failing",
-            "One-shot LLM-generated skills are never checked against a validation signal",
-            "Loose self-revision can drift the skill worse over time with no accept/reject gate"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f1778a60-eada-4718-a7e0-4d59f3cadb62",
-          "kind": "solution",
-          "title": "Bounded Edits, Accepted Only If They Beat a Held-Out Score",
-          "body": "SkillOpt runs the agent, scores the rollouts, and has a separate optimizer model propose bounded add/delete/replace edits to a single skill document. An edit is kept only when it strictly improves a held-out validation score — otherwise it's discarded.",
-          "bullets": [
-            "Optimizer model turns scored rollouts into small, bounded edits — not full rewrites",
-            "Validation-gated updates: an edit ships only if it strictly beats the current held-out score",
-            "Zero inference-time overhead — the trained artifact is just a markdown file the frozen agent reads"
-          ],
-          "symbol": "wand.and.stars",
-          "table": null
-        },
-        {
-          "id": "c0b1bb41-9366-4cdd-a263-44d0fe9694c3",
-          "kind": "architecture",
-          "title": "Three Mechanisms That Keep Text Optimization Stable",
-          "body": "Editing a text document by gradient-like feedback can easily thrash. SkillOpt borrows stability tricks from weight-space optimization and reimplements them in text.",
-          "bullets": [
-            "A textual 'learning-rate' budget caps how much a skill document can change per round",
-            "A rejected-edit buffer remembers edits that failed validation so they aren't retried",
-            "Epoch-wise slow/meta updates smooth out noisy single-rollout signal before committing a change"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "e41d0af9-6a1b-415c-b6ed-63a857697425",
-          "kind": "comparison",
-          "title": "Best-or-Tied on Every Cell, Against Six Prior Approaches",
-          "body": "The paper evaluates 6 benchmarks (including SpreadsheetBench, OfficeQA, and LiveMathematicianBench) across 7 target models and 3 execution harnesses (direct chat, Codex, Claude Code) — 52 total cells.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Skill approach",
-              "Optimized how",
-              "Wins/ties across 52 cells"
-            ],
-            "rows": [
-              [
-                "Human-written",
-                "Manual, static",
-                "Beaten by SkillOpt"
-              ],
-              [
-                "One-shot LLM-generated",
-                "Single generation, no feedback",
-                "Beaten by SkillOpt"
-              ],
-              [
-                "TextGrad / GEPA / EvoSkill",
-                "Some form of iterative revision",
-                "Beaten by SkillOpt"
-              ],
-              [
-                "SkillOpt",
-                "Validation-gated bounded edits",
-                "Best or tied on 52/52"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "6389cd8b-a6e7-4b02-9c5a-c9f0b87b6586",
-          "kind": "example",
-          "title": "The Numbers, and a Skill That Moved Between Tools",
-          "body": "On GPT-5.5 in direct chat, procedural tasks saw the largest jumps: SpreadsheetBench rose from 41.8 to 80.7, OfficeQA from 33.1 to 72.1, LiveMathematicianBench from 37.6 to 66.9. Averaged across benchmarks, SkillOpt lifted GPT-5.5's accuracy by +23.5 points in direct chat, +24.8 inside the Codex agentic loop, and +19.1 inside Claude Code.",
-          "bullets": [
-            "SpreadsheetBench: 41.8 → 80.7 (GPT-5.5, direct chat, no-skill vs. SkillOpt-trained skill)",
-            "A spreadsheet skill trained entirely inside the Codex loop was dropped into Claude Code unchanged",
-            "That transferred skill drove a +59.7 point gain over Claude Code's own native baseline"
-          ],
-          "symbol": "arrow.left.arrow.right",
-          "table": null
-        },
-        {
-          "id": "e8c1a352-88e2-4dcd-843c-e1b978a48b1c",
-          "kind": "concept",
-          "title": "Where Text-Space Optimization Runs Out of Road",
-          "body": "SkillOpt trains the instructions, not the model — which is exactly its limit as well as its strength.",
-          "bullets": [
-            "It needs a scorable validation signal for every task; skills for hard-to-grade, open-ended work have less to optimize against",
-            "A single bounded skill document can't fix a base model that's fundamentally incapable of a task",
-            "Training still costs optimizer-model calls and rollouts, even though deployment is free of overhead",
-            "Bounded add/delete/replace edits favor incremental improvement over rethinking a skill from scratch"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "99257591-e584-435b-a951-ced44c04f6e0",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "SkillOpt reframes 'prompt engineering for agents' as a real optimization problem: score it, edit it, validate it, keep only what wins.",
-          "bullets": [
-            "Skills become external, trainable state for a frozen agent — no weight updates, no extra inference cost",
-            "Validation-gated edits (not free-form self-revision) are what make the process reliable enough to beat 6 prior methods",
-            "Best-or-tied on 52/52 tested cells, with gains up to +24.8 points and skills that transfer across execution harnesses",
-            "The tradeoff: it needs a scorable task and rollouts to learn from — it isn't magic for ungraded, wide-open work"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "296fb1b6-8caa-44af-9ea3-6ac80198c7d3",
-            "prompt": "What does SkillOpt actually optimize?",
-            "options": [
-              "The agent model's weights via fine-tuning",
-              "A natural-language skill document, treated as the agent's external trainable state",
-              "The tokenizer vocabulary",
-              "A separate reward model used for RLHF"
-            ],
-            "correctIndex": 1,
-            "explanation": "SkillOpt keeps the agent frozen and instead edits a skill markdown file — treating that document as the thing to train, with zero added inference-time cost at deployment."
-          },
-          {
-            "id": "7e852093-e901-4de5-ac5a-c3e00e8e5458",
-            "prompt": "How does SkillOpt decide whether to keep a proposed edit to the skill document?",
-            "options": [
-              "It always accepts the optimizer model's suggested edit",
-              "It picks the edit with the most words changed",
-              "It keeps the edit only if it strictly improves a held-out validation score",
-              "It asks a human reviewer for every edit"
-            ],
-            "correctIndex": 2,
-            "explanation": "Validation-gated updates are central to SkillOpt: an edit ships only when it strictly beats the current held-out score, which is what keeps the optimization from drifting or thrashing."
-          },
-          {
-            "id": "aa81ae94-5630-43ad-9f02-f046fefbf3fe",
-            "prompt": "What happened when a skill trained inside the Codex harness was moved into Claude Code unchanged?",
-            "options": [
-              "It failed completely and had to be retrained",
-              "It drove a +59.7 point gain over Claude Code's native baseline",
-              "Performance was identical to no skill at all",
-              "It only worked after converting it to a different file format"
-            ],
-            "correctIndex": 1,
-            "explanation": "The transferred spreadsheet skill produced a +59.7 point gain over Claude Code's own baseline with no further changes — evidence that a trained skill document can generalize across execution harnesses, not just across prompts."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1f1fa497-8e0e-40a1-976e-a72a593aad26",
-          "title": "SkillOpt: Executive Strategy for Self-Evolving Agent Skills (arXiv:2605.23904)",
-          "url": "https://arxiv.org/abs/2605.23904"
-        },
-        {
-          "id": "7f430448-386e-4f6f-a3be-8bb4fe4b6373",
-          "title": "microsoft/SkillOpt on GitHub",
-          "url": "https://github.com/microsoft/SkillOpt"
-        }
-      ],
-      "publishedDate": "2026-07-06T12:41:00Z"
     }
   ]
 }
