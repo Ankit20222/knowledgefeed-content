@@ -1,6 +1,206 @@
 {
   "posts": [
     {
+      "title": "Continuous Batching: Ending the GPU Bubble in LLM Serving",
+      "subtitle": "Why waiting for the longest reply in a batch was wasting most of your GPU",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "continuous-batching",
+        "inference",
+        "gpu-scheduling",
+        "throughput",
+        "vllm"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "Static batching forces a GPU to wait for every sequence in a batch to finish before starting the next one, even though requests finish at wildly different times. Continuous (iteration-level) batching fixes this by admitting new requests into a running batch at every decoding step, which is why serving engines like vLLM and TensorRT-LLM built it into their schedulers.",
+      "body": null,
+      "slides": [
+        {
+          "id": "df2079ee-8347-4f81-8ab5-a5e43aee0f4e",
+          "kind": "cover",
+          "title": "Continuous Batching: Ending the GPU Bubble in LLM Serving",
+          "body": "A scheduling trick, not a model change, that turned idle GPU cycles into serving throughput — now standard in every serious LLM inference engine.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "e8dbe2c3-eb95-4bc0-a069-2dd694a35611",
+          "kind": "problem",
+          "title": "Static Batching Waits for the Slowest Request",
+          "body": "Group requests into a fixed batch, run the forward pass step by step, and don't touch the batch again until every sequence has produced an end-of-sequence token.",
+          "bullets": [
+            "A batch of 16 requests where 15 finish in 30 tokens and 1 runs to 800 tokens: the GPU keeps recomputing padding for the 15 finished slots the whole time",
+            "New requests queue up outside the batch even while most of its slots sit idle",
+            "GPU utilization drops sharply near the tail of every batch — this is the classic 'bubble' problem also seen in pipeline-parallel training"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "5e7d8dcb-4675-4a2c-ac47-292eae11132a",
+          "kind": "solution",
+          "title": "Schedule by Iteration, Not by Batch",
+          "body": "Continuous batching (also called dynamic or in-flight batching) makes the scheduling unit one decoding step instead of one whole batch. The scheduler checks in after every single forward pass.",
+          "bullets": [
+            "The moment a sequence emits its EOS token, its slot is freed and immediately handed to the next queued request",
+            "The 'batch' is really a live set that's re-composed every iteration, not a fixed group that runs start-to-finish together",
+            "First formalized as 'iteration-level scheduling' in the Orca serving system (OSDI 2022), now the default scheduling model in vLLM, TensorRT-LLM, and TGI"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "d62acd4e-7531-4c58-8f7a-a16ebcac1055",
+          "kind": "architecture",
+          "title": "It Needs a Memory Manager That Can Keep Up",
+          "body": "Resizing the batch every step means the KV cache has to grow and shrink every step too — which is exactly the problem PagedAttention was built to solve.",
+          "bullets": [
+            "Without paged KV cache allocation, admitting a new request mid-batch would require costly memory defragmentation",
+            "Continuous batching is the scheduling policy; PagedAttention is the memory layout underneath it — they're separate ideas that happen to be near-mandatory partners",
+            "This is why vLLM ships both together rather than either alone"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "a64928ab-a0f7-40b4-b3fe-b4d5f35c7267",
+          "kind": "comparison",
+          "title": "The Throughput Gap Is Not Small",
+          "body": "Because idle slots are refilled instead of held empty, effective GPU utilization rises across the whole serving window, not just per-request latency.",
+          "bullets": [
+            "Widely-cited industry benchmarks (Anyscale's 2023 vLLM writeup) reported up to roughly 23x higher throughput over naive static batching on realistic chat-length workloads",
+            "The gap narrows when request lengths are uniform (little tail-waiting to reclaim) and widens when output lengths vary a lot"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "Static batching",
+              "Continuous batching"
+            ],
+            "rows": [
+              [
+                "Scheduling unit",
+                "Whole batch",
+                "Single decode step"
+              ],
+              [
+                "New request admitted",
+                "Only after batch fully drains",
+                "As soon as any slot frees"
+              ],
+              [
+                "GPU idle time from short finishers",
+                "High",
+                "Near zero"
+              ],
+              [
+                "Needs paged/dynamic KV cache",
+                "No",
+                "Effectively yes"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "542c375d-c2e0-48a7-820c-5b843a5f836b",
+          "kind": "example",
+          "title": "Worked Example: A Mixed Batch of 4",
+          "body": "Requests A and B ask short factual questions (~20 tokens). Requests C and D ask for long explanations (~400 tokens). All four arrive together.",
+          "bullets": [
+            "Static batching: GPU processes all 4 in lockstep; A and B's slots sit computing nothing useful for ~380 extra steps while C and D finish",
+            "Continuous batching: at step ~20, A and B finish and exit; two new incoming requests E and F are slotted in immediately to fill their spots",
+            "Net effect: the GPU never runs a step with unused capacity it could've given to a waiting request"
+          ],
+          "symbol": "list.number",
+          "table": null
+        },
+        {
+          "id": "158d5a8e-de9d-4bbf-8aa3-ba0c15cda35f",
+          "kind": "problem",
+          "title": "Where It Falls Short",
+          "body": "Continuous batching is a serving-engine feature, not something you can bolt onto any inference loop, and it introduces new failure modes.",
+          "bullets": [
+            "Requires an engine built for iteration-level scheduling — a plain Hugging Face `generate()` loop doesn't do this automatically",
+            "A flood of very long requests can still starve short ones if the scheduler has no fairness/priority policy",
+            "Prefill (processing the prompt) is compute-heavy and decode (generating tokens) is memory-bandwidth-heavy; mixing them in the same batch without care (no 'chunked prefill') can stall ongoing decodes",
+            "Doesn't help if your bottleneck is elsewhere — e.g., a slow tokenizer, network I/O, or a single-request low-QPS workload with no queue to backfill from"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "80217ac8-52c4-4801-8514-aa4d032c4c6b",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Static batching wastes GPU cycles waiting for a batch's longest sequence to finish",
+            "Continuous batching reschedules at every decode step, backfilling freed slots immediately",
+            "It pairs with paged KV-cache memory management (PagedAttention) to handle the constant resizing",
+            "It's an inference-engine property (vLLM, TensorRT-LLM, TGI) — not something a naive generation loop gets for free",
+            "Biggest wins come with high request-length variance and a real queue of waiting requests to backfill from"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "e3aa780a-0258-475b-a69e-c8c2687a9fa5",
+            "prompt": "What GPU inefficiency does continuous batching primarily target?",
+            "options": [
+              "Slow model weight loading at server startup",
+              "Idle GPU slots left by requests that finish early while a static batch waits for its longest sequence",
+              "High network latency between client and server",
+              "Large tokenizer vocabulary lookup time"
+            ],
+            "correctIndex": 1,
+            "explanation": "In static batching the whole batch is locked together until every sequence hits EOS, so slots for short requests sit idle recomputing nothing useful. Continuous batching frees and refills those slots every decode step instead of waiting for the batch to fully drain."
+          },
+          {
+            "id": "af6b20ae-5ced-4e1f-b77f-3e9d76d8228c",
+            "prompt": "How does continuous batching relate to PagedAttention?",
+            "options": [
+              "They're competing techniques and serving engines must pick one",
+              "PagedAttention replaced continuous batching in modern engines",
+              "Continuous batching is a scheduling policy (which requests run each step); PagedAttention is a KV-cache memory layout — they're complementary and usually deployed together",
+              "Continuous batching only applies to CPU inference, PagedAttention only to GPU"
+            ],
+            "correctIndex": 2,
+            "explanation": "They solve different layers of the same problem: continuous batching decides admission/eviction every step, while PagedAttention gives the KV cache a paged layout so growing and shrinking the batch every step doesn't require expensive memory defragmentation."
+          },
+          {
+            "id": "c045c251-7118-41a8-9db3-46c11ed3b9d2",
+            "prompt": "Which of these is a genuine limitation of continuous batching?",
+            "options": [
+              "It requires retraining the underlying model",
+              "It only works when batch size is exactly 1",
+              "It needs an inference engine built for iteration-level scheduling, and without a fairness policy long requests can starve short ones",
+              "It eliminates the need for a KV cache entirely"
+            ],
+            "correctIndex": 2,
+            "explanation": "Continuous batching is a serving-engine capability, not a free property of any generation loop — you need scheduler support, and mismanaged admission can let long-running requests crowd out shorter ones without an explicit fairness/priority policy."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "ca93d956-df8e-4334-96fb-1047b879f2f0",
+          "title": "How continuous batching enables 23x throughput in LLM inference while reducing p50 latency (Anyscale)",
+          "url": "https://www.anyscale.com/blog/continuous-batching-llm-inference"
+        }
+      ],
+      "id": "361f522a-fb45-4399-b4cf-43488de1e1a7",
+      "publishedDate": "2026-07-14T18:40:53Z"
+    },
+    {
       "id": "a4930cb3-28a9-45d7-bcd0-676016cf29dc",
       "title": "J-Space: The Hidden Workspace Inside Claude",
       "subtitle": "A Jacobian-based lens finds a tiny subspace that acts like a global workspace for reasoning",
@@ -11145,214 +11345,6 @@
           "url": "https://arxiv.org/abs/2501.12948"
         }
       ]
-    },
-    {
-      "id": "51abcbd6-3a24-4782-8a82-4ba4ffcfe286",
-      "title": "HNSW: The Graph That Makes Vector Search Fast",
-      "subtitle": "Why your RAG pipeline can search 50 million embeddings in single-digit milliseconds.",
-      "category": "RAG",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "vector search",
-        "hnsw",
-        "rag",
-        "ann",
-        "embeddings",
-        "vector databases"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind nearly every production vector database. Instead of scanning every vector, it builds layered 'skip list'-style graphs and greedily walks toward the nearest neighbors, trading a small, tunable amount of recall for orders-of-magnitude faster search.",
-      "publishedDate": "2026-07-07T12:46:56Z",
-      "slides": [
-        {
-          "id": "0da90854-4092-4b52-83c3-f1d493722d48",
-          "kind": "cover",
-          "title": "One Graph, Millions of Vectors, Milliseconds",
-          "body": "Every RAG pipeline eventually hits the same wall: once you have millions of embeddings, finding the nearest ones to a query vector by brute force gets too slow to serve live traffic. HNSW is the algorithm that almost every vector database (FAISS, Qdrant, Pinecone, Weaviate, pgvector) uses to fix that.",
-          "bullets": [
-            "Powers approximate nearest-neighbor (ANN) search in FAISS, Qdrant, Pinecone, Weaviate, and pgvector's 'hnsw' index",
-            "Introduced by Malkov & Yashunin (2016/2018) — still the default ANN index a decade later",
-            "Turns an O(n) linear scan into an expected O(log n) graph walk"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "86548cb4-bb57-42a2-b22b-2d984c8437d9",
-          "kind": "problem",
-          "title": "Brute-Force Search Doesn't Survive Scale",
-          "body": "Exact nearest-neighbor search means computing a distance from the query to every stored vector, then sorting. That's fine at 10,000 vectors and painful at 10 million — and RAG corpora routinely land in the tens of millions of chunks.",
-          "bullets": [
-            "Exact k-NN cost scales linearly: 2x the vectors = 2x the query time, every query",
-            "A 50M-chunk knowledge base means 50M distance computations per single query",
-            "GPUs can brute-force small collections fast, but CPU-served, cost-sensitive RAG backends can't afford it at scale",
-            "Sorting/ranking on top of the scan adds further overhead as corpus size grows"
-          ],
-          "symbol": "tortoise.fill",
-          "table": null
-        },
-        {
-          "id": "d63558aa-a2c0-4cbf-a3a1-3c5741339d0f",
-          "kind": "solution",
-          "title": "Stack Sparse Graphs on Top of a Dense One",
-          "body": "HNSW builds several layers of graphs, like a skip list. The top layer has very few nodes and long-range links; each layer down gets denser, until the bottom layer connects every vector. A query starts at a single entry point on the sparse top layer and greedily hops to whichever neighbor is closer to the query — descending a layer each time it can't get closer.",
-          "bullets": [
-            "Layer assignment is randomized (exponentially decaying), so higher layers are exponentially sparser",
-            "Search = greedy best-first walk: always move to the neighbor closest to the query, drop a layer when stuck",
-            "Top layer gives huge jumps across the whole space; bottom layer gives fine-grained precision",
-            "Net effect: expected logarithmic hops instead of a linear scan"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "26ffb79c-715b-40bd-bff0-f05cf850abc5",
-          "kind": "concept",
-          "title": "Three Knobs Trade Recall for Speed and Memory",
-          "body": "HNSW's behavior is controlled by a small set of build-time and query-time parameters. Getting these wrong is the most common reason teams see either bad recall or bloated latency in production.",
-          "bullets": [
-            "M — max neighbors per node (typically 12–48). Higher M = better recall, more memory, slower inserts",
-            "efConstruction — how many candidates are explored while building each node's links (typically 100–200). Higher = better graph quality, much slower indexing",
-            "efSearch — how many candidates are explored per query (typically 50–200+). Higher = better recall, higher query latency — this one you can tune live, per query, without rebuilding",
-            "efSearch is the dial to turn at request time: bump it for a 'high recall' endpoint, drop it for a 'fast autocomplete' endpoint against the same index"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "7f86b07a-1e3d-462c-b793-0c8b5f1025d4",
-          "kind": "comparison",
-          "title": "HNSW vs. the Other Standard ANN Approaches",
-          "body": null,
-          "bullets": [
-            "Flat/brute-force stays the right choice under ~100K vectors, or whenever 100% exact recall is a hard requirement",
-            "IVF trades some accuracy for much lower memory and is common when RAM is the bottleneck, not latency",
-            "HNSW is the default for read-heavy, latency-sensitive search — most vector DBs ship it as the out-of-the-box index"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Index",
-              "Query time",
-              "Memory overhead",
-              "Typical use"
-            ],
-            "rows": [
-              [
-                "Flat (brute-force)",
-                "Linear, exact",
-                "Lowest (just the vectors)",
-                "Small corpora, or exactness required"
-              ],
-              [
-                "IVF (inverted file)",
-                "Sub-linear, needs a trained clustering step",
-                "Low-moderate",
-                "Huge, memory-constrained, mostly-static corpora"
-              ],
-              [
-                "HNSW",
-                "Expected logarithmic, approximate",
-                "Higher — graph edges add ~1.5–2x the raw vector size",
-                "Live, read-heavy RAG and semantic search"
-              ],
-              [
-                "LSH",
-                "Sub-linear, approximate",
-                "Moderate",
-                "Very high-dimensional dedup/similarity at massive scale"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "3edcc130-6a98-4e71-81e5-06b7724492c0",
-          "kind": "example",
-          "title": "Walking a Query Through a 50M-Chunk Index",
-          "body": "A support-bot RAG system embeds 50 million document chunks into an HNSW index built with M=16, efConstruction=200. A user asks a question; here's what happens before the LLM ever sees a chunk.",
-          "bullets": [
-            "1. The query is embedded, then search enters at the single top-layer entry point",
-            "2. On the sparse top layers, a handful of greedy hops jump across huge regions of the vector space",
-            "3. Descending each layer, the search keeps a growing candidate list of size efSearch (say, 100)",
-            "4. At layer 0 (every vector included), the algorithm returns the top-k closest candidates from that list",
-            "Result: sub-10ms retrieval touching only a few hundred vectors out of 50 million — not a 50M-way scan"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "77a38d78-33b3-479b-8e02-b06b900e2c76",
-          "kind": "problem",
-          "title": "Where HNSW Breaks Down",
-          "body": "HNSW is not free lunch — its weaknesses are exactly what its speed trades away, and they bite hardest in write-heavy or memory-constrained systems.",
-          "bullets": [
-            "Approximate, not exact — recall is typically 95–99%, tunable but never guaranteed 100%",
-            "Deletes are awkward: HNSW graphs are usually built for inserts, so most engines 'tombstone' deleted vectors instead of truly removing them, letting stale nodes accumulate",
-            "Heavy write workloads degrade graph quality over time, eventually requiring a full rebuild",
-            "Memory-hungry: the graph links roughly double per-vector overhead versus a flat index, which matters at billions of vectors",
-            "Don't reach for HNSW for a small, static lookup table (<100K vectors) — a flat index is simpler, exact, and often just as fast there"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "da596fad-5029-41a2-9ad4-589022e7c84d",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": "HNSW is the default answer to 'how do vector databases search millions of embeddings so fast' — understanding its knobs is what separates a RAG system that's fast AND accurate from one that's just fast.",
-          "bullets": [
-            "HNSW trades a small amount of recall for a huge speedup by searching a layered graph instead of scanning every vector",
-            "M controls graph density (memory + recall), efConstruction controls build quality, efSearch controls query-time recall/latency — tune efSearch first",
-            "It's the right default for live, read-heavy semantic search; prefer flat indexes for small/static data and IVF when memory is the binding constraint",
-            "Frequent deletes and heavy write churn are HNSW's weak spot — plan for periodic rebuilds in high-churn systems"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "16fea6b8-8dc0-4a53-bca4-f8873c4b1484",
-            "prompt": "Why is HNSW dramatically faster than brute-force nearest-neighbor search at scale?",
-            "options": [
-              "It compresses vectors to lower precision before comparing them",
-              "It walks a layered graph greedily, needing only expected logarithmic hops instead of scanning every vector",
-              "It only searches vectors uploaded in the last 24 hours",
-              "It runs exclusively on GPUs, which are inherently faster"
-            ],
-            "correctIndex": 1,
-            "explanation": "HNSW's speed comes from its structure, not from hardware or compression: a sparse top layer lets search take huge jumps across the space, and each layer down refines the answer, so total work grows roughly with log(n) instead of n."
-          },
-          {
-            "id": "01841250-d963-4946-a9ef-16488675a885",
-            "prompt": "You're serving both a 'fast autocomplete' endpoint and a 'high-accuracy search' endpoint off the same HNSW index. What should you change between them?",
-            "options": [
-              "Rebuild the whole index with a different M for each endpoint",
-              "Nothing — HNSW indexes can't support different quality targets from one index",
-              "Change efSearch at query time — higher for the accuracy endpoint, lower for autocomplete",
-              "Switch to brute-force for the accuracy endpoint only"
-            ],
-            "correctIndex": 2,
-            "explanation": "efSearch is a query-time parameter — it doesn't require touching the index at all, so the same HNSW graph can serve a low-latency, lower-recall path and a slower, higher-recall path just by varying efSearch per request."
-          },
-          {
-            "id": "fd62a264-2850-4981-83b0-91e62dd839c2",
-            "prompt": "Your corpus is a 40,000-row static lookup table that almost never changes. What's the better choice than HNSW here?",
-            "options": [
-              "HNSW is still strictly better regardless of corpus size",
-              "A flat/brute-force index — at this scale it's simple, exact, and the graph's memory overhead buys you nothing",
-              "LSH, because it's always more memory-efficient than any alternative",
-              "IVF, because clustering is required for correctness below 100K vectors"
-            ],
-            "correctIndex": 1,
-            "explanation": "HNSW's value proposition is speed at scale in exchange for approximate results and extra memory. Below roughly 100K vectors, a flat index is often just as fast in wall-clock terms, is exact, and skips the graph's construction and memory overhead entirely."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
