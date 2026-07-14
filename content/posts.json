@@ -1,6 +1,192 @@
 {
   "posts": [
     {
+      "title": "Direct Preference Optimization: Skipping the Reward Model",
+      "subtitle": "RLHF needs four models and an unstable RL loop. DPO gets the same alignment from one supervised loss.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "alignment",
+        "preference-tuning",
+        "fine-tuning"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "scalemass.fill",
+      "summary": "RLHF aligns a model by training a separate reward model, then running an unstable RL loop against it. DPO shows that under a KL-constrained objective, the optimal policy has a closed form — so the reward can be rewritten entirely in terms of the policy, collapsing RLHF into a single classification-style loss with no reward model and no rollouts.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "RLHF's Reward Model Was Never Necessary",
+          "body": null,
+          "bullets": [
+            "Standard RLHF: train a reward model on human preferences, then run PPO against it",
+            "That RL loop needs up to four model copies in memory and is notoriously unstable to tune",
+            "DPO (2023) proved you can optimize directly on preference pairs — no reward model, no RL"
+          ],
+          "symbol": "scalemass.fill",
+          "id": "57febb22-04d8-420f-b07f-636c5458e2e3"
+        },
+        {
+          "kind": "problem",
+          "title": "PPO-Based RLHF Has Too Many Moving Parts",
+          "body": "Classic RLHF is a three-stage pipeline: supervised fine-tuning, then a reward model trained on chosen-vs-rejected pairs, then PPO to push the policy toward higher reward while a KL penalty keeps it near the reference model.",
+          "bullets": [
+            "Four models resident at once: policy, frozen reference, reward model, and a value/critic network",
+            "PPO requires online sampling — the policy must generate rollouts during training, which is slow",
+            "Reward hacking and hyperparameter sensitivity (KL coefficient, clip ratio) make training runs fragile"
+          ],
+          "symbol": "gearshape.2.fill",
+          "id": "7d0a0679-9827-44a9-9b41-b58094cedd22"
+        },
+        {
+          "kind": "solution",
+          "title": "The Trick: Reparameterize the Reward as the Policy",
+          "body": "Under a KL-regularized reward-maximization objective, the optimal policy has a known closed form: pi*(y|x) is proportional to pi_ref(y|x) times exp(reward / beta). Inverting that equation lets you write the reward directly in terms of the policy's own log-probabilities.",
+          "bullets": [
+            "Implicit reward: beta * log( pi_theta(y|x) / pi_ref(y|x) )",
+            "Plugging this into the Bradley-Terry preference model, the per-prompt normalizing constant cancels out between the chosen and rejected terms",
+            "What's left is a plain binary classification loss over log-probability ratios — trainable with standard supervised gradient descent"
+          ],
+          "symbol": "function",
+          "id": "5a5cbb9f-530d-4ede-8feb-2699435d0adc"
+        },
+        {
+          "kind": "architecture",
+          "title": "What the Training Loop Actually Needs",
+          "body": "DPO trains directly on a static, offline dataset of (prompt, chosen response, rejected response) triples. No sampling from the current policy happens during training.",
+          "bullets": [
+            "Two models: the policy being trained, and a frozen reference (usually the SFT checkpoint) used only for log-prob lookups",
+            "Reference log-probs can be precomputed once and cached, since that model never changes",
+            "No reward model, no value network, no PPO clipping, no on-policy rollouts — just backprop on a preference dataset"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "id": "f9c50219-7164-4b9d-9c28-9786ea432711"
+        },
+        {
+          "kind": "comparison",
+          "title": "RLHF (PPO) vs. DPO",
+          "body": null,
+          "bullets": [
+            "The core tradeoff: RLHF's online sampling can adapt across iterations; DPO's offline training is simpler but locked to the dataset it saw"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Aspect",
+              "RLHF (PPO)",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "4 (policy, reference, reward, critic)",
+                "2 (policy, frozen reference)"
+              ],
+              [
+                "Training signal",
+                "Reward-model score via RL rollouts",
+                "Direct loss on preference pairs"
+              ],
+              [
+                "Sampling during training",
+                "Required (on-policy)",
+                "None (fully offline)"
+              ],
+              [
+                "Tuning surface",
+                "KL coefficient, PPO clip, GAE lambda, reward shaping",
+                "Mainly one knob: beta"
+              ]
+            ]
+          },
+          "id": "652f0577-689b-4332-9872-2a69d87da16a"
+        },
+        {
+          "kind": "example",
+          "title": "Two Draft Replies, One Update",
+          "body": "A prompt gets two candidate answers: y_w (the one a labeler preferred) and y_l (the one they rejected). DPO doesn't need a reward number for either — it only needs the pair and the direction of preference.",
+          "bullets": [
+            "Compute log pi_theta(y|x) and log pi_ref(y|x) for both responses",
+            "Form the margin: beta * [ (log pi_theta(y_w) - log pi_ref(y_w)) - (log pi_theta(y_l) - log pi_ref(y_l)) ]",
+            "Push that margin through a sigmoid and take -log of it as the loss — larger margin, smaller loss, and the gradient nudges y_w's relative probability up and y_l's down"
+          ],
+          "symbol": "list.number",
+          "id": "3ad0850c-8b52-4342-9e34-3703cff0ded1"
+        },
+        {
+          "kind": "problem",
+          "title": "Where DPO Bites Back",
+          "body": null,
+          "bullets": [
+            "Likelihood displacement: because the loss only cares about the margin, training can satisfy it by dropping y_l's probability faster than raising y_w's — sometimes y_w's absolute probability falls too",
+            "Fully offline: preference pairs come from some other policy (often a mix of models or humans), so DPO can overfit to that dataset's quirks instead of the current model's actual failure modes",
+            "Beta is doing a lot of work: too high and the policy barely moves from the reference; too low and it can drift past the intended safety margin",
+            "Skip DPO when you need a reusable, standalone reward model (e.g., for best-of-n reranking) — DPO only produces a tuned policy, not a scoring model"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "e7866ab9-c5e9-40a6-8a61-b21f9795179f"
+        },
+        {
+          "kind": "takeaways",
+          "title": "One Loss Function Replaced a Whole RL Pipeline",
+          "body": null,
+          "bullets": [
+            "DPO's core move: rewrite the reward in terms of the policy so the reward model becomes unnecessary",
+            "The payoff is a stable, supervised-style training loop — the cost is going fully offline, which invites overfitting to stale preference data",
+            "Watch absolute chosen-response probability during training, not just the chosen-vs-rejected margin"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "ac9ce154-9125-48f0-9557-4e3d3e734daa"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the key mathematical trick behind DPO?",
+            "options": [
+              "It reparameterizes the reward in terms of the policy itself, using the closed-form optimal policy under a KL constraint, so the reward's normalizing constant cancels out of the preference loss",
+              "It replaces attention with a preference-weighted mechanism",
+              "It distills a large reward model into a smaller student model",
+              "It removes the KL penalty entirely so the policy can move freely"
+            ],
+            "correctIndex": 0,
+            "explanation": "Under a KL-regularized reward-maximization objective, the optimal policy has a closed form proportional to pi_ref * exp(reward/beta). Substituting that back into the Bradley-Terry preference model makes the per-prompt normalizing constant cancel between the chosen and rejected terms, leaving a loss expressed purely in policy log-probabilities.",
+            "id": "02b862d3-69cd-42df-8cdb-93bd3606e9ed"
+          },
+          {
+            "prompt": "Compared to PPO-based RLHF, what does DPO training NOT require?",
+            "options": [
+              "A frozen reference model",
+              "A separate reward model and on-policy sampling/rollouts",
+              "A dataset of preference pairs",
+              "Gradient descent"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO folds the reward model into the policy and trains directly on a static, offline dataset of chosen/rejected pairs. It never samples from the policy during training and never maintains a separate reward or value network — which is exactly what makes RLHF's RL loop expensive and unstable.",
+            "id": "aa6d1ad2-7b38-42c9-97f1-199aac28a018"
+          },
+          {
+            "prompt": "What is 'likelihood displacement,' a documented failure mode of DPO?",
+            "options": [
+              "Inference latency increases as training progresses",
+              "The absolute probability of the CHOSEN response can decrease during training, even as its margin over the rejected response grows",
+              "The reference model's weights drift during training",
+              "The tokenizer vocabulary changes between training runs"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO's loss only cares about the relative margin between chosen and rejected log-probabilities. The optimizer can satisfy that margin by pushing the rejected response's probability down faster than it raises the chosen one — sometimes lowering the chosen response's absolute likelihood too. Practitioners track absolute probabilities, not just the margin, for this reason.",
+            "id": "1981ef05-ab1f-4d21-8864-cd089ebc3bbc"
+          }
+        ]
+      },
+      "references": [],
+      "id": "22d27b65-2832-4210-ae83-d50186fbbd29",
+      "publishedDate": "2026-07-14T00:40:36Z"
+    },
+    {
       "title": "Agent Sandboxing: Bounding the Blast Radius of Autonomy",
       "subtitle": "Autonomous agents now run real shell commands — sandboxing is what keeps a hallucination from becoming an incident.",
       "category": "AI Agents",
@@ -11145,199 +11331,6 @@
           "id": "7d3180d4-2cf3-42d3-b87b-d09d7a5c48a0",
           "title": "ARIS: Autonomous Research via Adversarial Multi-Agent Collaboration (arXiv:2605.03042)",
           "url": "https://arxiv.org/abs/2605.03042"
-        }
-      ],
-      "publishedDate": "2026-07-07T00:41:22Z"
-    },
-    {
-      "id": "2606fa1c-cbf4-4f2d-8208-8d57afde2b77",
-      "title": "Deep Research Max: Google Trades Speed for Depth",
-      "subtitle": "Two new Gemini agents split fast lookups from slow, thorough investigations.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "ai agents",
-        "gemini",
-        "google deepmind",
-        "deep research",
-        "mcp"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "magnifyingglass.circle.fill",
-      "summary": "Google DeepMind launched two research agents built on Gemini 3.1 Pro: Deep Research, optimized for fast, low-latency lookups, and Deep Research Max, which spends far more test-time compute to plan, search, and iterate before writing a report. Both add MCP support and native chart generation for the first time.",
-      "slides": [
-        {
-          "id": "4d9984bd-7ca2-44d9-b7f1-240276479ad1",
-          "bullets": [
-            "Deep Research: low latency, built for real-time search UIs and APIs",
-            "Deep Research Max: depth over speed, extended test-time compute",
-            "Launched in public preview via paid tiers in the Gemini API"
-          ],
-          "body": "Google DeepMind split its Deep Research product into two tiers, both riding on Gemini 3.1 Pro, aimed at very different use cases.",
-          "symbol": "sparkles",
-          "table": null,
-          "kind": "cover",
-          "title": "One Research Agent Becomes Two"
-        },
-        {
-          "id": "81a293d3-0913-4d34-9a32-ac7fa69faf9e",
-          "bullets": [
-            "Quick API lookups don't need a 10-minute investigation",
-            "Genuinely hard research questions get shortchanged by a fast mode",
-            "One-size-fits-all pricing and latency stopped making sense"
-          ],
-          "body": "A single 'deep research' mode forces a tradeoff: make it fast and it can't dig deep; make it thorough and every quick lookup pays the same tax.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "One Speed Doesn't Fit Every Research Task"
-        },
-        {
-          "id": "17e6a6c9-6a46-45dc-ac55-3d9945064dab",
-          "bullets": [
-            "Deep Research: fast, efficient — for search interfaces and low-latency APIs",
-            "Deep Research Max: extended test-time compute to reason, search, and revise",
-            "Max plans collaboratively before executing, instead of one-shot searching"
-          ],
-          "body": "Both agents run on Gemini 3.1 Pro, but Deep Research Max adds a collaborative planning step and iterates on its own report before returning it.",
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "kind": "solution",
-          "title": "Two Tiers, Same Underlying Model"
-        },
-        {
-          "id": "86646cb6-0991-4b53-9106-67527adf09ea",
-          "bullets": [
-            "MCP support: securely connect to custom/private data sources",
-            "Native charts and infographics — a first for Deep Research in the Gemini API",
-            "Multimodal input: PDFs, CSVs, images, audio, and video",
-            "Real-time streaming of intermediate reasoning as it works"
-          ],
-          "body": "The upgrade isn't just speed tiers — both agents gained real new capabilities over the previous Deep Research.",
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "kind": "architecture",
-          "title": "What's New Across Both Agents"
-        },
-        {
-          "id": "ffcafb1a-bac4-40f4-8aaa-a8f2fe33028a",
-          "bullets": [
-            "These are Google's own reported scores at launch",
-            "Humanity's Last Exam is intentionally brutal — 54.6% is still a leading result on it"
-          ],
-          "body": "Google positions Deep Research Max at the top of public agentic-research benchmarks.",
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Deep Research Max score"
-            ],
-            "rows": [
-              [
-                "DeepSearchQA",
-                "93.3%"
-              ],
-              [
-                "BrowseComp",
-                "85.9%"
-              ],
-              [
-                "Humanity's Last Exam",
-                "54.6%"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Deep Research Max's Reported Benchmarks"
-        },
-        {
-          "id": "487d0dd0-5e65-4254-98af-d2678c827c54",
-          "bullets": [
-            "Agent plans the investigation before running any searches",
-            "Pulls from both the private MCP source and public web pages",
-            "Returns native charts comparing competitors, not just prose describing numbers",
-            "Streams its intermediate reasoning so the analyst can sanity-check it mid-run"
-          ],
-          "body": "An analyst connects a private MCP data source (internal sales data) alongside the open web and asks Deep Research Max to compile a competitive landscape report.",
-          "symbol": "doc.text.magnifyingglass",
-          "table": null,
-          "kind": "example",
-          "title": "Example: A Competitive-Landscape Report"
-        },
-        {
-          "id": "2fe6841d-c603-4f6e-8a58-b9853cf88d84",
-          "bullets": [
-            "Pricing scales with the full research loop's token usage, not just input/output",
-            "Slower by design — wrong choice for latency-sensitive, simple lookups",
-            "Ships as a paid-tier public preview, not a free consumer feature at launch",
-            "Benchmark numbers are self-reported by Google, not independently audited"
-          ],
-          "body": "Depth-over-speed has real costs — this isn't a free upgrade to reach for by default.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Tradeoffs and Pitfalls"
-        },
-        {
-          "id": "de4b1018-5b93-4292-b065-60776daf4950",
-          "bullets": [
-            "Reach for Deep Research for fast, low-latency lookups in a search UI or API",
-            "Reach for Deep Research Max for genuinely hard, multi-source investigations",
-            "MCP support is the bigger structural shift — it's what lets either agent touch private data safely"
-          ],
-          "body": "Pick the tier that matches the question, not the agent that sounds most impressive.",
-          "symbol": "flag.checkered",
-          "table": null,
-          "kind": "takeaways",
-          "title": "Takeaways"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5892e2fb-903b-42ea-afc7-d4b8d16ee1e5",
-            "explanation": "Both run on Gemini 3.1 Pro. The split is about how much test-time compute each spends reasoning, searching, and revising before returning a report — not about input format or vendor.",
-            "prompt": "What's the core difference between Deep Research and Deep Research Max?",
-            "options": [
-              "Max only accepts image inputs",
-              "Max trades speed for depth using extended test-time compute and a planning step",
-              "Deep Research is free forever; Max is always paid",
-              "They run on entirely different companies' models"
-            ],
-            "correctIndex": 1
-          },
-          {
-            "id": "f6cfee1a-9b61-42b7-868f-d03f39025cc4",
-            "explanation": "MCP support is one of the headline additions — it lets either agent connect to specialized or private data streams securely, not just the open web.",
-            "prompt": "What new protocol lets these agents securely pull in custom or private data sources?",
-            "options": [
-              "A proprietary Google-only plugin format",
-              "Model Context Protocol (MCP)",
-              "GraphQL federation",
-              "Plain REST webhooks"
-            ],
-            "correctIndex": 1
-          },
-          {
-            "id": "0acd639f-7b4d-4e9b-808c-a7aa57879bd5",
-            "explanation": "DeepSearchQA at 93.3% was the highest of the three reported scores — Humanity's Last Exam is deliberately the hardest of the set, so 54.6% there is still notable.",
-            "prompt": "Of the three benchmarks Google cited at launch, which did Deep Research Max score highest on?",
-            "options": [
-              "Humanity's Last Exam (54.6%)",
-              "BrowseComp (85.9%)",
-              "DeepSearchQA (93.3%)",
-              "All three were reported as tied"
-            ],
-            "correctIndex": 2
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "4cf2330b-258a-4a74-874c-96d4fa160705",
-          "title": "Deep Research Max: a step change for autonomous research agents — Google Blog",
-          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/next-generation-gemini-deep-research/"
         }
       ],
       "publishedDate": "2026-07-07T00:41:22Z"
