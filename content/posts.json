@@ -1,6 +1,387 @@
 {
   "posts": [
     {
+      "title": "Multi-Head Latent Attention: Compressing the KV Cache",
+      "subtitle": "DeepSeek's trick for caching one small latent vector instead of a full set of keys and values",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "inference",
+        "deepseek",
+        "transformers"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu.fill",
+      "summary": "Multi-Head Latent Attention (MLA) shrinks the KV cache by storing a single low-rank latent vector per token instead of separate keys and values for every attention head, then reconstructing per-head K/V on the fly. DeepSeek-V2 reported this cuts KV cache size by about 93% versus standard multi-head attention while matching or beating its quality — at the cost of a trickier RoPE implementation and no easy retrofit onto existing checkpoints.",
+      "slides": [
+        {
+          "id": "480757bf-457a-4132-9707-f1994ba8ccd3",
+          "kind": "cover",
+          "title": "One Latent Vector Replaces a Whole Set of Keys and Values",
+          "body": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2, compresses the per-token KV cache into a single low-rank latent vector instead of storing separate keys and values for every attention head.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "771bf7fb-0835-4f11-8875-af44d51553e1",
+          "kind": "problem",
+          "title": "The KV Cache Is What Actually Runs Out of Memory",
+          "body": "Every token generated has to keep its keys and values in GPU memory for every later token to attend back to. That cache — not the model weights — is usually what limits context length and batch size at serving time.",
+          "bullets": [
+            "Standard multi-head attention (MHA) caches a separate key and value vector per head, per layer, per token — the cache grows linearly with heads × head_dim × layers × sequence length",
+            "At 128K context, that cache can dwarf the weights themselves, forcing smaller batches and lower throughput",
+            "Grouped-Query Attention (GQA) shrinks the cache by sharing K/V across groups of heads, but coarser sharing measurably hurts quality"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "2bf53cfd-f28d-4280-a223-f7fe10bbdb41",
+          "kind": "solution",
+          "title": "Cache a Compressed Latent, Reconstruct K/V on the Fly",
+          "body": "Instead of caching per-head keys and values, MLA down-projects the hidden state into a single low-dimensional latent vector c_t. That latent is what gets cached. At attention time, learned up-projection matrices reconstruct the per-head keys and values from it.",
+          "bullets": [
+            "The up-projection matrices can be algebraically folded into the query and output projections ('absorption'), so reconstruction adds no extra matmul at inference time",
+            "DeepSeek-V2's technical report puts the resulting KV cache at roughly 93% smaller than standard MHA, at quality that matched or exceeded full MHA on their benchmarks",
+            "Queries can optionally be low-rank compressed too — that saves activation memory during training but isn't needed for the inference-time cache win"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null
+        },
+        {
+          "id": "9fe94c5f-0971-4429-b9de-6b8d07a80eb7",
+          "kind": "architecture",
+          "title": "RoPE Doesn't Compress Cleanly, So It Gets Decoupled",
+          "body": "Rotary position embeddings rotate each head's key vector by a position-dependent angle. Applying that rotation to the shared compressed latent would destroy the low-rank structure the absorption trick depends on.",
+          "bullets": [
+            "MLA's fix: split off a small number of extra dimensions that carry RoPE and are computed per-head, uncompressed — these get concatenated onto the compressed content dimensions",
+            "Only that small decoupled slice is position-rotated; the bulk of the cached latent stays compressed and RoPE-free",
+            "This is the main source of implementation complexity — it's why MLA needs bespoke kernels, not a drop-in swap for MHA/GQA attention code"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "74c98eb5-3901-45a4-aa2c-9d7a2e20e7d4",
+          "kind": "comparison",
+          "title": "Cache Size vs. Quality, at a Glance",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Mechanism",
+              "What's cached per token",
+              "Quality vs. full MHA"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "Full K/V for every head",
+                "Baseline"
+              ],
+              [
+                "GQA",
+                "K/V shared across head groups",
+                "Slightly lower, cache shrinks with group count"
+              ],
+              [
+                "MLA",
+                "One low-rank latent (+ small decoupled RoPE slice)",
+                "Matched/exceeded MHA in DeepSeek-V2's own reported results"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "15a5aa7c-9206-4fbc-a0c2-15c35364d9cf",
+          "kind": "example",
+          "title": "Why This Mattered for DeepSeek-V2's Serving Cost",
+          "body": "DeepSeek-V2 is a 236B-parameter MoE model with only 21B activated per token and a 128K context window — exactly the regime where KV cache, not compute, becomes the serving bottleneck.",
+          "bullets": [
+            "With a standard MHA-sized cache at that context length, GPUs would run out of memory long before compute became the limiting factor, capping batch size and throughput",
+            "By shrinking the cache roughly 93%, DeepSeek-V2 could hold far more concurrent sequences in the same memory — DeepSeek's report cites a large generation-throughput increase over their prior dense model, largely attributable to this",
+            "This is why MLA shows up specifically in models built for long-context, high-concurrency serving — the payoff is proportional to how cache-bound your workload already is"
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "2d3bccec-9c82-4bb4-aada-3fd1ee25ad7a",
+          "kind": "problem",
+          "title": "Tradeoffs: Where MLA Is the Wrong Tool",
+          "body": "MLA is a training-time architectural choice, not a serving-time optimization you can bolt onto an existing model.",
+          "bullets": [
+            "You can't retrofit MLA onto an already-trained MHA/GQA checkpoint — the low-rank projections have to be learned from scratch during pretraining",
+            "Short-context, low-concurrency workloads (small chatbots, single-user local inference) rarely feel the KV cache pressure MLA is solving for — GQA's simplicity wins there",
+            "The decoupled-RoPE bookkeeping means MLA needs custom attention kernels; teams without kernel engineering resources are better served by GQA's plain head-sharing"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "7111ee58-1701-456e-aa47-1033a26838ca",
+          "kind": "takeaways",
+          "title": "The Core Idea, Compressed",
+          "body": null,
+          "bullets": [
+            "MLA caches one shared low-rank latent per token instead of per-head K/V — that's the whole trick",
+            "A learned up-projection reconstructs per-head keys/values, and matrix absorption makes that reconstruction free at inference",
+            "RoPE can't apply to a compressed latent directly, so a small slice of dimensions is decoupled and kept per-head just for position information",
+            "It's a pretraining-time decision aimed squarely at long-context, high-throughput serving — not a universal upgrade over GQA"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b14c628d-a582-4545-b2d8-79bf7dfca3e7",
+            "prompt": "What does Multi-Head Latent Attention cache per token, instead of separate per-head keys and values?",
+            "options": [
+              "A single low-rank latent vector that per-head K/V are reconstructed from",
+              "A quantized 4-bit version of the full K/V tensors",
+              "Nothing — MLA recomputes attention from scratch every step",
+              "One key/value pair shared across all layers"
+            ],
+            "correctIndex": 0,
+            "explanation": "MLA down-projects the hidden state into a compressed latent vector; per-head keys and values are reconstructed from it via learned up-projections at attention time."
+          },
+          {
+            "id": "b51e8c58-4c69-4277-a844-9ba1036a67e6",
+            "prompt": "Why can't standard RoPE be applied directly to MLA's compressed latent?",
+            "options": [
+              "RoPE only works with 4-bit quantized vectors",
+              "Rotating the shared low-rank latent would break the low-rank structure the absorption trick relies on, so a small slice of dimensions is decoupled and rotated per-head instead",
+              "RoPE requires the query and key to have different dimensionalities",
+              "MLA doesn't use positional information at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Applying RoPE's position-dependent rotation to the compressed content dimensions would destroy the low-rank structure MLA depends on for cheap reconstruction, so a small decoupled RoPE-only slice is computed per-head instead."
+          },
+          {
+            "id": "3ddde71c-0dfe-4c26-9a40-ebb74976bacc",
+            "prompt": "Why is MLA harder to adopt than GQA for a team with an existing MHA checkpoint?",
+            "options": [
+              "MLA only runs on TPUs",
+              "GQA is actually slower than MLA in every case",
+              "MLA's low-rank projections must be learned during pretraining — it can't be applied to an already-trained model the way GQA's head-sharing can be configured",
+              "MLA requires no positional encoding, making it incompatible with existing tokenizers"
+            ],
+            "correctIndex": 2,
+            "explanation": "MLA is a pretraining-time architectural choice: its compression matrices are learned from scratch. GQA, by contrast, is a simpler head-grouping choice that's easier to reason about and configure at pretraining time without bespoke kernels."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "abf4290f-14ea-463b-a77a-731b45ada3d0",
+          "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model (arXiv:2405.04434)",
+          "url": "https://arxiv.org/abs/2405.04434"
+        }
+      ],
+      "id": "b267b9fb-febf-4dd6-9744-e523e54f548c",
+      "publishedDate": "2026-07-14T06:40:45Z"
+    },
+    {
+      "title": "Corrective RAG: Grading Retrieval Before You Trust It",
+      "subtitle": "A lightweight evaluator scores what your retriever found — and falls back to web search when it's wrong",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "retrieval",
+        "hallucination",
+        "evaluation",
+        "web-search-fallback"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "Corrective RAG (CRAG) adds a lightweight retrieval evaluator that grades retrieved documents as Correct, Incorrect, or Ambiguous before generation happens. Correct documents get stripped down to relevant 'knowledge strips'; Incorrect ones are discarded and replaced with a live web search; Ambiguous cases blend both. It's a plug-in correction layer for standard RAG pipelines, not a retriever replacement — and it adds latency and a new failure point of its own.",
+      "slides": [
+        {
+          "id": "b14055a3-72dc-4b8b-9a4c-010118d02df6",
+          "kind": "cover",
+          "title": "What Happens When Your Retriever Is Confidently Wrong?",
+          "body": "Corrective RAG (CRAG) inserts a lightweight evaluator between retrieval and generation that grades documents before the model ever sees them.",
+          "bullets": [],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "d1526f13-13ff-4421-963f-36d37dda0e9c",
+          "kind": "problem",
+          "title": "Standard RAG Trusts Whatever It Retrieves",
+          "body": "A typical RAG pipeline retrieves top-k documents and hands them straight to the generator. Better chunking, reranking, and hybrid search all improve the odds of good retrieval — but none of them stop the generator from confidently answering off irrelevant or stale documents when retrieval fails anyway.",
+          "bullets": [
+            "Out-of-distribution queries, sparse corpora, or an index that's simply out of date all produce low-relevance retrievals that still get passed through",
+            "The generator has no signal that what it received is wrong — it will synthesize a fluent, confident answer from bad context",
+            "Reranking picks the 'best available' documents from what was retrieved; it doesn't tell you whether even the best available document is actually good enough"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "98dbf2b8-67e8-4bae-a611-63c25acf25a7",
+          "kind": "solution",
+          "title": "Grade First, Then Decide How to Respond",
+          "body": "CRAG trains a small, lightweight evaluator (much cheaper than the generator itself) to score each retrieved document's relevance to the query and assign a confidence label.",
+          "bullets": [
+            "Correct (high confidence): the document is relevant — proceed, but refine it first (see next slide)",
+            "Incorrect (low confidence): discard the retrieved set entirely and trigger a rewritten web search query as a fallback source of knowledge",
+            "Ambiguous (in between): combine refined internal knowledge with supplemental web search results rather than betting on one source"
+          ],
+          "symbol": "checkmark.circle.badge.questionmark",
+          "table": null
+        },
+        {
+          "id": "c0c05fb0-95ee-4879-8077-242c2832495d",
+          "kind": "architecture",
+          "title": "Decompose-Then-Recompose: Cleaning Up 'Correct' Documents",
+          "body": "Even a document graded Correct is rarely 100% relevant end-to-end — it usually has useful and irrelevant parts mixed together.",
+          "bullets": [
+            "The document is decomposed into fine-grained 'knowledge strips' (small segments of text)",
+            "Each strip is individually filtered for relevance to the query",
+            "Only the surviving relevant strips are recomposed into the final context — cutting noise the generator would otherwise have to sift through itself"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "6c1053eb-28ec-45a1-a79d-4abdfd02e079",
+          "kind": "comparison",
+          "title": "Naive RAG vs. Self-RAG vs. CRAG",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "Handles bad retrievals?",
+              "External fallback?",
+              "Extra training needed?"
+            ],
+            "rows": [
+              [
+                "Naive RAG",
+                "No — passes retrieved docs through as-is",
+                "No",
+                "No"
+              ],
+              [
+                "Self-RAG",
+                "Partially — model self-critiques via reflection tokens",
+                "No",
+                "Yes, generator fine-tuning"
+              ],
+              [
+                "CRAG",
+                "Yes — dedicated evaluator grades before generation",
+                "Yes — web search on low confidence",
+                "Small evaluator only, generator untouched"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "f4a56ba3-5ba7-48ac-be37-404371e70eca",
+          "kind": "example",
+          "title": "A Query the Corpus Can't Answer",
+          "body": "A support-bot corpus was indexed three months ago. A user asks about a product change that shipped last week.",
+          "bullets": [
+            "Naive RAG: retrieves the closest old documents, generator answers fluently — and wrong — because nothing tells it the retrieved docs predate the change",
+            "CRAG: the evaluator scores the retrieved docs low relevance/confidence against the query, triggers the Incorrect path, rewrites the query for web search, and grounds the answer in current information instead",
+            "The fix isn't a smarter generator or a bigger index — it's a cheap check that catches the mismatch before generation happens"
+          ],
+          "symbol": "clock.arrow.circlepath",
+          "table": null
+        },
+        {
+          "id": "c07b4780-b07b-46a7-80d6-e5644bb80312",
+          "kind": "problem",
+          "title": "Tradeoffs and When to Skip It",
+          "body": "CRAG buys robustness against bad retrievals, but it isn't free.",
+          "bullets": [
+            "Extra latency: every query now pays for evaluator inference, plus a possible full web search round-trip on the Incorrect path — a poor fit for tight latency budgets",
+            "New failure surface: the evaluator is itself a trained classifier that can be miscalibrated or biased for your domain, and needs its own evaluation, not just the generator's",
+            "Web fallback assumes a live search API is available and trustworthy — in air-gapped, private-corpus-only, or high-security deployments, that path may not exist, and fetching untrusted web content is itself a risk to manage",
+            "If your corpus is comprehensive and frequently refreshed, the marginal benefit shrinks — CRAG earns its keep specifically when retrieval failure is a real, recurring risk"
+          ],
+          "symbol": "gauge.with.needle",
+          "table": null
+        },
+        {
+          "id": "82d8cb06-0b14-45d7-8909-359fe1166961",
+          "kind": "takeaways",
+          "title": "The Core Idea, Compressed",
+          "body": null,
+          "bullets": [
+            "CRAG adds a lightweight evaluator that grades retrieved documents Correct / Incorrect / Ambiguous before the generator sees them",
+            "Correct documents get refined via decompose-then-recompose; Incorrect ones are dropped in favor of a live web search; Ambiguous cases use both",
+            "It's a plug-in correction layer — the generator doesn't need retraining, unlike Self-RAG",
+            "The cost is latency and a new, separately-fallible component; it pays off most when retrieval failure is common, not when your corpus is already reliable"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "fcf28dfb-6e3a-46d2-a81e-f7ce9485bce4",
+            "prompt": "What triggers CRAG's web-search fallback?",
+            "options": [
+              "The user explicitly asks for a web search",
+              "The retrieval evaluator scores the retrieved documents as low-confidence / Incorrect",
+              "The generator runs out of context window",
+              "CRAG always searches the web in addition to the corpus"
+            ],
+            "correctIndex": 1,
+            "explanation": "CRAG's lightweight evaluator grades retrieved documents; only when confidence falls into the Incorrect range does it discard them and fall back to a rewritten web search query."
+          },
+          {
+            "id": "6501bfc5-1aa2-48d8-8535-91d6518e70cc",
+            "prompt": "What does the 'decompose-then-recompose' step do to a document graded Correct?",
+            "options": [
+              "Translates it into a different language for the generator",
+              "Splits it into fine-grained knowledge strips, filters out irrelevant strips, and recomposes only the relevant ones",
+              "Compresses it into a vector embedding and discards the text",
+              "Sends it back to the retriever for a second retrieval pass"
+            ],
+            "correctIndex": 1,
+            "explanation": "Even relevant documents usually mix useful and irrelevant content. Decompose-then-recompose breaks the document into strips, filters each for relevance, and keeps only the ones that survive — cutting noise before generation."
+          },
+          {
+            "id": "319ed127-4a3a-4111-865f-45528def3b4b",
+            "prompt": "What's the main tradeoff of adding CRAG to an existing RAG pipeline?",
+            "options": [
+              "It requires retraining the entire generator model from scratch",
+              "It only works with proprietary vector databases",
+              "It adds latency from evaluator inference and possible web search round-trips, plus a new component (the evaluator) that can itself be miscalibrated",
+              "It eliminates the need for any retriever at all"
+            ],
+            "correctIndex": 2,
+            "explanation": "CRAG's grading and fallback steps sit in the critical path of every query, adding latency, and the evaluator is a separately-trained classifier that introduces its own failure mode rather than eliminating one."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d961becc-8877-48b5-bdc2-d7b4a6bcf6d8",
+          "title": "Corrective Retrieval Augmented Generation (arXiv:2401.15884)",
+          "url": "https://arxiv.org/abs/2401.15884"
+        }
+      ],
+      "id": "a807eb1c-3dc6-4858-9e1b-25091817df12",
+      "publishedDate": "2026-07-14T06:40:44Z"
+    },
+    {
       "title": "Direct Preference Optimization: Skipping the Reward Model",
       "subtitle": "RLHF needs four models and an unstable RL loop. DPO gets the same alignment from one supervised loss.",
       "category": "LLMs",
@@ -10932,408 +11313,6 @@
       ],
       "id": "d94d6650-cbff-4420-bd0b-7128bd10eefd",
       "publishedDate": "2026-07-07T06:44:06Z"
-    },
-    {
-      "title": "Knowledge Distillation: Teaching a Small Model to Think Big",
-      "subtitle": "Train the student on the teacher's soft probabilities, not just the right answer.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "knowledge distillation",
-        "model compression",
-        "llm training",
-        "efficiency"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "graduationcap.fill",
-      "summary": "Knowledge distillation trains a small 'student' model to reproduce a large 'teacher' model's full output distribution, not just its final answers. Soft labels, softened with a temperature parameter, carry far more signal than hard labels — and the technique is why so many small, capable production models exist today.",
-      "slides": [
-        {
-          "id": "9441ca54-8441-4fbb-92df-03c13ec396e7",
-          "bullets": [
-            "A small 'student' model is trained to mimic a large 'teacher' model's behavior",
-            "Core idea traces to Hinton et al., 2015 — still the backbone of most production-size LLMs today",
-            "Used to ship 7-8B models that punch well above their parameter count"
-          ],
-          "body": "Most teams can't run a 500B-parameter flagship model at inference scale. Knowledge distillation is how you compress that model's behavior into something small enough to actually serve.",
-          "symbol": "graduationcap.fill",
-          "table": null,
-          "kind": "cover",
-          "title": "Shrink the Model, Keep the Smarts"
-        },
-        {
-          "id": "86f059eb-70c5-427f-b4a2-fa17b89babfa",
-          "bullets": [
-            "Flagship models are trained for capability, not for cheap serving",
-            "Latency and cost scale roughly with parameter count and active compute per token",
-            "Training a small model from scratch on the same raw data rarely reaches the same quality",
-            "The small model needs to inherit the big model's judgment, not just its training set"
-          ],
-          "body": "A frontier model's weights encode countless subtle judgment calls that a raw dataset alone doesn't hand you — the goal is transferring as much of that judgment as possible into a model cheap enough to run everywhere.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "The Biggest Model Isn't the Deployable One"
-        },
-        {
-          "id": "47401328-24da-4cf4-bfdd-911ddb7f73d7",
-          "bullets": [
-            "Hard label: the correct answer is 'cat' — a single one-hot target",
-            "Soft label: the teacher's full probability distribution — 'cat' 70%, 'dog' 20%, 'fox' 8%, everything else 2%",
-            "Those probabilities encode the teacher's uncertainty and which wrong answers are 'less wrong'",
-            "A 'temperature' parameter softens the teacher's distribution further, exposing more of that relative structure to the student"
-          ],
-          "body": "The trick isn't just imitating the teacher's final answer — it's imitating its entire probability distribution over all possible answers, which carries far more signal than a single correct label.",
-          "symbol": "thermometer.medium",
-          "table": null,
-          "kind": "solution",
-          "title": "Train on Soft Labels, Not Just Hard Answers"
-        },
-        {
-          "id": "63c39fc1-02a6-472e-931f-9550a1293b10",
-          "bullets": [
-            "KL-divergence term: match the student's output distribution to the teacher's softened distribution",
-            "Standard cross-entropy term: still fit the ground-truth labels directly",
-            "A weighting term balances 'imitate the teacher' against 'get the ground truth right'",
-            "Backprop runs through the student only — the teacher stays frozen and just supplies targets"
-          ],
-          "body": "In practice the student optimizes a blended loss: part 'match my teacher,' part 'match the actual label,' so it doesn't become a purely lossy copy.",
-          "symbol": "function",
-          "table": null,
-          "kind": "concept",
-          "title": "The Distillation Loss: Two Objectives at Once"
-        },
-        {
-          "id": "a2d98a9c-1066-46d1-b247-3f4f0534b729",
-          "bullets": [
-            "Distillation changes WHICH model you deploy; quantization and pruning shrink the SAME model",
-            "The three techniques compose — distill first, then quantize the resulting student further",
-            "Distillation is the only one of the three that can change the underlying architecture entirely"
-          ],
-          "body": null,
-          "symbol": "square.on.square",
-          "table": {
-            "headers": [
-              "Technique",
-              "What it compresses",
-              "What you keep"
-            ],
-            "rows": [
-              [
-                "Distillation",
-                "Behavior, via a smaller model trained on the teacher's outputs",
-                "Most of the teacher's task performance in far fewer params"
-              ],
-              [
-                "Quantization",
-                "Numeric precision of existing weights",
-                "Same architecture, lower memory/compute per weight"
-              ],
-              [
-                "Pruning",
-                "Number of weights/heads/layers in the same model",
-                "Original architecture, minus low-importance parts"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Distillation vs. Its Neighbors"
-        },
-        {
-          "id": "9dcb84a4-39ad-4825-85eb-699149a28e10",
-          "bullets": [
-            "Teacher: a large flagship model answering millions of diverse prompts",
-            "Generate the teacher's full response plus token probabilities for each prompt",
-            "Train a small student to match those soft distributions, plus the real preferred answers",
-            "Result: a small model that retains a large share of the flagship's helpfulness, at a fraction of the serving cost"
-          ],
-          "body": "This is roughly how many 'small but surprisingly capable' open models are built: not trained from raw internet text alone, but distilled from a larger sibling's outputs.",
-          "symbol": "arrow.down.right.and.arrow.up.left",
-          "table": null,
-          "kind": "example",
-          "title": "Worked Example: Distilling a Chat Assistant"
-        },
-        {
-          "id": "6a7aa9df-058e-4a65-b07b-60879865ddce",
-          "bullets": [
-            "The student is capped by the teacher — it can't exceed the teacher's own ceiling of quality",
-            "Generating teacher outputs over millions of prompts costs real inference compute upfront",
-            "Capabilities that are rare in the teacher's outputs are often the first thing lost in a smaller student",
-            "Works best when inference-time tasks resemble the distillation prompts — distribution shift still hurts"
-          ],
-          "body": "Distillation is a transfer of behavior, not a shortcut past the teacher's own limitations — a flawed teacher produces a flawed, if smaller, student.",
-          "symbol": "scalemass.fill",
-          "table": null,
-          "kind": "concept",
-          "title": "Tradeoffs: What Distillation Doesn't Fix"
-        },
-        {
-          "id": "1022275c-7340-4885-bc4d-1bc47e238e30",
-          "bullets": [
-            "Distillation trains a small model on a large model's full output distribution, not just its right answers",
-            "Soft labels, softened with temperature, carry far more signal than one-hot hard labels",
-            "It composes with quantization and pruning — most production small models use more than one of these together",
-            "The student's ceiling is the teacher's ceiling — distillation transfers capability, it doesn't create it"
-          ],
-          "body": null,
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "Takeaways"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "186f34b5-88ab-492c-9958-00e8bd0f74ab",
-            "prompt": "What is a 'soft label' in knowledge distillation?",
-            "options": [
-              "A label with lower confidence written by a human annotator",
-              "The teacher model's full probability distribution over all possible outputs, not just the correct answer",
-              "A compressed version of the training dataset",
-              "A label used only during pruning"
-            ],
-            "correctIndex": 1,
-            "explanation": "Soft labels are the teacher's complete output distribution — including how much probability it assigns to wrong answers — which carries far more signal than a single one-hot correct label."
-          },
-          {
-            "id": "2f33a188-6c57-4744-ae3a-039c76a3b71f",
-            "prompt": "What does the temperature parameter do during distillation?",
-            "options": [
-              "It controls the learning rate of the student model",
-              "It softens the teacher's probability distribution, exposing more relative structure between wrong answers",
-              "It measures the GPU's thermal output during training",
-              "It sets how many layers the student model has"
-            ],
-            "correctIndex": 1,
-            "explanation": "A higher temperature flattens the teacher's distribution, making the relative probabilities of less-likely answers more visible to the student instead of being drowned out by one dominant answer."
-          },
-          {
-            "id": "4f92d617-c4d0-4921-bb8b-f592082f73bf",
-            "prompt": "Why can't a distilled student model ever exceed its teacher's quality?",
-            "options": [
-              "Because the student always has more parameters than the teacher",
-              "Because the student is trained to imitate the teacher's own output distribution, which caps its ceiling at the teacher's ceiling",
-              "Because distillation always corrupts the training data",
-              "Because pruning removes the student's best weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "Distillation transfers the teacher's behavior — it doesn't add new capability beyond what the teacher already has, so the student's quality ceiling is bounded by the teacher's."
-          }
-        ]
-      },
-      "references": [],
-      "id": "f26fa277-6cf1-4466-b30a-65b3f90cce1c",
-      "publishedDate": "2026-07-07T06:44:06Z"
-    },
-    {
-      "id": "ed699850-9548-4d5c-b4b6-0890fa175795",
-      "title": "ARIS: When Your Research Agent Gets a Skeptical Reviewer",
-      "subtitle": "An executor writes the paper; a rival model tries to tear it apart.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "research automation",
-        "multi-agent",
-        "llm evaluation",
-        "arxiv"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "checkmark.seal.fill",
-      "summary": "ARIS pairs an executor model that drives a research project forward with a reviewer from a different model family whose only job is to find holes in it. A three-stage assurance layer then cross-checks every claim in the final write-up against the raw evidence before anything is called done.",
-      "slides": [
-        {
-          "id": "9b551010-fd69-4710-a845-daa43b42f757",
-          "bullets": [
-            "ARIS (Shanghai Jiao Tong University / Shanghai Innovation Institute, arXiv 2605.03042)",
-            "Targets 'plausible unsupported success', not obvious breakdowns",
-            "Trending on Hugging Face Daily Papers"
-          ],
-          "body": "For long-running research agents, the scary outcome isn't a crash — it's a polished, confident report whose claims quietly outrun the evidence.",
-          "symbol": "sparkles",
-          "table": null,
-          "kind": "cover",
-          "title": "Autonomous Research's Silent Failure Mode"
-        },
-        {
-          "id": "614456fa-4189-49f2-b69b-9284a9e88cda",
-          "bullets": [
-            "No visible crash — the report just reads well",
-            "Errors compound across many autonomous steps",
-            "Nothing forces the agent to re-check its own framing"
-          ],
-          "body": "A long-horizon research agent can produce claims whose evidential support is incomplete, misreported, or silently inherited from the executor's own framing of the problem.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "A Confident Agent Isn't the Same as a Correct One"
-        },
-        {
-          "id": "225fdd91-69b4-4be2-a5dd-aa254d83c89f",
-          "bullets": [
-            "Executor and reviewer are adversarial, not collaborative",
-            "Different model family avoids shared blind spots",
-            "Reviewer can send work back for revision at any stage"
-          ],
-          "body": "An executor model drives the research forward. A reviewer — recommended to come from a different model family — is tasked purely with critiquing intermediate artifacts and demanding revisions.",
-          "symbol": "person.2.fill",
-          "table": null,
-          "kind": "solution",
-          "title": "Fix: Make a Different Model Argue Back"
-        },
-        {
-          "id": "5644d04d-c69a-413a-9b07-831500b6dd8b",
-          "bullets": [
-            "65+ reusable Markdown-defined skills",
-            "Model integrations wired through MCP",
-            "A persistent research wiki so findings get reused across sessions",
-            "Deterministic figure generation (no re-rolling charts hoping they look right)"
-          ],
-          "body": "The executor isn't working from a blank prompt — it has a large library of reusable, structured skills and a memory of prior work.",
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "kind": "architecture",
-          "title": "The Execution Layer's Toolkit"
-        },
-        {
-          "id": "248ed950-4371-4ec2-abaa-853ccf0d6e7c",
-          "bullets": [
-            "5 end-to-end workflows for different research shapes",
-            "Adjustable effort settings trade compute for thoroughness",
-            "Reviewer-model routing is configurable per run"
-          ],
-          "body": "A coordination layer sits above the executor/reviewer loop, routing work through defined pipelines instead of one open-ended agent loop.",
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "kind": "architecture",
-          "title": "Orchestration: Five Workflows, Tunable Effort"
-        },
-        {
-          "id": "a6dcf07e-a654-47ab-8123-5295d26a8b60",
-          "bullets": [
-            "1) Integrity verification of the raw experimental evidence",
-            "2) Result-to-claim mapping — which evidence backs which sentence",
-            "3) Claim auditing — cross-checks the manuscript against a 'claim ledger'",
-            "Plus a 5-pass editing pass, math-proof checks, and visual PDF inspection"
-          ],
-          "body": "Before a result ships, a three-stage assurance layer checks whether the manuscript's claims actually match what the experiments produced.",
-          "symbol": "list.bullet.clipboard.fill",
-          "table": null,
-          "kind": "concept",
-          "title": "Assurance: Auditing Claims Against Evidence"
-        },
-        {
-          "id": "fc25129d-0085-41ff-83bf-e1df7ed85f98",
-          "bullets": [
-            "Claim-to-evidence mapping flags the sentence as unsupported",
-            "Reviewer (different model family) independently re-reads the raw logs",
-            "Executor is sent back to either rerun cleanly or rewrite the claim narrowly",
-            "Nothing reaches the final report without a traceable evidence link"
-          ],
-          "body": "Imagine the executor's draft says 'our method improves accuracy by a large margin,' but the raw logs only support a modest gain on a filtered subset of runs.",
-          "symbol": "magnifyingglass",
-          "table": null,
-          "kind": "example",
-          "title": "Worked Example: Catching an Inflated Claim"
-        },
-        {
-          "id": "9d14b5fc-5fcc-40fa-a111-e3e6b73e7304",
-          "bullets": [
-            "More model calls per finding = higher latency and compute cost",
-            "Reviewer must genuinely differ from the executor, or biases just double up",
-            "Assurance catches evidence mismatches, not every possible reasoning error",
-            "Best suited to long-horizon, high-stakes research — overkill for a quick lookup"
-          ],
-          "body": "Adding a skeptical reviewer and a multi-stage audit isn't free — it trades speed and simplicity for reliability.",
-          "symbol": "scalemass.fill",
-          "table": {
-            "headers": [
-              "Setup",
-              "Failure caught?"
-            ],
-            "rows": [
-              [
-                "Single executor, no review",
-                "Confident but unsupported claims ship"
-              ],
-              [
-                "Executor + same-family reviewer",
-                "Shared blind spots slip through"
-              ],
-              [
-                "ARIS: executor + cross-family reviewer + claim ledger",
-                "Claim-to-evidence mismatches get flagged before publication"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Tradeoffs: What Adversarial Review Costs You"
-        },
-        {
-          "id": "7edaf9c1-7dc2-483f-b3b2-180cb04827a3",
-          "bullets": [
-            "The real risk in autonomous research is plausible, unsupported success",
-            "Cross-model adversarial review beats a single model checking its own work",
-            "A claim ledger makes 'what backs this sentence?' answerable, not assumed"
-          ],
-          "body": "ARIS treats 'the agent sounds confident' as insufficient evidence of correctness, and builds structural friction to force claims back to their evidence.",
-          "symbol": "flag.checkered",
-          "table": null,
-          "kind": "takeaways",
-          "title": "Takeaways"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "ca146090-23b0-4f76-932d-9acda0902180",
-            "explanation": "ARIS's core insight is that the dangerous outcome isn't a visible crash — it's a confident, well-written report whose claims silently outrun what the evidence actually supports.",
-            "prompt": "What 'central failure mode' does ARIS specifically target in long-horizon research agents?",
-            "options": [
-              "The agent crashes or times out",
-              "A plausible-looking result whose claims aren't actually backed by evidence",
-              "Running out of context window mid-task",
-              "Excessive API billing costs"
-            ],
-            "correctIndex": 1
-          },
-          {
-            "id": "ba3405d8-7072-46bb-a5d2-5f90f7d68e85",
-            "explanation": "If executor and reviewer share the same training lineage, they're more likely to share the same errors and biases. A genuinely different model family is more likely to catch mistakes the executor can't see in itself.",
-            "prompt": "Why does ARIS recommend the reviewer model come from a different model family than the executor?",
-            "options": [
-              "To cut API costs by using a cheaper provider",
-              "To avoid shared blind spots and self-preference biases that same-family models tend to share",
-              "Because reviewer models must always be smaller",
-              "It's a hard requirement of the MCP protocol"
-            ],
-            "correctIndex": 1
-          },
-          {
-            "id": "4c63b7f8-9fa0-4b8f-95e3-651872988150",
-            "explanation": "The claim ledger is the mechanism that makes 'what evidence backs this sentence?' an explicit, checkable question instead of an assumption — it's how result-to-claim mapping gets audited before anything ships.",
-            "prompt": "What does ARIS's 'claim ledger' step do in the assurance layer?",
-            "options": [
-              "Tracks how much compute each experiment used",
-              "Cross-checks every statement in the manuscript against the raw supporting evidence",
-              "Stores API keys for the model integrations",
-              "Ranks the paper's novelty against prior arXiv submissions"
-            ],
-            "correctIndex": 1
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "7d3180d4-2cf3-42d3-b87b-d09d7a5c48a0",
-          "title": "ARIS: Autonomous Research via Adversarial Multi-Agent Collaboration (arXiv:2605.03042)",
-          "url": "https://arxiv.org/abs/2605.03042"
-        }
-      ],
-      "publishedDate": "2026-07-07T00:41:22Z"
     }
   ]
 }
