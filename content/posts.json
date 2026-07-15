@@ -1,6 +1,204 @@
 {
   "posts": [
     {
+      "title": "HNSW: The Graph That Makes Vector Search Fast",
+      "subtitle": "How a layered graph turns 'compare against everything' into a handful of hops",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "vector search",
+        "hnsw",
+        "embeddings",
+        "ann",
+        "rag",
+        "indexing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "heroImageURL": null,
+      "body": null,
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind most production vector search — it turns a query that would need to touch every stored vector into a handful of hops through a layered graph. Understanding its M, efConstruction, and ef knobs is the difference between a RAG system that's fast and accurate versus one that's slow, bloated, or missing the right chunks.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Billions of Vectors, Milliseconds Per Query",
+          "body": "Every RAG pipeline, semantic search bar, and recommendation feed eventually asks the same question: given this embedding, which stored vectors are closest? HNSW is the graph structure that answers it without scanning everything.",
+          "bullets": [],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "id": "dde83cfb-9dbd-4cbb-bbe2-51186c7bd26d",
+          "table": null
+        },
+        {
+          "kind": "problem",
+          "title": "Brute-Force Nearest Neighbor Doesn't Scale",
+          "body": "Exact k-nearest-neighbor search compares your query vector against every stored vector — O(n) distance computations per query.",
+          "bullets": [
+            "At 10K vectors, brute force is fine — sub-millisecond on a CPU.",
+            "At 10M+ vectors, comparing against everything turns a query into seconds, not milliseconds.",
+            "Distance math (cosine/dot product) is cheap per pair, but it's the count of pairs that kills you at scale.",
+            "The fix isn't a faster distance function — it's not comparing against everything."
+          ],
+          "symbol": "tortoise.fill",
+          "id": "1de1c66d-6d46-485a-af3d-d74d551b568f",
+          "table": null
+        },
+        {
+          "kind": "solution",
+          "title": "A Graph Built Like a Skip List",
+          "body": "HNSW (Malkov & Yashunin, 2016) stacks multiple layers of a proximity graph, where nearby vectors are connected by edges. Search starts at a single entry point in the sparsest top layer and greedily walks toward the query.",
+          "bullets": [
+            "Top layers are sparse with long-range 'highway' edges — a few hops cover huge distances in vector space.",
+            "Each layer down is denser; the bottom layer (layer 0) contains every vector in the index.",
+            "A node's layer assignment is randomized with exponentially decaying probability, so most nodes only exist at layer 0 — same trick a skip list uses for O(log n) lookups.",
+            "Search greedily moves to the neighbor closest to the query at each layer, then drops down a layer and repeats until it bottoms out."
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "id": "35f39eaa-d485-4af5-8c91-eeac1d48abbf",
+          "table": null
+        },
+        {
+          "kind": "architecture",
+          "title": "Three Knobs: M, efConstruction, ef",
+          "body": "HNSW's behavior is controlled by three parameters you set once at index build time and once (adjustably) at query time.",
+          "bullets": [
+            "M — max bi-directional edges per node per layer. Typical range 16–48; higher M means a denser, more accurate graph but more memory and slower inserts.",
+            "efConstruction — how many candidate neighbors are considered while building each node's edges. Typical default ~200; higher means a better-connected graph built more slowly.",
+            "ef (efSearch) — how many candidates are tracked while answering a query. Must be ≥ k (the number of results you want); raising it trades latency for recall.",
+            "ef is the one knob you can tune per-query without rebuilding the index — it's your live recall/latency dial."
+          ],
+          "symbol": "slider.horizontal.3",
+          "id": "f0ecb6be-48f1-4392-a864-d6e65c440971",
+          "table": null
+        },
+        {
+          "kind": "comparison",
+          "title": "HNSW vs. IVF vs. Brute Force",
+          "body": "No single index is right for every dataset size and memory budget.",
+          "bullets": [
+            "Brute force: exact, zero index-build cost, but query time grows linearly with dataset size.",
+            "IVF (inverted file index): clusters vectors with k-means, then searches only the nearest clusters — lower memory than HNSW, often paired with product quantization (IVF-PQ) for billion-scale, but generally lower recall at the same speed.",
+            "HNSW: highest recall-per-millisecond of the three at medium-to-large scale, at the cost of holding the full graph (and often full-precision vectors) in memory."
+          ],
+          "table": {
+            "headers": [
+              "Method",
+              "Query speed",
+              "Memory",
+              "Best for"
+            ],
+            "rows": [
+              [
+                "Brute force",
+                "Slow at scale (linear)",
+                "Lowest (vectors only)",
+                "< ~100K vectors, exact recall required"
+              ],
+              [
+                "IVF / IVF-PQ",
+                "Fast",
+                "Low (compressed)",
+                "Billion-scale, memory-constrained"
+              ],
+              [
+                "HNSW",
+                "Fastest per unit recall",
+                "High (graph + vectors)",
+                "Millions of vectors, latency-sensitive RAG"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "id": "be0c4456-3654-42c4-93c4-5045c7328590"
+        },
+        {
+          "kind": "example",
+          "title": "5 Million Chunks, One Query",
+          "body": "A RAG system embeds 5 million document chunks at 768 dimensions each.",
+          "bullets": [
+            "Brute force: the query vector is compared against all 5M chunk embeddings — on CPU this is a multi-second scan, unacceptable for an interactive chat response.",
+            "With HNSW: the query enters at the top layer's single entry point, takes a few long hops toward the right neighborhood, drops a layer, refines, and repeats — touching a few hundred candidates total instead of 5 million.",
+            "Result: the same lookup drops to tens of milliseconds, fast enough to sit inside a chat turn alongside the LLM call itself.",
+            "This is why pgvector, Qdrant, Weaviate, Milvus, and FAISS all ship HNSW as a default or recommended index type for this exact workload."
+          ],
+          "symbol": "bolt.fill",
+          "id": "9f005e41-f18d-4a39-b6fa-770454205fe2",
+          "table": null
+        },
+        {
+          "kind": "concept",
+          "title": "The Tradeoffs Nobody Puts on the Slide",
+          "body": "HNSW is fast, not free — three costs matter in production.",
+          "bullets": [
+            "Memory: every node stores M (2M at layer 0) edges on top of the raw vector, so the index can run 1.5–2x the size of the raw embeddings — painful at hundreds of millions of vectors.",
+            "Deletes are awkward: removing a node can disconnect its neighbors' paths, so most implementations tombstone (mark-deleted) rather than truly remove, and periodically rebuild to reclaim space.",
+            "It's approximate: ef controls a recall/latency tradeoff, not a guarantee — HNSW can miss the true nearest neighbor, which matters if your RAG system needs the single most relevant chunk, not 'one of the close ones'.",
+            "Build time grows with efConstruction and M — reindexing a large, frequently-updated corpus is not instant."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "58bfc44a-93bb-4e72-acdf-b6d46d2778a4",
+          "table": null
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "What to remember when you're the one setting up the vector index.",
+          "bullets": [
+            "HNSW trades memory for speed by replacing a linear scan with a layered graph walk — logarithmic-ish hops instead of comparing against every vector.",
+            "M and efConstruction are index-build-time tradeoffs (memory/build speed vs. graph quality); ef is your per-query recall/latency dial.",
+            "Reach for HNSW when you have millions of vectors and need low-latency, high-recall lookups with memory to spare — reach for IVF-PQ when memory is the constraint at billion-scale, and brute force when the dataset is small enough that 'exact' costs you nothing.",
+            "Deletes and heavy churn are HNSW's weak point — plan for periodic rebuilds if your corpus changes fast."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "08074617-9c91-4d16-b398-8d4e08d009ce",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In HNSW, what does the query-time parameter `ef` (efSearch) primarily control?",
+            "options": [
+              "The number of graph layers built",
+              "The tradeoff between search recall and query latency",
+              "The dimensionality of the stored vectors",
+              "How many threads the index build uses"
+            ],
+            "correctIndex": 1,
+            "explanation": "ef sets how many candidate nodes are tracked while searching. A higher ef examines more candidates before returning results, improving the odds of finding the true nearest neighbors at the cost of a slower query — it's the dial you turn per-query without rebuilding anything.",
+            "id": "0e2fde5c-a1ce-4b65-bca2-6a5a34149fb2"
+          },
+          {
+            "prompt": "Why does HNSW use multiple graph layers instead of one flat graph?",
+            "options": [
+              "To reduce total memory usage to near zero",
+              "It mimics a skip list — sparse top layers give long 'highway' jumps toward the right region before the dense bottom layer refines the result",
+              "GPUs require data to be split into layers to process it",
+              "It's required to guarantee exact, 100% recall"
+            ],
+            "correctIndex": 1,
+            "explanation": "Each node's presence in upper layers is randomized with exponentially decaying probability, so most nodes only live at layer 0. That mirrors how a skip list gets logarithmic search: a few long jumps at the top, then fine-grained steps near the bottom.",
+            "id": "a31f8286-f31b-4fdd-aef7-0543ec2567c6"
+          },
+          {
+            "prompt": "What's a real limitation of HNSW compared to brute-force exact search?",
+            "options": [
+              "It cannot run on CPUs, only GPUs",
+              "It doesn't support embeddings below 128 dimensions",
+              "It's approximate — increasing ef improves recall but never guarantees the true nearest neighbor is found",
+              "It requires labeled training data before it can index vectors"
+            ],
+            "correctIndex": 2,
+            "explanation": "HNSW is an Approximate Nearest Neighbor (ANN) method. It's dramatically faster than brute force, but the graph walk can settle on a local optimum and miss the true closest vector — a real risk if your application needs the single best match rather than 'one of the close ones'.",
+            "id": "6edead1d-6a8d-4d31-8c2b-0dca501485a1"
+          }
+        ]
+      },
+      "references": [],
+      "id": "aebeb02f-1721-439d-836d-1c1789d1d675",
+      "publishedDate": "2026-07-15T06:41:23Z"
+    },
+    {
       "title": "Long-Horizon-Terminal-Bench: 29 Tasks No Model Solves",
       "subtitle": "Give an agent 90 minutes and hundreds of steps in a real terminal, and the leaderboard flips",
       "category": "AI Innovations",
@@ -11136,184 +11334,6 @@
           "url": "https://openai.com/index/advancing-voice-intelligence-with-new-models-in-the-api/"
         }
       ]
-    },
-    {
-      "id": "4a1968cd-a878-4327-8218-b29b31b8c26d",
-      "title": "Multi-Agent Orchestration: Supervisor vs. Swarm vs. Pipeline",
-      "subtitle": "How you wire agents together decides whether failures stay contained or cascade.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "tags": [
-        "multi-agent systems",
-        "ai agents",
-        "orchestration",
-        "system design",
-        "llm"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "person.3.fill",
-      "summary": "There are three common ways to wire multiple LLM agents together — a central supervisor, a fixed pipeline, or a decentralized swarm — and each trades off control, latency, and failure isolation differently. Picking the wrong topology is a common reason multi-agent systems get slower and less reliable instead of more capable.",
-      "publishedDate": "2026-07-08T06:46:00Z",
-      "slides": [
-        {
-          "id": "0e7cb000-095d-41c4-951c-9b03eeff8e0d",
-          "kind": "cover",
-          "title": "Three Ways to Wire Multiple Agents Together",
-          "body": null,
-          "bullets": [
-            "Supervisor: one orchestrator agent delegates to specialist sub-agents and combines results",
-            "Pipeline: agents run in a fixed order, each consuming the previous one's output",
-            "Swarm: agents hand off control directly to each other based on the task, no central router"
-          ],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "da3c3e38-cbed-43da-a23c-89f662fe68d2",
-          "kind": "problem",
-          "title": "A Single Agent Doing Everything Doesn't Scale",
-          "body": null,
-          "bullets": [
-            "One agent with a giant system prompt and every tool attached gets slower (more tokens to reason over) and less reliable (tool-selection accuracy drops as tool count grows)",
-            "Different sub-tasks want different context — a research step wants search tools, a coding step wants a sandbox — mixing them pollutes context for both",
-            "Debugging is hard when one agent's transcript mixes five unrelated responsibilities"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "c2af0866-84df-4007-b212-106ecf0e8d9b",
-          "kind": "architecture",
-          "title": "Pick the Topology That Matches Your Failure Mode",
-          "body": null,
-          "bullets": [
-            "Supervisor: a lead agent calls specialists as tools and decides what's next — centralizes control and is easy to audit, but the supervisor is a bottleneck and single point of failure",
-            "Pipeline: fixed hand-off order (planner -> researcher -> writer -> reviewer) — predictable and cheap to reason about, but rigid: a bad step 2 silently corrupts steps 3 and 4",
-            "Swarm/handoff: any agent can transfer the conversation to any other agent based on the current need, like a call-center transfer — flexible and bottleneck-free, but harder to guarantee the task terminates or stays on-topic"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "9053a76b-5152-4d1b-a566-8573d5bef2ac",
-          "kind": "comparison",
-          "title": "Supervisor vs. Pipeline vs. Swarm",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Pattern",
-              "Control",
-              "Failure isolation",
-              "Best for"
-            ],
-            "rows": [
-              [
-                "Supervisor",
-                "Centralized",
-                "High — supervisor can catch or retry a bad sub-agent",
-                "Tasks needing a final quality gate (e.g. review before merge)"
-              ],
-              [
-                "Pipeline",
-                "Fixed sequence",
-                "Low — errors propagate forward silently",
-                "Well-defined linear workflows (e.g. extract -> transform -> summarize)"
-              ],
-              [
-                "Swarm/handoff",
-                "Decentralized",
-                "Medium — depends on each agent's own handoff logic",
-                "Routing scenarios where the right specialist isn't known upfront"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "9aa2452f-21bc-404b-88a8-87117fae23c4",
-          "kind": "example",
-          "title": "Worked Example: Support With Three Escalation Tiers",
-          "body": null,
-          "bullets": [
-            "A support bot handles billing questions with a swarm/handoff pattern",
-            "Tier-1 agent (FAQ and account-lookup tools) answers directly if confidence is high",
-            "If the question needs a refund decision, tier-1 hands off to a billing-specialist agent with refund-policy tools and the full conversation history",
-            "If the customer is upset (a sentiment check fires), any agent can hand off directly to a human-escalation agent",
-            "No central supervisor decides every step — each agent decides when to transfer"
-          ],
-          "symbol": "person.2.wave.2.fill",
-          "table": null
-        },
-        {
-          "id": "fe34cda6-01ed-4043-9846-1cd5c969c06f",
-          "kind": "problem",
-          "title": "When Orchestration Overhead Isn't Worth It",
-          "body": null,
-          "bullets": [
-            "For tasks a single well-scoped agent with under ~10 tools can handle reliably, orchestration is pure latency and cost overhead — every hop is another model call",
-            "Swarm patterns can loop: two agents hand off back and forth if their handoff conditions overlap — always cap the total number of hops",
-            "Supervisor patterns concentrate cost and latency in one place; if the supervisor's context grows unbounded, it becomes the same \"one agent doing everything\" problem you were trying to avoid",
-            "Pipelines are the easiest to test (deterministic order) but the worst at handling the unexpected — an edge case not anticipated by the fixed sequence has no recovery path"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "61524d9b-f445-42da-b142-af1a59524291",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "Match the topology to your failure mode: need a final check before output ships -> supervisor; steps are strictly ordered -> pipeline; the right specialist isn't known in advance -> swarm/handoff",
-            "More agents isn't automatically better — every hop adds latency and a new place for context to get lost",
-            "Always bound the total number of hops or handoffs, regardless of pattern, to prevent infinite loops or runaway cost"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6357699d-fe50-4ee8-a13f-a2e84b03544e",
-            "prompt": "Which orchestration pattern is most vulnerable to errors silently propagating forward without any check?",
-            "options": [
-              "Supervisor",
-              "Pipeline",
-              "Swarm/handoff",
-              "None of them"
-            ],
-            "correctIndex": 1,
-            "explanation": "A fixed sequential pipeline has no step that re-evaluates earlier output, so a bad result at step 2 flows unchecked into steps 3 and 4."
-          },
-          {
-            "id": "a4d78a3c-f091-44e9-8f5e-3a9299bf5523",
-            "prompt": "In a supervisor pattern, what is the main scalability risk?",
-            "options": [
-              "Sub-agents can't use tools",
-              "The supervisor becomes a bottleneck if its context keeps growing",
-              "Pipelines can't be tested",
-              "Swarm agents can't hand off"
-            ],
-            "correctIndex": 1,
-            "explanation": "If the supervisor accumulates every sub-agent's full output into its own context, it eventually recreates the same overloaded-single-agent problem the topology was meant to avoid."
-          },
-          {
-            "id": "7d418c80-0b94-4872-bdf9-4bf88d341d58",
-            "prompt": "What's the most important safeguard to add to a swarm/handoff pattern?",
-            "options": [
-              "Removing all tools from agents",
-              "A hard cap on the number of handoffs to prevent infinite loops",
-              "Forcing a fixed execution order",
-              "Disabling sentiment detection"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without a hop limit, two agents whose handoff conditions overlap can transfer control back and forth indefinitely, burning cost with no progress."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
