@@ -1,6 +1,204 @@
 {
   "posts": [
     {
+      "title": "Grouped-Query Attention: Splitting the Difference",
+      "subtitle": "How Llama 2, Llama 3, and Mistral shrink the KV cache without eating Multi-Query Attention's quality hit",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "inference",
+        "transformers",
+        "llama"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "cpu.fill",
+      "summary": "Grouped-Query Attention (GQA) has query heads share a small number of key/value heads instead of each head keeping its own (Multi-Head Attention) or all heads sharing just one (Multi-Query Attention). It shrinks the KV cache and the memory traffic that bottlenecks autoregressive decoding, while staying much closer to full-attention quality than MQA. Llama 2's 34B/70B, all of Llama 3, and Mistral 7B ship with it — and existing MHA checkpoints can be converted into GQA ones with a small amount of extra pretraining instead of starting over.",
+      "slides": [
+        {
+          "id": "65bc6ac4-1e56-4351-b240-468ba36e6a48",
+          "kind": "cover",
+          "title": "One Key/Value Head Can Serve a Whole Group of Query Heads",
+          "body": "Grouped-Query Attention (GQA) sits between two extremes: every query head keeping its own key/value head (Multi-Head Attention), and every query head sharing a single key/value head (Multi-Query Attention). GQA splits query heads into a handful of groups, each sharing one K/V head.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "34dc5103-a93f-4136-b1f8-ff6584bf3f4c",
+          "kind": "problem",
+          "title": "Decoding Is Bottlenecked by Memory Traffic, Not Math",
+          "body": "Generating one token at a time means the GPU does very little compute per step (one new query vector), but it still has to read the entire cached keys and values for every head, every layer, every prior token out of HBM.",
+          "bullets": [
+            "That read, not the matmul, dominates decode latency — it's a classic memory-bandwidth-bound workload, so anything that shrinks the KV cache speeds up every subsequent token",
+            "Standard Multi-Head Attention (MHA) caches a separate K and V per head — with H heads, the cache (and the bytes read per step) scales linearly with H",
+            "Multi-Query Attention (MQA, Shazeer 2019) collapses all query heads onto one shared K/V head, cutting cache size by roughly a factor of H — but that aggressive sharing measurably hurts output quality and can destabilize training"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "051dd318-2898-48d1-be4d-6dd02e83ca99",
+          "kind": "solution",
+          "title": "Group the Heads Instead of Merging Them All",
+          "body": "GQA (Ainslie et al., 2023) partitions the H query heads into G groups, where 1 < G < H. Every query head in a group attends using that group's single shared K/V head. G = H recovers ordinary MHA; G = 1 recovers MQA — GQA is the tunable middle ground.",
+          "bullets": [
+            "Cache size (and memory traffic per decode step) shrinks by a factor of H/G compared to full MHA",
+            "Quality degrades gracefully as G shrinks — nowhere near the cliff MQA hits when it forces every head down to one shared K/V",
+            "G is a straightforward hyperparameter choice made at pretraining time, constrained only by needing to divide H evenly"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "c5e4d7e5-b69b-42d8-9d34-a2cf39df7944",
+          "kind": "architecture",
+          "title": "You Don't Need to Retrain From Scratch",
+          "body": "The GQA paper's other contribution is a cheap way to convert an already-trained MHA checkpoint instead of pretraining a grouped model from zero.",
+          "bullets": [
+            "'Uptraining': initialize each group's shared K/V head by mean-pooling the original per-head K/V projections that fall into that group — not by arbitrarily picking one head and discarding the rest",
+            "Continue pretraining the converted checkpoint for a small additional slice of the original training compute so the model adapts to the new shared heads",
+            "This makes GQA cheap to retrofit onto an existing MHA model family, which is exactly how it was validated on T5-XXL-scale checkpoints"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "b5a1881f-42e4-45d4-8fe2-72ef0c2e0c64",
+          "kind": "comparison",
+          "title": "MHA vs. GQA vs. MQA",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Mechanism",
+              "K/V heads",
+              "Cache vs. MHA",
+              "Quality"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "One per query head (H)",
+                "Baseline",
+                "Best"
+              ],
+              [
+                "GQA",
+                "A handful of groups (G), 1 < G < H",
+                "Smaller by H/G",
+                "Close to MHA"
+              ],
+              [
+                "MQA",
+                "One, shared by all heads",
+                "Smallest (÷H)",
+                "Noticeably worse"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "27085d4b-3737-42f7-aaff-9c4cfe58eff4",
+          "kind": "example",
+          "title": "Llama 2 70B: 64 Query Heads, 8 K/V Heads",
+          "body": "Llama 2's 34B and 70B models use GQA with 8 K/V head groups; the smaller 7B and 13B models kept plain MHA. Llama 3 extended GQA to every model size, including the 8B, and Mistral 7B (32 query heads, 8 K/V heads) ships it too.",
+          "bullets": [
+            "On 70B, 64 query heads are split into 8 groups of 8 — each group's 8 query heads share one K/V head",
+            "That's an 8x smaller KV cache than full MHA would need at the same context length, directly cutting the bytes read from HBM on every decoding step",
+            "Because it's an architectural choice baked in at pretraining time, none of this is visible to callers of the model — it just shows up as faster, cheaper serving at long context"
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "eb711e9a-4f77-46bd-9f6c-d164877f1b5e",
+          "kind": "problem",
+          "title": "Where GQA Isn't the Right Call",
+          "body": "GQA optimizes specifically for the memory-bandwidth wall of autoregressive decoding — it isn't a universal attention upgrade.",
+          "bullets": [
+            "Encoder-only or non-autoregressive workloads that don't grow a KV cache step-by-step see little to no benefit — the problem GQA solves doesn't exist there",
+            "It's a pretraining-time architecture decision, not a serving-time toggle — you can't flip an already-deployed MHA model into GQA without the uptraining step (or full retraining)",
+            "Push G too low and you approach MQA's quality cliff; picking G is a real tradeoff, not a free lunch — most production models land around 4-8 K/V heads regardless of total head count",
+            "For workloads chasing maximum cache compression at long context (128K+), Multi-Head Latent Attention's low-rank latent goes further than GQA, at the cost of needing bespoke kernels"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "967be997-c5b9-4a37-bfcf-7dc82c3ef585",
+          "kind": "takeaways",
+          "title": "The Core Idea, Compressed",
+          "body": null,
+          "bullets": [
+            "Autoregressive decoding is memory-bandwidth bound: shrinking the KV cache directly speeds up every generated token",
+            "GQA groups query heads so each group shares one K/V head — a tunable middle ground between MHA (one K/V head per query head) and MQA (one K/V head total)",
+            "Existing MHA checkpoints can be uptrained into GQA by mean-pooling K/V heads per group, then briefly continuing pretraining — no need to start from scratch",
+            "It's now the default for open-weight LLMs: Llama 2's larger models, all of Llama 3, and Mistral 7B all ship with GQA"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4de0de39-3932-4443-a809-214c365f85be",
+            "prompt": "Why does shrinking the KV cache speed up autoregressive token generation?",
+            "options": [
+              "It reduces the number of floating-point operations needed per token",
+              "Decoding one token at a time is memory-bandwidth bound — the GPU spends most of its time reading the cached keys/values, not computing — so a smaller cache means less to read",
+              "It lets the model skip the softmax step in attention",
+              "It reduces the vocabulary size the model has to search over"
+            ],
+            "correctIndex": 1,
+            "explanation": "At decode time the compute per step is tiny (one new query vector), but the entire KV cache must be read from memory every step. That read dominates latency, which is why cache size — not FLOPs — is the lever GQA pulls."
+          },
+          {
+            "id": "b21b6c47-da53-4c2f-8a9e-93b69151c057",
+            "prompt": "How does GQA relate to Multi-Head Attention (MHA) and Multi-Query Attention (MQA)?",
+            "options": [
+              "GQA is unrelated — it's a completely different mechanism from both",
+              "GQA is the special case of MQA used only for encoder models",
+              "GQA generalizes both: G groups of shared K/V heads, where G = H recovers MHA and G = 1 recovers MQA",
+              "GQA always uses exactly 2 K/V heads regardless of model size"
+            ],
+            "correctIndex": 2,
+            "explanation": "GQA introduces a tunable number of groups G. Setting G equal to the number of query heads H gives ordinary MHA (every head has its own K/V); setting G to 1 gives MQA (all heads share one K/V). Values in between are GQA proper."
+          },
+          {
+            "id": "fec91ff8-c47b-4f19-9a8b-8d2fc4a0e96f",
+            "prompt": "Llama 2 70B uses 64 query heads split into 8 GQA groups. What does that mean for its KV cache?",
+            "options": [
+              "The cache is 8 times larger than plain MHA would need, because groups add overhead",
+              "There is no KV cache at all — GQA eliminates caching entirely",
+              "Each of the 8 groups shares one K/V head across its 8 query heads, so the cache is about 8 times smaller than full MHA at the same context length",
+              "The cache size is unrelated to the number of groups"
+            ],
+            "correctIndex": 2,
+            "explanation": "64 query heads in 8 groups means each K/V head serves 8 query heads. Compared to MHA's one K/V head per query head, that's roughly an 8x reduction in cache size and in the bytes read per decoding step."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "cd2d5f10-d368-4833-a860-9b1a3159258c",
+          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (arXiv:2305.13245)",
+          "url": "https://arxiv.org/abs/2305.13245"
+        },
+        {
+          "id": "13d7aa02-3b3b-4bae-aee2-bab53392ed04",
+          "title": "Llama 2: Open Foundation and Fine-Tuned Chat Models (arXiv:2307.09288)",
+          "url": "https://arxiv.org/abs/2307.09288"
+        }
+      ],
+      "id": "b6ca4aa5-7b8c-41e2-9c8e-e5e3bed3af3c",
+      "publishedDate": "2026-07-15T12:42:29Z"
+    },
+    {
       "title": "HNSW: The Graph That Makes Vector Search Fast",
       "subtitle": "How a layered graph turns 'compare against everything' into a handful of hops",
       "category": "RAG",
@@ -11141,197 +11339,6 @@
           "id": "230382cb-d36e-41e6-a66e-9b7958669a8f",
           "title": "MrFlow GitHub Repository",
           "url": "https://github.com/Xingyu-Zheng/MrFlow"
-        }
-      ]
-    },
-    {
-      "id": "53c3ac80-5d7e-4e27-b112-fea54f8c5361",
-      "title": "OpenAI's Realtime API Gets a Reasoning Mini Model",
-      "subtitle": "gpt-realtime-2.1 and its mini tier cut voice-agent latency 25% and bring tool use to the cheap tier.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "openai",
-        "voice ai",
-        "realtime api",
-        "speech-to-speech",
-        "ai agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "waveform",
-      "summary": "OpenAI shipped gpt-realtime-2.1 and gpt-realtime-2.1-mini on July 6, 2026, cutting p95 latency at least 25% across its Realtime voice models via caching improvements and, for the first time, bringing reasoning and tool use to the mini price tier.",
-      "publishedDate": "2026-07-08T06:45:00Z",
-      "slides": [
-        {
-          "id": "590d7558-6f68-468e-8402-efcba13465d6",
-          "kind": "cover",
-          "title": "Voice Agents No Longer Have to Choose Fast or Smart",
-          "body": null,
-          "bullets": [
-            "OpenAI shipped gpt-realtime-2.1 and gpt-realtime-2.1-mini on July 6, 2026",
-            "Realtime voice p95 latency down at least 25% across the lineup, via caching, not smaller models",
-            "The mini tier now supports reasoning and tool use — previously only the flagship could"
-          ],
-          "symbol": "waveform",
-          "table": null
-        },
-        {
-          "id": "1821678a-696f-4f11-b077-4c2d305beaa5",
-          "kind": "problem",
-          "title": "The Old Tradeoff: Cheap Voice Meant Dumb Voice",
-          "body": null,
-          "bullets": [
-            "Speech-to-speech voice agents run on a tight latency budget — every added reasoning step risks breaking the conversational feel",
-            "Until this release, \"mini\" realtime models meant fast and cheap but without flagship-level reasoning or reliable tool use",
-            "That forced teams to either pay flagship pricing for tool-calling voice agents, or ship a mini tier that couldn't reliably act on requests"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "e773ca87-3c27-43fb-b4ca-f677cff4c776",
-          "kind": "solution",
-          "title": "What Changed",
-          "body": null,
-          "bullets": [
-            "gpt-realtime-2.1: better alphanumeric recognition, silence/noise handling, and interruption behavior; configurable reasoning effort",
-            "gpt-realtime-2.1-mini: a distilled reasoning model — brings tool use and reasoning to the mini price point for the first time",
-            "Both connect over WebRTC, WebSocket, or SIP for speech-to-speech voice-agent workflows",
-            "p95 latency cut by at least 25% versus the prior generation, attributed to caching improvements rather than smaller models"
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "62f84a87-580a-4fed-9f41-ac08a978a40c",
-          "kind": "comparison",
-          "title": "Realtime Lineup: Before and After",
-          "body": "Mini-tier pricing wasn't published in the announcement, so this compares confirmed capabilities and gpt-realtime-2.1's published rate.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Capability",
-              "Previous generation (gpt-realtime-2)",
-              "This release"
-            ],
-            "rows": [
-              [
-                "p95 latency",
-                "Baseline",
-                "At least 25% lower (caching)"
-              ],
-              [
-                "Mini-tier reasoning + tool use",
-                "Not available",
-                "Available (gpt-realtime-2.1-mini)"
-              ],
-              [
-                "Alphanumeric recognition",
-                "Baseline",
-                "Improved"
-              ],
-              [
-                "Connection types",
-                "WebRTC / WebSocket / SIP",
-                "WebRTC / WebSocket / SIP"
-              ],
-              [
-                "gpt-realtime-2.1 pricing",
-                "—",
-                "$32/M input, $64/M output (audio tokens)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1c8c5b79-81ba-404b-a8a7-f6f21e06216d",
-          "kind": "example",
-          "title": "Worked Example: Building a Phone-Support Agent",
-          "body": null,
-          "bullets": [
-            "A team builds an IVR-replacement phone agent that needs to look up order status mid-call",
-            "Previously: reliable tool use in a live call meant paying flagship pricing ($32/$64 per M audio tokens)",
-            "Now: prototype on gpt-realtime-2.1-mini, which supports tool calling and reasoning at the mini price point, and escalate to the full model only when accuracy on complex intents demands it",
-            "The 25%+ lower p95 latency also cuts the dead air during a live call that makes voice agents feel robotic"
-          ],
-          "symbol": "phone.fill",
-          "table": null
-        },
-        {
-          "id": "efe52c64-dabb-4dcc-98b7-38eb5b3fb38a",
-          "kind": "problem",
-          "title": "Tradeoffs: What This Doesn't Fix",
-          "body": null,
-          "bullets": [
-            "Latency gains come from caching, not raw model speed — cold-start or highly novel prompts may see smaller improvements",
-            "Mini's reasoning is described as \"distilled\" — for the hardest tool-use decisions, the flagship model likely still wins on accuracy",
-            "Speech-to-speech pricing is per audio token, a different (often pricier) unit economics than text — model this before committing to an architecture",
-            "This is an API/infrastructure upgrade, not a new foundation model — underlying language capability didn't change"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "631eb59b-2f6e-42cb-aee6-e000f2f627cc",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "OpenAI narrowed the fast-vs-smart tradeoff for voice agents: the mini tier now handles reasoning and tool use, not just cheap transcription-and-reply",
-            "A 25%+ p95 latency cut applies across the whole Realtime lineup, attributed to caching improvements",
-            "For teams building voice agents, this shifts the default starting point: prototype on mini, escalate only when needed"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8f230f82-8237-4945-a913-a936598d4964",
-            "prompt": "What is the primary source of the at-least-25% p95 latency reduction in this release?",
-            "options": [
-              "A smaller model architecture",
-              "Improved caching",
-              "Removing the SIP protocol",
-              "Lower audio sample rates"
-            ],
-            "correctIndex": 1,
-            "explanation": "OpenAI attributes the latency cut to caching improvements, not to shrinking the models — the reasoning and tool-use capability actually grew for the mini tier."
-          },
-          {
-            "id": "55865472-d62c-4d87-91fb-4b23fa22d393",
-            "prompt": "What capability did gpt-realtime-2.1-mini gain that the previous mini generation lacked?",
-            "options": [
-              "Text-only chat",
-              "Reasoning and tool use at the mini price tier",
-              "Support for WebRTC",
-              "Multilingual translation"
-            ],
-            "correctIndex": 1,
-            "explanation": "Before this release, the mini tier traded away flagship-level reasoning and tool use for lower cost. gpt-realtime-2.1-mini brings both to the mini tier for the first time."
-          },
-          {
-            "id": "7a771320-26bf-4c65-8fb7-ad9941c4bb23",
-            "prompt": "Per OpenAI's published pricing, what does gpt-realtime-2.1 cost per million audio output tokens?",
-            "options": [
-              "$6",
-              "$32",
-              "$64",
-              "$128"
-            ],
-            "correctIndex": 2,
-            "explanation": "OpenAI lists gpt-realtime-2.1 at $32 per million audio input tokens and $64 per million audio output tokens."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "e60a729e-70f0-42fd-b02f-3a96885c3c7e",
-          "title": "Advancing voice intelligence with new models in the API — OpenAI",
-          "url": "https://openai.com/index/advancing-voice-intelligence-with-new-models-in-the-api/"
         }
       ]
     }
