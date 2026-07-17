@@ -1,6 +1,215 @@
 {
   "posts": [
     {
+      "id": "de745b74-5c3c-4e8c-ab88-298ad5fa7b51",
+      "title": "Quantization: Squeezing a 70B Model Onto One GPU",
+      "subtitle": "Round the weights to fewer bits, protect the ones that matter, and keep almost all the accuracy.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "gptq",
+        "awq",
+        "inference",
+        "llm-serving",
+        "gguf"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.down.right.and.arrow.up.left",
+      "summary": "Post-training quantization stores each weight in fewer bits (16 to 8 to 4) to cut a model's memory footprint, but naive uniform rounding wrecks accuracy because real weight distributions have outliers. GPTQ fixes this with calibration-driven, sequential per-column correction; AWQ instead rescales the small fraction of activation-salient weight channels before rounding. Both can push a 70B model from ~140GB down to ~35GB with only a small accuracy cost — but push past 3 bits and quality typically falls off a cliff.",
+      "slides": [
+        {
+          "id": "ace6d854-458d-4270-807a-a527d5271888",
+          "kind": "cover",
+          "title": "A 70B Model Doesn't Fit on Your GPU",
+          "body": "Every parameter in a transformer is normally stored as a 16-bit float. That precision is nearly free during training, but at inference it's mostly wasted — and it's the single biggest cost of serving a large model.",
+          "bullets": [
+            "A 70B-parameter model in fp16 needs roughly 140GB just for the weights, before activations or a KV cache",
+            "That's more memory than two 80GB GPUs, before serving a single token",
+            "Quantization asks: what if each weight were stored in 8, 4, or even fewer bits instead of 16?"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "6efa0c58-0a54-43af-a74c-9070d800a79b",
+          "kind": "problem",
+          "title": "Naive Rounding Breaks the Model",
+          "body": "You can't just round every weight uniformly to a lower bit-width and call it done — real transformer weight distributions have long tails, and the largest values dominate the error.",
+          "bullets": [
+            "Uniform (linear) quantization maps a weight's range onto a fixed number of buckets — 4 bits gives only 16 distinct levels for the entire range",
+            "A handful of outlier weights or activation channels stretch that range, so most 'normal' weights get crushed into just a few buckets and lose precision",
+            "Naive INT4 on an untouched model can cost several points of accuracy and send perplexity climbing — enough to make outputs noticeably worse"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "746e5f1d-213a-4e88-b2f8-86031972905a",
+          "kind": "solution",
+          "title": "GPTQ: Quantize Layer-by-Layer, Correct as You Go",
+          "body": "GPTQ (Frantar et al., 2022) treats quantization as an optimization problem, not a rounding rule.",
+          "bullets": [
+            "It runs a small calibration dataset through the model and uses the resulting activation statistics to approximate each layer's Hessian — how sensitive the output is to each weight",
+            "Weights are quantized one column at a time; after each column, the remaining unquantized weights in that layer are nudged to compensate for the error just introduced",
+            "This sequential correction is what lets GPTQ push to 4 bits (sometimes 3) with only a small accuracy hit, without any retraining or gradient descent"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "8bb86332-4b2b-44b4-b9c7-da68519e6eb4",
+          "kind": "concept",
+          "title": "AWQ: Protect the ~1% of Weights That Actually Matter",
+          "body": "AWQ (Lin et al., 2023) skips the heavy Hessian math and asks a simpler question: which weight channels see the largest activations?",
+          "bullets": [
+            "It observes activations on a small calibration set and finds the small fraction of weight channels — often around 1% — tied to consistently large activation magnitudes",
+            "Instead of leaving those channels at full precision, AWQ rescales them before quantizing, shrinking their rounding error without complicating the compute graph",
+            "No backpropagation and no per-layer reconstruction loop, so AWQ's calibration pass is markedly faster than GPTQ's — a practical reason it's a common default in serving stacks like vLLM and TensorRT-LLM"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "4a21cf2f-bb73-4767-9f39-37fa9320234e",
+          "kind": "comparison",
+          "title": "Precision vs. Memory: The Direct Tradeoff",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Format",
+              "Bits/Weight",
+              "70B Weights-Only Size",
+              "Typical Use"
+            ],
+            "rows": [
+              [
+                "FP16",
+                "16",
+                "~140 GB",
+                "Training, max-accuracy serving"
+              ],
+              [
+                "INT8 (bitsandbytes / SmoothQuant)",
+                "8",
+                "~70 GB",
+                "Safe middle ground, minimal quality loss"
+              ],
+              [
+                "GPTQ / AWQ INT4",
+                "4",
+                "~35 GB",
+                "Single high-memory GPU serving, near-fp16 quality"
+              ],
+              [
+                "GGUF Q4_K_M (llama.cpp)",
+                "~4-5 (mixed)",
+                "~35-40 GB",
+                "CPU / on-device / laptop inference"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "3d0d56d9-7d8c-4e1c-ae1b-231206d5e129",
+          "kind": "example",
+          "title": "Worked Example: Serving a 70B Chat Model on One GPU",
+          "body": "Concrete scenario: you want to serve a 70B-class chat model for a small team, and you have exactly one 48GB GPU.",
+          "bullets": [
+            "At FP16 (~140GB) or even INT8 (~70GB), the model alone doesn't fit — you'd need multi-GPU tensor parallelism just to hold the weights",
+            "Quantize to 4-bit with AWQ or GPTQ: weights shrink to roughly 35GB, leaving headroom on a 48GB card for the KV cache and activations of several concurrent requests",
+            "The tradeoff you accept: slightly higher perplexity and a small per-multiply dequantization cost — usually a good trade for turning 'impossible on this hardware' into 'running today'"
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "0c84c06c-ee61-4312-9af6-cb85c26dad82",
+          "kind": "takeaways",
+          "title": "When Quantization Bites Back",
+          "body": "Quantization is a real accuracy-for-memory trade, not a free win — and it doesn't fail evenly.",
+          "bullets": [
+            "Below about 3 bits, quality typically falls off a cliff rather than degrading gracefully — most production deployments stop at 4 bits for exactly this reason",
+            "A calibration set that doesn't match real traffic (wrong language, wrong domain) can misidentify 'salient' channels, quietly hurting accuracy on exactly the inputs you care about",
+            "Quantizing weights alone doesn't reduce FLOPs — without kernels that natively compute in low precision, you save memory and bandwidth but not necessarily wall-clock compute",
+            "Some layers (often the first and last) are more sensitive than others; naively quantizing everything uniformly is why tooling like GGUF's K-quants supports mixed per-layer precision"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "8e4cef33-5952-4567-a51a-7230dac46bec",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Quantization stores weights in fewer bits (16 to 8 to 4) to cut memory roughly in half at each step, making large models fit on smaller hardware",
+            "GPTQ uses calibration-derived Hessian approximations and sequential per-column correction to reach 4-bit with minimal accuracy loss, no retraining required",
+            "AWQ instead identifies and rescales the small fraction of activation-salient weight channels — faster to calibrate, no backprop, popular in serving frameworks",
+            "Below roughly 3 bits, accuracy drops sharply, and quantization saves memory/bandwidth more reliably than raw compute — pick your bit-width based on the hardware constraint you actually have"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "93a2ecae-8e64-44a1-a3f7-d0b790cb2723",
+            "prompt": "Why can't you just uniformly round every weight in a transformer to 4 bits?",
+            "options": [
+              "Transformers don't support integer math at all",
+              "Real weight distributions have outliers that stretch the range, crushing most 'normal' values into very few of the 16 available buckets",
+              "4-bit numbers can only represent even numbers",
+              "GPUs cannot store integers, only floats"
+            ],
+            "correctIndex": 1,
+            "explanation": "With 4 bits you only get 16 distinct levels to cover the whole range. Outlier weights stretch that range so most other weights collapse into just a few of those levels — which is why naive uniform rounding costs noticeable accuracy, and why methods like GPTQ and AWQ exist."
+          },
+          {
+            "id": "b1ea293f-7f15-4c59-91cc-719b7dda1fcc",
+            "prompt": "What does GPTQ use to decide how to quantize each layer?",
+            "options": [
+              "A fixed rounding rule applied identically to every model",
+              "Calibration-data-derived Hessian approximations, quantizing one column at a time and adjusting the remaining weights to compensate for the error just introduced",
+              "A second neural network trained to predict quantized weights",
+              "Random search over possible bit-widths"
+            ],
+            "correctIndex": 1,
+            "explanation": "GPTQ runs a calibration set through the model to approximate each layer's Hessian, then quantizes weights column-by-column, updating the not-yet-quantized weights after each step to correct for the rounding error — all without gradient descent or retraining."
+          },
+          {
+            "id": "3b9ac099-c23c-4937-86ab-8f06b5591bb8",
+            "prompt": "How does AWQ differ from GPTQ in what it protects?",
+            "options": [
+              "AWQ quantizes every weight to a lower bit-width than GPTQ",
+              "AWQ identifies the small fraction of weight channels tied to large activation magnitudes and rescales them before quantizing, instead of computing a full Hessian-based correction",
+              "AWQ only works for 8-bit quantization, never 4-bit",
+              "AWQ requires full retraining of the model"
+            ],
+            "correctIndex": 1,
+            "explanation": "AWQ skips GPTQ's Hessian approximation and per-layer reconstruction loop. It instead finds the small share of activation-salient weight channels and rescales them to shrink their rounding error — a lighter calibration pass that's become a common default in serving stacks like vLLM."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "94d00720-38cb-4408-9326-5e1dc535057c",
+          "title": "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers",
+          "url": "https://arxiv.org/abs/2210.17323"
+        },
+        {
+          "id": "a349cb37-ba3e-4ecb-85ed-21df3f5f8b11",
+          "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration",
+          "url": "https://arxiv.org/abs/2306.00978"
+        }
+      ],
+      "publishedDate": "2026-07-17T12:40:06Z"
+    },
+    {
       "title": "Multi-Agent Orchestration: When One Agent Isn't Enough",
       "subtitle": "Supervisor, swarm, or debate — the pattern you pick decides whether more agents means more accuracy or just more cost",
       "category": "AI Agents",
@@ -11095,203 +11304,6 @@
           "id": "b8a26295-9173-44f9-87e5-24a298ae1b10",
           "title": "ChatGPT is now a partner for your most ambitious work",
           "url": "https://openai.com/index/chatgpt-for-your-most-ambitious-work/"
-        }
-      ]
-    },
-    {
-      "id": "1d75a2cf-e49c-4990-ad60-cd72a84ecaae",
-      "title": "Rotary Position Embeddings: How Transformers Learn 'Where'",
-      "subtitle": "A rotation trick that encodes token position as an angle — and quietly powers almost every open LLM context window.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "rope",
-        "transformers",
-        "attention",
-        "context-length",
-        "position-encoding"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Rotary Position Embeddings (RoPE) inject position by rotating query/key vectors by an angle proportional to token position, so attention scores depend only on relative distance between tokens. That single property is why RoPE became the default in LLaMA, GPT-NeoX, Mistral, Qwen, and the Gemma family — and why extension tricks like NTK-aware scaling and YaRN can stretch trained context windows without retraining from scratch.",
-      "publishedDate": "2026-07-10T06:44:31Z",
-      "slides": [
-        {
-          "id": "5fa51e2f-8fc6-4c7c-adb0-c5adfec9678f",
-          "kind": "cover",
-          "title": "Attention Has No Sense of Order",
-          "body": "Self-attention computes a weighted sum over every token in a sequence — and that sum is exactly the same no matter what order the tokens arrive in. Position has to be injected on purpose.",
-          "bullets": [
-            "Attention is permutation-invariant by default",
-            "RoPE fixes this by rotating, not adding",
-            "Now the default in LLaMA, Mistral, Qwen, Gemma"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "ee2f6c00-46fb-439b-8a48-168642d1a112",
-          "kind": "problem",
-          "title": "Why Adding a Position Vector Falls Short",
-          "body": "The original Transformer and early GPT/BERT models injected position by adding a fixed or learned vector to each token embedding before attention.",
-          "bullets": [
-            "Sinusoidal or learned absolute embeddings encode \"this token is at slot 47,\" not \"this token is 3 words after that one\"",
-            "Absolute position mixed directly into the embedding makes it harder for attention to cleanly recover relative distance",
-            "Models trained on a fixed max length (say 2K or 8K) generalize poorly past it — there's no learned representation for position 50,000"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "cfb62e7b-8039-4779-9a48-302d07d08c43",
-          "kind": "solution",
-          "title": "Rotate Instead of Add",
-          "body": "RoFormer (Su et al., 2021) proposed rotating each query and key vector by an angle proportional to its token position, rather than adding a position vector.",
-          "bullets": [
-            "Each pair of dimensions in Q and K is treated as a 2D point and rotated by angle m·θ, where m is the token position and θ is a fixed frequency",
-            "Different dimension pairs rotate at different frequencies — low-index pairs rotate fast (fine-grained), high-index pairs rotate slow (coarse-grained), like a multi-scale clock",
-            "No extra learned parameters — it's a fixed geometric transform applied at attention time, not part of the token embedding"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "d0535671-82f7-453d-adf1-a5f16cb9f75d",
-          "kind": "concept",
-          "title": "The Key Property: Relative, Not Absolute",
-          "body": "Because rotation is a linear, angle-preserving operation, the dot product of a rotated query at position m and a rotated key at position n works out to depend only on the angle difference (m−n)·θ.",
-          "bullets": [
-            "The attention score between two tokens depends on their distance apart, not where they sit in the sequence",
-            "This is why RoPE generalizes better than absolute embeddings: \"3 tokens apart\" means the same thing at position 10 and position 10,000",
-            "This relative-distance property is what every context-extension trick below exploits"
-          ],
-          "symbol": "link",
-          "table": null
-        },
-        {
-          "id": "8945c220-eca6-40e8-8940-3a6925a3531d",
-          "kind": "example",
-          "title": "Worked Example: Position 5 vs. Position 8",
-          "body": "Take a single rotation pair with frequency θ.",
-          "bullets": [
-            "Query token at position 5 gets rotated by 5θ; key token at position 8 gets rotated by 8θ",
-            "Their dot product reduces to a function of (8−5)·θ = 3θ — the same value you'd get from positions 105 and 108",
-            "Now push a model trained up to position 8,000 to attend across a 50,000-token gap: the raw angle (50,000·θ) is far outside anything the model saw in training, and the effective resolution at that range collapses — this is exactly the failure mode context-extension methods target"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "794bdb16-22f2-48ac-ae25-c72295f62c5c",
-          "kind": "comparison",
-          "title": "Stretching the Window Without Retraining",
-          "body": "Several methods rescale RoPE's frequencies so a model trained at a short context can run at a much longer one.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Method",
-              "Idea",
-              "Tradeoff"
-            ],
-            "rows": [
-              [
-                "Position Interpolation",
-                "Linearly compress positions to fit the trained range",
-                "Simple, but needs fine-tuning to recover quality"
-              ],
-              [
-                "NTK-aware scaling",
-                "Nonlinearly adjust the rotation base so high frequencies stay sharp, low frequencies stretch",
-                "Better zero-shot extension, no training required"
-              ],
-              [
-                "YaRN",
-                "Combines NTK-by-parts scaling with attention temperature adjustment",
-                "Reached results comparable to Position Interpolation in ~400 fine-tuning steps vs. ~1,000 — about 2.5x fewer steps"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "0d57dc03-6c2d-4436-8e9e-3096e21dac13",
-          "kind": "takeaways",
-          "title": "When Not to Worry About It",
-          "body": "RoPE tuning is a context-length problem, not a general performance dial.",
-          "bullets": [
-            "If you never exceed the model's trained context length, default RoPE just works — no scaling needed",
-            "Frequency-rescaling tricks trade some short-range precision for long-range reach; they don't come free",
-            "RoPE only fixes position encoding — it does nothing about attention's quadratic compute cost. Don't confuse it with FlashAttention or sparse attention, which solve a completely different problem (speed, not position)"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "6808ad0f-756e-4a5f-9aeb-2546b1bac463",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "RoPE encodes position by rotating query/key vector pairs by an angle proportional to token position",
-            "Because rotation is linear, attention scores end up depending only on relative distance between tokens — not absolute position",
-            "This relative property is why RoPE generalizes across sequence lengths better than absolute position embeddings",
-            "NTK-aware scaling and YaRN exploit that same property to stretch a trained context window without retraining from scratch"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "be288e25-c74f-41f2-a450-52e25b217f0b",
-            "prompt": "How does RoPE inject position information into attention?",
-            "options": [
-              "By adding a learned position vector to each token embedding",
-              "By rotating pairs of dimensions in the query/key vectors by an angle proportional to token position",
-              "By appending a position index as an extra token in the sequence",
-              "By sorting tokens before feeding them to attention"
-            ],
-            "correctIndex": 1,
-            "explanation": "Unlike sinusoidal or learned absolute embeddings that get added to the token embedding, RoPE rotates pairs of query/key dimensions by an angle proportional to position, applied at attention time rather than baked into the embedding."
-          },
-          {
-            "id": "44ada2d1-0c5e-4126-b137-9f0c8ab26f54",
-            "prompt": "Why does the attention score between two RoPE-encoded tokens depend only on their relative distance?",
-            "options": [
-              "Because the model is trained to ignore absolute position",
-              "Because rotation is a linear, angle-preserving operation, so the dot product reduces to a function of the angle difference between positions",
-              "Because RoPE removes position information entirely",
-              "Because attention always normalizes distances to zero"
-            ],
-            "correctIndex": 1,
-            "explanation": "Rotating two vectors by m·θ and n·θ and then taking their dot product mathematically collapses to a function of (m−n)·θ — the angle difference. That's a property of rotation, not something the model has to learn."
-          },
-          {
-            "id": "5d0acb04-8401-4e56-8bee-ba85d053af07",
-            "prompt": "What problem do NTK-aware scaling and YaRN solve?",
-            "options": [
-              "They speed up attention computation",
-              "They reduce the number of parameters in a model",
-              "They extend a model's usable context length beyond what it was trained on, without full retraining",
-              "They replace attention with a different mechanism entirely"
-            ],
-            "correctIndex": 2,
-            "explanation": "Both methods rescale RoPE's rotation frequencies so a model trained at a shorter context (e.g., 8K tokens) can run at a much longer one (128K+), typically needing far less fine-tuning than training a longer context from scratch."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "2e33a39e-a93e-4714-9d99-e8c43880d016",
-          "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding",
-          "url": "https://arxiv.org/abs/2104.09864"
-        },
-        {
-          "id": "196b1e70-9ae7-4523-a8a9-7b03be837e3d",
-          "title": "YaRN: Efficient Context Window Extension of Large Language Models",
-          "url": "https://arxiv.org/abs/2309.00071"
         }
       ]
     }
