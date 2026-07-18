@@ -1,6 +1,192 @@
 {
   "posts": [
     {
+      "title": "PagedAttention: The GPU Memory Trick Behind vLLM",
+      "subtitle": "How treating the KV cache like OS virtual memory cut serving waste from 60-80% to under 4%",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "inference",
+        "llm-serving",
+        "vllm",
+        "kv-cache",
+        "gpu-memory",
+        "systems"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.3x3.fill",
+      "summary": "PagedAttention splits each request's KV cache into small fixed-size blocks addressed through a block table, instead of reserving one worst-case contiguous slab per request. That single idea, borrowed from OS virtual memory paging, is what lets vLLM pack far more concurrent requests onto the same GPU and became the default memory-management strategy across modern LLM serving engines.",
+      "slides": [
+        {
+          "id": "eef60f6c-2833-4695-a32d-7945c6d2b536",
+          "kind": "cover",
+          "title": "The GPU Memory Trick Behind Every Fast LLM Server",
+          "body": "PagedAttention is the memory-management technique inside vLLM that turned LLM serving from wasteful, worst-case guesswork into something as disciplined as an OS managing RAM.",
+          "bullets": [],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "54a14e2d-3f9d-4e2a-b89d-9313ca1061c3",
+          "kind": "problem",
+          "title": "Naive KV Caching Wastes 60-80% of GPU Memory",
+          "body": null,
+          "bullets": [
+            "Every generated token needs its key/value vectors cached so future tokens can attend back to it — the KV cache grows with every decoding step of every active request",
+            "Early serving systems reserved one long contiguous memory slab per request, sized for the *maximum possible* sequence length, before generation even started",
+            "Most requests finish far short of that max — the reserved-but-unused space (internal fragmentation) plus memory carved out but never reused (external fragmentation) can waste 60-80% of allocated KV cache memory",
+            "That waste directly caps batch size: fewer concurrent requests fit in GPU memory, so throughput suffers even while the GPU's compute sits idle"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "464c0eb3-e89b-4635-a895-9c888bef0209",
+          "kind": "solution",
+          "title": "Treat the KV Cache Like Virtual Memory Pages",
+          "body": "PagedAttention borrows the classic OS trick: don't allocate memory in one contiguous slab — allocate small fixed-size blocks and let a table point to wherever they physically live.",
+          "bullets": [
+            "Each sequence's KV cache is split into fixed-size blocks (vLLM's default is 16 tokens per block)",
+            "Blocks are allocated on demand, one at a time, as generation produces new tokens — no need to guess a max length upfront",
+            "A per-sequence 'block table' maps logical block index to physical block location in GPU memory, exactly like a page table maps virtual addresses to physical ones",
+            "Because blocks don't need to be contiguous, the allocator packs GPU memory almost perfectly — internal fragmentation is limited to at most one partially-filled block per sequence"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "7e00ce3c-e13a-40ba-bd2d-af981bd3211c",
+          "kind": "concept",
+          "title": "Bonus: Blocks Can Be Shared, Not Just Packed",
+          "body": null,
+          "bullets": [
+            "Parallel sampling and beam search often share a common prompt prefix across multiple candidate sequences",
+            "Because each block is reference-counted, PagedAttention lets multiple sequences point their block tables at the same physical blocks for that shared prefix",
+            "When one branch needs to diverge — write a new token into a shared block — vLLM copies just that one block first: copy-on-write, straight out of OS memory management",
+            "This can cut memory use substantially for beam search and parallel sampling, since the shared prompt is stored once instead of once per candidate"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "75388936-7e5c-4375-b7fd-7a1c56436256",
+          "kind": "example",
+          "title": "Worked Example: 3 Requests, One GPU",
+          "body": "Say a GPU has room for 256 KV-cache blocks of 16 tokens each — 4,096 tokens of total capacity.",
+          "bullets": [
+            "Naive allocator: reserves a 2,048-token contiguous slab per request 'just in case' — only 2 requests fit, even if both actually finish after 100 tokens",
+            "PagedAttention: request A gets blocks as it generates — after 100 tokens it holds 7 blocks (112 tokens of capacity), not 128 reserved-but-empty blocks",
+            "Blocks freed by a request that finishes early become available immediately, so a 3rd or 4th request can start as soon as blocks free up — no waiting on one giant reserved slab to close out",
+            "Net effect: far more concurrent sequences fit in the same physical memory, which is what actually drives serving throughput"
+          ],
+          "symbol": "list.number",
+          "table": null
+        },
+        {
+          "id": "4f91e975-a24d-4e45-8607-9347140d34f9",
+          "kind": "comparison",
+          "title": "The Headline Numbers",
+          "body": "vLLM's own reporting on the naive-vs-paged comparison for KV cache memory:",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Approach",
+              "KV cache memory waste",
+              "Concurrent requests per GPU"
+            ],
+            "rows": [
+              [
+                "Naive contiguous pre-allocation",
+                "60-80%",
+                "Low — capped by worst-case reservations"
+              ],
+              [
+                "PagedAttention (vLLM)",
+                "Under 4%",
+                "Much higher — memory packed near-optimally"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "04dd27a4-97c0-4c79-8c16-a3283849f4e3",
+          "kind": "problem",
+          "title": "Where Paging Costs You Something",
+          "body": null,
+          "bullets": [
+            "Non-contiguous blocks mean the attention kernel must gather scattered memory instead of reading one linear array — vLLM ships custom CUDA kernels specifically to make that gather fast, it isn't free on arbitrary hardware",
+            "Block size is a tuning knob: smaller blocks reduce internal fragmentation but add more block-table bookkeeping overhead per token processed",
+            "For workloads with short, uniform-length outputs and small batch sizes, naive allocation wastes little anyway — paging's win shrinks when there's little fragmentation to reclaim",
+            "Copy-on-write sharing specifically helps beam search and parallel sampling; it does nothing for unrelated concurrent requests that share no prefix"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "06babce4-dde6-46b5-8129-bc0808aa4b2d",
+          "kind": "takeaways",
+          "title": "Why This Became the Default",
+          "body": null,
+          "bullets": [
+            "PagedAttention turned KV cache memory from a hard-coded worst-case reservation into an on-demand, near-fully-packed resource",
+            "It's the core idea inside vLLM, now one of the most widely deployed open-source LLM inference engines",
+            "The lesson generalizes: LLM serving increasingly borrows decades-old OS techniques — paging, copy-on-write, scheduling — because GPU memory pressure looks a lot like the RAM problem operating systems solved long ago",
+            "Pair it with continuous batching (scheduling) and you get the two pillars most modern LLM serving stacks are built on"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What specific problem does PagedAttention solve in LLM serving?",
+            "options": [
+              "It reduces the number of floating-point operations in the attention computation",
+              "It eliminates KV cache memory waste caused by reserving contiguous max-length blocks upfront",
+              "It makes tokenization faster",
+              "It removes the need for a KV cache entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "PagedAttention doesn't change attention's math — it changes how the resulting KV cache is stored in memory, replacing wasteful worst-case contiguous pre-allocation with on-demand fixed-size blocks."
+          },
+          {
+            "prompt": "In vLLM, what maps a sequence's logical KV cache blocks to their physical location in GPU memory?",
+            "options": [
+              "The tokenizer vocabulary",
+              "A block table, analogous to an OS page table",
+              "The attention mask",
+              "The model's positional embeddings"
+            ],
+            "correctIndex": 1,
+            "explanation": "The block table is the indirection layer that lets each sequence's blocks live scattered anywhere in physical GPU memory while still being addressed in logical order — exactly like a page table in virtual memory."
+          },
+          {
+            "prompt": "Why can beam search or parallel sampling save memory under PagedAttention?",
+            "options": [
+              "Beam search automatically switches to a smaller model",
+              "Candidate sequences sharing a prompt prefix can share the same physical blocks via copy-on-write",
+              "PagedAttention disables the extra candidate branches",
+              "The KV cache is skipped entirely for beam search"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because blocks are reference-counted, multiple sequences can point to the same physical block for a shared prefix; only when a branch writes a new, diverging token does vLLM copy that one block — copy-on-write."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "34f68e49-5396-4904-9a10-699b1bdf8210",
+          "title": "vLLM — high-throughput LLM inference and serving engine built on PagedAttention (GitHub)",
+          "url": "https://github.com/vllm-project/vllm"
+        }
+      ],
+      "id": "0c9fa8ba-a48b-4a36-a130-e28572d48481",
+      "publishedDate": "2026-07-18T18:42:48Z"
+    },
+    {
       "title": "BadWAM: When Robot Brains Dream Right, Act Wrong",
       "subtitle": "A new attack proves a robot's imagined future can look perfect while its hands do something else",
       "category": "AI Innovations",
@@ -11099,188 +11285,6 @@
       ],
       "id": "1f341ebb-cbf4-4dae-ad09-666db5bf5762",
       "publishedDate": "2026-07-11T12:41:00Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "4ede7dcf-d7d9-45ff-989d-ac8fd3204543",
-      "title": "LingBot-Video: A 30B MoE Brain Built to Move Robots",
-      "subtitle": "Why a video model trained to look pretty makes a bad robot simulator — and how sparse experts fix it",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "embodied-ai",
-        "mixture-of-experts",
-        "video-generation",
-        "world-models",
-        "robotics"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cube.transparent.fill",
-      "summary": "LingBot-Video is a DiT-based video pretraining model built specifically for embodied intelligence: a 30B-parameter Mixture-of-Experts network that only activates 3B parameters per token, trained on 70,000+ hours of robot-augmented footage, and it tops the open-source RBench leaderboard for physically plausible video generation.",
-      "body": null,
-      "slides": [
-        {
-          "id": "51dc33ad-3700-4eb8-b193-36b1b9eb0694",
-          "kind": "cover",
-          "title": "LingBot-Video: One Model, Two Sizes, Robot-Ready",
-          "body": "A new open-source video pretraining paradigm asks: what if the video generator wasn't optimized to look beautiful, but to be physically correct enough for a robot to plan on?",
-          "bullets": [],
-          "symbol": "cube.transparent.fill",
-          "table": null
-        },
-        {
-          "id": "40f1832e-4239-4f73-81c9-96567260f891",
-          "kind": "problem",
-          "title": "Cinematic Video Models Don't Understand Physics",
-          "body": "Today's best video diffusion models are trained on internet video to maximize visual fidelity and creativity — not physical realism. That's a domain mismatch when you want to use the model as a 'world model' for robot planning.",
-          "bullets": [
-            "Internet video is optimized for aesthetics: lighting, composition, motion blur",
-            "Robots need the OPPOSITE priority: consistent physics, accurate contact, predictable object permanence",
-            "A gorgeous but physically wrong prediction is worse than a plain but correct one for planning"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "55b021d3-365b-47d1-82a8-b45a1e5ca5b0",
-          "kind": "solution",
-          "title": "30B Total Parameters, Only 3B Active Per Token",
-          "body": "LingBot-Video ships two variants: a 1.3B dense model and a 30B-A3B Mixture-of-Experts model built on a Diffusion Transformer (DiT) backbone. The MoE router activates just 3B parameters per token, so you get near-30B capacity at a fraction of the compute.",
-          "bullets": [
-            "Naming convention '30B-A3B' = 30B total params, ~3B Active per forward pass",
-            "MoE trades a memory cost (all 30B weights must be resident) for a compute win",
-            "Result: roughly 3x faster inference than a dense model of comparable capability"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "a9149ad9-2799-4648-b4e4-37e7f179f80a",
-          "kind": "concept",
-          "title": "70,000+ Hours of Robot Footage, Blended Into Web Video",
-          "body": "A data profiling engine deliberately augments the standard internet-video pretraining mix with manipulation, navigation, and egocentric robot footage, so the base model picks up an intrinsic sense of actions and world dynamics before any task-specific fine-tuning.",
-          "bullets": [
-            "Manipulation: arm/gripper contact, grasping, object deformation",
-            "Navigation: egocentric locomotion, obstacle avoidance",
-            "A multi-dimensional reward system further tunes for aesthetics AND physical rationality AND task completion — not just one of those"
-          ],
-          "symbol": "video.fill",
-          "table": null
-        },
-        {
-          "id": "82c16575-e922-4cb0-90b4-6fa5a922eed9",
-          "kind": "comparison",
-          "title": "It Tops the Open-Source Leaderboard on RBench",
-          "body": "On the RBench leaderboard for embodied video generation, LingBot-Video's MoE variant posts the best average score among open-source models, with its biggest edge on quadruped locomotion.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "LingBot-Video (30B-A3B)"
-            ],
-            "rows": [
-              [
-                "RBench overall average",
-                "0.620 (#1 open-source)"
-              ],
-              [
-                "Quadruped tasks",
-                "0.758"
-              ],
-              [
-                "Manipulation tasks",
-                "0.578"
-              ],
-              [
-                "Physics-IQ Verified",
-                "40.4"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "4d5e215b-cc03-437f-804a-350bddcae07a",
-          "kind": "example",
-          "title": "Worked Example: Simulating Before You Actuate",
-          "body": "A robotics team wants to test whether a gripper can pick up a mug without knocking over a nearby glass. Instead of risking real hardware, they feed the current camera frame plus a candidate action into LingBot-Video.",
-          "bullets": [
-            "Model rolls out ~1-2 seconds of predicted video showing the likely outcome",
-            "If the glass tips in the prediction, the planner discards that action and tries another",
-            "This is model-based planning: use the generative model as a cheap, fast simulator instead of real trials"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "436824a0-2346-4312-b119-b331456f19d0",
-          "kind": "takeaways",
-          "title": "The Catch: It's a Predictor, Not a Physics Engine",
-          "body": "Sparse MoE models don't save you on memory — you still need enough VRAM to hold all 30B weights, even though only 3B compute per token. And a generated video, however physically plausible, is still a prediction, not ground truth.",
-          "bullets": [
-            "VRAM footprint scales with TOTAL params (30B), not active params (3B) — plan hardware accordingly",
-            "Confidently wrong predictions can mislead a planner just as badly as confidently wrong language",
-            "Best used as one signal in a planning loop, not a standalone source of truth",
-            "Released under Apache 2.0 with both dense (1.3B) and MoE (30B-A3B) checkpoints on Hugging Face"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "60c551bd-b8f8-4293-89df-3b01352c5785",
-            "prompt": "In LingBot-Video's '30B-A3B' MoE variant, how many parameters actually run for a given token?",
-            "options": [
-              "30B",
-              "3B",
-              "1.3B",
-              "15B"
-            ],
-            "correctIndex": 1,
-            "explanation": "The 'A3B' suffix means ~3B parameters are Active per token — the MoE router sends each token to only a subset of the 30B total experts, which is where the inference speedup comes from."
-          },
-          {
-            "id": "edf6e21e-eb80-49e8-b2a0-47f4e75dbef9",
-            "prompt": "Why do generic internet-trained video diffusion models make poor 'world models' for robot planning?",
-            "options": [
-              "They are too slow to run in real time",
-              "They are optimized for visual fidelity and creativity, not physical accuracy",
-              "They cannot generate video longer than 1 second",
-              "They require labeled bounding boxes to run"
-            ],
-            "correctIndex": 1,
-            "explanation": "Internet video pretraining rewards aesthetics — good lighting, composition, style — not physical consistency. A robot planner needs the opposite priority: predictable, physically correct outcomes, even if less visually polished."
-          },
-          {
-            "id": "3a304058-9ca1-4223-bea9-09efe086cd45",
-            "prompt": "What's a key hardware tradeoff of the MoE design compared to a dense model of similar quality?",
-            "options": [
-              "MoE needs less VRAM because only 3B params run at once",
-              "MoE needs enough VRAM to hold all 30B weights even though only ~3B compute per token, trading memory for ~3x faster inference",
-              "MoE and dense models have identical memory and speed",
-              "MoE can only run on CPU, not GPU"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sparse MoE saves compute, not memory: all expert weights must stay resident in VRAM for routing to work, even though each token only activates a fraction of them. The payoff here is roughly 3x faster inference than a similarly capable dense model."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1995cc08-054a-47db-9813-08fc26261ab3",
-          "title": "LingBot-Video: Scaling Mixture-of-Experts Video Pretraining for Embodied Intelligence (arXiv 2607.07675)",
-          "url": "https://arxiv.org/abs/2607.07675"
-        },
-        {
-          "id": "96451b82-c831-4c05-b5fa-cdf8e93096d4",
-          "title": "robbyant/lingbot-video — official GitHub repository",
-          "url": "https://github.com/robbyant/lingbot-video"
-        }
-      ],
-      "publishedDate": "2026-07-11T06:42:06Z",
       "heroImageURL": null
     }
   ]
