@@ -1,6 +1,195 @@
 {
   "posts": [
     {
+      "id": "17069c26-d237-4b52-b70c-f3d384c378d9",
+      "title": "MCP Sampling: When a Tool Server Borrows the Model",
+      "subtitle": "The MCP primitive that lets a server ask your LLM for a completion — without ever holding an API key.",
+      "category": "MCP",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "model context protocol",
+        "llm agents",
+        "tool use",
+        "protocol design"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "MCP sampling flips the usual tool-calling direction: instead of an LLM calling a tool, a tool server can ask the client's LLM to generate text on its behalf, while the human stays in the loop to approve or edit the request. It's how MCP servers get real language judgment without shipping their own model subscription or API key.",
+      "slides": [
+        {
+          "id": "602a5953-57c4-46ef-a450-926dbf836bab",
+          "kind": "cover",
+          "title": "The MCP Primitive Nobody Talks About",
+          "body": "Tools and Resources let a model read data and take actions. Sampling flips the arrow: a server can ask the client's LLM to think for it — with a human still holding the approve button.",
+          "bullets": [],
+          "symbol": "point.3.connected.trianglepath.dotted"
+        },
+        {
+          "id": "aea0f3ee-194d-4084-8e2c-3783cd3660eb",
+          "kind": "problem",
+          "title": "A Tool That Needs Judgment Has Two Bad Options",
+          "body": null,
+          "bullets": [
+            "A git-commit-message server needs to summarize a diff into prose — that's a job for an LLM, not string formatting.",
+            "Option A: ship the server with its own model API key. Now every install needs a second subscription and a second bill.",
+            "Option B: fall back to crude heuristics instead of real language understanding — the tool gets dumber to avoid the dependency.",
+            "Neither option lets the server reuse the model the user already pays for and trusts."
+          ],
+          "symbol": "key.fill"
+        },
+        {
+          "id": "49a50e48-bffd-4f95-9e15-c3f48d36f0bd",
+          "kind": "solution",
+          "title": "Sampling Lets the Server Borrow the Client's Model",
+          "body": "MCP defines a sampling/createMessage request a server can send back through the client. The client — not the server — decides whether to forward it to an LLM, which model to use, and whether to show the human the prompt first.",
+          "bullets": [
+            "The server never sees an API key or talks to a model provider directly — it only talks to the client over the existing MCP connection.",
+            "The request carries messages, an optional systemPrompt, and soft modelPreferences (costPriority, speedPriority, intelligencePriority) instead of naming an exact model.",
+            "Sampling is an optional client capability, negotiated per connection — the server must check for it, not assume it."
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "b934b478-cb65-4d5c-a1cc-d24f1db3fd64",
+          "kind": "architecture",
+          "title": "The Round Trip Has a Human Checkpoint Built In",
+          "body": null,
+          "bullets": [
+            "1) Server sends sampling/createMessage over the MCP connection, not to any LLM API.",
+            "2) The client (the host app, e.g. an IDE or desktop assistant) can surface the proposed prompt to the user for review before doing anything.",
+            "3) If approved, the client forwards it to whichever LLM it has configured and gets a completion back.",
+            "4) The client may also review the completion before returning it to the server — two human checkpoints, not one."
+          ],
+          "symbol": "arrow.left.arrow.right.circle.fill"
+        },
+        {
+          "id": "48934f3b-7ab5-402a-8128-7eb75a4d0935",
+          "kind": "example",
+          "title": "Worked Example: A Commit-Message Tool",
+          "body": "A local MCP server watches `git diff --staged` and wants to draft a commit message.",
+          "bullets": [
+            "Server sends a sampling request: systemPrompt 'write a conventional commit message', messages containing the diff, modelPreferences={intelligencePriority: 0.3, speedPriority: 0.8} — it wants fast, not brilliant.",
+            "The client shows: 'This server wants to generate text using your model. Diff: +42/-11 lines in auth.py. Allow?'",
+            "The user approves once (or sets a standing permission); the model drafts 'fix(auth): handle expired refresh tokens'.",
+            "The server never touched a model API key — the client's own subscription and model choice paid for the call."
+          ],
+          "symbol": "text.bubble.fill"
+        },
+        {
+          "id": "f3c729cc-26e8-454c-aed2-ca4f23031cb6",
+          "kind": "comparison",
+          "title": "Sampling vs. a Server Bringing Its Own Key",
+          "body": "Sampling trades a little latency and client-side complexity for zero secret sprawl and a human in the loop.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "MCP Sampling",
+              "Server's Own API Key"
+            ],
+            "rows": [
+              [
+                "Who pays",
+                "User's existing client subscription",
+                "A separate bill per server"
+              ],
+              [
+                "Key management",
+                "None — server never holds one",
+                "Every server ships/stores a secret"
+              ],
+              [
+                "Human oversight",
+                "Client can show/approve each prompt",
+                "Invisible to the user by default"
+              ],
+              [
+                "Model choice",
+                "Client's configured model (portable)",
+                "Whatever the server author hardcoded"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "23b7cb2a-89db-4467-b810-795b6b63a788",
+          "kind": "concept",
+          "title": "Where Sampling Breaks Down",
+          "body": null,
+          "bullets": [
+            "It's an optional client capability — many MCP hosts don't implement it, so servers must degrade gracefully rather than assume it exists.",
+            "Every hop adds latency: server -> client -> LLM -> client -> server. Not suitable for tight loops needing many completions per second.",
+            "modelPreferences are hints, not guarantees — a cost-sensitive server can still get routed to an expensive model if that's all the client has configured.",
+            "Overusing approval prompts trains users to click 'allow' reflexively, weakening the human-in-the-loop safeguard sampling was built for."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "ca3ebd5c-a65e-4f2d-b113-997e1a329204",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Sampling inverts the usual MCP direction: instead of the model calling a tool, a tool asks the model for help.",
+            "It removes the API-key burden from tool servers while keeping a human checkpoint on every LLM call a server triggers.",
+            "It's a capability, not a guarantee — check for it, degrade without it, and don't spam approval prompts."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c2909599-20f1-4785-bc06-53b5428732ba",
+            "prompt": "In MCP sampling, which side actually holds the API key and talks to the LLM provider?",
+            "options": [
+              "The tool server",
+              "The client/host application",
+              "A dedicated sampling proxy",
+              "Neither — sampling is keyless end-to-end"
+            ],
+            "correctIndex": 1,
+            "explanation": "The server never touches an LLM API directly. It sends a sampling/createMessage request over the existing MCP connection, and the client — which already has a model configured and paid for — decides whether and how to fulfill it."
+          },
+          {
+            "id": "17fca548-3c73-4f84-8cd7-fe0fc76fec15",
+            "prompt": "What is the purpose of modelPreferences fields like costPriority and speedPriority in a sampling request?",
+            "options": [
+              "They force the client to use one exact model name",
+              "They express soft priorities so the client can pick an appropriate model without the server hardcoding one",
+              "They set a hard budget cap the client cannot exceed",
+              "They are ignored by the specification and exist only for logging"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sampling requests avoid naming a specific model. Instead they carry priorities (e.g., prefer cheap/fast over maximally capable) that the client is free to interpret however its configuration allows — the server stays portable across whatever model the user has connected."
+          },
+          {
+            "id": "1236e91d-f0d3-495b-aa7b-85440125f0db",
+            "prompt": "Why does sampling still keep a human in the loop even though it automates an LLM call for a tool?",
+            "options": [
+              "MCP requires cryptographic signing for every request",
+              "The client can surface the proposed prompt for approval before forwarding it to an LLM, and can review the completion before returning it",
+              "Sampling requests are rate-limited to one per session",
+              "The user must manually type every response the server receives"
+            ],
+            "correctIndex": 1,
+            "explanation": "The client sits between the server and the LLM at two checkpoints — it can show the user what's being asked before sending it, and can review what comes back before handing it to the server. That's what distinguishes sampling from a server silently calling an LLM on its own."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "af437bcc-5536-4545-8a4f-e4edd3bd71ba",
+          "title": "Model Context Protocol — official specification",
+          "url": "https://modelcontextprotocol.io/"
+        }
+      ],
+      "publishedDate": "2026-07-19T06:40:44Z"
+    },
+    {
       "id": "f646ea41-f4cc-4478-ba76-7c6e446a4007",
       "title": "Hybrid Search: Fusing Keyword and Vector Retrieval",
       "subtitle": "Why the best RAG pipelines never trust embeddings alone",
@@ -11092,177 +11281,6 @@
           "url": "https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/"
         }
       ],
-      "publishedDate": "2026-07-11T18:42:14Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "7f78c074-8fb2-44b8-a130-aed63bb075c6",
-      "title": "Function Calling: Teaching an LLM to Use Real Tools",
-      "subtitle": "A JSON schema, a model trained to fill it in, and a loop that feeds the result back.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "function calling",
-        "tool use",
-        "agents",
-        "json schema",
-        "structured output"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "wrench.and.screwdriver.fill",
-      "summary": "Function calling lets a model act on the world by emitting a structured request instead of prose -- the harness executes it and feeds the result back in. It's the mechanism underneath nearly every AI agent, from a weather bot to MCP-connected tool use, and understanding its failure modes explains why agents with 50 tools often behave worse than agents with 5.",
-      "slides": [
-        {
-          "id": "c41b7ff9-6321-4fe4-b146-0b89f9bff94a",
-          "kind": "cover",
-          "title": "The Model Never Actually Calls Anything",
-          "body": "Function calling is a naming trap: the LLM doesn't execute code. It emits structured data that your code decides whether to execute.",
-          "bullets": [],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "246be811-795d-4b4e-9036-09f8fe4d6527",
-          "kind": "concept",
-          "title": "Three Pieces: a Schema, a Trained Model, a Loop",
-          "body": "You describe available tools as JSON Schema (name, description, parameter types). The model is fine-tuned to recognize when a tool fits the user's request and to emit a matching JSON object instead of a plain-text answer.",
-          "bullets": [
-            "The schema is just documentation the model reads -- there's no guarantee it fills in valid, safe, or even sensible arguments",
-            "Your application code -- not the model -- parses that JSON and actually runs the function, API call, or query",
-            "The result goes back into the conversation as a 'tool' message; the model reads it and writes the final answer"
-          ],
-          "symbol": "curlybraces",
-          "table": null
-        },
-        {
-          "id": "8d862e8a-b4b6-422b-93cb-4b4b6eccf206",
-          "kind": "solution",
-          "title": "Why a Trained Format Beats Prompted JSON",
-          "body": "Early tool-use patterns (like ReAct) just asked the model to output JSON inside its regular text -- fragile, easy to malform.",
-          "bullets": [
-            "Modern APIs (Claude, GPT, Gemini) constrain decoding so the model can only emit tokens that satisfy the tool's JSON schema -- a schema violation becomes structurally impossible, not just less likely",
-            "A tool-choice setting can force a specific tool, force any tool, or leave it optional -- useful when you know the next step must be a lookup",
-            "Models can request several tool calls in one turn (parallel tool calls) instead of one call per round trip, cutting latency for independent lookups"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "ce525745-ade6-449f-a3de-f6cd4e05bab7",
-          "kind": "example",
-          "title": "A Weather Agent, Turn by Turn",
-          "body": "User asks: 'Should I bring an umbrella to Austin tomorrow?'",
-          "bullets": [
-            "Turn 1 -- model emits a call: get_forecast with arguments city=Austin, date=tomorrow, instead of guessing the weather",
-            "Your code calls the real weather API, gets back precip_chance=70, condition=thunderstorms, and appends it as a tool-result message",
-            "Turn 2 -- model reads that result and writes: 'Yes -- 70% chance of thunderstorms in Austin tomorrow, bring one.' It never saw real weather data until you gave it back"
-          ],
-          "symbol": "cloud.rain.fill",
-          "table": null
-        },
-        {
-          "id": "ed62628d-a0aa-4b47-b812-5975f75e6cb5",
-          "kind": "comparison",
-          "title": "Structured Tool Calls vs. Prompted JSON",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "Prompted JSON in text (ReAct-style)",
-              "Native function calling"
-            ],
-            "rows": [
-              [
-                "Format guarantee",
-                "None -- model can emit malformed JSON or wrap it in prose",
-                "Constrained decoding enforces schema validity"
-              ],
-              [
-                "Parallel calls",
-                "Requires custom prompt engineering",
-                "Native -- multiple calls in one turn"
-              ],
-              [
-                "Forcing a specific tool",
-                "Not directly possible",
-                "Built-in tool-choice control"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "bf35f810-749b-4ba6-80e9-960c640b6476",
-          "kind": "problem",
-          "title": "Where Function Calling Breaks Down",
-          "body": "A valid JSON schema doesn't mean a correct decision.",
-          "bullets": [
-            "Tool selection degrades with scale: past roughly 20-30 tools in context, models start picking the wrong one or ignoring relevant ones entirely",
-            "Every tool definition costs context tokens on every turn -- a large tool library can eat thousands of tokens before the conversation even starts",
-            "Arguments can be confidently wrong -- a syntactically valid call with a hallucinated parameter (wrong city, invented ID) still executes if you don't validate it",
-            "Not every tool call should auto-execute -- a delete_record or send_email tool needs a confirmation step, not blind trust in the schema match"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "12addbde-6a37-4661-995e-6c13035eacaa",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "Function calling is a formatting contract, not an execution guarantee -- your code still decides what actually runs",
-            "Constrained decoding turned 'ask the model for JSON' into 'the model structurally cannot emit invalid JSON' -- that reliability jump is what made real agents practical",
-            "Curate your tool list; more tools in context usually means worse tool selection, not more capability",
-            "This is the exact mechanism MCP servers plug into -- MCP standardizes how tools are described and discovered, function calling is how the model actually invokes them"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "742061c1-de58-4ab7-8485-ea445e55df8b",
-            "prompt": "What does the LLM actually do in function calling?",
-            "options": [
-              "Directly executes code in a sandbox",
-              "Emits a structured JSON object describing a tool call, which application code then executes",
-              "Compiles and runs the function itself",
-              "Sends an HTTP request directly to the API"
-            ],
-            "correctIndex": 1,
-            "explanation": "The model only produces structured data describing what it wants to call and with what arguments -- your application code is what actually executes it."
-          },
-          {
-            "id": "8393d44b-f641-43b1-9f58-6d01ed8545dd",
-            "prompt": "What does constrained decoding guarantee in native function calling?",
-            "options": [
-              "The arguments will always be factually correct",
-              "The output will always be a JSON object that validates against the declared schema",
-              "The tool will always succeed when executed",
-              "The model will always pick the most efficient tool"
-            ],
-            "correctIndex": 1,
-            "explanation": "Constrained decoding restricts which tokens the model can produce so the output structurally matches the schema -- it guarantees valid shape, not correct or safe content."
-          },
-          {
-            "id": "6abbf11c-7045-44be-8bda-c5eb84a9d1a5",
-            "prompt": "Why can adding more tools to an agent hurt performance?",
-            "options": [
-              "More tools always improve accuracy with no downside",
-              "Each tool definition costs context tokens and, past a few dozen tools, models start selecting the wrong one or ignoring relevant tools",
-              "Tools can only be added in pairs",
-              "Adding tools disables parallel tool calls"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every tool schema in context costs tokens on every turn, and tool-selection accuracy measurably degrades once the tool list grows past roughly 20-30 options."
-          }
-        ]
-      },
-      "references": [],
       "publishedDate": "2026-07-11T18:42:14Z",
       "heroImageURL": null
     }
