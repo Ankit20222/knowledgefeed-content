@@ -1,6 +1,194 @@
 {
   "posts": [
     {
+      "title": "MCP Authorization: OAuth 2.1 for Remote Tool Servers",
+      "subtitle": "How MCP servers use OAuth 2.1, PKCE, and resource indicators so one stolen token can't unlock every tool you've connected.",
+      "category": "MCP",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "oauth",
+        "authorization",
+        "security",
+        "tool servers",
+        "protocol"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "lock.shield.fill",
+      "summary": "The MCP Authorization spec makes an MCP server an OAuth 2.1 resource server rather than its own identity provider, discovering a separate authorization server via RFC 9728/8414 metadata. Mandatory PKCE closes code-interception attacks, and RFC 8707 Resource Indicators bind every token to the one server it was issued for — so a token stolen from one connected MCP server can't be replayed against another. The full flow is meant for remote, HTTP-based servers; local stdio subprocess servers rely on OS-level trust instead.",
+      "slides": [
+        {
+          "id": "b10a2eef-0fb2-44d3-9d3f-20a7508128d3",
+          "kind": "cover",
+          "title": "One Protocol, Many Servers, One Auth Problem",
+          "body": "Remote MCP servers need to know who's calling and what they're allowed to touch — without every client reinventing login.",
+          "bullets": [],
+          "symbol": "lock.shield.fill",
+          "table": null
+        },
+        {
+          "id": "e39df887-d6c9-4ad1-afd8-fabe4708b607",
+          "kind": "problem",
+          "title": "Static API Keys Don't Scale to Multi-Server Agents",
+          "body": null,
+          "bullets": [
+            "An agent today connects to many MCP servers at once — Slack, GitHub, a CRM, an internal database — each historically needing its own hardcoded secret",
+            "A leaked static key grants standing access until someone manually rotates it — no scoping to a session, no per-user identity, no expiry",
+            "Nothing stops one compromised key from being replayed against a different server than the one it was issued for"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2c536c2f-f9fe-402d-9ff0-dcf766f433ed",
+          "kind": "solution",
+          "title": "MCP Servers Are OAuth 2.1 Resource Servers",
+          "body": null,
+          "bullets": [
+            "The MCP Authorization spec casts the MCP server as an OAuth 2.1 resource server, not the identity provider itself — it delegates login to a separate authorization server",
+            "Clients discover the right authorization server via Protected Resource Metadata (RFC 9728) at a well-known URL, then fetch its endpoints via Authorization Server Metadata (RFC 8414)",
+            "New clients can self-register with Dynamic Client Registration (RFC 7591) instead of a developer manually creating an OAuth app for every MCP client that shows up",
+            "PKCE (Proof Key for Code Exchange) is mandatory on every authorization code flow, closing the code-interception hole that plagued OAuth on native/desktop apps"
+          ],
+          "symbol": "key.fill",
+          "table": null
+        },
+        {
+          "id": "56d780f0-c659-4308-8375-bf9e20207516",
+          "kind": "architecture",
+          "title": "Resource Indicators Stop Token Replay Across Servers",
+          "body": "The mechanism built specifically for MCP's multi-server reality: binding every access token to the one resource it was issued for.",
+          "bullets": [
+            "RFC 8707 Resource Indicators let the client tell the authorization server exactly which MCP server (audience) a token is being requested for",
+            "The resulting token is only valid at that one resource server — presenting it to a second MCP server should be rejected outright",
+            "Without this, a token minted for a low-trust MCP server (say, a weather tool) could be replayed against a high-trust one (say, an internal database) if both trust the same authorization server"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "f2bdb373-7f3c-4807-8eb1-a8706cadf6df",
+          "kind": "comparison",
+          "title": "Static Keys vs. OAuth 2.1 MCP Flow",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Property",
+              "Static API key",
+              "OAuth 2.1 (MCP)"
+            ],
+            "rows": [
+              [
+                "Per-user identity",
+                "No — one key for everyone",
+                "Yes — token tied to the authenticated user"
+              ],
+              [
+                "Revocation",
+                "Manual, out-of-band",
+                "Token expiry + auth server revocation endpoint"
+              ],
+              [
+                "Cross-server replay",
+                "Not prevented",
+                "Blocked by Resource Indicators (RFC 8707)"
+              ],
+              [
+                "Client onboarding",
+                "Hand-issued secret per client",
+                "Self-service via Dynamic Client Registration"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "d62b5c55-9be5-4950-85bb-1db0b1a3b95c",
+          "kind": "example",
+          "title": "Worked Example: One Agent, Two MCP Servers",
+          "body": "A user connects an AI assistant to both a GitHub MCP server and an internal Postgres MCP server.",
+          "bullets": [
+            "The client discovers each server's authorization server via its Protected Resource Metadata, then starts an OAuth 2.1 authorization-code-with-PKCE flow for GitHub, requesting a token with a resource indicator locked to the GitHub MCP server",
+            "The user approves in a browser; the auth server issues a token whose audience is bound to that one resource indicator",
+            "The same flow repeats independently for the Postgres MCP server, producing a second token scoped to that server alone — the GitHub token cannot be reused there even if an attacker intercepts it"
+          ],
+          "symbol": "person.badge.key.fill",
+          "table": null
+        },
+        {
+          "id": "53427800-f9b5-4ca8-9f67-b9f6eadbee42",
+          "kind": "problem",
+          "title": "When You Don't Need the Full OAuth Dance",
+          "body": null,
+          "bullets": [
+            "Local, stdio-launched MCP servers running as a subprocess on the user's own machine inherit the OS user's trust boundary — the spec doesn't require OAuth there, only for remote/HTTP servers",
+            "Common pitfall: an authorization server that issues one token valid for every resource it trusts, skipping Resource Indicators — that silently reintroduces the cross-server replay risk OAuth 2.1 was meant to close",
+            "Dynamic Client Registration trades setup friction for a new attack surface: an auth server that auto-registers any client without vetting can be abused to mint legitimate-looking OAuth clients"
+          ],
+          "symbol": "list.bullet.clipboard.fill",
+          "table": null
+        },
+        {
+          "id": "f2a32e84-7136-4c8e-b94b-9de453a20da9",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "MCP servers are OAuth 2.1 resource servers, not identity providers — auth is delegated, not reinvented per server",
+            "PKCE and Resource Indicators aren't optional extras — they're what stops code interception and cross-server token replay",
+            "Reach for the full flow only with remote MCP servers; local subprocess servers rely on OS-level trust instead"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "910e2649-770a-4afb-8dc3-7452ec49f3a6",
+            "prompt": "What role does an MCP server play in the OAuth 2.1 authorization flow?",
+            "options": [
+              "The identity provider that authenticates users directly",
+              "A resource server that trusts a separate authorization server",
+              "A public OAuth client with no credentials",
+              "A certificate authority for TLS"
+            ],
+            "correctIndex": 1,
+            "explanation": "The MCP Authorization spec separates roles: the MCP server is the resource server being protected, while a distinct authorization server handles login and token issuance."
+          },
+          {
+            "id": "9d039e02-dacb-474b-a9b2-c3986766e7d1",
+            "prompt": "What problem do Resource Indicators (RFC 8707) solve in MCP authorization?",
+            "options": [
+              "They speed up token issuance",
+              "They let one token be replayed safely across multiple MCP servers",
+              "They bind a token to a specific resource server so it can't be replayed against a different one",
+              "They replace the need for PKCE"
+            ],
+            "correctIndex": 2,
+            "explanation": "Resource Indicators bind the issued token's audience to the specific MCP server it was requested for, so a token minted for one server is rejected if presented to another."
+          },
+          {
+            "id": "0c181e87-181a-4e88-ae6e-d17679d79979",
+            "prompt": "When does the MCP spec say the full OAuth 2.1 flow is NOT required?",
+            "options": [
+              "Never — every MCP server needs OAuth",
+              "For local, stdio-launched MCP servers running as a subprocess on the user's own machine",
+              "Only for MCP servers with fewer than 10 tools",
+              "Only during development, never in production"
+            ],
+            "correctIndex": 1,
+            "explanation": "Local subprocess MCP servers inherit the OS user's own trust boundary, so the spec doesn't require the OAuth 2.1 dance there — it targets remote, HTTP-based MCP servers."
+          }
+        ]
+      },
+      "references": [],
+      "id": "b805ac00-135c-40ee-872a-10c62ba4656e",
+      "publishedDate": "2026-07-20T12:40:29Z"
+    },
+    {
       "title": "Claude Science: Anthropic's AI Workbench for Researchers",
       "subtitle": "A dedicated agentic environment for genomics, proteomics, and drug discovery — Claude Code's playbook, applied to the lab bench.",
       "category": "AI News",
@@ -11177,197 +11365,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "id": "206cfb5b-b24c-451f-9f1f-669b8a4daa40",
-      "title": "Agents-A1: A 35B Model Trained to Match Trillion-Parameter Rivals",
-      "subtitle": "Instead of adding parameters, this agent scales the length and diversity of what it practices on.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "mixture of experts",
-        "distillation",
-        "long-horizon",
-        "benchmarks"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "chart.line.uptrend.xyaxis",
-      "summary": "Agents-A1 is a 35B-parameter Mixture-of-Experts agent that matches or beats trillion-parameter models like Kimi-K2.6 and DeepSeek-V4-pro on agentic benchmarks — not by growing bigger, but by training on much longer, more varied agent trajectories through a three-stage multi-teacher distillation recipe.",
-      "slides": [
-        {
-          "id": "c9e514d6-4c9e-4235-a971-aef422ab4e13",
-          "kind": "cover",
-          "title": "35B Parameters, Trillion-Parameter Results",
-          "body": null,
-          "bullets": [
-            "Paper: \"Scaling the Horizon, Not the Parameters\" (arXiv:2606.30616)",
-            "Agents-A1: a 35B Mixture-of-Experts agentic model",
-            "Matches trillion-parameter models like Kimi-K2.6 and DeepSeek-V4-pro on agent benchmarks"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "table": null
-        },
-        {
-          "id": "dc42989d-78c6-483c-b4a3-95a24b5bb74c",
-          "kind": "problem",
-          "title": "The Industry's Default Lever Is Just 'Bigger'",
-          "body": "Frontier agentic models have mostly chased capability by scaling parameter count into the trillions. That buys performance, but it also buys enormous inference cost — every token generated by a 1T-parameter model activates far more compute than a 35B one, even with Mixture-of-Experts routing.",
-          "bullets": [
-            "Trillion-parameter agents (Kimi-K2.6, DeepSeek-V4-pro) are expensive to serve at scale",
-            "Bigger models don't automatically learn to plan, use tools, or survive long tasks better",
-            "The paper asks: what if you scaled the agent's *practice*, not its *size*?"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "311afd0e-de05-4cff-b351-52027dcd1c98",
-          "kind": "solution",
-          "title": "Scale the Horizon: Longer Tasks, More Domains",
-          "body": "Agents-A1 builds a long-horizon knowledge-action infrastructure connecting external knowledge, actions, observations, and verifier outcomes — producing training trajectories that average 45,000 tokens, far longer than typical single-turn fine-tuning examples.",
-          "bullets": [
-            "Stage 1: full-domain supervised fine-tuning for broad agentic behavior",
-            "Stage 2: train separate domain-level teacher models, each an expert in one domain",
-            "Stage 3: multi-teacher, domain-routed on-policy distillation with vocabulary alignment — merges the teachers' expertise back into one 35B student",
-            "Trajectories average ~45K tokens, spanning six distinct agentic domains"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "3e4b2af9-0951-456e-a089-5c3fe1dbd926",
-          "kind": "comparison",
-          "title": "A 35B Model Trading Blows With 1T Models",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Agents-A1 (35B)",
-              "What it's compared against"
-            ],
-            "rows": [
-              [
-                "Seal-0 (agentic search)",
-                "56.4",
-                "Best score among all models tested, including 1T-class"
-              ],
-              [
-                "GAIA (tool-use agent tasks)",
-                "96.0",
-                "Best among comparable 35B-class models"
-              ],
-              [
-                "IFEval (instruction following)",
-                "94.8",
-                "Best overall in the paper's evaluation suite"
-              ],
-              [
-                "FrontierScience-Olympiad",
-                "79.0",
-                "Best overall, ahead of larger frontier models"
-              ],
-              [
-                "XBench-DS-2510",
-                "86.0",
-                "Best among comparable models"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "6a4c2c87-ea43-4ab6-9c5e-14f989219d11",
-          "kind": "example",
-          "title": "Same Question, Two Very Different Training Diets",
-          "body": "Imagine two 35B models given the same coding-agent task: fix a multi-file bug, running tests, reading logs, adjusting a plan when the first fix fails. A model trained only on short, single-step examples has never practiced holding a 40-step plan together. Agents-A1's 45K-token trajectories mean it has already seen thousands of long, messy, multi-step tasks where the first attempt failed and the plan had to adapt — so a novel long task looks like more of the same, not something unfamiliar.",
-          "bullets": [
-            "Long trajectories teach the model to recover from failed sub-steps, not just execute cleanly",
-            "Domain-routed distillation means a 'coding' teacher and a 'research' teacher both shape the same student",
-            "The student model ends up generalizing across domains its teachers never saw combined"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "3273884c-5a23-4617-8bcc-3e945aca8688",
-          "kind": "problem",
-          "title": "Where Horizon-Scaling Has Real Costs",
-          "body": "This approach doesn't remove cost — it moves it. Building the long-horizon knowledge-action infrastructure and training a dedicated teacher model per domain is expensive engineering before the student ever sees a single trajectory.",
-          "bullets": [
-            "Requires building verifier infrastructure for every domain you want to distill from",
-            "Six domain-teacher models must each be trained and validated before distillation starts",
-            "Vocabulary alignment across teachers adds a non-trivial extra training stage",
-            "Performance outside the six trained domains is untested — this is not a general 'any-task' guarantee"
-          ],
-          "symbol": "exclamationmark.shield",
-          "table": null
-        },
-        {
-          "id": "a1427b4a-deec-490b-bc7b-43e5e8876978",
-          "kind": "takeaways",
-          "title": "Parameters Aren't the Only Scaling Axis",
-          "body": null,
-          "bullets": [
-            "A 35B agent can match 1T-class models by training on longer, harder, more varied trajectories",
-            "Three-stage recipe: broad SFT → domain teachers → multi-teacher on-policy distillation",
-            "45K-token average trajectory length is the core lever, not extra parameters",
-            "The tradeoff: cheaper inference, but expensive, domain-specific training infrastructure upfront"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "88d2b79c-2fd1-47e7-9665-5baf837e7155",
-            "prompt": "What is the core idea behind Agents-A1's 'scaling the horizon' approach?",
-            "options": [
-              "Adding more parameters until it matches 1T-class models",
-              "Training on longer, more varied agentic trajectories instead of growing model size",
-              "Using a bigger vocabulary for tokenization",
-              "Running the model for more inference steps at test time"
-            ],
-            "correctIndex": 1,
-            "explanation": "Agents-A1 stays at 35B parameters but trains on trajectories averaging 45K tokens across six domains, arguing that the length and diversity of practice matters as much as raw model size."
-          },
-          {
-            "id": "b1566661-cd83-4a24-8797-ed2128f09612",
-            "prompt": "What does Stage 3 of the training recipe (multi-teacher domain-routed on-policy distillation) actually do?",
-            "options": [
-              "Deletes the domain teachers and retrains from scratch",
-              "Merges the specialized knowledge of separate domain-teacher models into one student model",
-              "Increases the student model's parameter count to match the teachers",
-              "Removes agentic capabilities and adds general chat ability"
-            ],
-            "correctIndex": 1,
-            "explanation": "Stage 3 distills knowledge from multiple domain-specific teacher models into the single 35B student, using vocabulary alignment so knowledge transfers cleanly across domains."
-          },
-          {
-            "id": "489c5e32-1275-4318-a527-d55f57f4eae5",
-            "prompt": "What's a real limitation of the horizon-scaling approach described in the paper?",
-            "options": [
-              "It only works on GPUs with less than 8GB of memory",
-              "It requires no training infrastructure at all",
-              "Building domain-teacher models and verifier infrastructure for each domain is expensive, and performance outside those domains is unproven",
-              "It cannot use Mixture-of-Experts architectures"
-            ],
-            "correctIndex": 2,
-            "explanation": "The approach trades cheaper inference for expensive, domain-specific upfront training infrastructure — and the paper's results are demonstrated only within the six domains it was trained and evaluated on."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "395cad4b-2ee2-4c89-ad4e-6d87b1622bec",
-          "title": "Scaling the Horizon, Not the Parameters: Reaching Trillion-Parameter Performance with a 35B Agent (arXiv:2606.30616)",
-          "url": "https://arxiv.org/abs/2606.30616"
-        }
-      ],
-      "publishedDate": "2026-07-12T06:43:49Z"
     }
   ]
 }
