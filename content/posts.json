@@ -1,6 +1,408 @@
 {
   "posts": [
     {
+      "id": "b6fc6c01-54b6-45ef-bfb9-82a89aa67bd0",
+      "title": "MCP Elicitation: The Protocol's Ask-the-User Primitive",
+      "subtitle": "A tool server can pause mid-call and request exactly the structured data it's missing — nothing more.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "elicitation",
+        "human-in-the-loop",
+        "tool-use",
+        "json-schema"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "questionmark.bubble.fill",
+      "summary": "Elicitation is the MCP primitive that lets a server pause a tool call and ask the human, through the client, for exactly the structured field it's missing — a confirmation, a missing parameter, a choice among options. It's schema-constrained to flat objects with primitive fields, resolves to one of three distinct actions (accept, decline, cancel), and servers are explicitly barred from using it to collect passwords or secrets.",
+      "body": null,
+      "publishedDate": "2026-07-21T12:42:58Z",
+      "slides": [
+        {
+          "id": "da43238e-a505-43a0-82c6-5ee91f35456c",
+          "kind": "cover",
+          "title": "The Missing Piece Between Tool Calls and Human Judgment",
+          "body": "MCP already gives servers two ways to reach back into the client: Sampling asks the client's LLM to generate text, and Roots asks about the filesystem boundaries it can touch. Elicitation, added to the spec, is the third — a way to ask the human directly.",
+          "bullets": [
+            "Servers request additional information from users through the client during a tool call, via the elicitation/create method",
+            "Unlike a chat message, the request carries a JSON Schema — the client can render a real form, not just free text",
+            "It exists because plenty of tool calls can't be fully specified up front: the right next question depends on what the tool discovers"
+          ],
+          "symbol": "questionmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "fd3961be-8a97-4ab6-b7b6-089da38da5bd",
+          "kind": "problem",
+          "title": "Tools Either Guess or Fail Closed",
+          "body": "Before elicitation, an MCP server facing a missing or ambiguous input had two bad options.",
+          "bullets": [
+            "Guess: fill in a sensible default and hope it's right — risky for anything destructive or costly, like which environment to deploy to",
+            "Fail: return an error and force the whole request to restart from the client/LLM side, losing the context of exactly where the tool call got stuck",
+            "Neither option lets the server ask one precise, structured follow-up question at the exact moment it discovers it needs one"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9bfa2ed5-8cc7-4ff3-a6f6-502591c9d178",
+          "kind": "solution",
+          "title": "elicitation/create: A Schema, Not a Free-Text Prompt",
+          "body": "The server sends an elicitation/create request with a human-readable message plus a JSON Schema describing exactly what it needs back.",
+          "bullets": [
+            "The schema is deliberately restricted to flat objects with primitive properties — strings (with minLength/maxLength or formats like email, uri, date), numbers/integers (min/max), booleans, and enums",
+            "Complex nested structures and arrays of objects are intentionally NOT supported — this keeps the client able to render a generic form without custom UI per server",
+            "The client shows that form to the user, identifies which server is asking, and lets the user edit before submitting"
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "63905f13-ad81-4d42-a98d-068f9a484ae7",
+          "kind": "concept",
+          "title": "Three Outcomes, Not Two",
+          "body": "It's tempting to model the response as yes/no. The spec defines three distinct actions instead, and a server that only handles two will mishandle real user behavior.",
+          "bullets": [
+            "accept — the user submitted the form; the response includes a content field populated per the schema",
+            "decline — the user explicitly rejected the request (clicked \"No\" / \"Deny\"); content is typically omitted",
+            "cancel — the user dismissed the dialog without choosing either way (closed it, navigated away); content is also omitted",
+            "Collapsing decline and cancel into one case loses a real signal: decline is an informed no, cancel is no answer at all"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "8330b66b-1e2d-4f45-baa3-1112558605ad",
+          "kind": "example",
+          "title": "A Deployment Tool That Asks Before It Acts",
+          "body": "Picture a deploy_service tool. The agent calls it with just a service name — the target environment wasn't specified.",
+          "bullets": [
+            "The server can't safely default to production, and erroring out just pushes the question back to the user's next message with no structure",
+            "Instead it sends elicitation/create with a schema: environment (enum: staging/production), confirm (boolean), reason (string, optional)",
+            "The client renders that as a real form; the user picks \"production\", checks confirm, and submits — the server resumes the exact same tool call with a typed, validated answer instead of parsing free text"
+          ],
+          "symbol": "shippingbox.fill",
+          "table": null
+        },
+        {
+          "id": "327f00cb-90aa-4ad0-912d-7eec89ced2f3",
+          "kind": "comparison",
+          "title": "Elicitation vs. Sampling: Two Different Callbacks",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "Elicitation",
+              "Sampling"
+            ],
+            "rows": [
+              [
+                "Who answers",
+                "The human user, via the client's UI",
+                "The client's LLM"
+              ],
+              [
+                "Payload",
+                "A JSON Schema form (flat, primitives only)",
+                "A prompt/message for text generation"
+              ],
+              [
+                "Typical use",
+                "Missing parameter, confirmation, a choice",
+                "Let the server borrow reasoning without its own model access"
+              ],
+              [
+                "Response shape",
+                "action: accept / decline / cancel + content",
+                "A generated message"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7bbeb962-5376-4b5b-9601-0bf5ab28e462",
+          "kind": "concept",
+          "title": "Where This Breaks Down",
+          "body": "Elicitation is deliberately narrow, and that's the point — but it has hard limits worth knowing before you reach for it.",
+          "bullets": [
+            "The spec states servers MUST NOT use elicitation to request sensitive information — no passwords, API keys, or secrets belong in an elicitation form, since clients aren't required to treat that field as protected",
+            "Not every client implements it — elicitation is an optional client capability, so a server has to check for it during capability negotiation and have a fallback (usually: return a normal error)",
+            "Overusing it turns a tool call into a chain of modal dialogs — each elicitation blocks the in-flight call, so it should be reserved for genuinely necessary, high-stakes gaps, not every optional field"
+          ],
+          "symbol": "lock.shield.fill",
+          "table": null
+        },
+        {
+          "id": "0701aa3f-8773-486d-ba7f-4c4d54990faa",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Elicitation lets a server pause mid-tool-call and ask the human for exactly the structured field it's missing, via a flat JSON Schema form",
+            "Responses resolve to three distinct actions — accept (with data), decline (explicit no), or cancel (no answer) — and servers should handle all three differently",
+            "It's the human-facing counterpart to Sampling (which asks the client's LLM, not the user) — together they're how a server reaches back into the client instead of just returning an error",
+            "Never use it for secrets, always check the client supports it first, and use it sparingly — every elicitation is a blocking round trip"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "60f397b6-8c45-4010-aef6-8111709c01c7",
+            "prompt": "A server sends an elicitation/create request. The user closes the dialog without clicking any button. What action does the client report?",
+            "options": [
+              "accept",
+              "decline",
+              "cancel",
+              "timeout"
+            ],
+            "correctIndex": 2,
+            "explanation": "\"cancel\" means the user dismissed the request without making a choice either way — distinct from \"decline\", which means the user explicitly said no. A server that treats both the same loses the ability to tell \"no\" from \"no answer.\""
+          },
+          {
+            "id": "1675d7ed-84f2-4c7b-aa48-67b04f2f4b1e",
+            "prompt": "Why does the elicitation JSON Schema forbid nested objects and arrays of objects?",
+            "options": [
+              "Nested schemas are too slow for the client to parse",
+              "It keeps the client able to render a generic form for any server without custom per-server UI code",
+              "MCP doesn't support JSON Schema at all",
+              "Arrays can't be serialized over the MCP transport"
+            ],
+            "correctIndex": 1,
+            "explanation": "By restricting schemas to flat objects with primitive fields (strings, numbers, booleans, enums), any client can build one generic form-rendering path that works for every server's elicitation request, instead of needing bespoke UI per server."
+          },
+          {
+            "id": "c7957437-5354-4072-803c-85623975371b",
+            "prompt": "Which of these is an appropriate use of elicitation, per the spec's constraints?",
+            "options": [
+              "Asking the user to type in their database password so the server can connect",
+              "Asking the user to confirm which environment (staging vs. production) a deploy tool should target",
+              "Silently retrying the tool call with default values",
+              "Asking the client's LLM to draft a summary of the last tool result"
+            ],
+            "correctIndex": 1,
+            "explanation": "Elicitation is for structured, non-sensitive input the server genuinely needs from the human — like confirming a target environment. The spec explicitly prohibits using it to collect sensitive information like passwords, and asking the LLM (not the user) for a draft is Sampling, not Elicitation."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "950d6250-1ff1-49ff-bc98-65e4f823bf6b",
+          "title": "Elicitation — Model Context Protocol Specification",
+          "url": "https://modelcontextprotocol.io/specification/draft/client/elicitation"
+        },
+        {
+          "id": "bc4509db-a0b3-4b8a-93eb-ad4a546edf77",
+          "title": "modelcontextprotocol/modelcontextprotocol — elicitation.mdx source",
+          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/elicitation.mdx"
+        }
+      ]
+    },
+    {
+      "id": "30da2c62-fe6a-4c30-abbb-3a05e82e5757",
+      "title": "SpidR: Faster, More Stable Codebooks for Spoken Language Models",
+      "subtitle": "Meta FAIR stabilizes online clustering in self-supervised speech models — and cuts pretraining to a day on 16 GPUs.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "speech",
+        "self-supervised-learning",
+        "spoken-language-models",
+        "meta-fair",
+        "representation-learning"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "waveform",
+      "summary": "SpidR, from Meta FAIR (published at TMLR), targets a specific weak point in self-supervised speech models: the online clustering step used to turn raw audio into discrete \"linguistic units\" is unstable and prone to collapse. By having a student model predict cluster assignments derived from a teacher's intermediate layers — rather than clustering the student's own shifting representations — SpidR reports more stable training and higher-quality codebooks than wav2vec2, HuBERT, WavLM, and DinoSR on standard spoken-language-modeling probes, while pretraining in about a day on 16 A100s.",
+      "body": null,
+      "publishedDate": "2026-07-21T12:42:58Z",
+      "slides": [
+        {
+          "id": "b347e155-f4d9-4141-b35d-673228883be8",
+          "kind": "cover",
+          "title": "Turning Raw Audio Into a Vocabulary a Language Model Can Use",
+          "body": "Spoken language models need discrete \"linguistic units\" — a vocabulary — before a transformer can be trained over speech the way GPT is trained over text. SpidR is Meta FAIR's self-supervised method for learning that vocabulary.",
+          "bullets": [
+            "Published by Meta FAIR at Transactions on Machine Learning Research (TMLR)",
+            "Code, training recipe, and pretrained checkpoints (LibriSpeech 960h) are public on GitHub under CC BY-NC 4.0",
+            "The core problem it targets: the online clustering step that produces those units is notoriously unstable to train"
+          ],
+          "symbol": "waveform",
+          "table": null
+        },
+        {
+          "id": "aee2ab84-6dd0-4f31-bb88-f5cc3a5f002b",
+          "kind": "problem",
+          "title": "Online Clustering Is Prone to Collapse",
+          "body": "Prior self-supervised speech models (HuBERT-style approaches, DinoSR) learn their discrete units by clustering the model's own hidden representations while those representations are still changing during training.",
+          "bullets": [
+            "The clustering target and the representations being clustered move together — a moving-target problem that can destabilize training or collapse many clusters into a handful of overused ones",
+            "A collapsed or low-quality codebook means the discrete units downstream language models are trained on are a poor proxy for actual linguistic structure (phonemes, words)",
+            "That weak vocabulary caps how well any spoken language model built on top can perform, no matter how good the downstream transformer is"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3af1634c-65bb-41ed-83e5-c0d050802a7e",
+          "kind": "solution",
+          "title": "Let the Teacher's Intermediate Layers Anchor the Clusters",
+          "body": "SpidR trains with a masked-prediction objective combined with self-distillation between a student and a teacher, plus online clustering — but changes what gets clustered.",
+          "bullets": [
+            "Intermediate layers of the student model are trained to predict cluster assignments derived from the teacher's intermediate layers, not from the student's own unstable representations",
+            "Because the teacher (typically an exponential moving average of the student) evolves more slowly and smoothly, the clustering target is far more stable turn to turn",
+            "The paper reports this stabilizes the online clustering procedure compared to prior approaches and yields higher-quality codebooks as a result"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "287eb38c-8ecd-44c0-8634-959bf495b45e",
+          "kind": "concept",
+          "title": "Why the Vocabulary Quality Matters Downstream",
+          "body": "The units SpidR learns aren't the end product — they're the tokens a separate spoken language model is later trained on, the same way BPE tokens feed a text LLM.",
+          "bullets": [
+            "Standard probes for judging that vocabulary: sWUGGY (can the model tell a real word from a similar-sounding fake one?), sBLIMP (does it prefer grammatical over ungrammatical sentences?), tSC (topic/semantic coherence over longer spans)",
+            "A noisier codebook shows up downstream as worse scores on exactly these lexical, syntactic, and semantic probes — the paper reports SpidR outperforming wav2vec2, HuBERT, WavLM, and DinoSR across this benchmark suite",
+            "This is why the paper frames stability as the headline contribution, not just a speed trick — a more stable codebook is a better codebook"
+          ],
+          "symbol": "textformat.abc",
+          "table": null
+        },
+        {
+          "id": "28fdc4ab-eed6-4dba-b42e-89100768fc6b",
+          "kind": "example",
+          "title": "What a Lab Actually Gets: A Day, Not a Week",
+          "body": "The practical payoff the repo highlights is training cost, which matters because self-supervised speech pretraining has historically required large clusters for long stretches.",
+          "bullets": [
+            "SpidR reaches 400k pretraining steps in about a day on 16 A100 GPUs, or in about 15 hours on 16 H100 GPUs, per the released training recipe",
+            "That's a modest, single-node-scale cluster and a single-day budget — a meaningful difference from setups that need multi-day, multi-node runs to reach a usable checkpoint",
+            "Two checkpoints ship directly: spidr_base and a reproduced dinosr_base baseline, both pretrained on LibriSpeech 960h, so results are directly comparable out of the box"
+          ],
+          "symbol": "clock.fill",
+          "table": null
+        },
+        {
+          "id": "e17c5d7e-b160-4fa1-9427-44cd5e524e56",
+          "kind": "comparison",
+          "title": "SpidR vs. Prior Self-Supervised Speech Models",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Method",
+              "Clustering target",
+              "Reported result vs. SpidR"
+            ],
+            "rows": [
+              [
+                "wav2vec 2.0 / HuBERT",
+                "Student's own (or offline, fixed) representations",
+                "SpidR reports outperforming on sWUGGY / sBLIMP / tSC"
+              ],
+              [
+                "WavLM",
+                "HuBERT-style clustering + denoising objective",
+                "SpidR reports outperforming on the same probe suite"
+              ],
+              [
+                "DinoSR",
+                "Online clustering of student representations directly",
+                "Same online-clustering family as SpidR, but SpidR's teacher-derived targets reportedly give more stable training and better codebooks"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "86ee12da-a49c-487c-8693-0efaa6a84c00",
+          "kind": "concept",
+          "title": "Limits Worth Knowing Before You Reach for It",
+          "body": "SpidR is a targeted fix for a specific instability, not a general speech-model breakthrough — and it comes with real constraints.",
+          "bullets": [
+            "Licensing: code and checkpoints are CC BY-NC 4.0 — non-commercial use only, which rules it out as a drop-in for a commercial product without a separate license",
+            "It still needs a real multi-GPU cluster (16 A100s/H100s) — cheaper than prior multi-node setups, but not something you train on a single workstation",
+            "Evaluation is on LibriSpeech (English, read speech) and the standard sWUGGY/sBLIMP/tSC probes — the paper doesn't claim these stability gains are proven across noisy, multilingual, or conversational speech domains"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "679c8c06-679b-4771-a85f-60c2e2e2c3e5",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "SpidR fixes a specific failure mode in self-supervised speech pretraining: online clustering targets that move with the student's own unstable representations",
+            "The fix is to derive cluster assignments from the teacher's intermediate layers instead — a more stable target that the paper reports yields higher-quality discrete linguistic units",
+            "Reported result: outperforms wav2vec2, HuBERT, WavLM, and DinoSR on sWUGGY/sBLIMP/tSC, while pretraining in about a day on 16 A100 GPUs",
+            "Non-commercial license and English-only, read-speech evaluation are real limits — treat it as a research recipe, not a production-ready drop-in"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "02576cb9-78e9-42a8-890a-375d83a52e27",
+            "prompt": "What specific instability does SpidR target in prior self-supervised speech models like DinoSR?",
+            "options": [
+              "Slow inference speed at deployment time",
+              "Online clustering targets that shift because they're derived from the student's own still-changing representations",
+              "A lack of any clustering step at all",
+              "Excessive GPU memory use during fine-tuning"
+            ],
+            "correctIndex": 1,
+            "explanation": "DinoSR-style online clustering computes cluster targets from the student's own representations while those representations are still being updated — a moving-target problem that can destabilize training or collapse the codebook."
+          },
+          {
+            "id": "ea43a69d-ad59-43af-93d4-4f6176164cb7",
+            "prompt": "How does SpidR stabilize the clustering target?",
+            "options": [
+              "By freezing the student model entirely during pretraining",
+              "By deriving the student's cluster-assignment targets from the teacher's intermediate layers instead of the student's own",
+              "By removing masked prediction from the objective",
+              "By training on text data instead of audio"
+            ],
+            "correctIndex": 1,
+            "explanation": "The student is trained to predict cluster assignments derived from the teacher's (typically an EMA of the student) intermediate layers. The teacher moves more slowly, so the clustering target is smoother and less prone to collapse."
+          },
+          {
+            "id": "1fb1b85e-2a5d-42ae-9c37-e00a5d7c368c",
+            "prompt": "What do sWUGGY, sBLIMP, and tSC actually measure?",
+            "options": [
+              "GPU throughput during training",
+              "Lexical, syntactic, and semantic quality of the discrete units, via downstream language-modeling probes",
+              "Audio compression ratio",
+              "Licensing compliance"
+            ],
+            "correctIndex": 1,
+            "explanation": "These are standard probes for spoken language models: sWUGGY tests real-vs-fake word discrimination (lexical), sBLIMP tests grammaticality preference (syntactic), and tSC tests topic/semantic coherence over longer spans — together they judge how good the learned \"vocabulary\" actually is."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d504c18d-9eec-4e57-864c-8ca0bea4d9cb",
+          "title": "facebookresearch/spidr — official code, checkpoints, and paper links",
+          "url": "https://github.com/facebookresearch/spidr"
+        },
+        {
+          "id": "8c6702c9-dd36-4fc6-8016-1ad218182d10",
+          "title": "SpidR: Learning Fast and Stable Linguistic Units for Spoken Language Models Without Supervision (arXiv)",
+          "url": "https://arxiv.org/abs/2512.20308"
+        }
+      ]
+    },
+    {
       "id": "7c340a25-f220-4f2f-bdb8-8dc709b25206",
       "title": "GMPO: Taming GRPO's Outlier-Driven Instability",
       "subtitle": "One swap — arithmetic mean to geometric mean — and reasoning RL stops blowing up on rare high-ratio tokens.",
@@ -10988,341 +11390,6 @@
       "references": [],
       "id": "22d27b65-2832-4210-ae83-d50186fbbd29",
       "publishedDate": "2026-07-14T00:40:36Z"
-    },
-    {
-      "title": "Agent Sandboxing: Bounding the Blast Radius of Autonomy",
-      "subtitle": "Autonomous agents now run real shell commands — sandboxing is what keeps a hallucination from becoming an incident.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "ai-agents",
-        "sandboxing",
-        "security",
-        "tool-use",
-        "isolation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "shield.lefthalf.filled",
-      "summary": "Prompt instructions are advisory, not enforceable — a jailbreak or a poisoned tool result can still make an agent run a destructive command. Sandboxing enforces limits at the process, filesystem, and network layer that the model has no way to override, but the isolation strength and policy scope have to match the agent's actual blast radius.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Why Autonomous Agents Need a Cage, Not Just a Prompt",
-          "body": null,
-          "bullets": [
-            "Coding and ops agents now execute real shell commands, write files, and call paid APIs",
-            "One hallucinated or hijacked action can delete data, leak secrets, or run up a bill",
-            "Sandboxing is an architectural boundary, not a system-prompt instruction"
-          ],
-          "symbol": "shield.lefthalf.filled",
-          "id": "c158252c-b646-4506-88f4-fe627a58299b"
-        },
-        {
-          "kind": "problem",
-          "title": "A Prompt Guardrail Is Not a Security Boundary",
-          "body": "Telling a model 'never delete files' shapes behavior, but the model still generates the final action. A jailbreak, a poisoned tool result, or a plain reasoning error can talk it past that instruction — because nothing actually enforces it.",
-          "bullets": [
-            "Instructions are advisory: they influence probabilities, they don't block execution",
-            "Prompt injection can arrive from anywhere the agent reads: a README, a search result, a file comment",
-            "The fix has to sit below the model, at the OS or network layer, where the model can't argue its way out"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "af231aa2-71a1-416e-913b-60939faa56b2"
-        },
-        {
-          "kind": "solution",
-          "title": "Three Enforcement Layers: Process, Filesystem, Network",
-          "body": null,
-          "bullets": [
-            "Process isolation — each tool call runs in its own container or microVM (gVisor, Firecracker), so a crash or exploit can't reach the host",
-            "Filesystem scoping — mount a scratch directory read-write; everything else is read-only or simply absent (chroot / OverlayFS)",
-            "Network allow-listing — default-deny egress; only explicitly approved domains or APIs are reachable, which is what stops silent exfiltration"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "id": "f89c0d91-97d5-44d7-8efc-098275f1d2bd"
-        },
-        {
-          "kind": "architecture",
-          "title": "Where the Boundary Actually Sits",
-          "body": "A trusted orchestrator never runs untrusted output directly. It hands each tool call to a policy engine first, which checks it against the allowlist/rate limit before the sandboxed executor ever sees it.",
-          "bullets": [
-            "Approval gates for irreversible actions: payments, deletions, sending external messages",
-            "Rate limits and timeouts to stop a runaway retry loop from burning budget or hammering an API",
-            "Every tool call is logged, so a breach is auditable even when it isn't blocked"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "id": "40e195dc-a7f2-478b-b1c7-5b07e62c939f"
-        },
-        {
-          "kind": "example",
-          "title": "A Poisoned README Tries to Exfiltrate Secrets",
-          "body": "A coding agent is asked to 'fix the failing test.' A dependency's README contains a hidden instruction: run a setup script that curls a remote payload and pipes it to sh. The agent, reading that README as context, tries it.",
-          "bullets": [
-            "Without sandboxing: the curl succeeds, the payload runs with the agent's full filesystem and network access, env secrets leak",
-            "With network allow-listing scoped to github.com and pypi.org: the outbound request to the attacker's domain is blocked and logged",
-            "The agent never needs to 'recognize' the attack — the boundary doesn't care what it intended"
-          ],
-          "symbol": "ladybug.fill",
-          "id": "6ba3fbe9-b03f-48e9-b69d-4f859fcd156b"
-        },
-        {
-          "kind": "comparison",
-          "title": "Isolation Strength vs. Cold-Start Cost",
-          "body": null,
-          "bullets": [
-            "Stronger isolation generally means slower startup — the choice is a real latency/safety tradeoff, not free"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Technique",
-              "Isolation strength",
-              "Typical cold start"
-            ],
-            "rows": [
-              [
-                "chroot / namespaces",
-                "Weak — shares host kernel",
-                "~milliseconds"
-              ],
-              [
-                "Docker container",
-                "Moderate — shared kernel, restricted syscalls",
-                "~100s of ms"
-              ],
-              [
-                "microVM (Firecracker/gVisor)",
-                "Strong — near-VM, minimal guest kernel",
-                "~125ms"
-              ],
-              [
-                "Full VM",
-                "Strongest — separate kernel entirely",
-                "Several seconds"
-              ]
-            ]
-          },
-          "id": "25755bde-5ad8-4927-b983-270aabde77e6"
-        },
-        {
-          "kind": "problem",
-          "title": "When Sandboxing Costs More Than It Saves",
-          "body": null,
-          "bullets": [
-            "A read-only research agent that only summarizes documents rarely needs microVM-grade isolation — the added complexity isn't buying much",
-            "Over-restrictive sandboxes break legitimate multi-step work, like an agent that needs to install a package mid-task",
-            "An allowlist is only as good as its scope: allowing github.com also allows gist.github.com, which is a plausible exfiltration path attackers actually use"
-          ],
-          "symbol": "hand.raised.slash.fill",
-          "id": "f5d949de-215c-46a1-a9cb-38ecf22eff33"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Match Isolation to Blast Radius, Not to Habit",
-          "body": null,
-          "bullets": [
-            "Baseline: default-deny network, scoped filesystem, approval gates on irreversible actions",
-            "Scale isolation strength to what the agent can actually touch — not uniformly across every agent you run",
-            "Treat every tool result as potentially adversarial context, because increasingly it is one"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "a121511c-facb-413a-90ae-faa015bcb554"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What's the main weakness of relying only on system-prompt instructions to keep an agent 'safe'?",
-            "options": [
-              "They're advisory — a jailbreak or poisoned tool output can override them",
-              "They slow down inference too much",
-              "They cost extra tokens on every call",
-              "They only work in single-turn conversations"
-            ],
-            "correctIndex": 0,
-            "explanation": "A system prompt shapes what the model is likely to generate, but the model still produces the final action itself. If adversarial input convinces it to ignore the instruction, nothing actually stops execution — which is why the enforcement has to move to a layer the model can't talk its way past, like the OS or network.",
-            "id": "c2d422d7-666f-49fe-9a19-b5f2fdded459"
-          },
-          {
-            "prompt": "Which isolation technique is most associated with sub-200ms cold starts, making it practical to spin up a fresh sandbox per agent task?",
-            "options": [
-              "A full virtual machine",
-              "chroot alone",
-              "microVM (e.g. Firecracker/gVisor)",
-              "No isolation, just careful prompting"
-            ],
-            "correctIndex": 2,
-            "explanation": "MicroVMs trim the guest kernel and device model down to the essentials, landing cold starts around 125ms — fast enough to isolate every single agent task, unlike full VMs (seconds) or plain containers (weaker isolation, shared kernel).",
-            "id": "faddebe8-d13f-4c13-8c43-883092b73dd2"
-          },
-          {
-            "prompt": "An agent's sandbox allows network egress only to github.com and pypi.org. A prompt-injected instruction tells it to POST captured secrets to a newly created GitHub Gist. What happens?",
-            "options": [
-              "The allowlist blocks it because gist URLs aren't explicitly listed",
-              "It succeeds silently, because gist.github.com resolves under the allowed github.com domain",
-              "The sandbox automatically detects and blocks malicious payloads",
-              "The filesystem layer prevents the request before it reaches the network"
-            ],
-            "correctIndex": 1,
-            "explanation": "gist.github.com is a subdomain of github.com, so a domain-level allowlist wouldn't stop it. This is why allowlists need to be scoped to specific paths or APIs rather than whole domains, and why logging every egress destination matters as a second line of defense even when a request isn't blocked outright.",
-            "id": "7d656e91-9617-4ac2-a488-970882eadcec"
-          }
-        ]
-      },
-      "references": [],
-      "id": "9eef4441-9552-4baf-94de-fbed212c039d",
-      "publishedDate": "2026-07-13T18:39:37Z"
-    },
-    {
-      "title": "InnoGym: Grading Agents on Novelty, Not Just Correctness",
-      "subtitle": "A new ICLR 2026 benchmark shows agents that get creative rarely get it right.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "ai-agents",
-        "benchmark",
-        "evaluation",
-        "iclr-2026",
-        "innovation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "lightbulb.fill",
-      "summary": "InnoGym (ICLR 2026, Zhejiang University's ZJUNLP lab) is the first benchmark to score AI agents on innovation, not just correctness, using 18 real engineering/science tasks. Its headline finding: agents that produce the most novel solutions tend to have the lowest performance gains, and vice versa — creativity and reliability rarely show up together yet.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "18 Tasks, One Question: Can Agents Actually Innovate?",
-          "body": null,
-          "bullets": [
-            "Published at ICLR 2026 by Zhejiang University's ZJUNLP lab (arXiv:2512.01822)",
-            "First benchmark to separate \"did it work\" from \"was it original\"",
-            "Code, dataset, and framework open-sourced at github.com/zjunlp/igym"
-          ],
-          "symbol": "lightbulb.fill",
-          "id": "2fb41acb-a461-4f37-9582-66197b876e36"
-        },
-        {
-          "kind": "problem",
-          "title": "Every Prior Benchmark Only Checks Correctness",
-          "body": "SWE-bench, GAIA, and similar agent benchmarks score whether the final answer passes tests — not whether the agent found a genuinely new way to get there. An agent that copies a known fix looks identical to one that invents a better algorithm.",
-          "bullets": [
-            "Real engineering and science reward novel methods, not just passing tests",
-            "Correctness-only scoring can't tell \"copied a known fix\" from \"invented something better\""
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "f484e732-72c9-416f-9ed3-d3488bd6d9f9"
-        },
-        {
-          "kind": "solution",
-          "title": "Two Metrics Instead of One: Performance Gain + Novelty",
-          "body": null,
-          "bullets": [
-            "Performance gain = improvement over the best known existing solution for that task",
-            "Novelty = how methodologically different the agent's approach is from prior solutions",
-            "18 \"Improvable Tasks\" curated from real engineering and scientific domains, each with a documented best-known baseline to beat"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "id": "34b31f04-fe35-4cd8-9fc5-618e74a98d35"
-        },
-        {
-          "kind": "architecture",
-          "title": "iGym: Where the Agent Actually Has to Do the Work",
-          "body": "Instead of one-shot Q&A, agents work inside iGym's sandboxed environment across many steps — writing code, running experiments, iterating — closer to how a real researcher or engineer attacks an open-ended improvement problem.",
-          "bullets": [
-            "Long-horizon, tool-using loop, not single-turn prompting",
-            "Standardized via resource filtering, evaluator validation, and solution collection"
-          ],
-          "symbol": "gearshape.2",
-          "id": "6e0a5f0b-b154-4f98-9398-910386bc3e4a"
-        },
-        {
-          "kind": "example",
-          "title": "What an \"Improvable Task\" Actually Looks Like",
-          "body": "Each of the 18 tasks starts from a real, previously-solved engineering or scientific problem with a documented best-known solution — the agent's job is to beat that baseline, not just match it.",
-          "bullets": [
-            "Agent is given the problem plus the existing best solution as a floor to clear",
-            "Success requires a measurable improvement, not just a valid answer"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "id": "2cc8f0ec-37c9-4865-a28a-79c1bba72f6c"
-        },
-        {
-          "kind": "comparison",
-          "title": "The Headline Finding: Creativity and Reliability Don't Come Together",
-          "body": null,
-          "bullets": [
-            "Agents with the most novel approaches often had the lowest performance gains",
-            "The reverse held too: safe, incremental agents scored reliably but rarely beat the baseline",
-            "Core gap identified: agents can be creative OR robust — rarely both at once, yet"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": null,
-          "id": "e1ee617a-af7e-4db0-867b-30a83acedcc7"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Why This Matters Beyond One Paper",
-          "body": null,
-          "bullets": [
-            "Correctness benchmarks (SWE-bench Pro, GAIA) are saturating fast — innovation is the next frontier to measure",
-            "Expect future agent evals to score novelty explicitly, not just pass/fail",
-            "Fully open-sourced, so any lab can extend it to new domains"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "56a2ff16-126d-4c8a-b476-f858243f15d7"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does InnoGym's \"performance gain\" metric measure?",
-            "options": [
-              "Whether the agent's final answer passes unit tests",
-              "How much the agent's solution improves over the best known existing solution",
-              "How fast the agent completes the task",
-              "How many tokens the agent used"
-            ],
-            "correctIndex": 1,
-            "explanation": "Performance gain is explicitly defined against a documented best-known baseline for each of the 18 tasks — it measures improvement, not mere pass/fail correctness.",
-            "id": "1e48e37a-553c-4982-a810-d3c38382e927"
-          },
-          {
-            "prompt": "What was InnoGym's key finding about agent behavior?",
-            "options": [
-              "Agents that were most novel also had the highest performance gains",
-              "Agents that produced the most novel approaches often had the lowest performance gains",
-              "All tested agents scored identically on every task",
-              "Novelty could not be measured with current agents"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper found a gap between creativity and effectiveness: the most methodologically novel solutions tended to be the least robust, and vice versa.",
-            "id": "269846b8-d831-4a47-a12c-17884e42c0af"
-          },
-          {
-            "prompt": "What is iGym?",
-            "options": [
-              "A dataset of chatbot conversation logs",
-              "A unified execution environment for long-horizon, reproducible agent evaluation",
-              "A pretraining framework for video generation models",
-              "A pricing calculator for LLM API costs"
-            ],
-            "correctIndex": 1,
-            "explanation": "iGym is the sandboxed, tool-using execution environment that lets agents work through the 18 Improvable Tasks over many steps instead of a single turn.",
-            "id": "5539f7c2-7c05-4fb2-b915-7f5ddce124f7"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "InnoGym: Benchmarking the Innovation Potential of AI Agents (arXiv:2512.01822, ICLR 2026)",
-          "url": "https://arxiv.org/abs/2512.01822",
-          "id": "9ac2db53-5b79-4628-b0cd-acf9c2f3608a"
-        }
-      ],
-      "id": "ef4af1c2-5b9a-43bd-bde5-79907e2947e1",
-      "publishedDate": "2026-07-13T12:44:19Z"
     }
   ]
 }
