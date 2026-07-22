@@ -1,6 +1,578 @@
 {
   "posts": [
     {
+      "title": "xHC: Scaling Residual Streams Past the N=4 Wall",
+      "subtitle": "A cheap architecture trick that beats DeepSeek's mHC at 18B and 28B scale.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "llm pretraining",
+        "hyper-connections",
+        "residual stream",
+        "moe",
+        "scaling laws"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "xHC expands a Transformer's residual stream to 16 parallel paths but only updates 4 at a time, beating DeepSeek's mHC on loss and downstream benchmarks at 18B and 28B scale for just ~4% extra training FLOPs.",
+      "slides": [
+        {
+          "id": "b09d2136-2c91-4a45-9749-377eb021a408",
+          "kind": "cover",
+          "title": "One Scaling Axis Nobody Was Using",
+          "body": "Model width, depth, and data get all the attention. xHC treats the residual stream itself as a fourth axis — and shows it was barely explored.",
+          "bullets": [
+            "Hyper-Connections (HC) split the residual stream into N parallel paths instead of one",
+            "Prior HC methods (including DeepSeek's mHC) stalled at N=4",
+            "xHC pushes to N=16 while updating only 4 streams per step"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "0e49a6d6-2aa5-4d63-8298-9f2fa72a55d1",
+          "kind": "problem",
+          "title": "Past N=4, Hyper-Connections Hit Two Walls",
+          "body": "Naively widening N breaks down for two separate reasons — one statistical, one computational.",
+          "bullets": [
+            "Information supply: one write-back vector has to feed more and more streams, so extra streams become redundant",
+            "Residual-mapping cost: generating the dense N×N mixing matrix from an NC-dim state scales as O(N³C) — cubic in N",
+            "Result: mHC's gains flatten fast while its FLOPs keep climbing as N grows"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "22ade4f3-b324-4223-a2e3-9cace05a0b23",
+          "kind": "solution",
+          "title": "Richer Signal In, Sparser Updates Out",
+          "body": "xHC combines two fixes that attack each bottleneck separately.",
+          "bullets": [
+            "Temporal feature augmentation: causal depthwise convolutions (kernel sizes 4, 8, 12) enrich the MLP write-back with multi-scale local context",
+            "Sparse residual updates: all N=16 streams are read, but only k=4 active streams are mixed and written back each sublayer",
+            "This drops the mapping cost from O(N³C) to O(k³C) — cubic in k, not N"
+          ],
+          "symbol": "wand.and.rays",
+          "table": null
+        },
+        {
+          "id": "b1c2bb64-e964-4022-a9f6-5de7389016e8",
+          "kind": "architecture",
+          "title": "xHC-Flash: Making It Deployable",
+          "body": "Full xHC still touches every stream on read. xHC-Flash trims that for real training runs.",
+          "bullets": [
+            "Shares full-state operations across consecutive sublayers instead of recomputing them every layer",
+            "Reconstructs later-sublayer inputs with lightweight corrections",
+            "Per-token I/O per sublayer: mHC (N=4) 34C → xHC 73.5C → xHC-Flash 51C → xHC-Flash-4sub 40C, all near mHC's memory traffic"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "8760a09f-196f-42aa-b841-b81a8611fd1c",
+          "kind": "comparison",
+          "title": "The Numbers at 18B and 28B",
+          "body": "Measured on real pretraining runs, not toy tasks.",
+          "bullets": [
+            "At 18B: xHC improves average downstream score over mHC by 4.0 points (44.8 → 48.8), with gains across reasoning, knowledge, and code",
+            "At 28B: xHC beats mHC by another 3.1 average points, winning on 11 of 12 benchmarks"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Method (18B MoE)",
+              "Final training loss"
+            ],
+            "rows": [
+              [
+                "Vanilla baseline",
+                "1.799"
+              ],
+              [
+                "mHC (DeepSeek)",
+                "1.776"
+              ],
+              [
+                "xHC",
+                "1.758"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "16084e9f-cc37-4386-94c0-c09234bcc6db",
+          "kind": "example",
+          "title": "Same Compute Budget, Better Loss",
+          "body": "Picture a team pretraining an 18B MoE model on a fixed GPU-hour budget.",
+          "bullets": [
+            "Switching vanilla → xHC costs about 4.1% extra training FLOPs for the N=4→16 expansion",
+            "But to reach xHC's final loss of 1.758, mHC needs 1.19× the training compute and the vanilla baseline needs 1.50×",
+            "In other words: a ~4% FLOPs surcharge buys back 19-50% of a full extra training run's worth of compute efficiency"
+          ],
+          "symbol": "gauge.with.dots.needle.67percent",
+          "table": null
+        },
+        {
+          "id": "efac1a88-4f7e-4579-95b2-6f433217d32b",
+          "kind": "concept",
+          "title": "The Overhead Is Real, Not Free",
+          "body": "xHC isn't a strictly-better free lunch — it trades wall-clock and engineering complexity for sample efficiency.",
+          "bullets": [
+            "Fused mHC kernels already add ~15% training overhead over vanilla at 18B; xHC-Flash-4sub adds ~11% more on top of that",
+            "At inference prefill (2K tokens), mHC and xHC-Flash-4sub add 11.4% and 12.9% overhead over vanilla respectively",
+            "Needs custom fused forward/backward kernels to be practical — not a drop-in change for an arbitrary training stack",
+            "Skip it if you're not already running at a scale (multi-billion parameter, long training runs) where compute-efficiency gains outweigh kernel-engineering cost"
+          ],
+          "symbol": "exclamationmark.circle",
+          "table": null
+        },
+        {
+          "id": "6ce257df-2695-41c0-912b-f74fbbcb6463",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "The residual stream width (N) is a real, underused scaling axis alongside depth and width",
+            "The trick to scaling it: read all streams densely, but write back through only a sparse subset (k out of N)",
+            "xHC beats mHC at both 18B and 28B with modest (~4%) extra FLOPs, but adds real kernel and runtime overhead",
+            "It remains effective under Muon as well as AdamW, suggesting the gains aren't optimizer-specific"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "75aeeac3-45f1-4e2b-a08e-161b67232fa4",
+            "prompt": "Why do Hyper-Connections stop paying off once N grows much past 4?",
+            "options": [
+              "The residual-mapping cost scales as O(N³C) and one write-back vector becomes an increasingly redundant signal for more streams",
+              "GPUs run out of registers to store N separate streams",
+              "The tokenizer can't handle more than 4 parallel paths",
+              "Backpropagation becomes numerically unstable above N=4"
+            ],
+            "correctIndex": 0,
+            "explanation": "Two compounding problems: cubic residual-mapping cost in N, and the write-back signal being spread too thin across streams — both make naive scaling a bad trade."
+          },
+          {
+            "id": "7b51821d-1a38-4726-a4d6-1ec52baafc4f",
+            "prompt": "How does xHC keep the residual-mapping cost from exploding as N grows to 16?",
+            "options": [
+              "It reads and writes all 16 streams every step, just with a smaller matrix",
+              "It reads all N streams but mixes and writes back through only k=4 sparse active streams, cutting cost to O(k³C)",
+              "It removes residual connections entirely above N=4",
+              "It quantizes the residual stream to int8"
+            ],
+            "correctIndex": 1,
+            "explanation": "Dense reads keep information flowing from all streams, while sparse (k=4) writes keep the expensive mapping small — cost depends on k, not N."
+          },
+          {
+            "id": "c55aeee0-a25f-41f7-93d2-13d35ca13fdc",
+            "prompt": "On the 18B MoE run, how much extra training compute would the vanilla (no hyper-connections) baseline need to match xHC's final loss?",
+            "options": [
+              "1.19×",
+              "1.50×",
+              "2.0×",
+              "4.1×"
+            ],
+            "correctIndex": 1,
+            "explanation": "The paper's scaling-law fit shows mHC needs 1.19× and vanilla needs 1.50× the compute xHC uses to hit the same loss — xHC's ~4% FLOPs overhead buys outsized compute efficiency."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "3667f4f2-a797-4863-862f-ef582bdc1eab",
+          "title": "xHC: Expanded Hyper-Connections (arXiv:2607.14530)",
+          "url": "https://arxiv.org/abs/2607.14530"
+        },
+        {
+          "id": "f8177a68-4507-4480-9c4e-61940d1929c9",
+          "title": "xHC official code and technical report (GitHub)",
+          "url": "https://github.com/aHapBean/xHC"
+        }
+      ],
+      "id": "82f7ffdd-c435-41e1-aa70-a2016df2f9d1",
+      "publishedDate": "2026-07-22T18:42:10Z"
+    },
+    {
+      "title": "Gemini 3.5 Flash Cyber: A Model Built to Hunt Exploits",
+      "subtitle": "Google's security-tuned Flash variant found 55 confirmed V8 bugs versus Opus 4.6's 36.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "ai security",
+        "vulnerability research",
+        "codemender",
+        "gemini",
+        "google deepmind"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "lock.shield.fill",
+      "summary": "On July 21, 2026 Google DeepMind released Gemini 3.5 Flash Cyber, a Flash model fine-tuned to find, validate, and patch software vulnerabilities through its CodeMender agent — currently gated to a limited pilot with governments and trusted partners.",
+      "slides": [
+        {
+          "id": "c3588ee1-4f70-4d73-ae30-8315d9f1f895",
+          "kind": "cover",
+          "title": "A Flash Model Whose Only Job Is Finding Bugs",
+          "body": "Alongside Gemini 3.6 Flash and 3.5 Flash-Lite, Google DeepMind shipped a third sibling built for one narrow task.",
+          "bullets": [
+            "Released July 21, 2026 by Google DeepMind",
+            "Built on top of Gemini 3.5 Flash, then fine-tuned specifically for vulnerability discovery and patching",
+            "Plugs into CodeMender, Google's AI patch agent unveiled in October 2025"
+          ],
+          "symbol": "lock.shield.fill",
+          "table": null
+        },
+        {
+          "id": "6d2d840b-2794-4b54-92c4-7e14369bf316",
+          "kind": "problem",
+          "title": "Security Review Doesn't Scale With Codebase Size",
+          "body": "The bottleneck in vulnerability discovery usually isn't finding candidate issues — it's confirming which of them are real.",
+          "bullets": [
+            "Large codebases have too many execution paths for manual review or naive fuzzing to cover",
+            "Automated flaggers produce heavy false-positive noise, and a suspected flaw still has to be reproduced and validated",
+            "Patching without validating the exploit path risks shipping a fix that doesn't actually close the hole"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "9dac67f0-0ba5-47f0-b9cf-ac37e4c9bb48",
+          "kind": "solution",
+          "title": "Fine-Tuned to Confirm, Not Just Flag",
+          "body": "Cyber is invoked repeatedly inside a CodeMender pipeline rather than used as a single one-shot classifier.",
+          "bullets": [
+            "CodeMender calls the model multiple times to inspect large codebases and explore numerous execution paths",
+            "It repeatedly retests suspected flaws to confirm they're real before a fix is proposed",
+            "Sub-agents combine their findings into one consolidated vulnerability report"
+          ],
+          "symbol": "checkmark.shield",
+          "table": null
+        },
+        {
+          "id": "b576f030-1e92-47ed-9421-fb534396573b",
+          "kind": "comparison",
+          "title": "Tested Against the V8 JavaScript Engine",
+          "body": "Google benchmarked Cyber against its own base Flash model and Anthropic's Opus 4.6 on one of the most heavily-audited codebases in the world.",
+          "bullets": [
+            "10 of Cyber's 55 confirmed findings were bugs neither other model caught"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Model",
+              "Unique confirmed V8 vulnerabilities found"
+            ],
+            "rows": [
+              [
+                "Gemini 3.5 Flash Cyber",
+                "55"
+              ],
+              [
+                "Gemini 3.5 Flash (base)",
+                "47"
+              ],
+              [
+                "Claude Opus 4.6",
+                "36"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "94aca4ee-0286-4f95-a1be-0f7bdf18beca",
+          "kind": "example",
+          "title": "Beyond the Benchmark: Real Production Bugs",
+          "body": "Google also pointed Cyber at live targets, not just a fixed test suite.",
+          "bullets": [
+            "It surfaced remote code execution (RCE) vulnerabilities in public APIs and a memory-corruption bug in a sensitive production service",
+            "In one case it produced a 100%-reliable RCE exploit that bypassed both ASLR and W^X mitigations",
+            "The exploit's purpose was internal: proving a flaw's real severity so a patch gets prioritized, not shipping an attack tool"
+          ],
+          "symbol": "ladybug.fill",
+          "table": null
+        },
+        {
+          "id": "eff0b2f9-3ef7-4bb4-9375-48f2319c2e88",
+          "kind": "concept",
+          "title": "Why You Can't Use It Yet",
+          "body": "A model this good at finding exploits is also a dual-use risk if broadly available.",
+          "bullets": [
+            "It's exclusively available to governments and trusted partners via a limited-access CodeMender pilot — not a public API",
+            "Patches produced with its help still require human review before shipping",
+            "Gating access is a deliberate tradeoff: the same capability that hardens software could be misused for offense if released without controls"
+          ],
+          "symbol": "person.badge.key.fill",
+          "table": null
+        },
+        {
+          "id": "5e59f3af-2a60-4cb0-86d7-2fe705b863b4",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Cyber is a narrow specialist, not a general chat model — it's Flash fine-tuned for one job",
+            "On V8, it beat both its own base model and a rival frontier model on confirmed, validated bug counts",
+            "Access is deliberately restricted to a pilot program, reflecting the dual-use nature of automated vulnerability discovery"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "36dcd505-7165-48bf-856a-8a9836ec1e36",
+            "prompt": "What is Gemini 3.5 Flash Cyber specifically fine-tuned to do?",
+            "options": [
+              "General-purpose conversation and creative writing",
+              "Finding, validating, and helping patch software vulnerabilities",
+              "Translating code between programming languages",
+              "Generating unit tests for arbitrary functions"
+            ],
+            "correctIndex": 1,
+            "explanation": "It's built on Gemini 3.5 Flash but specialized for vulnerability discovery and patching, working through Google's CodeMender agent."
+          },
+          {
+            "id": "f8f25b59-6d4f-4bca-b334-fd958386f331",
+            "prompt": "In Google's V8 JavaScript Engine test, how did the three models compare on confirmed unique vulnerabilities found?",
+            "options": [
+              "Cyber 36, base Flash 47, Opus 4.6 55",
+              "Cyber 55, base Flash 47, Opus 4.6 36",
+              "All three found the same 40 vulnerabilities",
+              "Opus 4.6 found the most, at 60"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cyber found 55 confirmed unique vulnerabilities, ahead of base Gemini 3.5 Flash's 47 and Claude Opus 4.6's 36 — including 10 bugs neither other model caught."
+          },
+          {
+            "id": "bb87d29d-aa7e-4b63-b7d6-99c2a261bb23",
+            "prompt": "Who can currently access Gemini 3.5 Flash Cyber?",
+            "options": [
+              "Anyone with a Google Cloud account",
+              "Free-tier consumer users only",
+              "Governments and trusted partners, via a limited-access CodeMender pilot",
+              "Only Google's own internal engineering teams"
+            ],
+            "correctIndex": 2,
+            "explanation": "It's not a public API release — access is gated to a limited pilot with governments and trusted partners, reflecting the dual-use risk of a strong exploit-hunting model."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "80214eaa-b218-4f16-a19c-2eaab76f6d2e",
+          "title": "Introducing Gemini 3.6 Flash, 3.5 Flash-Lite, and 3.5 Flash Cyber — Google",
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/"
+        },
+        {
+          "id": "b9908df5-faa8-4a75-ae89-e32c4bcd631e",
+          "title": "Google Launches Gemini 3.5 Flash Cyber AI to Find and Fix Software Vulnerabilities — The Hacker News",
+          "url": "https://thehackernews.com/2026/07/google-launches-gemini-35-flash-cyber.html"
+        }
+      ],
+      "id": "a96c1e7a-9281-4a40-9113-1c0d5b4072e5",
+      "publishedDate": "2026-07-22T18:42:10Z"
+    },
+    {
+      "title": "Mamba: State Space Models Ditch Attention's O(n²)",
+      "subtitle": "Selective state spaces give linear-time sequence modeling with content-aware memory.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "state space models",
+        "mamba",
+        "attention alternatives",
+        "linear time",
+        "sequence modeling"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "waveform.path.ecg",
+      "summary": "Mamba replaces self-attention with a selective state space model whose recurrence parameters depend on the input, giving linear-time, constant-memory sequence modeling that competes with Transformers on language while scaling far better to long sequences.",
+      "slides": [
+        {
+          "id": "5c39184b-d4c2-4676-8e61-0140310e4d10",
+          "kind": "cover",
+          "title": "An Old Control-Theory Idea Beats Attention's Cost Curve",
+          "body": "State space models (SSMs) come from control theory. Mamba (Gu & Dao, 2023) made them competitive with Transformers on language by making them 'selective.'",
+          "bullets": [
+            "Self-attention costs grow quadratically with sequence length",
+            "Mamba processes sequences in linear time with a fixed-size hidden state",
+            "The key idea: let the model's memory dynamics depend on the current token, not just position"
+          ],
+          "symbol": "waveform.path.ecg",
+          "table": null
+        },
+        {
+          "id": "ae9b8970-2425-4e0b-a6b9-867496e49ea4",
+          "kind": "problem",
+          "title": "Attention's Bill Comes Due at Long Context",
+          "body": "Every token attends to every other token, and every generated token needs the growing KV cache in memory.",
+          "bullets": [
+            "Self-attention: O(n²) time and O(n) memory in sequence length n",
+            "The KV cache grows linearly with context — a 1M-token context means a 1M-entry cache to keep resident",
+            "This makes very long contexts (whole books, genomic sequences, audio streams) expensive to serve, not just to train"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "86d83a52-6134-47ac-a284-4b37f727835b",
+          "kind": "concept",
+          "title": "Selective State Spaces: Data-Dependent Memory",
+          "body": "A classic SSM recurrence is x_t = A·x_{t-1} + B·u_t, y_t = C·x_t — but A, B, C are fixed matrices, the same at every timestep.",
+          "bullets": [
+            "Earlier SSMs (like S4) keep A, B, C, and the discretization step Δ constant across time — linear time-invariant (LTI)",
+            "Mamba makes B, C, and Δ functions of the current input token instead of fixed constants",
+            "This lets the model decide, per token, what to write into its state and what to forget — content-aware filtering, not just position-based decay"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "604c0551-a8f6-49fa-bd06-29c8597cd051",
+          "kind": "architecture",
+          "title": "Why This Needs a New Kernel",
+          "body": "LTI SSMs can be computed as one big convolution, precomputed once. Selective SSMs can't — the dynamics change every step.",
+          "bullets": [
+            "Because B, C, Δ vary per token, Mamba can't collapse to a single precomputed convolution kernel the way S4 does",
+            "It uses a hardware-aware parallel scan, keeping intermediate states in fast GPU SRAM rather than materializing them in slower HBM",
+            "Activations needed for the backward pass are recomputed rather than stored, trading compute for memory — the same philosophy as FlashAttention"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "4e2590db-2a38-4ff9-ad29-4b920b90c1f5",
+          "kind": "comparison",
+          "title": "Transformer vs. Mamba",
+          "body": null,
+          "bullets": [
+            "The tradeoff is precision vs. cost: attention keeps everything; Mamba keeps a compressed summary"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Property",
+              "Transformer (attention)",
+              "Mamba (selective SSM)"
+            ],
+            "rows": [
+              [
+                "Time per step",
+                "O(n) — grows with full context",
+                "O(1) — constant, fixed state"
+              ],
+              [
+                "Memory during inference",
+                "KV cache grows with sequence length",
+                "Fixed-size hidden state, independent of length"
+              ],
+              [
+                "Exact long-range recall",
+                "Strong — any token can attend to any other",
+                "Weaker alone — history is compressed into fixed state"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "77c534d6-894d-4bb0-bd0f-61fdac48c2b7",
+          "kind": "example",
+          "title": "Streaming a 1M-Token Document",
+          "body": "Picture an agent reading a very long log file or genome sequence token by token, in real time.",
+          "bullets": [
+            "With a Transformer, memory for the KV cache keeps growing the whole way through — eventually forcing truncation or costly cache management",
+            "With Mamba, the hidden state is a fixed size the entire time — you can stream indefinitely without the memory footprint changing",
+            "The cost: if a critical fact appeared once near the very start, Mamba's compressed state may have already overwritten or diluted it, where attention could still look straight back at it"
+          ],
+          "symbol": "text.line.first.and.arrowtriangle.forward",
+          "table": null
+        },
+        {
+          "id": "f07e3a6b-5ac1-456e-94b9-a504198dae4b",
+          "kind": "concept",
+          "title": "When Not to Reach for Pure Mamba",
+          "body": "Mamba isn't a strict upgrade — it's a different point on the cost/precision tradeoff curve.",
+          "bullets": [
+            "Tasks needing exact retrieval of one specific fact from deep in a huge context (needle-in-haystack, precise copying) favor attention's uncompressed lookup",
+            "This is why hybrid architectures (e.g., Jamba, Zamba) interleave a handful of attention layers among mostly-Mamba layers — cheap linear-time backbone, with attention available for exact recall",
+            "Tooling and kernel support are newer and less mature than the Transformer ecosystem's, so training/serving infra can be less plug-and-play"
+          ],
+          "symbol": "exclamationmark.circle",
+          "table": null
+        },
+        {
+          "id": "af9ba354-6bd6-476d-b1ed-22494263a966",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Mamba's core trick: make SSM parameters (B, C, Δ) depend on the input token — 'selective' state, not fixed dynamics",
+            "This buys linear time and constant memory in sequence length, instead of attention's quadratic time and growing KV cache",
+            "The cost is compressed history — pure Mamba can lose precise long-range recall, which is why hybrids mix in a few attention layers",
+            "Choose Mamba-style layers when raw context length and streaming cost dominate; choose attention when exact retrieval precision matters most"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "0ce63d87-f608-4bfc-af26-3c507b12925a",
+            "prompt": "What does 'selective' mean in Mamba's selective state space model?",
+            "options": [
+              "The model only attends to a random subset of tokens",
+              "Its B, C, and Δ parameters are functions of the current input, letting it decide per-token what to remember or forget",
+              "It selectively skips layers during inference to save compute",
+              "It selects which GPU to run on based on sequence length"
+            ],
+            "correctIndex": 1,
+            "explanation": "Earlier SSMs like S4 use fixed (linear time-invariant) parameters at every step. Mamba makes them input-dependent, giving content-aware, per-token filtering of what enters the state."
+          },
+          {
+            "id": "041e530b-08c6-4709-ba5e-4c00e623432b",
+            "prompt": "What is Mamba's main complexity advantage over standard self-attention?",
+            "options": [
+              "It needs no training data",
+              "Linear time and constant memory in sequence length, versus attention's quadratic time and growing KV cache",
+              "It eliminates the need for a GPU entirely",
+              "It has zero parameters"
+            ],
+            "correctIndex": 1,
+            "explanation": "Attention costs O(n²) time and its KV cache grows with sequence length; Mamba's fixed-size recurrent state gives O(n) time and constant memory regardless of context length."
+          },
+          {
+            "id": "081ca54e-4542-4a14-a192-05a25890a0b4",
+            "prompt": "Where does plain attention still tend to beat plain Mamba?",
+            "options": [
+              "Training throughput on short sequences",
+              "Exact recall of one specific fact buried deep in a very long context",
+              "Total parameter count",
+              "Energy efficiency at inference time"
+            ],
+            "correctIndex": 1,
+            "explanation": "Mamba compresses history into a fixed-size state, so a single old fact can get diluted or overwritten. Attention keeps uncompressed access to every past token, which is why hybrids like Jamba mix in some attention layers for precise recall."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "01bb553e-9d7b-4104-ba7d-62befbc9d99a",
+          "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (arXiv:2312.00752)",
+          "url": "https://arxiv.org/abs/2312.00752"
+        }
+      ],
+      "id": "f5a3133b-66e4-4c50-8be6-b1bb17a5c411",
+      "publishedDate": "2026-07-22T18:42:10Z"
+    },
+    {
       "title": "TimeLens2: One Model to Find Any Moment in Video",
       "subtitle": "A single MLLM beats open-source rivals up to 397B parameters at knowing exactly when something happens on screen.",
       "category": "AI Innovations",
@@ -10786,587 +11358,6 @@
       ],
       "id": "b5ed20cc-8a28-4c91-98ff-19e930dcc148",
       "publishedDate": "2026-07-15T18:42:47Z"
-    },
-    {
-      "title": "GenCeption: When Video Generators Learn to See",
-      "subtitle": "One video-diffusion backbone matches specialist vision models on a fraction of the data.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "video-generation",
-        "computer-vision",
-        "diffusion-models",
-        "foundation-models",
-        "google-deepmind"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "video.fill",
-      "summary": "A new paper repurposes a pretrained text-to-video diffusion backbone as a general-purpose vision model, matching specialist systems on depth, pose, and segmentation tasks with far less task-specific training data — and showing surprising generalization from synthetic to real footage.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Backbone, Five Vision Tasks",
-          "body": "A video generation model, steered by text, doubles as depth estimator, pose estimator, and segmenter — without a separate architecture for each.",
-          "bullets": [],
-          "symbol": "video.fill",
-          "id": "9c1b9e19-5742-40a1-9457-611ae1fdd1c7"
-        },
-        {
-          "kind": "problem",
-          "title": "Vision Still Trains One Model Per Task",
-          "body": null,
-          "bullets": [
-            "Depth estimation, segmentation, 3D keypoints, and camera pose each ship as separate specialist architectures with separate training pipelines.",
-            "Models like DepthAnything3, SAM3, and VGGT-Omega are excellent at their one job but don't transfer across tasks.",
-            "NLP unified around next-token prediction years ago; vision has never had an equivalent generalist recipe."
-          ],
-          "symbol": "square.stack.3d.up.slash",
-          "id": "b4075530-c249-4203-b4ad-3bd42253756b"
-        },
-        {
-          "kind": "solution",
-          "title": "Repurpose the Video Diffusion Backbone Itself",
-          "body": null,
-          "bullets": [
-            "GenCeption turns a pretrained text-to-video diffusion model into a feed-forward perception model — no new backbone trained from scratch.",
-            "A task is just a text instruction ('estimate depth', 'segment the referenced object') that steers the same backbone toward a different output.",
-            "No per-task fine-tuning loop: the video generator's own learned priors do most of the work."
-          ],
-          "symbol": "wand.and.rays",
-          "id": "ecf3c5aa-04f0-4962-8b2d-7279f59d6c07"
-        },
-        {
-          "kind": "architecture",
-          "title": "Why Video Pretraining Transfers to Vision Tasks",
-          "body": null,
-          "bullets": [
-            "Learning to generate coherent video already forces a model to encode geometry, object permanence, and motion consistency across frames.",
-            "GenCeption decodes that representation into task-specific outputs — depth maps, keypoints, masks — instead of denoised video frames.",
-            "The vision-language alignment learned from text-to-video captions doubles as instruction-following for the downstream vision task."
-          ],
-          "symbol": "cube.transparent",
-          "id": "4126e740-34c6-47d4-a562-987694489191"
-        },
-        {
-          "kind": "comparison",
-          "title": "Matching Specialists With a Fraction of the Data",
-          "body": "Reported against strong specialist baselines including D4RT and VGGT-Omega.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Model",
-              "Approach",
-              "Data needed for comparable accuracy"
-            ],
-            "rows": [
-              [
-                "D4RT",
-                "Specialist depth/pose model",
-                "Baseline (task-specific training set)"
-              ],
-              [
-                "VGGT-Omega",
-                "Specialist geometry model",
-                "Baseline (task-specific training set)"
-              ],
-              [
-                "GenCeption",
-                "Repurposed video-diffusion backbone",
-                "Reported 7-500x less data, matching or beating both"
-              ]
-            ]
-          },
-          "id": "5aee49c7-457a-462c-bb70-f4d192d17698"
-        },
-        {
-          "kind": "example",
-          "title": "Trained on Synthetic Humans, Tested on Real Animals and Robots",
-          "body": null,
-          "bullets": [
-            "GenCeption was trained exclusively on synthetic videos of humans.",
-            "At test time it was pointed at real-world footage of animals and robots — categories it never saw during training.",
-            "It still produced accurate depth and pose estimates, evidence the video-generation prior generalized past its narrow training distribution rather than memorizing it."
-          ],
-          "symbol": "pawprint.fill",
-          "id": "c9b6316a-a1ee-4aa5-abe4-69e1f6ac75a4"
-        },
-        {
-          "kind": "concept",
-          "title": "Where This Approach Falls Short",
-          "body": null,
-          "bullets": [
-            "A video diffusion backbone is heavier at inference than a small specialist head — don't reach for this if you only need fast, depth-only inference at the edge.",
-            "Feed-forward decoding avoids iterative diffusion sampling at inference, but the backbone itself is still large; the cost isn't free.",
-            "Results are benchmarked as competitive with strong specialists like SAM3 and DepthAnything3 — notable, not universally superior on every metric."
-          ],
-          "symbol": "exclamationmark.triangle",
-          "id": "27d975da-b2a3-4bc7-a79f-2d17fcfffcce"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Video Generation Might Be Vision's Next-Token Prediction",
-          "body": null,
-          "bullets": [
-            "One broad pretraining objective — generate realistic video — turns out to carry most of what several specialist vision tasks need.",
-            "The headline result is data efficiency: matching specialists while needing far fewer task-specific labels.",
-            "Expect this pattern — repurposing a generative backbone as a perception model — to spread to other modalities next."
-          ],
-          "symbol": "checkmark.seal",
-          "id": "f572b7b4-e1ff-4efa-8ebb-b0f7a9916751"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does GenCeption reuse to build a general-purpose vision model?",
-            "options": [
-              "A pretrained text-to-video diffusion backbone",
-              "A brand-new vision transformer trained from scratch",
-              "An ensemble of specialist models like SAM3 and DepthAnything3",
-              "A large language model fine-tuned on image captions"
-            ],
-            "correctIndex": 0,
-            "explanation": "GenCeption's core idea is that a video generation model already learned the spatiotemporal priors vision tasks need, so instead of training a new backbone, it repurposes the video diffusion model itself, steered by text instructions.",
-            "id": "0b372dc7-b821-476b-aeee-33d44f452ed1"
-          },
-          {
-            "prompt": "What is the headline efficiency result GenCeption reports against specialists like D4RT and VGGT-Omega?",
-            "options": [
-              "It requires 7-500x MORE training data for the same accuracy",
-              "It matches or beats them using roughly 7-500x LESS training data",
-              "It only works on synthetic data, never on real footage",
-              "It ties on benchmarks but runs far slower at inference"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper's key efficiency claim is matching specialist performance while needing far less task-specific training data, because the video-generation pretraining already carries most of the necessary visual knowledge.",
-            "id": "4c24a74a-fd0d-47f2-88a7-c0b7517c0647"
-          },
-          {
-            "prompt": "What surprising generalization did the paper report?",
-            "options": [
-              "The model refused to run on any data outside its training distribution",
-              "A model trained only on synthetic human videos generalized to real footage of animals and robots",
-              "The model required separate fine-tuning for every new object category",
-              "Performance collapsed entirely on out-of-distribution inputs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Despite training exclusively on synthetic human videos, GenCeption transferred to real-world, out-of-distribution categories like animals and robots, evidence the learned prior is genuinely general rather than memorized.",
-            "id": "5ffc5e27-b143-40ca-8a6c-8a5af7f88d20"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Video Generation Models are General-Purpose Vision Learners (arXiv:2607.09024)",
-          "url": "https://arxiv.org/abs/2607.09024",
-          "id": "8ff83c07-7086-4b6c-9bc8-d68054e37cf0"
-        },
-        {
-          "title": "GenCeption project page",
-          "url": "https://genception.github.io/",
-          "id": "50466d89-4c3d-47a5-b06b-e4ca4e8159e5"
-        }
-      ],
-      "id": "34577d01-d015-4220-bc6d-750d8f191206",
-      "publishedDate": "2026-07-15T18:42:47Z"
-    },
-    {
-      "title": "Grouped-Query Attention: Splitting the Difference",
-      "subtitle": "How Llama 2, Llama 3, and Mistral shrink the KV cache without eating Multi-Query Attention's quality hit",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "kv-cache",
-        "inference",
-        "transformers",
-        "llama"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Grouped-Query Attention (GQA) has query heads share a small number of key/value heads instead of each head keeping its own (Multi-Head Attention) or all heads sharing just one (Multi-Query Attention). It shrinks the KV cache and the memory traffic that bottlenecks autoregressive decoding, while staying much closer to full-attention quality than MQA. Llama 2's 34B/70B, all of Llama 3, and Mistral 7B ship with it — and existing MHA checkpoints can be converted into GQA ones with a small amount of extra pretraining instead of starting over.",
-      "slides": [
-        {
-          "id": "65bc6ac4-1e56-4351-b240-468ba36e6a48",
-          "kind": "cover",
-          "title": "One Key/Value Head Can Serve a Whole Group of Query Heads",
-          "body": "Grouped-Query Attention (GQA) sits between two extremes: every query head keeping its own key/value head (Multi-Head Attention), and every query head sharing a single key/value head (Multi-Query Attention). GQA splits query heads into a handful of groups, each sharing one K/V head.",
-          "bullets": [],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "34dc5103-a93f-4136-b1f8-ff6584bf3f4c",
-          "kind": "problem",
-          "title": "Decoding Is Bottlenecked by Memory Traffic, Not Math",
-          "body": "Generating one token at a time means the GPU does very little compute per step (one new query vector), but it still has to read the entire cached keys and values for every head, every layer, every prior token out of HBM.",
-          "bullets": [
-            "That read, not the matmul, dominates decode latency — it's a classic memory-bandwidth-bound workload, so anything that shrinks the KV cache speeds up every subsequent token",
-            "Standard Multi-Head Attention (MHA) caches a separate K and V per head — with H heads, the cache (and the bytes read per step) scales linearly with H",
-            "Multi-Query Attention (MQA, Shazeer 2019) collapses all query heads onto one shared K/V head, cutting cache size by roughly a factor of H — but that aggressive sharing measurably hurts output quality and can destabilize training"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "051dd318-2898-48d1-be4d-6dd02e83ca99",
-          "kind": "solution",
-          "title": "Group the Heads Instead of Merging Them All",
-          "body": "GQA (Ainslie et al., 2023) partitions the H query heads into G groups, where 1 < G < H. Every query head in a group attends using that group's single shared K/V head. G = H recovers ordinary MHA; G = 1 recovers MQA — GQA is the tunable middle ground.",
-          "bullets": [
-            "Cache size (and memory traffic per decode step) shrinks by a factor of H/G compared to full MHA",
-            "Quality degrades gracefully as G shrinks — nowhere near the cliff MQA hits when it forces every head down to one shared K/V",
-            "G is a straightforward hyperparameter choice made at pretraining time, constrained only by needing to divide H evenly"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "c5e4d7e5-b69b-42d8-9d34-a2cf39df7944",
-          "kind": "architecture",
-          "title": "You Don't Need to Retrain From Scratch",
-          "body": "The GQA paper's other contribution is a cheap way to convert an already-trained MHA checkpoint instead of pretraining a grouped model from zero.",
-          "bullets": [
-            "'Uptraining': initialize each group's shared K/V head by mean-pooling the original per-head K/V projections that fall into that group — not by arbitrarily picking one head and discarding the rest",
-            "Continue pretraining the converted checkpoint for a small additional slice of the original training compute so the model adapts to the new shared heads",
-            "This makes GQA cheap to retrofit onto an existing MHA model family, which is exactly how it was validated on T5-XXL-scale checkpoints"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "b5a1881f-42e4-45d4-8fe2-72ef0c2e0c64",
-          "kind": "comparison",
-          "title": "MHA vs. GQA vs. MQA",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Mechanism",
-              "K/V heads",
-              "Cache vs. MHA",
-              "Quality"
-            ],
-            "rows": [
-              [
-                "MHA",
-                "One per query head (H)",
-                "Baseline",
-                "Best"
-              ],
-              [
-                "GQA",
-                "A handful of groups (G), 1 < G < H",
-                "Smaller by H/G",
-                "Close to MHA"
-              ],
-              [
-                "MQA",
-                "One, shared by all heads",
-                "Smallest (÷H)",
-                "Noticeably worse"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "27085d4b-3737-42f7-aaff-9c4cfe58eff4",
-          "kind": "example",
-          "title": "Llama 2 70B: 64 Query Heads, 8 K/V Heads",
-          "body": "Llama 2's 34B and 70B models use GQA with 8 K/V head groups; the smaller 7B and 13B models kept plain MHA. Llama 3 extended GQA to every model size, including the 8B, and Mistral 7B (32 query heads, 8 K/V heads) ships it too.",
-          "bullets": [
-            "On 70B, 64 query heads are split into 8 groups of 8 — each group's 8 query heads share one K/V head",
-            "That's an 8x smaller KV cache than full MHA would need at the same context length, directly cutting the bytes read from HBM on every decoding step",
-            "Because it's an architectural choice baked in at pretraining time, none of this is visible to callers of the model — it just shows up as faster, cheaper serving at long context"
-          ],
-          "symbol": "server.rack",
-          "table": null
-        },
-        {
-          "id": "eb711e9a-4f77-46bd-9f6c-d164877f1b5e",
-          "kind": "problem",
-          "title": "Where GQA Isn't the Right Call",
-          "body": "GQA optimizes specifically for the memory-bandwidth wall of autoregressive decoding — it isn't a universal attention upgrade.",
-          "bullets": [
-            "Encoder-only or non-autoregressive workloads that don't grow a KV cache step-by-step see little to no benefit — the problem GQA solves doesn't exist there",
-            "It's a pretraining-time architecture decision, not a serving-time toggle — you can't flip an already-deployed MHA model into GQA without the uptraining step (or full retraining)",
-            "Push G too low and you approach MQA's quality cliff; picking G is a real tradeoff, not a free lunch — most production models land around 4-8 K/V heads regardless of total head count",
-            "For workloads chasing maximum cache compression at long context (128K+), Multi-Head Latent Attention's low-rank latent goes further than GQA, at the cost of needing bespoke kernels"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "967be997-c5b9-4a37-bfcf-7dc82c3ef585",
-          "kind": "takeaways",
-          "title": "The Core Idea, Compressed",
-          "body": null,
-          "bullets": [
-            "Autoregressive decoding is memory-bandwidth bound: shrinking the KV cache directly speeds up every generated token",
-            "GQA groups query heads so each group shares one K/V head — a tunable middle ground between MHA (one K/V head per query head) and MQA (one K/V head total)",
-            "Existing MHA checkpoints can be uptrained into GQA by mean-pooling K/V heads per group, then briefly continuing pretraining — no need to start from scratch",
-            "It's now the default for open-weight LLMs: Llama 2's larger models, all of Llama 3, and Mistral 7B all ship with GQA"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4de0de39-3932-4443-a809-214c365f85be",
-            "prompt": "Why does shrinking the KV cache speed up autoregressive token generation?",
-            "options": [
-              "It reduces the number of floating-point operations needed per token",
-              "Decoding one token at a time is memory-bandwidth bound — the GPU spends most of its time reading the cached keys/values, not computing — so a smaller cache means less to read",
-              "It lets the model skip the softmax step in attention",
-              "It reduces the vocabulary size the model has to search over"
-            ],
-            "correctIndex": 1,
-            "explanation": "At decode time the compute per step is tiny (one new query vector), but the entire KV cache must be read from memory every step. That read dominates latency, which is why cache size — not FLOPs — is the lever GQA pulls."
-          },
-          {
-            "id": "b21b6c47-da53-4c2f-8a9e-93b69151c057",
-            "prompt": "How does GQA relate to Multi-Head Attention (MHA) and Multi-Query Attention (MQA)?",
-            "options": [
-              "GQA is unrelated — it's a completely different mechanism from both",
-              "GQA is the special case of MQA used only for encoder models",
-              "GQA generalizes both: G groups of shared K/V heads, where G = H recovers MHA and G = 1 recovers MQA",
-              "GQA always uses exactly 2 K/V heads regardless of model size"
-            ],
-            "correctIndex": 2,
-            "explanation": "GQA introduces a tunable number of groups G. Setting G equal to the number of query heads H gives ordinary MHA (every head has its own K/V); setting G to 1 gives MQA (all heads share one K/V). Values in between are GQA proper."
-          },
-          {
-            "id": "fec91ff8-c47b-4f19-9a8b-8d2fc4a0e96f",
-            "prompt": "Llama 2 70B uses 64 query heads split into 8 GQA groups. What does that mean for its KV cache?",
-            "options": [
-              "The cache is 8 times larger than plain MHA would need, because groups add overhead",
-              "There is no KV cache at all — GQA eliminates caching entirely",
-              "Each of the 8 groups shares one K/V head across its 8 query heads, so the cache is about 8 times smaller than full MHA at the same context length",
-              "The cache size is unrelated to the number of groups"
-            ],
-            "correctIndex": 2,
-            "explanation": "64 query heads in 8 groups means each K/V head serves 8 query heads. Compared to MHA's one K/V head per query head, that's roughly an 8x reduction in cache size and in the bytes read per decoding step."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "cd2d5f10-d368-4833-a860-9b1a3159258c",
-          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (arXiv:2305.13245)",
-          "url": "https://arxiv.org/abs/2305.13245"
-        },
-        {
-          "id": "13d7aa02-3b3b-4bae-aee2-bab53392ed04",
-          "title": "Llama 2: Open Foundation and Fine-Tuned Chat Models (arXiv:2307.09288)",
-          "url": "https://arxiv.org/abs/2307.09288"
-        }
-      ],
-      "id": "b6ca4aa5-7b8c-41e2-9c8e-e5e3bed3af3c",
-      "publishedDate": "2026-07-15T12:42:29Z"
-    },
-    {
-      "title": "HNSW: The Graph That Makes Vector Search Fast",
-      "subtitle": "How a layered graph turns 'compare against everything' into a handful of hops",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "vector search",
-        "hnsw",
-        "embeddings",
-        "ann",
-        "rag",
-        "indexing"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "heroImageURL": null,
-      "body": null,
-      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind most production vector search — it turns a query that would need to touch every stored vector into a handful of hops through a layered graph. Understanding its M, efConstruction, and ef knobs is the difference between a RAG system that's fast and accurate versus one that's slow, bloated, or missing the right chunks.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Billions of Vectors, Milliseconds Per Query",
-          "body": "Every RAG pipeline, semantic search bar, and recommendation feed eventually asks the same question: given this embedding, which stored vectors are closest? HNSW is the graph structure that answers it without scanning everything.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "id": "dde83cfb-9dbd-4cbb-bbe2-51186c7bd26d",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Brute-Force Nearest Neighbor Doesn't Scale",
-          "body": "Exact k-nearest-neighbor search compares your query vector against every stored vector — O(n) distance computations per query.",
-          "bullets": [
-            "At 10K vectors, brute force is fine — sub-millisecond on a CPU.",
-            "At 10M+ vectors, comparing against everything turns a query into seconds, not milliseconds.",
-            "Distance math (cosine/dot product) is cheap per pair, but it's the count of pairs that kills you at scale.",
-            "The fix isn't a faster distance function — it's not comparing against everything."
-          ],
-          "symbol": "tortoise.fill",
-          "id": "1de1c66d-6d46-485a-af3d-d74d551b568f",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "A Graph Built Like a Skip List",
-          "body": "HNSW (Malkov & Yashunin, 2016) stacks multiple layers of a proximity graph, where nearby vectors are connected by edges. Search starts at a single entry point in the sparsest top layer and greedily walks toward the query.",
-          "bullets": [
-            "Top layers are sparse with long-range 'highway' edges — a few hops cover huge distances in vector space.",
-            "Each layer down is denser; the bottom layer (layer 0) contains every vector in the index.",
-            "A node's layer assignment is randomized with exponentially decaying probability, so most nodes only exist at layer 0 — same trick a skip list uses for O(log n) lookups.",
-            "Search greedily moves to the neighbor closest to the query at each layer, then drops down a layer and repeats until it bottoms out."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "id": "35f39eaa-d485-4af5-8c91-eeac1d48abbf",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "Three Knobs: M, efConstruction, ef",
-          "body": "HNSW's behavior is controlled by three parameters you set once at index build time and once (adjustably) at query time.",
-          "bullets": [
-            "M — max bi-directional edges per node per layer. Typical range 16–48; higher M means a denser, more accurate graph but more memory and slower inserts.",
-            "efConstruction — how many candidate neighbors are considered while building each node's edges. Typical default ~200; higher means a better-connected graph built more slowly.",
-            "ef (efSearch) — how many candidates are tracked while answering a query. Must be ≥ k (the number of results you want); raising it trades latency for recall.",
-            "ef is the one knob you can tune per-query without rebuilding the index — it's your live recall/latency dial."
-          ],
-          "symbol": "slider.horizontal.3",
-          "id": "f0ecb6be-48f1-4392-a864-d6e65c440971",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "HNSW vs. IVF vs. Brute Force",
-          "body": "No single index is right for every dataset size and memory budget.",
-          "bullets": [
-            "Brute force: exact, zero index-build cost, but query time grows linearly with dataset size.",
-            "IVF (inverted file index): clusters vectors with k-means, then searches only the nearest clusters — lower memory than HNSW, often paired with product quantization (IVF-PQ) for billion-scale, but generally lower recall at the same speed.",
-            "HNSW: highest recall-per-millisecond of the three at medium-to-large scale, at the cost of holding the full graph (and often full-precision vectors) in memory."
-          ],
-          "table": {
-            "headers": [
-              "Method",
-              "Query speed",
-              "Memory",
-              "Best for"
-            ],
-            "rows": [
-              [
-                "Brute force",
-                "Slow at scale (linear)",
-                "Lowest (vectors only)",
-                "< ~100K vectors, exact recall required"
-              ],
-              [
-                "IVF / IVF-PQ",
-                "Fast",
-                "Low (compressed)",
-                "Billion-scale, memory-constrained"
-              ],
-              [
-                "HNSW",
-                "Fastest per unit recall",
-                "High (graph + vectors)",
-                "Millions of vectors, latency-sensitive RAG"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis",
-          "id": "be0c4456-3654-42c4-93c4-5045c7328590"
-        },
-        {
-          "kind": "example",
-          "title": "5 Million Chunks, One Query",
-          "body": "A RAG system embeds 5 million document chunks at 768 dimensions each.",
-          "bullets": [
-            "Brute force: the query vector is compared against all 5M chunk embeddings — on CPU this is a multi-second scan, unacceptable for an interactive chat response.",
-            "With HNSW: the query enters at the top layer's single entry point, takes a few long hops toward the right neighborhood, drops a layer, refines, and repeats — touching a few hundred candidates total instead of 5 million.",
-            "Result: the same lookup drops to tens of milliseconds, fast enough to sit inside a chat turn alongside the LLM call itself.",
-            "This is why pgvector, Qdrant, Weaviate, Milvus, and FAISS all ship HNSW as a default or recommended index type for this exact workload."
-          ],
-          "symbol": "bolt.fill",
-          "id": "9f005e41-f18d-4a39-b6fa-770454205fe2",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "The Tradeoffs Nobody Puts on the Slide",
-          "body": "HNSW is fast, not free — three costs matter in production.",
-          "bullets": [
-            "Memory: every node stores M (2M at layer 0) edges on top of the raw vector, so the index can run 1.5–2x the size of the raw embeddings — painful at hundreds of millions of vectors.",
-            "Deletes are awkward: removing a node can disconnect its neighbors' paths, so most implementations tombstone (mark-deleted) rather than truly remove, and periodically rebuild to reclaim space.",
-            "It's approximate: ef controls a recall/latency tradeoff, not a guarantee — HNSW can miss the true nearest neighbor, which matters if your RAG system needs the single most relevant chunk, not 'one of the close ones'.",
-            "Build time grows with efConstruction and M — reindexing a large, frequently-updated corpus is not instant."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "58bfc44a-93bb-4e72-acdf-b6d46d2778a4",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "What to remember when you're the one setting up the vector index.",
-          "bullets": [
-            "HNSW trades memory for speed by replacing a linear scan with a layered graph walk — logarithmic-ish hops instead of comparing against every vector.",
-            "M and efConstruction are index-build-time tradeoffs (memory/build speed vs. graph quality); ef is your per-query recall/latency dial.",
-            "Reach for HNSW when you have millions of vectors and need low-latency, high-recall lookups with memory to spare — reach for IVF-PQ when memory is the constraint at billion-scale, and brute force when the dataset is small enough that 'exact' costs you nothing.",
-            "Deletes and heavy churn are HNSW's weak point — plan for periodic rebuilds if your corpus changes fast."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "08074617-9c91-4d16-b398-8d4e08d009ce",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "In HNSW, what does the query-time parameter `ef` (efSearch) primarily control?",
-            "options": [
-              "The number of graph layers built",
-              "The tradeoff between search recall and query latency",
-              "The dimensionality of the stored vectors",
-              "How many threads the index build uses"
-            ],
-            "correctIndex": 1,
-            "explanation": "ef sets how many candidate nodes are tracked while searching. A higher ef examines more candidates before returning results, improving the odds of finding the true nearest neighbors at the cost of a slower query — it's the dial you turn per-query without rebuilding anything.",
-            "id": "0e2fde5c-a1ce-4b65-bca2-6a5a34149fb2"
-          },
-          {
-            "prompt": "Why does HNSW use multiple graph layers instead of one flat graph?",
-            "options": [
-              "To reduce total memory usage to near zero",
-              "It mimics a skip list — sparse top layers give long 'highway' jumps toward the right region before the dense bottom layer refines the result",
-              "GPUs require data to be split into layers to process it",
-              "It's required to guarantee exact, 100% recall"
-            ],
-            "correctIndex": 1,
-            "explanation": "Each node's presence in upper layers is randomized with exponentially decaying probability, so most nodes only live at layer 0. That mirrors how a skip list gets logarithmic search: a few long jumps at the top, then fine-grained steps near the bottom.",
-            "id": "a31f8286-f31b-4fdd-aef7-0543ec2567c6"
-          },
-          {
-            "prompt": "What's a real limitation of HNSW compared to brute-force exact search?",
-            "options": [
-              "It cannot run on CPUs, only GPUs",
-              "It doesn't support embeddings below 128 dimensions",
-              "It's approximate — increasing ef improves recall but never guarantees the true nearest neighbor is found",
-              "It requires labeled training data before it can index vectors"
-            ],
-            "correctIndex": 2,
-            "explanation": "HNSW is an Approximate Nearest Neighbor (ANN) method. It's dramatically faster than brute force, but the graph walk can settle on a local optimum and miss the true closest vector — a real risk if your application needs the single best match rather than 'one of the close ones'.",
-            "id": "6edead1d-6a8d-4d31-8c2b-0dca501485a1"
-          }
-        ]
-      },
-      "references": [],
-      "id": "aebeb02f-1721-439d-836d-1c1789d1d675",
-      "publishedDate": "2026-07-15T06:41:23Z"
     }
   ]
 }
