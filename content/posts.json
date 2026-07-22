@@ -1,6 +1,211 @@
 {
   "posts": [
     {
+      "id": "701417f0-9bce-4f69-b025-a7abe591f9fe",
+      "title": "Direct Preference Optimization: Skip the Reward Model Entirely",
+      "subtitle": "RLHF needs a reward model and an RL loop to align a language model. DPO proves you can get the same result with one closed-form loss and no RL at all.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "alignment",
+        "preference-tuning",
+        "post-training",
+        "bradley-terry"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "hand.thumbsup.fill",
+      "summary": "Direct Preference Optimization (DPO) reframes RLHF's reward-then-RL pipeline as a single classification-style loss computed directly on preference pairs. By exploiting a closed-form relationship between optimal policies and rewards under a KL constraint, it trains a language model to prefer better answers without ever training a separate reward model or running PPO rollouts.",
+      "body": null,
+      "slides": [
+        {
+          "id": "89a19b2c-b23f-406a-a4ad-11f71b982dc7",
+          "kind": "cover",
+          "title": "The Same RLHF Result, Without Reinforcement Learning",
+          "body": "RLHF aligns a language model to human preferences in two stages: train a reward model on comparison data, then run PPO to maximize that reward while staying close to the original model. DPO (Rafailov et al., Stanford, 2023) collapses both stages into one supervised-style loss trained directly on the preference pairs.",
+          "bullets": [
+            "No reward model to train, no PPO rollouts to sample, no critic/value network — just gradient descent on (prompt, chosen, rejected) triples",
+            "Mathematically equivalent objective to RLHF's reward-maximization-under-KL-constraint problem — DPO doesn't approximate RLHF, it reparameterizes it",
+            "Became a default alignment recipe for many open-weight model releases within months of publication"
+          ],
+          "symbol": "hand.thumbsup.fill",
+          "table": null
+        },
+        {
+          "id": "dc851c4f-6805-4e73-9ea7-952240bc464a",
+          "kind": "problem",
+          "title": "RLHF's Reward-Then-RL Pipeline Is Expensive and Fragile",
+          "body": "Classic RLHF needs several models in memory during training — the policy, a frozen reference copy for the KL penalty, a reward model, and PPO's critic. Each stage introduces its own instability.",
+          "bullets": [
+            "Stage 1: train a reward model on human preference pairs — it can be exploited ('reward hacking') if it doesn't generalize past its training distribution",
+            "Stage 2: run PPO, sampling new completions from the current policy every step, scoring them with the reward model, and updating with a clipped policy-gradient objective",
+            "PPO's own hyperparameters (clip range, KL coefficient, batch size, PPO epochs per rollout) are notoriously fragile to tune at LLM scale"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "6ed533d6-dcc5-4683-97b8-8853ff9cbbae",
+          "kind": "solution",
+          "title": "The Reward Model Is Already Implicit in the Policy",
+          "body": "DPO's key trick: under a KL-constrained reward-maximization objective, the optimal policy has a closed form — pi*(y|x) is proportional to pi_ref(y|x) times exp(r(x,y)/beta). That lets you solve for the reward in terms of the policy itself, and substitute it directly into the Bradley-Terry preference likelihood.",
+          "bullets": [
+            "The result is one loss: L = -log(sigmoid(beta * [(log pi(yw|x) - log pi_ref(yw|x)) - (log pi(yl|x) - log pi_ref(yl|x))])), computed on preferred (yw) vs rejected (yl) completions",
+            "beta plays the same role as the KL penalty coefficient in PPO — it controls how far the tuned policy is allowed to drift from the reference",
+            "Because it's just a per-example loss (no rollouts), training looks like ordinary supervised fine-tuning on a fixed dataset of triples"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "0bca5fd8-1e44-42cb-956c-45b38d3882d7",
+          "kind": "concept",
+          "title": "What the Loss Actually Rewards and Punishes",
+          "body": "The gradient of the DPO loss increases the log-probability of the chosen response and decreases the log-probability of the rejected one, weighted by how wrong the model's implicit reward currently is.",
+          "bullets": [
+            "Implicit reward for a response: beta * log(pi(y|x) / pi_ref(y|x)) — how much more likely the current policy makes y versus the frozen reference",
+            "If the model already strongly prefers yw over yl, the sigmoid saturates and the gradient weight shrinks — the loss stops pushing once the ranking is confidently correct",
+            "Training data is entirely offline: static (prompt, chosen, rejected) triples collected once, with no need to sample from the live policy during training"
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "d86a0655-0079-4533-8306-acbf0e37cfeb",
+          "kind": "comparison",
+          "title": "PPO vs GRPO vs DPO: What Each One Needs at Training Time",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "",
+              "PPO (classic RLHF)",
+              "GRPO",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "Policy + reference + reward model + critic",
+                "Policy + reference + reward model",
+                "Policy + reference only"
+              ],
+              [
+                "Needs live sampling from policy",
+                "Yes (online)",
+                "Yes (online)",
+                "No (offline, fixed pairs)"
+              ],
+              [
+                "Needs a scalar reward model",
+                "Yes",
+                "Yes",
+                "No — reward is implicit in the policy"
+              ],
+              [
+                "Best fit",
+                "Any reward signal, incl. RL environments",
+                "Verifiable rewards at scale (math, code)",
+                "Fixed human/AI preference datasets"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "0535091b-26c9-4709-8aa8-8a50a4908d3a",
+          "kind": "example",
+          "title": "Worked Example: One Preference Pair",
+          "body": "Prompt: 'Explain recursion to a beginner.' Chosen (yw): a short answer with a concrete base-case example. Rejected (yl): a dense, jargon-heavy paragraph with no example.",
+          "bullets": [
+            "Compute log pi(yw|x) and log pi(yl|x) under the current policy, and the same two values under the frozen reference model — four log-probabilities total, no new generation required since yw/yl are fixed text",
+            "margin = beta * [(log pi(yw) - log pi_ref(yw)) - (log pi(yl) - log pi_ref(yl))]",
+            "If that margin is already large and positive, sigmoid saturates near 1, loss is near 0, and this pair contributes almost no gradient — the model has already 'learned' this comparison",
+            "With beta = 0.1 (a common default), the policy is kept close to the reference; raising beta trades alignment strength for more drift from the reference's original fluency"
+          ],
+          "symbol": "text.quote",
+          "table": null
+        },
+        {
+          "id": "b7282d8c-0d0d-42fb-b020-a0a39b5533ce",
+          "kind": "concept",
+          "title": "Where DPO Breaks Down",
+          "body": "DPO trades RL's complexity for a new set of failure modes rooted in its offline, closed-form nature.",
+          "bullets": [
+            "Fully offline: it can only rank completions that already exist in the dataset — it never explores new completions the way PPO's online sampling does, so it can't discover better responses outside the preference data's distribution",
+            "Likelihood displacement: pushing down a rejected response's probability can inadvertently push down probability mass on similar, even correct, completions if the training pairs aren't diverse",
+            "Sensitive to reference-policy quality: since the implicit reward is defined relative to pi_ref, starting from a poorly fine-tuned reference model biases every subsequent preference judgment",
+            "Not a fix for reward hacking on its own: an under-specified or biased preference dataset teaches the model to exploit whatever pattern separates chosen from rejected in that data, the same risk a bad reward model carries"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "ca457f9f-ce8e-4084-b466-79c22aa7f797",
+          "kind": "takeaways",
+          "title": "Same Objective, Different Optimization Path",
+          "body": null,
+          "bullets": [
+            "DPO is not a heuristic approximation of RLHF — it's a reparameterization that reaches the same KL-constrained optimum via supervised-style gradient descent",
+            "Removing the reward model and RL loop removes an enormous amount of training infrastructure — but also removes online exploration, which matters when preference data doesn't cover the response space you care about",
+            "Use DPO when you have a solid preference dataset and want a stable, RL-free path to alignment; prefer online RL (PPO/GRPO) when rewards are verifiable and the policy needs to explore beyond a fixed dataset"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "af8df4c1-27f7-4f1c-8dad-17b3eed735ff",
+            "prompt": "What closed-form relationship does DPO exploit to eliminate the separate reward model?",
+            "options": [
+              "It assumes all rewards are zero and trains only on log-likelihood",
+              "Under a KL-constrained reward-maximization objective, the optimal policy is proportional to pi_ref(y|x) * exp(r(x,y)/beta) — so the reward can be solved for in terms of the policy and substituted into the preference likelihood",
+              "It distills the reward model directly into the policy's weights via knowledge distillation",
+              "It replaces the reward model with a majority vote across sampled completions"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO's derivation starts from the same KL-constrained objective RLHF optimizes, shows the optimal policy has this closed form, algebraically isolates the reward, and plugs it into the Bradley-Terry preference model — producing a loss defined purely in terms of policy log-probabilities."
+          },
+          {
+            "id": "9dfc5161-fad4-4df5-a98c-94fb026053da",
+            "prompt": "Why is DPO training described as 'offline'?",
+            "options": [
+              "It only works without an internet connection",
+              "It trains on a fixed dataset of (prompt, chosen, rejected) triples and never needs to sample new completions from the live policy during training, unlike PPO's online rollouts",
+              "It can only be run overnight due to compute cost",
+              "It doesn't require GPUs"
+            ],
+            "correctIndex": 1,
+            "explanation": "PPO needs to generate fresh completions from the current policy at every training step to score with the reward model. DPO's loss only needs log-probabilities of already-fixed chosen/rejected text, so the whole training set can be prepared once, upfront."
+          },
+          {
+            "id": "925d0cfe-ae91-4ada-b014-3f19a49e3ea7",
+            "prompt": "What is a known failure mode of DPO that online RL methods are less prone to?",
+            "options": [
+              "It requires more GPU memory than PPO",
+              "It cannot be combined with a KL penalty",
+              "Likelihood displacement — suppressing a rejected response's probability can also suppress similar, even correct, completions, since DPO never explores new responses beyond the fixed dataset",
+              "It only works on summarization tasks"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because DPO only ever compares completions that already exist in the training data, its gradient updates can generalize in unintended ways to nearby completions never seen during training — a risk online methods mitigate by continually sampling fresh completions from the current policy."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "e6c3d722-0bb9-4e50-b1d3-5eaaf2623cd3",
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model",
+          "url": "https://arxiv.org/abs/2305.18290"
+        }
+      ],
+      "publishedDate": "2026-07-22T00:41:41Z"
+    },
+    {
       "id": "41a007ab-a3db-4b29-bd79-77a383d82306",
       "title": "A2A: The Protocol for AI Agents to Talk to Each Other",
       "subtitle": "MCP connects an agent to its tools. A2A connects one agent to another — as peers that never see each other's insides.",
@@ -11213,199 +11418,6 @@
       ],
       "id": "b267b9fb-febf-4dd6-9744-e523e54f548c",
       "publishedDate": "2026-07-14T06:40:45Z"
-    },
-    {
-      "title": "Corrective RAG: Grading Retrieval Before You Trust It",
-      "subtitle": "A lightweight evaluator scores what your retriever found — and falls back to web search when it's wrong",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "retrieval",
-        "hallucination",
-        "evaluation",
-        "web-search-fallback"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.text.magnifyingglass",
-      "summary": "Corrective RAG (CRAG) adds a lightweight retrieval evaluator that grades retrieved documents as Correct, Incorrect, or Ambiguous before generation happens. Correct documents get stripped down to relevant 'knowledge strips'; Incorrect ones are discarded and replaced with a live web search; Ambiguous cases blend both. It's a plug-in correction layer for standard RAG pipelines, not a retriever replacement — and it adds latency and a new failure point of its own.",
-      "slides": [
-        {
-          "id": "b14055a3-72dc-4b8b-9a4c-010118d02df6",
-          "kind": "cover",
-          "title": "What Happens When Your Retriever Is Confidently Wrong?",
-          "body": "Corrective RAG (CRAG) inserts a lightweight evaluator between retrieval and generation that grades documents before the model ever sees them.",
-          "bullets": [],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "d1526f13-13ff-4421-963f-36d37dda0e9c",
-          "kind": "problem",
-          "title": "Standard RAG Trusts Whatever It Retrieves",
-          "body": "A typical RAG pipeline retrieves top-k documents and hands them straight to the generator. Better chunking, reranking, and hybrid search all improve the odds of good retrieval — but none of them stop the generator from confidently answering off irrelevant or stale documents when retrieval fails anyway.",
-          "bullets": [
-            "Out-of-distribution queries, sparse corpora, or an index that's simply out of date all produce low-relevance retrievals that still get passed through",
-            "The generator has no signal that what it received is wrong — it will synthesize a fluent, confident answer from bad context",
-            "Reranking picks the 'best available' documents from what was retrieved; it doesn't tell you whether even the best available document is actually good enough"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "98dbf2b8-67e8-4bae-a611-63c25acf25a7",
-          "kind": "solution",
-          "title": "Grade First, Then Decide How to Respond",
-          "body": "CRAG trains a small, lightweight evaluator (much cheaper than the generator itself) to score each retrieved document's relevance to the query and assign a confidence label.",
-          "bullets": [
-            "Correct (high confidence): the document is relevant — proceed, but refine it first (see next slide)",
-            "Incorrect (low confidence): discard the retrieved set entirely and trigger a rewritten web search query as a fallback source of knowledge",
-            "Ambiguous (in between): combine refined internal knowledge with supplemental web search results rather than betting on one source"
-          ],
-          "symbol": "checkmark.circle.badge.questionmark",
-          "table": null
-        },
-        {
-          "id": "c0c05fb0-95ee-4879-8077-242c2832495d",
-          "kind": "architecture",
-          "title": "Decompose-Then-Recompose: Cleaning Up 'Correct' Documents",
-          "body": "Even a document graded Correct is rarely 100% relevant end-to-end — it usually has useful and irrelevant parts mixed together.",
-          "bullets": [
-            "The document is decomposed into fine-grained 'knowledge strips' (small segments of text)",
-            "Each strip is individually filtered for relevance to the query",
-            "Only the surviving relevant strips are recomposed into the final context — cutting noise the generator would otherwise have to sift through itself"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "6c1053eb-28ec-45a1-a79d-4abdfd02e079",
-          "kind": "comparison",
-          "title": "Naive RAG vs. Self-RAG vs. CRAG",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Approach",
-              "Handles bad retrievals?",
-              "External fallback?",
-              "Extra training needed?"
-            ],
-            "rows": [
-              [
-                "Naive RAG",
-                "No — passes retrieved docs through as-is",
-                "No",
-                "No"
-              ],
-              [
-                "Self-RAG",
-                "Partially — model self-critiques via reflection tokens",
-                "No",
-                "Yes, generator fine-tuning"
-              ],
-              [
-                "CRAG",
-                "Yes — dedicated evaluator grades before generation",
-                "Yes — web search on low confidence",
-                "Small evaluator only, generator untouched"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "f4a56ba3-5ba7-48ac-be37-404371e70eca",
-          "kind": "example",
-          "title": "A Query the Corpus Can't Answer",
-          "body": "A support-bot corpus was indexed three months ago. A user asks about a product change that shipped last week.",
-          "bullets": [
-            "Naive RAG: retrieves the closest old documents, generator answers fluently — and wrong — because nothing tells it the retrieved docs predate the change",
-            "CRAG: the evaluator scores the retrieved docs low relevance/confidence against the query, triggers the Incorrect path, rewrites the query for web search, and grounds the answer in current information instead",
-            "The fix isn't a smarter generator or a bigger index — it's a cheap check that catches the mismatch before generation happens"
-          ],
-          "symbol": "clock.arrow.circlepath",
-          "table": null
-        },
-        {
-          "id": "c07b4780-b07b-46a7-80d6-e5644bb80312",
-          "kind": "problem",
-          "title": "Tradeoffs and When to Skip It",
-          "body": "CRAG buys robustness against bad retrievals, but it isn't free.",
-          "bullets": [
-            "Extra latency: every query now pays for evaluator inference, plus a possible full web search round-trip on the Incorrect path — a poor fit for tight latency budgets",
-            "New failure surface: the evaluator is itself a trained classifier that can be miscalibrated or biased for your domain, and needs its own evaluation, not just the generator's",
-            "Web fallback assumes a live search API is available and trustworthy — in air-gapped, private-corpus-only, or high-security deployments, that path may not exist, and fetching untrusted web content is itself a risk to manage",
-            "If your corpus is comprehensive and frequently refreshed, the marginal benefit shrinks — CRAG earns its keep specifically when retrieval failure is a real, recurring risk"
-          ],
-          "symbol": "gauge.with.needle",
-          "table": null
-        },
-        {
-          "id": "82d8cb06-0b14-45d7-8909-359fe1166961",
-          "kind": "takeaways",
-          "title": "The Core Idea, Compressed",
-          "body": null,
-          "bullets": [
-            "CRAG adds a lightweight evaluator that grades retrieved documents Correct / Incorrect / Ambiguous before the generator sees them",
-            "Correct documents get refined via decompose-then-recompose; Incorrect ones are dropped in favor of a live web search; Ambiguous cases use both",
-            "It's a plug-in correction layer — the generator doesn't need retraining, unlike Self-RAG",
-            "The cost is latency and a new, separately-fallible component; it pays off most when retrieval failure is common, not when your corpus is already reliable"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "fcf28dfb-6e3a-46d2-a81e-f7ce9485bce4",
-            "prompt": "What triggers CRAG's web-search fallback?",
-            "options": [
-              "The user explicitly asks for a web search",
-              "The retrieval evaluator scores the retrieved documents as low-confidence / Incorrect",
-              "The generator runs out of context window",
-              "CRAG always searches the web in addition to the corpus"
-            ],
-            "correctIndex": 1,
-            "explanation": "CRAG's lightweight evaluator grades retrieved documents; only when confidence falls into the Incorrect range does it discard them and fall back to a rewritten web search query."
-          },
-          {
-            "id": "6501bfc5-1aa2-48d8-8535-91d6518e70cc",
-            "prompt": "What does the 'decompose-then-recompose' step do to a document graded Correct?",
-            "options": [
-              "Translates it into a different language for the generator",
-              "Splits it into fine-grained knowledge strips, filters out irrelevant strips, and recomposes only the relevant ones",
-              "Compresses it into a vector embedding and discards the text",
-              "Sends it back to the retriever for a second retrieval pass"
-            ],
-            "correctIndex": 1,
-            "explanation": "Even relevant documents usually mix useful and irrelevant content. Decompose-then-recompose breaks the document into strips, filters each for relevance, and keeps only the ones that survive — cutting noise before generation."
-          },
-          {
-            "id": "319ed127-4a3a-4111-865f-45528def3b4b",
-            "prompt": "What's the main tradeoff of adding CRAG to an existing RAG pipeline?",
-            "options": [
-              "It requires retraining the entire generator model from scratch",
-              "It only works with proprietary vector databases",
-              "It adds latency from evaluator inference and possible web search round-trips, plus a new component (the evaluator) that can itself be miscalibrated",
-              "It eliminates the need for any retriever at all"
-            ],
-            "correctIndex": 2,
-            "explanation": "CRAG's grading and fallback steps sit in the critical path of every query, adding latency, and the evaluator is a separately-trained classifier that introduces its own failure mode rather than eliminating one."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "d961becc-8877-48b5-bdc2-d7b4a6bcf6d8",
-          "title": "Corrective Retrieval Augmented Generation (arXiv:2401.15884)",
-          "url": "https://arxiv.org/abs/2401.15884"
-        }
-      ],
-      "id": "a807eb1c-3dc6-4858-9e1b-25091817df12",
-      "publishedDate": "2026-07-14T06:40:44Z"
     }
   ]
 }
