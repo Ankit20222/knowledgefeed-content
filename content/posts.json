@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "id": "dae38c9c-77ad-4012-807a-57d626e59f12",
+      "title": "Mixture of Experts: Bigger Models Without Bigger Compute",
+      "subtitle": "Route each token to a handful of specialists instead of waking up every parameter",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture-of-experts",
+        "moe",
+        "sparse-models",
+        "transformers",
+        "inference",
+        "scaling"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu.fill",
+      "summary": "Mixture-of-Experts (MoE) replaces a transformer's single feed-forward block with many specialized ones plus a router that activates only a few per token. It lets models scale total parameters into the hundreds of billions while keeping the compute per token close to a much smaller dense model — at the cost of memory footprint, load-balancing headaches, and serving complexity.",
+      "slides": [
+        {
+          "id": "30de8f1a-a0e5-4aee-a54f-d23ff4456533",
+          "kind": "cover",
+          "title": "What if a model didn't have to use all of itself, all the time?",
+          "body": "Mixture-of-Experts (MoE) is the architecture behind Mixtral, DeepSeek-V3, Kimi K3, and Grok: enormous total parameter counts, but only a slice of the network fires for any given token.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "c18fd63a-d799-4fcb-a31f-d11c24c441dd",
+          "kind": "problem",
+          "title": "Dense models tax every token equally",
+          "body": "In a standard transformer, every token passes through every parameter of every feed-forward layer. Doubling the model's knowledge means doubling the FLOPs for every single token, forever — even for easy tokens like 'the' or 'and'.",
+          "bullets": [
+            "Dense scaling is linear: 2x parameters = ~2x compute per token, at both training and inference",
+            "Most of a dense FFN's capacity is redundant for any one input — the network can't specialize",
+            "Serving cost (GPU-seconds per token) grows in lockstep with model quality, which caps how large you can afford to deploy"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "f0205ea7-a85a-460c-a5f5-263465e12585",
+          "kind": "solution",
+          "title": "Split the FFN into experts, add a router that picks a few",
+          "body": "Each MoE layer replaces one feed-forward block with N smaller feed-forward 'experts' and a lightweight gating network. The gate scores every expert per token and activates only the top-k, so compute scales with k, not N.",
+          "bullets": [
+            "Introduced as sparsely-gated MoE by Shazeer et al. (2017); scaled to production by Google's Switch Transformer (2021) and popularized by Mistral's Mixtral (2023)",
+            "Attention layers stay dense (shared by all tokens) — only the FFN sublayer becomes sparse",
+            "Total parameters (knowledge capacity) and active parameters (compute cost) become two separate dials instead of one"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "88cc3a2f-e660-441c-82e9-4a31ab6ac63b",
+          "kind": "architecture",
+          "title": "Inside one MoE layer: gate, top-k, weighted sum",
+          "body": "The router is just a linear layer producing one score per expert; softmax turns scores into weights; top-k picks which experts actually run.",
+          "bullets": [
+            "gate_logits = W_router · token_embedding  →  one number per expert",
+            "top_k = argmax_k(softmax(gate_logits))  — commonly k=2 (Mixtral) or k=8 of 256 (DeepSeek-V3's fine-grained experts)",
+            "output = Σ (gate_weight_i × expert_i(token))  over only the selected experts",
+            "A capacity factor caps how many tokens each expert accepts per batch; tokens beyond capacity get dropped or overflow to a fallback"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "7330c1fe-f44d-4be3-a4cf-81ff71c60018",
+          "kind": "example",
+          "title": "Tracing one token through an 8-expert, top-2 layer",
+          "body": "Say layer 12 has 8 experts. The router computes 8 logits for the token 'mitochondria', softmaxes them, and finds Expert 3 (0.61) and Expert 7 (0.24) on top — the other six get zero weight and never run for this token.",
+          "bullets": [
+            "output = 0.61 × Expert3(token) + 0.24 × Expert7(token), renormalized so the two weights sum to 1",
+            "Only 2 of 8 experts' matrix multiplies execute — a 4x reduction in FFN FLOPs for this token vs. a dense layer of equal total size",
+            "A different token in the same batch, say 'the', might route to Experts 1 and 5 instead — routing is learned and content-dependent, not fixed"
+          ],
+          "symbol": "arrow.right.circle.fill",
+          "table": null
+        },
+        {
+          "id": "109e5d59-3e6a-4669-b19d-43471967dd40",
+          "kind": "comparison",
+          "title": "Total parameters vs. parameters that actually fire",
+          "body": "The whole point of MoE shows up in the gap between these two columns — real numbers from public model reports.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Model",
+              "Total params",
+              "Active params/token",
+              "Routing"
+            ],
+            "rows": [
+              [
+                "Mixtral 8x7B (Mistral, 2023)",
+                "46.7B",
+                "12.9B",
+                "top-2 of 8 experts"
+              ],
+              [
+                "DeepSeek-V3 (2024)",
+                "671B",
+                "37B",
+                "top-8 of 256 routed + 1 shared"
+              ],
+              [
+                "Dense 13B model (reference)",
+                "13B",
+                "13B",
+                "no routing — all params active"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "cc41e4b9-29e0-46e8-985b-d4848c67ed88",
+          "kind": "problem",
+          "title": "The tradeoffs: memory, balance, and communication",
+          "body": "Sparse compute doesn't mean sparse memory — and routing introduces failure modes a dense model never has.",
+          "bullets": [
+            "VRAM footprint tracks TOTAL params, not active ones: serving DeepSeek-V3 still means holding 671B parameters in memory, even though only 37B compute per token",
+            "Load imbalance: an untrained router tends to collapse onto a few favorite experts ('expert collapse'); Switch Transformer added an auxiliary load-balancing loss, DeepSeek-V3 uses a bias-based auxiliary-loss-free balancing term instead",
+            "Distributed serving needs all-to-all GPU communication to ship each token to the GPU holding its chosen expert — this can bottleneck throughput more than the compute savings help",
+            "Not worth it at small scale: on a single GPU or for small models, the routing overhead and memory duplication can cost more than a plain dense FFN saves"
+          ],
+          "symbol": "scalemass.fill",
+          "table": null
+        },
+        {
+          "id": "e1f6a021-6dbd-46ce-9886-d4462eb29bbc",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "MoE turns 'model size' into two separate budgets — knowledge capacity and compute cost — which is why it now underpins most frontier open-weight models.",
+          "bullets": [
+            "MoE decouples total capacity from per-token compute by routing each token to a small top-k subset of experts",
+            "The router is a tiny linear + softmax layer — the real engineering is in load balancing and distributed serving",
+            "Memory cost scales with total params even though compute doesn't — plan VRAM for the full model, not the active slice",
+            "Best fit: very large models served at scale (Mixtral, DeepSeek-V3, Kimi K3-class); poor fit: small models or single-device training"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "8930b092-a8eb-4c27-b469-e0f6ec7bc249",
+            "prompt": "In a Mixture-of-Experts transformer layer, which part becomes sparse?",
+            "options": [
+              "The attention sublayer",
+              "The feed-forward (FFN) sublayer",
+              "The embedding table",
+              "The final output softmax"
+            ],
+            "correctIndex": 1,
+            "explanation": "Attention stays dense and shared by all tokens. MoE specifically replaces the FFN sublayer with N experts plus a router, so only the FFN computation becomes conditional on the token."
+          },
+          {
+            "id": "6a41cd00-1d0c-43c8-9587-fa6caf11dd83",
+            "prompt": "DeepSeek-V3 has 671B total parameters but only activates 37B per token. What does that gap mainly save?",
+            "options": [
+              "GPU memory needed to serve the model",
+              "Compute (FLOPs) spent per token, at both training and inference",
+              "The number of training tokens needed",
+              "Disk space for checkpoints"
+            ],
+            "correctIndex": 1,
+            "explanation": "MoE's savings are in compute per token, not memory — all 671B parameters still must be resident to serve the model, since any token could route to any expert. This is why MoE models are compute-cheap but memory-hungry."
+          },
+          {
+            "id": "c2fe0ee2-cf08-4bce-a3c3-855cfc83e9b3",
+            "prompt": "Why do MoE models need a load-balancing mechanism (like an auxiliary loss or bias term)?",
+            "options": [
+              "To make training faster on a single GPU",
+              "To prevent the router from collapsing onto a few favorite experts, leaving others undertrained and idle",
+              "To reduce the total number of parameters",
+              "To replace the need for attention layers"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without balancing, gradient descent tends to reinforce whichever experts already get more traffic, causing 'expert collapse' where a handful of experts do all the work and the rest go undertrained — wasting most of the model's capacity."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-07-23T12:40:22Z",
+      "heroImageURL": null
+    },
+    {
       "title": "The Flexibility Trap: Diffusion LLMs' Freedom Backfires in RL",
       "subtitle": "Letting a diffusion language model fill in tokens in any order sounds like an advantage — until RL training uses that freedom to dodge the exact tokens where reasoning happens.",
       "category": "AI Innovations",
@@ -11217,174 +11407,6 @@
         }
       ],
       "id": "45a2d1d7-c78d-43d5-b5bd-04c30488735a",
-      "publishedDate": "2026-07-16T06:45:00Z"
-    },
-    {
-      "title": "Context Engineering: Curating What the Model Actually Sees",
-      "subtitle": "Long-running agents rarely fail from a bad prompt — they fail from a cluttered context window. Anthropic's playbook: compact it, take notes outside it, or delegate the mess to a subagent.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "context-engineering",
-        "ai-agents",
-        "context-window",
-        "agentic-memory",
-        "prompting"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "rectangle.stack.fill",
-      "summary": "Context engineering reframes agent design around a scarce resource: the context window's finite attention budget. Rather than maximizing what you stuff into a prompt, the goal is the smallest set of high-signal tokens that reliably produces the desired behavior — using techniques like compaction, structured note-taking, and multi-agent delegation to keep long-running agents from drowning in their own history.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Prompting Was the Easy Part — Context Is the Hard Part",
-          "body": "As agents run longer — dozens of tool calls, hundreds of turns — the bottleneck stops being 'what words go in the prompt' and becomes 'what configuration of context is most likely to produce the model's desired behavior.' That's context engineering.",
-          "bullets": [],
-          "symbol": "rectangle.stack.fill",
-          "table": null,
-          "id": "f81d7f2f-03cb-4f5b-b16c-11faace613f9"
-        },
-        {
-          "kind": "problem",
-          "title": "A Context Window Is a Finite, Degrading Resource",
-          "body": null,
-          "bullets": [
-            "An LLM's attention is a finite budget spread across every token in the window — adding more tokens doesn't add more signal, and past a point it adds noise ('context pollution').",
-            "Long-running agents accumulate tool outputs, dead-end retries, and stale intermediate plans across many turns; that irrelevant history competes with the current task for the model's attention.",
-            "The naive fix — just use a bigger context window — doesn't solve this: the problem is signal density, not raw capacity, so a bigger window fills with the same proportion of noise."
-          ],
-          "symbol": "questionmark.square.dashed",
-          "table": null,
-          "id": "452cea70-9bb4-498c-a57d-a839576a0b2a"
-        },
-        {
-          "kind": "solution",
-          "title": "Compaction: Summarize, Then Restart",
-          "body": null,
-          "bullets": [
-            "When a conversation nears the context limit, compaction summarizes everything so far and reinitializes a fresh context window seeded with that summary instead of the full raw history.",
-            "The tuning order matters: first maximize recall so the compaction prompt captures every relevant fact from the trace, then iterate to improve precision by trimming anything superfluous.",
-            "Get that order backwards — optimize for precision first — and the summary can quietly drop a detail the agent turns out to need several turns later, with no obvious signal that anything went wrong."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "id": "21863a2d-b110-4f5f-af77-ae4954d63e9c"
-        },
-        {
-          "kind": "concept",
-          "title": "Structured Note-Taking: Memory Outside the Window",
-          "body": null,
-          "bullets": [
-            "Instead of keeping everything live in context, the agent periodically writes structured notes — a running todo list, key facts, decisions made — to persistent memory outside the context window.",
-            "This is 'agentic memory': the agent can let the raw conversation age out of context and still recover what mattered by reading its own notes back in when needed.",
-            "It trades a small per-step write/read overhead for a context window that stays close to the size of the actual current task, rather than the size of everything that's happened so far."
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "b6017dc5-9516-4022-a45b-e6d727a8648b"
-        },
-        {
-          "kind": "architecture",
-          "title": "Multi-Agent Delegation: Keep the Mess Off the Main Thread",
-          "body": null,
-          "bullets": [
-            "A subagent gets its own fresh context window to do one bounded piece of work — search a codebase, read a document, run an exploratory query — and returns only a distilled result to the parent.",
-            "The orchestrating agent's main context never sees the subagent's raw exploration, tool call retries, or dead ends — only the summary it needed.",
-            "The tradeoff: the parent loses visibility into the subagent's raw reasoning trace, so this only pays off when the subagent's returned summary genuinely captures what the parent actually needs."
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "id": "271326a0-b1e3-4f08-9aa3-32bc5fcfa781"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A 40-Turn Debugging Agent",
-          "body": null,
-          "bullets": [
-            "An agent debugging a failing test runs 40 tool calls — reading files, running the suite, checking logs. By turn 30, most of that raw output is dead weight.",
-            "Without context engineering: the full 40-turn transcript is fed back in every step, diluting the model's attention right when it most needs to reason precisely about the actual remaining bug.",
-            "With compaction plus structured notes: at turn 20 the agent compacts to 'tried X (failed — wrong import), tried Y (partial fix, one test still failing)' and keeps a running notes file — turn 40's context is a fraction of the size and almost entirely signal."
-          ],
-          "symbol": "list.number",
-          "table": null,
-          "id": "79870aec-d82a-47b0-a905-3b06ea175bef"
-        },
-        {
-          "kind": "concept",
-          "title": "When Context Engineering Isn't Worth It",
-          "body": null,
-          "bullets": [
-            "Short, single-turn tasks don't need compaction or note-taking machinery — the overhead of summarizing and re-reading notes can cost more than the pollution it would have prevented.",
-            "Compaction is lossy by construction: tuned precision-first instead of recall-first, it can silently drop a fact the agent needs later, and that failure is invisible until the agent acts on incomplete information.",
-            "Multi-agent delegation adds real latency and coordination overhead — it only pays off when the delegated task is genuinely boundable and can be compressed into a small, faithful summary."
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "caa0c3f0-4d61-472b-a58e-47d6e6ca80a1"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The Skill Is Curation, Not Just Prompting",
-          "body": null,
-          "bullets": [
-            "Context engineering treats the context window as a scarce, degrading resource — the goal is the smallest set of high-signal tokens that reliably produces the desired behavior, not the largest.",
-            "Three techniques cover most long-running agent failures: compaction (summarize and restart), structured note-taking (memory outside the window), and multi-agent delegation (keep exploration noise off the main thread).",
-            "How you structure what stays matters too: organizing prompts into clear sections — background, instructions, tool guidance, output format — marked with XML tags or Markdown headers reduces ambiguity about what each chunk of context is for."
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "fb94d394-533b-45c9-9635-2ed48a6ad863"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the central question context engineering asks, per Anthropic's framing?",
-            "options": [
-              "Which exact words in the prompt sound the most natural",
-              "What configuration of context is most likely to generate the model's desired behavior",
-              "How to make the context window as large as technically possible",
-              "Which fine-tuning dataset best matches the target task"
-            ],
-            "correctIndex": 1,
-            "explanation": "Context engineering shifts the focus from word choice to curating the whole configuration of context — what's included, what's left out, and how it's structured — so the model's finite attention lands on what matters.",
-            "id": "c26c7bc2-877f-4234-be8f-c410e4e6ebae"
-          },
-          {
-            "prompt": "What does 'compaction' do when an agent's conversation nears the context limit?",
-            "options": [
-              "It deletes a random half of the conversation history",
-              "It summarizes the conversation so far and reinitializes a new context window seeded with that summary",
-              "It compresses every token using a smaller vocabulary encoding",
-              "It pauses the agent until a human manually reviews the transcript"
-            ],
-            "correctIndex": 1,
-            "explanation": "Compaction replaces the full raw history with a summary in a fresh context window, keeping the window's contents proportional to what's actually still relevant rather than everything that's ever happened.",
-            "id": "5fff0203-6dae-4f4f-974a-8aebd2ec7096"
-          },
-          {
-            "prompt": "Why tune a compaction prompt for recall before precision?",
-            "options": [
-              "Because precision can't be measured reliably",
-              "Maximizing recall first ensures no relevant fact from the trace is lost; precision can then trim excess without risking deletion of something the agent still needs",
-              "Because recall is computationally cheaper to run than precision",
-              "Because a longer summary always improves agent performance regardless of content"
-            ],
-            "correctIndex": 1,
-            "explanation": "Doing precision first risks aggressively cutting details before you know they're safe to cut. Recall-first guarantees the important facts survive; precision then removes only what's truly superfluous.",
-            "id": "11f65075-e559-4eaa-b7d1-1206255ebb46"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Effective context engineering for AI agents (Anthropic Engineering)",
-          "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
-          "id": "e554df1e-0724-4170-a92b-4e0ec5ddf1bb"
-        }
-      ],
-      "id": "c15cc1bf-7ba0-4c3c-82b6-1ad7dfa100d2",
       "publishedDate": "2026-07-16T06:45:00Z"
     }
   ]
