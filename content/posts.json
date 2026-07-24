@@ -1,6 +1,211 @@
 {
   "posts": [
     {
+      "id": "c71a17d9-9ec5-44c1-af7f-e0baf9807c57",
+      "title": "HNSW: How Vector Databases Find Neighbors Fast",
+      "subtitle": "Brute-force checks every vector in the index — a navigable graph checks a few hundred and stops.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "vector-search",
+        "hnsw",
+        "embeddings",
+        "ann",
+        "vector-database"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "network",
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind approximate nearest-neighbor search in most production vector databases — Pinecone, Weaviate, Qdrant, Milvus, and pgvector all ship it. Instead of comparing a query against every stored vector, it walks a layered graph toward the closest match, trading a small amount of recall for orders-of-magnitude faster lookups. Knowing its parameters (M, ef_construction, ef_search) is the difference between a RAG pipeline that's fast and one that's fast but wrong.",
+      "publishedDate": "2026-07-24T06:40:52Z",
+      "slides": [
+        {
+          "id": "859a5b21-7aac-4628-b3da-ddc456bf248e",
+          "kind": "cover",
+          "title": "Search 10 Million Vectors Without Checking 10 Million Vectors",
+          "body": "Every RAG pipeline, semantic search feature, and recommendation engine eventually asks the same question: given a query embedding, which stored vectors are closest? At scale, checking every single one isn't an option — this is the algorithm almost everyone uses instead.",
+          "bullets": [
+            "HNSW = Hierarchical Navigable Small World graphs",
+            "Introduced by Malkov & Yashunin (2016); now the default ANN index in FAISS, Pinecone, Weaviate, Qdrant, Milvus, and pgvector",
+            "Powers approximate — not exact — nearest neighbor search"
+          ],
+          "symbol": "network",
+          "table": null
+        },
+        {
+          "id": "f889b434-986a-48a9-8030-86dc1ec67868",
+          "kind": "problem",
+          "title": "Brute-Force Search Doesn't Survive Contact With Scale",
+          "body": "Comparing a query vector to every row is exact, but the cost is linear in the size of the index — and RAG indexes keep growing.",
+          "bullets": [
+            "A flat (brute-force) index computes a distance for every stored vector, every query — O(N) comparisons",
+            "At 100K vectors this is fine (milliseconds); at 10M+ vectors with 768-1536 dimensions, that's billions of floating-point ops per query",
+            "Adding more RAM or a faster CPU only delays the problem — the cost still scales linearly with N"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "07808dd1-f14d-42ee-a2c3-b48698c23daf",
+          "kind": "solution",
+          "title": "Walk a Graph Instead of Scanning a List",
+          "body": "HNSW builds a multi-layer graph where each vector is a node connected to its approximate neighbors. Search starts at a sparse top layer and greedily descends toward the query, tightening the search at each level.",
+          "bullets": [
+            "Top layers are sparse 'highways' with long-range links — good for jumping across the vector space fast",
+            "Bottom layer (layer 0) contains every vector, densely connected to its true neighbors — good for fine-grained accuracy",
+            "A greedy best-first search at each layer needs only O(log N) hops on average to reach a near-optimal region",
+            "Inspired by skip lists (the layering) and small-world network theory (few hops connect any two nodes)"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "73e070dd-a6ed-49df-b53f-3343fdb54ebd",
+          "kind": "architecture",
+          "title": "Three Parameters Decide Recall, Speed, and Memory",
+          "body": "HNSW isn't a black box — its behavior is governed by a handful of tunable knobs.",
+          "bullets": [
+            "M: max neighbors per node (typically 16-64). Higher M = better recall and a denser graph, but more memory (~1.5-2x the raw vector size) and slower inserts",
+            "ef_construction: how many candidates are explored while building the graph. Higher = better index quality, slower to build (one-time cost)",
+            "ef_search: how many candidates are explored per query. Higher = better recall, slower queries — this is the knob you tune live to trade latency for accuracy"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "ffd87a73-d7d8-4c92-a5ea-710f45dedf0e",
+          "kind": "comparison",
+          "title": "Flat vs. IVF vs. HNSW",
+          "body": "The right index depends on what you're optimizing for.",
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "",
+              "Flat (brute-force)",
+              "IVF (clustered)",
+              "HNSW (graph)"
+            ],
+            "rows": [
+              [
+                "Recall",
+                "100% (exact)",
+                "~90-95%, tunable via nprobe",
+                "~95-99%+, tunable via ef_search"
+              ],
+              [
+                "Query cost",
+                "O(N)",
+                "O(N/clusters) — searches a few clusters",
+                "O(log N) approx. — graph traversal"
+              ],
+              [
+                "Memory overhead",
+                "None (just the vectors)",
+                "Low — pairs well with product quantization",
+                "~1.5-2x raw vectors (graph edges)"
+              ],
+              [
+                "Build step",
+                "None",
+                "Requires k-means training on the data",
+                "Sequential insertion, no training"
+              ],
+              [
+                "Best for",
+                "Small indexes, exact recall required",
+                "Very large indexes, memory-constrained",
+                "Latency-sensitive search at scale"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "74b80ba0-e8c7-483e-bb72-a2358fb114da",
+          "kind": "example",
+          "title": "A RAG Index at 10 Million Chunks",
+          "body": "A support-docs RAG system embeds 10M chunks at 768 dimensions. At query time it needs the top 10 nearest chunks to a user's question.",
+          "bullets": [
+            "Flat index: ~10M distance computations per query — even vectorized, this can run into hundreds of milliseconds to seconds under load",
+            "HNSW index (M=16, ef_search=100): touches roughly a few thousand candidate nodes instead of 10 million — typical production latency lands in single-digit milliseconds",
+            "The tradeoff: HNSW might return the 9th-best match instead of the true 10th-best in a small fraction of queries — for RAG, where the LLM re-reads and re-ranks the results anyway, that's a bargain worth taking"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "11835eb2-e3da-487b-9573-742a83e8f665",
+          "kind": "concept",
+          "title": "When HNSW Is the Wrong Tool",
+          "body": "Fast approximate search isn't free, and it isn't always the right default.",
+          "bullets": [
+            "Small collections (under ~10-50K vectors): a flat index is simpler, exact, and often just as fast in practice — don't add graph complexity you don't need",
+            "Deletes are awkward: HNSW graphs are built for insertion, not removal — most systems soft-delete (tombstone) and periodically rebuild rather than truly removing nodes",
+            "Recall-critical use cases (legal, medical, compliance search) may need exact search or a very high ef_search — approximate isn't always acceptable",
+            "Memory-constrained environments may prefer IVF+PQ (compressed vectors) over HNSW's graph overhead, even at some cost to speed"
+          ],
+          "symbol": "xmark.circle.fill",
+          "table": null
+        },
+        {
+          "id": "59478194-5fab-4d9b-89d9-6a1d96c77506",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "HNSW trades a small, tunable amount of recall for a massive drop in query cost — O(log N) graph traversal instead of O(N) brute force",
+            "M controls graph density and memory; ef_construction controls index quality at build time; ef_search controls the speed/recall tradeoff at query time",
+            "It's the default ANN index in nearly every production vector database — but flat search is still correct for small or recall-critical collections",
+            "Approximate nearest neighbor is a feature, not a bug: for RAG, a few near-misses barely matter once the LLM reads and reasons over the retrieved set"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "32156855-3512-4b4a-8a00-400c5602cc8e",
+            "prompt": "Why does brute-force (flat) nearest-neighbor search struggle at scale?",
+            "options": [
+              "It can't compute cosine similarity correctly",
+              "Its query cost scales linearly (O(N)) with the number of stored vectors",
+              "It requires GPUs to run at all",
+              "It only works with text embeddings, not images"
+            ],
+            "correctIndex": 1,
+            "explanation": "Flat search compares the query to every stored vector, so query time grows linearly with the size of the index — at millions of vectors, that becomes the bottleneck."
+          },
+          {
+            "id": "f395c317-1d5f-4d98-9565-c73290fd4482",
+            "prompt": "In HNSW, what does raising the ef_search parameter trade for what?",
+            "options": [
+              "More memory for faster builds",
+              "Higher recall for slower queries (more candidates explored per search)",
+              "Lower recall for faster inserts",
+              "Nothing — it only affects index build time"
+            ],
+            "correctIndex": 1,
+            "explanation": "ef_search controls how many candidate nodes the graph traversal explores at query time. Exploring more candidates catches more true neighbors (higher recall) but costs more time per query."
+          },
+          {
+            "id": "badb83ee-692f-46b5-a064-99a5e5de6e61",
+            "prompt": "When is a flat (brute-force) index often the better choice over HNSW?",
+            "options": [
+              "Whenever the dataset has more than 1 million vectors",
+              "For small collections or use cases that require guaranteed exact recall",
+              "Whenever queries need to run on a GPU",
+              "Never — HNSW is strictly better in every scenario"
+            ],
+            "correctIndex": 1,
+            "explanation": "Flat search is exact and simple. At small scale it's fast enough, and for recall-critical domains (compliance, medical, legal) the tiny error rate of an approximate index may not be acceptable."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "d6f37074-5dfe-4148-b36f-9efcae61315c",
       "title": "Rubric4Setwise: Grading RAG's Document Set, Not Each Row",
       "subtitle": "Score documents one at a time and you'll miss the duplicate pair quietly wasting half your context window.",
@@ -11224,185 +11429,6 @@
       ],
       "id": "3f2cce92-a398-4b69-aa0e-62da5369c0d2",
       "publishedDate": "2026-07-16T12:43:39Z"
-    },
-    {
-      "title": "PalmClaw: Mobile Agents That Call Tools, Not Taps",
-      "subtitle": "An on-device framework that ditches screen-tapping for real device APIs.",
-      "category": "AI Agents",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "mobile agents",
-        "on-device ai",
-        "tool calling",
-        "agent architecture",
-        "benchmarks"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "iphone",
-      "summary": "PalmClaw (arXiv 2607.13027) is a native on-device agent framework that replaces GUI tapping and swiping with direct tool calls to phone capabilities. On the new MobileTask benchmark it beats the strongest baseline by 11.5% relative task success while cutting completion time by 94.9%.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Teaching Phone Agents to Stop Tapping Screens",
-          "body": "Most mobile AI agents today still operate a phone the way a human would — tapping, swiping, typing through app UIs. PalmClaw asks: what if the agent just called the underlying functions directly?",
-          "bullets": [],
-          "symbol": "sparkles",
-          "table": null,
-          "id": "8f9accc0-b6fa-4b22-81af-a94d60b51e5e"
-        },
-        {
-          "kind": "problem",
-          "title": "GUI-Only Agents Are Slow and Fragile by Design",
-          "body": "Existing mobile agents mainly control phones through GUI actions.",
-          "bullets": [
-            "Tapping/swiping/typing produces long, interface-dependent action sequences — one UI redesign can break the whole chain",
-            "GUI agents can't directly reach device capabilities that aren't exposed as visible screens",
-            "Execution boundaries (when is a 'task' actually done?) are hard to define from pixels alone"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "0fb0e840-73a6-47f2-b84d-a4c9a38f9fe1"
-        },
-        {
-          "kind": "solution",
-          "title": "An Agent Loop That Lives on the Device",
-          "body": "PalmClaw is an open-source framework that runs natively on the phone, managing sessions, memory, skills, and tools directly on-device instead of routing everything through screen coordinates.",
-          "bullets": [
-            "Structured tool calls replace tap/swipe sequences wherever a device capability can be exposed as an API",
-            "Skills and memory persist locally between tasks instead of being rebuilt from scratch each session",
-            "The agent loop (plan → call tool → observe → continue) runs on-device, cutting round-trips"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null,
-          "id": "f533ea53-310b-484c-a8ae-6f3f1a4af465"
-        },
-        {
-          "kind": "comparison",
-          "title": "MobileTask: The Numbers",
-          "body": "MobileTask is a new 70-task benchmark adapted from AndroidWorld and MobileAgentBench, built to test real mobile workflows.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "PalmClaw vs. strongest baseline"
-            ],
-            "rows": [
-              [
-                "Task success",
-                "+11.5% relative improvement"
-              ],
-              [
-                "Completion time",
-                "-94.9% (average)"
-              ],
-              [
-                "Actions used",
-                "Fewer per task"
-              ],
-              [
-                "Tokens used",
-                "Fewer per task"
-              ],
-              [
-                "AssistantBench",
-                "Highest accuracy among compared agents"
-              ]
-            ]
-          },
-          "id": "e0225e09-8c81-4841-916a-9d254a87c09d"
-        },
-        {
-          "kind": "example",
-          "title": "Booking a Table for Four at 7PM",
-          "body": "A concrete task shows the difference in kind, not just degree.",
-          "bullets": [
-            "A GUI agent opens the reservations app, taps through a date picker, a time picker, a party-size field, then a confirm screen — 15-20+ actions, each a chance to mistap or hit a redesigned layout",
-            "PalmClaw instead calls a reservation-capable tool directly with structured parameters (party_size=4, time=19:00), needing far fewer steps",
-            "With no screenshots to render and re-parse between steps, the task finishes in a fraction of the wall-clock time — consistent with the paper's 94.9% completion-time reduction"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null,
-          "id": "ec822976-a8a0-4817-a99c-bc3b5224e1fe"
-        },
-        {
-          "kind": "problem",
-          "title": "It Only Works Where There's a Tool to Call",
-          "body": "Native tool-calling isn't a free upgrade — it depends on what the device and its apps actually expose.",
-          "bullets": [
-            "Apps that don't expose structured APIs still need a GUI fallback, so PalmClaw can't fully replace screen-based agents yet",
-            "Building and maintaining a tool/skill library per capability is more engineering upfront than 'just let the agent tap around'",
-            "On-device execution shifts compute and battery cost onto the phone itself rather than a server"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null,
-          "id": "91b42786-067a-4f57-8734-ffbeda4b58f4"
-        },
-        {
-          "kind": "takeaways",
-          "title": "What to Remember",
-          "body": null,
-          "bullets": [
-            "PalmClaw runs the full agent loop — memory, skills, tools — natively on the phone instead of orchestrating GUI taps",
-            "On MobileTask (70 tasks from AndroidWorld + MobileAgentBench), it beats the strongest baseline by 11.5% relative task success and 94.9% less completion time",
-            "It also tops AssistantBench accuracy among compared agents",
-            "The core idea generalizes beyond phones: wherever an agent can call a real API instead of faking a UI interaction, expect it to be faster and more reliable"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "0c980230-e924-46dd-a7f5-8e39c77e8733"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does PalmClaw replace GUI tapping/swiping with?",
-            "options": [
-              "Voice commands only",
-              "Direct structured tool calls to device capabilities",
-              "A faster screenshot pipeline",
-              "Cloud-only execution"
-            ],
-            "correctIndex": 1,
-            "explanation": "PalmClaw's core idea is calling device capabilities as structured tools directly, instead of simulating human taps and swipes through the UI.",
-            "id": "24a35a82-3817-41ea-8a0c-2bf4de52da3e"
-          },
-          {
-            "prompt": "What benchmark did PalmClaw's authors introduce to evaluate it?",
-            "options": [
-              "AndroidWorld",
-              "MobileTask",
-              "SWE-bench",
-              "AssistantBench"
-            ],
-            "correctIndex": 1,
-            "explanation": "MobileTask is a 70-task benchmark adapted from AndroidWorld and MobileAgentBench, purpose-built to evaluate real mobile agent workflows.",
-            "id": "c2f3e34b-b07e-46e4-8243-ac70cc87b3fd"
-          },
-          {
-            "prompt": "What is the main limitation of PalmClaw's approach?",
-            "options": [
-              "It requires a data-center GPU",
-              "It only works when a device capability is exposed as a callable tool",
-              "It cannot use any tools at all",
-              "It only works on a single phone model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Native tool-calling depends on the capability actually being exposed as an API — apps without one still need a GUI-based fallback.",
-            "id": "81c78d39-f845-41f9-9ea4-cfd6153467b6"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "PalmClaw: A Native On-Device Agent Framework for Mobile Phones (arXiv:2607.13027)",
-          "url": "https://arxiv.org/abs/2607.13027",
-          "id": "37b56a69-5cbb-4674-9ad9-19f280afece0"
-        }
-      ],
-      "id": "82acb004-3e25-4fa6-bb18-7e13b8d2d859",
-      "publishedDate": "2026-07-16T12:43:38Z"
     }
   ]
 }
