@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "id": "d65cf041-2d39-49bc-ae2d-57e5a629b40c",
+      "title": "KV Cache: Why LLMs Trade Memory for Speed",
+      "subtitle": "Every generated token reuses yesterday's math instead of redoing it — at a steep memory price.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llms",
+        "inference",
+        "kv-cache",
+        "attention",
+        "gqa",
+        "transformers"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip",
+      "summary": "The KV cache is what lets a transformer generate text one token at a time without redoing the whole forward pass for every prior token. It's also the single biggest consumer of GPU memory during serving — which is why architectures like GQA and MQA, and systems like PagedAttention, all exist to tame it.",
+      "slides": [
+        {
+          "id": "15112e71-4952-4e50-9d05-fbc7c0222373",
+          "kind": "cover",
+          "title": "The Hidden Cost of Generating One Token at a Time",
+          "body": "Every time an LLM emits a token, it has to attend back over every token that came before it — and it will need to do that again for the next token, and the next. Remembering what it already computed is what makes that affordable.",
+          "bullets": [],
+          "symbol": "memorychip",
+          "table": null
+        },
+        {
+          "id": "c6f9684a-a9b9-49b4-a613-7b8af9f77100",
+          "kind": "problem",
+          "title": "Recomputing Keys and Values Every Step Is Wasteful",
+          "body": "Without a cache, producing token i means re-running the projections that turn every one of the i-1 prior tokens into key (K) and value (V) vectors — again — even though those tokens haven't changed since the last step.",
+          "bullets": [
+            "A 1,000-token reply generated naively redoes roughly 500,000 K/V projection computations across all its steps combined",
+            "Attention itself is inherently O(n²) as the sequence grows — that part isn't avoidable — but recomputing K/V for tokens already seen is pure waste",
+            "That waste is why an uncached implementation turns into a compute-bound crawl instead of the memory-bound stream production servers rely on"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "67435b71-be02-4c09-8628-d2cdf350de11",
+          "kind": "solution",
+          "title": "Cache the Keys and Values, Reuse Them Forever",
+          "body": "Each token's key and value vectors, once computed, never change — only new tokens add new K/V pairs. So store them per layer and per head, and each step only compute K/V for the newest token.",
+          "bullets": [
+            "Per-step cost drops from re-deriving K/V for every prior token to one new projection plus attention over the cache",
+            "The cache sits in GPU memory next to the model weights, growing by one token's worth of K/V every step of generation",
+            "This is why serving metrics split into 'time to first token' (fills the cache from the prompt) and 'time per output token' (extends it by one) — they have very different cost profiles"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "5b3bef7f-39cd-4374-b6b5-98b141f52f0f",
+          "kind": "concept",
+          "title": "The Memory Math That Makes Cache Size Matter",
+          "body": "Cache size in bytes ≈ 2 (K and V) × layers × KV-heads × head_dim × sequence_length × bytes-per-value — and it's paid per sequence in the batch.",
+          "bullets": [
+            "A 7B-scale dense model with standard multi-head attention (32 layers, 32 heads, head_dim 128, fp16) costs about 512KB of cache per token, per sequence",
+            "At a 4,096-token context that's roughly 2GB of KV cache for a single conversation — on top of the model weights themselves",
+            "Double the context length or the number of concurrent conversations and the cache doubles right along with it, linearly, every time"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "20e9f064-3015-4ff8-9e8c-72ffa3705ef8",
+          "kind": "comparison",
+          "title": "Fewer KV Heads, Smaller Cache",
+          "body": "Multi-Query Attention (MQA) and Grouped-Query Attention (GQA) shrink the cache by having several query heads share the same K/V heads instead of every head keeping its own — the fix behind Llama 2 70B, Llama 3, and most models trained since.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Attention type",
+              "KV heads",
+              "Relative cache size"
+            ],
+            "rows": [
+              [
+                "Multi-Head (MHA)",
+                "32 (one per query head)",
+                "1x — baseline"
+              ],
+              [
+                "Grouped-Query (GQA)",
+                "8",
+                "4x smaller"
+              ],
+              [
+                "Multi-Query (MQA)",
+                "1",
+                "32x smaller"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b38d1056-0e47-493d-bd89-78d4885a04c3",
+          "kind": "example",
+          "title": "Serving 100 Conversations at Once",
+          "body": "A 7B-scale model with standard MHA, fp16 cache, serving 100 concurrent conversations at 2K tokens each needs on the order of 100GB just for KV cache — comparable to or more than the weights themselves.",
+          "bullets": [
+            "The same architecture built with GQA (8 KV heads, as in Llama 2 70B) would need roughly a quarter of that — around 25GB — for the identical workload",
+            "That's on top of what motivates systems like PagedAttention: paging KV cache memory on demand instead of pre-reserving a worst-case block per request",
+            "It's also why long-context models (100K+ tokens) are expensive to serve — cache cost scales with context length and concurrency, not just parameter count"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "79fbf702-8764-4bdd-a8b2-05b4af79f777",
+          "kind": "problem",
+          "title": "Where the Cache Bites Back",
+          "body": null,
+          "bullets": [
+            "Cache memory grows linearly with context length and batch size, so it — not raw compute — is often what caps how many requests a GPU can serve at once",
+            "Quantizing the cache itself (int8 or int4 K/V) trades a small amount of generation quality for a large memory win, and needs care since K and V tend to have different sensitivity to precision loss",
+            "Speculative decoding and beam search complicate the cache further — rejected speculative tokens or pruned beams mean cache entries have to be rolled back or discarded, not just appended to",
+            "The whole idea is specific to autoregressive decoding; it doesn't apply to encoder-only models or fully parallel (non-autoregressive) generation, which don't generate one cached token at a time"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2fe4e0a5-2ba3-4f01-b229-58ee6dd706c4",
+          "kind": "takeaways",
+          "title": "Why Every Serving Stack Is Built Around This",
+          "body": null,
+          "bullets": [
+            "The KV cache is what makes token-by-token generation affordable — without it, every response would redo the work of every response before it",
+            "Its size, not the model's parameter count alone, is often the real ceiling on how many users a GPU can serve concurrently",
+            "GQA/MQA attack the problem at the architecture level (fewer heads to cache); quantization and paged allocators attack it at the systems level — real deployments usually stack both",
+            "Next time you see a model's context window advertised, remember: the compute to attend over it is one cost, but the KV cache memory to hold it open is the one that actually limits concurrency"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "947da0ca-814f-4a36-a342-30050b15ff55",
+            "prompt": "What specifically does the KV cache avoid recomputing during text generation?",
+            "options": [
+              "The model's token embeddings for the entire vocabulary",
+              "The key and value projections for tokens that were already processed in earlier steps",
+              "The final softmax over output logits",
+              "The positional encodings for the very first token"
+            ],
+            "correctIndex": 1,
+            "explanation": "A token's key and value vectors don't change once computed. Without caching, an implementation would redo those projections for every prior token at every single generation step — the KV cache stores them once and reuses them."
+          },
+          {
+            "id": "4aca8c3a-dd20-4b51-b1c5-b6409baa503e",
+            "prompt": "A 7B-scale model with standard multi-head attention (32 layers, 32 heads, head_dim 128, fp16) generates roughly how much KV cache per token, per sequence?",
+            "options": [
+              "About 512 bytes",
+              "About 512KB",
+              "About 512MB",
+              "It depends only on batch size, not model architecture"
+            ],
+            "correctIndex": 1,
+            "explanation": "Using cache size ≈ 2 × layers × KV-heads × head_dim × bytes-per-value: 2 × 32 × 32 × 128 × 2 bytes = 524,288 bytes, about 512KB per token. That adds up fast across a long context or many concurrent users."
+          },
+          {
+            "id": "86f620f7-87dc-4f6e-8b83-971c3e7b7d44",
+            "prompt": "Why does Grouped-Query Attention (GQA) reduce KV cache size compared to standard Multi-Head Attention?",
+            "options": [
+              "It reduces the number of transformer layers in the model",
+              "It shrinks the model's hidden dimension",
+              "It has multiple query heads share the same, smaller set of key/value heads instead of each query head keeping its own",
+              "It removes the need to cache values (V), only keys (K)"
+            ],
+            "correctIndex": 2,
+            "explanation": "GQA groups query heads so several of them attend using one shared K/V head instead of each having a dedicated one — e.g. 8 KV heads instead of 32 cuts the cache 4x, since cache size scales with the number of KV heads, not query heads."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-07-24T12:41:56Z"
+    },
+    {
       "id": "c71a17d9-9ec5-44c1-af7f-e0baf9807c57",
       "title": "HNSW: How Vector Databases Find Neighbors Fast",
       "subtitle": "Brute-force checks every vector in the index — a navigable graph checks a few hundred and stops.",
@@ -11249,186 +11433,6 @@
       ],
       "id": "49dc450a-d65c-4056-96c6-61ba8fbcd6ec",
       "publishedDate": "2026-07-16T18:46:53Z"
-    },
-    {
-      "title": "Grok 4.5: xAI Bets on Cursor-Trained Code",
-      "subtitle": "A 500K-context coding model priced to undercut the frontier.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "grok",
-        "xai",
-        "coding agents",
-        "llm pricing",
-        "cursor"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "chevron.left.forwardslash.chevron.right",
-      "summary": "xAI shipped Grok 4.5 on July 8, 2026 — a 500K-context model trained alongside Cursor and aimed squarely at coding and agentic work. It undercuts frontier pricing at $2/$6 per million tokens while Musk pitches it as 'Opus 4.7-class, but faster and cheaper.'",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "xAI's Answer to the Coding-Agent Price War",
-          "body": "On July 8, 2026, xAI introduced Grok 4.5 — its most capable model yet, built specifically for coding, agentic tasks, and knowledge work.",
-          "bullets": [],
-          "symbol": "sparkles",
-          "table": null,
-          "id": "8e6df570-e744-4b5d-baac-a6208ba2e458"
-        },
-        {
-          "kind": "problem",
-          "title": "Frontier Coding Models Are Expensive and Crowded",
-          "body": "By mid-2026 every major lab has an agentic coding model, and the differentiator has shifted from raw capability to cost-per-token and tool-use reliability.",
-          "bullets": [
-            "GPT-5.6, Claude Opus 4.8/Sonnet 5, and Gemini already compete for the same coding-agent workloads",
-            "Long agentic sessions burn tokens fast — price per million tokens matters as much as benchmark scores",
-            "xAI needed a model developers would route through their IDE daily, not just try once as a demo"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "3724b3b9-4dc4-4999-b55c-f1c06d3de708"
-        },
-        {
-          "kind": "solution",
-          "title": "Trained Alongside Cursor, Priced to Undercut",
-          "body": "Grok 4.5 was trained in partnership with Cursor, xAI's coding-tool collaborator, on data spanning coding, science, engineering, and math.",
-          "bullets": [
-            "500K-token context window — enough to hold a mid-size repo's worth of files in one session",
-            "Served at roughly 80 tokens/second",
-            "$2 per million input tokens / $6 per million output tokens",
-            "Available same-day inside Grok Build, in Cursor on all plans, and via the xAI API console"
-          ],
-          "symbol": "hammer.fill",
-          "table": null,
-          "id": "cd7d9579-3a66-47c9-8408-463354c15beb"
-        },
-        {
-          "kind": "comparison",
-          "title": "Musk's Pitch: Opus-Class Speed at a Discount",
-          "body": "xAI positioned Grok 4.5 directly against Anthropic's Opus line rather than against GPT-5.6.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Spec",
-              "Grok 4.5"
-            ],
-            "rows": [
-              [
-                "Context window",
-                "500K tokens"
-              ],
-              [
-                "Throughput",
-                "~80 tok/s"
-              ],
-              [
-                "Input price",
-                "$2 / M tokens"
-              ],
-              [
-                "Output price",
-                "$6 / M tokens"
-              ],
-              [
-                "Musk's framing",
-                "\"Roughly comparable to Opus 4.7, but much faster\" and cheaper"
-              ]
-            ]
-          },
-          "id": "ce046721-ccaf-4dd8-8d60-90f58a745ba1"
-        },
-        {
-          "kind": "example",
-          "title": "A Multi-File Refactor, End to End",
-          "body": "Picture a developer inside Cursor asking Grok 4.5 to rename a config schema across a 40-file service.",
-          "bullets": [
-            "The 500K context window lets it ingest most of the relevant repo without manual file selection",
-            "At ~80 tok/s, a multi-step edit-test-fix loop finishes in roughly the time of a coffee break",
-            "Priced at $2/$6 per million tokens, the same agentic loop costs a fraction of premium frontier pricing"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null,
-          "id": "786b0268-8497-4044-be15-14655761335e"
-        },
-        {
-          "kind": "problem",
-          "title": "Not Available Everywhere, Not Free of Rough Edges",
-          "body": "The launch came with real caveats worth knowing before routing production workloads through it.",
-          "bullets": [
-            "Not available in the EU in any xAI product or the API console at launch — EU access was expected only in mid-July",
-            "Early third-party coverage flagged higher hallucination rates than some top frontier models even as raw agentic speed impressed",
-            "Independent benchmark rankings vary by suite and month — treat any single leaderboard number as a snapshot, not a verdict"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null,
-          "id": "d198fc26-800c-40d6-a81c-9fa17a589e68"
-        },
-        {
-          "kind": "takeaways",
-          "title": "What to Remember",
-          "body": null,
-          "bullets": [
-            "Grok 4.5 launched July 8, 2026 as xAI's coding- and agent-focused flagship, trained alongside Cursor",
-            "500K context, ~80 tok/s, $2/$6 per million tokens — priced as a cheaper, faster alternative to Opus-class models",
-            "Ships in Grok Build, Cursor, and the xAI API — but not yet in the EU",
-            "Cheaper and faster isn't the same as more reliable — weigh hallucination reports before high-stakes use"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "4b3dc854-cb8d-4cd8-a805-b66ffa302e51"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is Grok 4.5's context window?",
-            "options": [
-              "128K tokens",
-              "500K tokens",
-              "1M tokens",
-              "32K tokens"
-            ],
-            "correctIndex": 1,
-            "explanation": "xAI shipped Grok 4.5 with a 500K-token context window, enough to hold a large portion of a real codebase in a single session.",
-            "id": "de86bcd0-d54e-4227-85b1-dbea32d77ece"
-          },
-          {
-            "prompt": "Which coding tool did xAI train Grok 4.5 alongside?",
-            "options": [
-              "GitHub Copilot",
-              "Cursor",
-              "Replit",
-              "Windsurf"
-            ],
-            "correctIndex": 1,
-            "explanation": "Grok 4.5 was trained in partnership with Cursor, aiming it squarely at real-world coding-agent workflows rather than general chat.",
-            "id": "86ba23af-e985-47b1-a2c4-d40df52e9b22"
-          },
-          {
-            "prompt": "What tradeoff did early coverage of Grok 4.5 highlight?",
-            "options": [
-              "It's slower than every competitor",
-              "It has no API access",
-              "It shows higher hallucination rates despite its speed and price advantage",
-              "It cannot be used for coding tasks"
-            ],
-            "correctIndex": 2,
-            "explanation": "Independent reports noted Grok 4.5's near-frontier agentic speed came with higher hallucination rates than some top models — a real cost of the price/speed tradeoff.",
-            "id": "43f2204e-20dd-4c55-972a-9e10e3913883"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing Grok 4.5 — xAI",
-          "url": "https://x.ai/news/grok-4-5",
-          "id": "1977c506-a3de-46ad-95d4-d36b03523728"
-        }
-      ],
-      "id": "3f2cce92-a398-4b69-aa0e-62da5369c0d2",
-      "publishedDate": "2026-07-16T12:43:39Z"
     }
   ]
 }
