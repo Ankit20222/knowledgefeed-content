@@ -1,6 +1,189 @@
 {
   "posts": [
     {
+      "title": "FlashAttention: The Kernel Trick That Made Long Context Affordable",
+      "subtitle": "Same exact attention output, a fraction of the GPU memory traffic — because it never writes the full N×N score matrix to memory.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "flashattention",
+        "attention",
+        "gpu",
+        "inference",
+        "transformers",
+        "llms"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "bolt.fill",
+      "summary": "FlashAttention rewrites the attention computation to be IO-aware: instead of materializing the full N×N attention matrix in slow GPU memory, it tiles the computation through fast on-chip SRAM and uses an online softmax to produce mathematically identical output. The win comes from cutting memory traffic, not FLOPs — which is why it shipped as a drop-in, exact speedup rather than an approximation.",
+      "slides": [
+        {
+          "id": "3682c67d-9f24-4459-8f3c-b5b6a4d07378",
+          "kind": "cover",
+          "title": "The Attention Bottleneck Was Never About Math",
+          "body": "GPUs are compute-rich but memory-bandwidth-poor. Standard attention wastes most of its wall-clock time not computing scores, but shuttling a full N×N matrix between fast on-chip memory and slow off-chip HBM. FlashAttention fixes the memory pattern, not the math.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "c139a45b-0130-4279-b051-db8bc20c33c8",
+          "kind": "problem",
+          "title": "Standard Attention Is Memory-Bound, Not Compute-Bound",
+          "body": "The textbook implementation computes QK^T, writes the full N×N score matrix to HBM, reads it back for softmax, writes the normalized scores back, then reads them again to multiply by V.",
+          "bullets": [
+            "That N×N matrix means O(N²) memory just to hold attention scores — a 16K-token sequence needs a matrix with 256 million entries, roughly 512MB per head/layer in fp16",
+            "GPUs can do far more FLOPs/sec than they can move bytes/sec between HBM and on-chip SRAM, so an algorithm that reads/writes the score matrix multiple times spends most of its time waiting on memory, not computing",
+            "This is why naive attention underutilizes a GPU's real FLOP budget even though the math is 'only' O(N²) — the bottleneck is bandwidth, not arithmetic"
+          ],
+          "symbol": "arrow.up.arrow.down",
+          "table": null
+        },
+        {
+          "id": "2a48ef94-7dd1-4ca2-882c-8d959041dd69",
+          "kind": "solution",
+          "title": "Tile the Computation, Never Materialize the Full Matrix",
+          "body": "FlashAttention splits Q, K, V into blocks that fit in the GPU's fast on-chip SRAM, computes attention for each block pair there, and only ever writes the final output back to HBM — the N×N matrix is never fully formed anywhere.",
+          "bullets": [
+            "For each block of queries, it loops over blocks of keys/values, computing partial attention scores and accumulating a running (unnormalized) output entirely in SRAM",
+            "This is kernel fusion: matrix multiply, mask, softmax, and the second matrix multiply all happen inside one GPU kernel instead of four separate ones that each round-trip through HBM",
+            "FLOPs are roughly unchanged — this is not an approximation. The win comes entirely from cutting how many bytes move between memory tiers"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "0282e88e-fe33-43cf-91ba-81441e30fcd3",
+          "kind": "concept",
+          "title": "Online Softmax Is What Makes Tiling Possible",
+          "body": "Softmax needs a row's full max and sum to normalize — which seems to require seeing the whole row first. Online softmax rescales a running estimate as each new block arrives instead.",
+          "bullets": [
+            "For each new key block: update the running max m, rescale the existing accumulated output by exp(m_old − m_new), add the new block's contribution, update the running sum — one pass, no second look at earlier blocks",
+            "This numerically-stable-softmax trick, repurposed for tiling, is the reason FlashAttention needs only O(N) extra memory instead of O(N²)",
+            "Worked example: processing a 4,096-token sequence in blocks of 256 means 16 sequential block updates per query block, each touching only a 256×256 tile instead of the full 4096×4096 matrix"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "9d9b7a21-d57f-486c-9f65-8ad0d7bd853f",
+          "kind": "comparison",
+          "title": "IO Complexity Is the Real Difference",
+          "body": "The paper's core claim isn't a novel attention formula — it's a different accounting of how many bytes move between HBM and SRAM.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "HBM traffic",
+              "Attention matrix materialized?"
+            ],
+            "rows": [
+              [
+                "Standard attention",
+                "O(N²) — full matrix read/written repeatedly",
+                "Yes, in full"
+              ],
+              [
+                "FlashAttention",
+                "O(N²/M), M = SRAM block size — far fewer round-trips",
+                "No — only per-tile, discarded after use"
+              ],
+              [
+                "Sparse / low-rank approximate attention",
+                "Reduced, but trades exactness for speed",
+                "Approximated, not exact"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "4e3b9a63-45e4-45d2-abe5-3857c2813b92",
+          "kind": "example",
+          "title": "What It Looks Like in Practice",
+          "body": "The original FlashAttention paper (Dao et al., 2022) reported training BERT-large faster than the MLPerf 1.1 speed record and GPT-2 training roughly 3x faster than a standard HuggingFace baseline at matched accuracy — because exact attention with less memory traffic also unlocked longer training sequences without running out of memory.",
+          "bullets": [
+            "Needing O(N) memory instead of O(N²) meant models could train on much longer context windows without hitting an out-of-memory wall — memory savings translate directly into context-length headroom",
+            "FlashAttention-2 (2023) restructured the parallelization across thread blocks and warps to better saturate modern GPUs, roughly doubling throughput again over the original",
+            "It shipped as a drop-in kernel — same attention output, same model weights, just a faster op — which is why it was adopted broadly across training and inference stacks rather than requiring architecture changes"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "52dc3331-413e-4cb9-a2d3-2862030e4d53",
+          "kind": "problem",
+          "title": "Where It Doesn't Help — or Adds Complexity",
+          "body": null,
+          "bullets": [
+            "The backward pass recomputes some intermediate values instead of storing them, trading extra compute for lower memory use — a deliberate tradeoff, not a free lunch",
+            "Gains shrink on very short sequences, where the N×N matrix already fit comfortably and memory traffic was never the real bottleneck",
+            "It's a hardware-aware kernel, not a model architecture — it needs re-tuning for each GPU generation and each attention variant (causal masking, sliding window, GQA) rather than being architecture-agnostic",
+            "It doesn't reduce FLOPs, so on compute-bound workloads (very small batch, very short sequence) the speedup shrinks or disappears entirely"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d5e8029d-f134-4e35-972f-eca18d066769",
+          "kind": "takeaways",
+          "title": "Why This Became Table Stakes for Every LLM Stack",
+          "body": null,
+          "bullets": [
+            "FlashAttention proved the biggest wins in transformer speed weren't in better math, but in respecting the GPU's memory hierarchy — an IO-aware rewrite that changes zero model behavior",
+            "Because the output is mathematically exact, it required no retraining, no accuracy tradeoff, and no architecture change to adopt — a rare free lunch in systems work",
+            "It's now a default in virtually every serious training and inference stack (PyTorch, vLLM, Hugging Face Transformers), stacked alongside KV cache and PagedAttention as one of the foundational efficiency tricks behind modern LLM serving"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ed43ad83-327e-4ff1-b130-b9c3135fab45",
+            "prompt": "What specifically makes standard attention slow on GPUs, according to FlashAttention's core insight?",
+            "options": [
+              "The QK^T matrix multiply requires too many floating point operations",
+              "It repeatedly reads and writes the full N×N attention matrix between fast on-chip SRAM and slow HBM memory",
+              "Softmax cannot be computed in parallel across tokens",
+              "GPUs cannot store attention weights in any form of memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "FlashAttention's insight is that attention is memory-bandwidth-bound, not compute-bound — the bottleneck is moving the N×N score matrix in and out of HBM multiple times, not the arithmetic itself."
+          },
+          {
+            "id": "edb0764a-30ed-401a-a834-9b98250f9683",
+            "prompt": "What technique lets FlashAttention compute softmax correctly without ever seeing a full row of scores at once?",
+            "options": [
+              "Approximating softmax with a cheaper polynomial function",
+              "Precomputing softmax values offline before training",
+              "Online (running) softmax, which rescales an accumulated running max and sum as each new block of keys arrives",
+              "Skipping normalization entirely and renormalizing only at the very end of training"
+            ],
+            "correctIndex": 2,
+            "explanation": "Online softmax keeps a running max and sum, rescaling the accumulated output each time a new key block arrives — mathematically equivalent to standard softmax but computable one tile at a time."
+          },
+          {
+            "id": "aa4601fd-3d47-4a9b-80cd-5b1d1e57ecf7",
+            "prompt": "Which of these is a genuine tradeoff or limitation of FlashAttention?",
+            "options": [
+              "It produces approximate, slightly less accurate attention outputs",
+              "It requires retraining existing models from scratch on new data",
+              "Its backward pass recomputes some values instead of storing them, trading extra compute for lower memory use, and its kernels need re-tuning per GPU generation",
+              "It only works for encoder-only models like BERT"
+            ],
+            "correctIndex": 2,
+            "explanation": "FlashAttention is exact, not approximate, and needs no retraining — it's a drop-in kernel. But it does trade backward-pass compute for memory savings, and as a hardware-aware kernel it needs tuning per GPU architecture and attention variant."
+          }
+        ]
+      },
+      "references": [],
+      "id": "5767e8d4-6899-4808-82db-36b66ecbdea4",
+      "publishedDate": "2026-07-25T12:41:01Z"
+    },
+    {
       "title": "Claude Opus 5: Fable-5-Level Intelligence, Half the Price",
       "subtitle": "Anthropic's new default model matches near-frontier intelligence while keeping Opus 4.8 pricing and adding a 2.5x-faster mode.",
       "category": "AI News",
@@ -11158,184 +11341,6 @@
           "id": "64ecc58b-55f0-4104-8d52-40f4da06460d",
           "title": "MCG-NJU/VideoChat3 (GitHub)",
           "url": "https://github.com/MCG-NJU/VideoChat3"
-        }
-      ],
-      "publishedDate": "2026-07-17T18:44:29Z"
-    },
-    {
-      "id": "472e9755-3c94-4f9f-b249-672b2830ed4f",
-      "title": "Kimi K3: Moonshot's 2.8T Open Model Chases the Frontier",
-      "subtitle": "The largest open-weight model yet trades a hallucination spike for a frontend-coding lead — and triples its predecessor's price.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "kimi-k3",
-        "moonshotai",
-        "open-weights",
-        "mixture-of-experts",
-        "long-context",
-        "china-ai"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "moon.stars.fill",
-      "summary": "On July 16, 2026, Moonshot AI released Kimi K3 via API: a 2.8-trillion-parameter mixture-of-experts model (16-of-896 experts active) with a 1M-token context window, positioned against Claude Fable 5, Opus 4.8, and GPT-5.6 Sol. It tops LMArena's Frontend Code Arena but only lands mid-pack on general chat, and its accuracy gains come with a matching jump in hallucination rate. Full open weights are promised by July 27, 2026.",
-      "body": null,
-      "slides": [
-        {
-          "id": "e178abaa-b742-404b-86c3-120bb133ff82",
-          "kind": "cover",
-          "title": "The Largest Open-Weight Model Yet — Almost",
-          "body": "Moonshot AI (Beijing) released Kimi K3 via API on July 16, 2026: a 2.8-trillion-parameter mixture-of-experts model the company positions against Anthropic's Fable 5 and Claude Opus 4.8, and OpenAI's GPT-5.6 Sol.",
-          "bullets": [
-            "2.8T total parameters, but only 16 of 896 experts activate per token — roughly 50B active parameters, so inference cost tracks a much smaller model",
-            "Native multimodal input and a 1,048,576-token (1M) context window",
-            "Weights aren't out yet at launch — Moonshot committed to a full open-weight release by July 27, 2026"
-          ],
-          "symbol": "moon.stars.fill",
-          "table": null
-        },
-        {
-          "id": "35d3dae4-51ba-4e0d-b5c3-9f6ea2e0fcf9",
-          "kind": "solution",
-          "title": "Two Attention Tricks Behind the Efficiency Claim",
-          "body": "Moonshot attributes K3's reported ~2.5x scaling efficiency over its K2 generation to two architectural changes plus a new expert-routing framework.",
-          "bullets": [
-            "Kimi Delta Attention (KDA): a hybrid linear-attention mechanism Moonshot reports enables markedly faster decoding than standard attention at long context",
-            "Attention Residuals (AttnRes): lets a layer selectively pull representations from earlier depths instead of accumulating every previous state, reported to improve training efficiency by roughly 25% over K2.6",
-            "Paired with a \"Stable LatentMoE\" routing framework for the 16-of-896 expert selection that keeps the huge total parameter count cheap to run"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "f878a45e-4a0e-4d04-8cd6-ca4da43b4809",
-          "kind": "comparison",
-          "title": "Frontier Coding, Mid-Pack Chat, a Real Hallucination Cost",
-          "body": "Independent trackers (LMArena, Artificial Analysis) put K3 at the top of frontend-coding leaderboards but only mid-pack on general chat — and its jump in answer accuracy comes with a jump in confidently wrong answers.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Kimi K3",
-              "vs. K2.6 / rivals"
-            ],
-            "rows": [
-              [
-                "LMArena Frontend Code Arena",
-                "#1, ~1,679 points",
-                "17-place jump over Kimi K2.6"
-              ],
-              [
-                "LMArena Text Arena",
-                "Mid-pack (~#6-9)",
-                "No leap over frontier chat rivals"
-              ],
-              [
-                "AA-Omniscience accuracy",
-                "~46%",
-                "Up from K2.6's ~33%"
-              ],
-              [
-                "AA-Omniscience hallucination rate",
-                "~51%",
-                "Up from K2.6's ~39%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "40e1758e-71b5-4e5c-87d2-86baef5cec20",
-          "kind": "example",
-          "title": "Worked Example: Is K3 Worth the Price Jump?",
-          "body": "A team paying K2.6's per-token rate for a coding agent has to decide whether K3's frontend-coding lead justifies switching.",
-          "bullets": [
-            "K3 is priced at $3/million input tokens and $15/million output tokens (plus $0.30/million for cached input) — roughly triple K2.6's pricing, per independent trackers",
-            "For a coding-agent workload where the #1 Frontend Code Arena result is the deciding factor, the price jump can pay for itself in fewer retries and less human cleanup",
-            "For a general knowledge-QA workload, the hallucination-rate jump (~39%→~51%) means outputs need more verification, not less — the more accurate model is also the more confidently wrong one on that benchmark"
-          ],
-          "symbol": "dollarsign.circle.fill",
-          "table": null
-        },
-        {
-          "id": "6610aa48-57b0-4850-b2a4-d773acd395fb",
-          "kind": "concept",
-          "title": "Read the Weights Release Date Carefully",
-          "body": "\"Open-weight\" claims at launch describe intent, not something you can download and audit on day one.",
-          "bullets": [
-            "API-first, weights-later is now a common release pattern — don't assume \"open-weight model\" means the weights are available the day it's announced",
-            "Benchmark numbers this early come primarily from third-party leaderboards rather than Moonshot's own technical report — treat any specific score as provisional until that lands",
-            "The hallucination-rate increase is the clearest reason to pilot K3 on a narrow, verifiable task (like coding, where output can be tested) before trusting it on open-ended factual queries"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "dc88bccb-52ab-435e-bf12-567b02c0c17a",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Kimi K3 is a 2.8T-parameter MoE model (16-of-896 experts active, ~50B active) from Moonshot AI, released via API on July 16, 2026, with full open weights promised for July 27",
-            "Two new mechanisms — Kimi Delta Attention (hybrid linear attention) and Attention Residuals — are Moonshot's explanation for a claimed ~2.5x scaling-efficiency gain over its K2 generation",
-            "It tops LMArena's Frontend Code Arena but sits mid-pack on general chat, and its accuracy gains on AA-Omniscience come with a matching jump in hallucination rate",
-            "At roughly 3x K2.6's price, the numbers argue for using it where output is checkable (coding) rather than where you'd have to trust it unverified"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "7fe53aac-553d-4c1f-a7ce-25000f2bc099",
-            "prompt": "Roughly how many of Kimi K3's 896 experts are active for any given token?",
-            "options": [
-              "All 896",
-              "16",
-              "448 (half)",
-              "1"
-            ],
-            "correctIndex": 1,
-            "explanation": "K3 uses a sparse MoE routing scheme (16-of-896 experts, ~50B active parameters out of 2.8T total), which is why its inference cost tracks a much smaller dense model despite the huge total parameter count."
-          },
-          {
-            "id": "ef215f53-9f2b-471d-8cf5-4c0d37f5c79e",
-            "prompt": "What's the notable tradeoff in K3's benchmark results vs. its predecessor K2.6?",
-            "options": [
-              "Reported accuracy rose, but its reported hallucination rate rose alongside it",
-              "Accuracy fell while hallucination also fell",
-              "Both accuracy and hallucination rate stayed flat",
-              "K3 wasn't evaluated on any comparable benchmark"
-            ],
-            "correctIndex": 0,
-            "explanation": "K3 answers more questions correctly on AA-Omniscience, but also states more wrong answers confidently — a real tradeoff, not an unambiguous upgrade, especially for workflows where trustworthiness matters more than raw accuracy."
-          },
-          {
-            "id": "7c6753d0-9f92-4cf4-a24e-17a9d7ea85ea",
-            "prompt": "As of its July 16, 2026 launch, what's true about Kimi K3's \"open-weight\" status?",
-            "options": [
-              "Full weights were downloadable immediately at launch",
-              "It's API-only with no plan to ever release weights",
-              "It launched via API first, with full open weights promised for July 27, 2026 — about 11 days later",
-              "It's closed-source and Moonshot has not commented on weights"
-            ],
-            "correctIndex": 2,
-            "explanation": "K3 shipped API-first on July 16; Moonshot committed to releasing the full open weights by July 27, 2026. Until that date, \"open-weight\" describes a promise, not something available to download and audit."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "f165e555-4ba0-4157-bbc0-e44cc58a123e",
-          "title": "Kimi K3 2.8T-A50B: the largest open model ever released (AI News)",
-          "url": "https://www.latent.space/p/ainews-kimi-k3-28t-a50b-the-largest"
-        },
-        {
-          "id": "2aed348f-9d2f-4f00-9ded-a0b963b24209",
-          "title": "Kimi's open model K3 nears GPT-5.6 Sol and Fable 5",
-          "url": "https://the-decoder.com/kimis-open-model-k3-nears-gpt-5-6-sol-and-fable-5-while-signaling-the-end-of-super-cheap-chinese-ai/"
         }
       ],
       "publishedDate": "2026-07-17T18:44:29Z"
