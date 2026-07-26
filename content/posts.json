@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "id": "9cf6acf7-e935-4fb5-a26e-e7c9a59c8f26",
+      "title": "Grouped-Query Attention: The Middle Ground on KV Cache Size",
+      "subtitle": "Why Llama 2 70B gives 64 query heads only 8 sets of keys and values",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "gqa",
+        "kv-cache",
+        "transformers",
+        "inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.3.group.fill",
+      "summary": "Grouped-Query Attention (GQA) sits between multi-head attention (one key/value pair per query head, best quality) and multi-query attention (one shared key/value pair for all query heads, smallest cache). By clustering query heads into groups that each share a single KV head, GQA cuts KV cache size and memory-bandwidth cost by the grouping factor while losing under a point of benchmark quality — which is why Llama 2 70B, Mistral, and most modern open models use it instead of full multi-head attention.",
+      "body": null,
+      "slides": [
+        {
+          "id": "1c6d8d90-3aec-4f8b-9c29-359b37510101",
+          "kind": "cover",
+          "title": "Not Every Query Head Needs Its Own Keys and Values",
+          "body": "Standard multi-head attention gives every attention head its own key and value projections. GQA asks: what if several query heads shared one set of keys and values instead?",
+          "bullets": [],
+          "symbol": "rectangle.3.group.fill",
+          "table": null
+        },
+        {
+          "id": "bdd1851c-a307-4af8-9320-b973d78c24a9",
+          "kind": "problem",
+          "title": "The KV Cache Scales With Every Head You Add",
+          "body": "During autoregressive decoding, the model caches a key and value vector per token per head per layer so it doesn't recompute them. That cache is what actually limits how much context and how many concurrent requests a GPU can serve.",
+          "bullets": [
+            "Cache size = 2 (K and V) x num_kv_heads x head_dim x num_layers x tokens x bytes_per_value — linear in the number of KV heads",
+            "In classic multi-head attention (MHA), num_kv_heads equals num_query_heads, so a 64-head model caches 64 separate K/V pairs per token per layer",
+            "On long contexts or large batch sizes, this cache — not the model weights — becomes the memory bottleneck, and moving it in and out of HBM is what caps decode throughput",
+            "Multi-Query Attention (MQA, Shazeer 2019) is the extreme fix: collapse to a single shared KV head for all query heads, but that can measurably hurt quality"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9c55187d-6e36-4aa1-84ef-287d1acd95d2",
+          "kind": "solution",
+          "title": "Cluster Query Heads Into Groups That Share One KV Head",
+          "body": "GQA (Ainslie et al., Google Research, 2023) generalizes MQA: instead of one shared KV head for everything, split the query heads into G groups, and give each group its own single KV head. G=num_query_heads recovers plain MHA; G=1 recovers MQA.",
+          "bullets": [
+            "Grouping factor = num_query_heads / num_kv_heads — e.g. 64 query heads with 8 KV heads means groups of 8 query heads sharing one K/V pair",
+            "Cache size shrinks by exactly that grouping factor versus MHA, since you're storing num_kv_heads worth of K/V instead of num_query_heads worth",
+            "You can 'uptrain' an existing MHA checkpoint into a GQA model by mean-pooling each group's original KV heads into one, then continuing pretraining on ~5% of the original compute — no need to train from scratch",
+            "Empirically, GQA lands close to MHA quality while matching MQA's decode speed — it's a Pareto improvement over the MHA/MQA extremes, not just a compromise"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "5e78cb0b-6028-4163-a132-90e474d30953",
+          "kind": "example",
+          "title": "Llama 2 70B and Mistral 7B Made Different Grouping Choices",
+          "body": "Both ship GQA, but the grouping factor — and therefore the cache savings — differs based on how aggressively each team wanted to trade quality for memory.",
+          "bullets": [
+            "Llama 2 70B: 64 query heads, 8 KV heads -> grouping factor 8, an 8x smaller KV cache than full MHA, at under 1% cost on most benchmarks versus the MHA baseline",
+            "Mistral 7B: 32 query heads, 8 KV heads (head_dim 128) -> grouping factor 4, a 4x smaller cache, combined with a 4096-token sliding window to cut memory further still",
+            "8 KV heads is also a convenient number for 8-way tensor parallelism: each GPU shard owns exactly one KV head, so the cache splits cleanly across devices",
+            "Smaller open models often skip GQA entirely (num_kv_heads = num_query_heads) because their KV cache was never the bottleneck at their target context length"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "c4d755ca-40c1-486d-95d6-2990c511d83c",
+          "kind": "comparison",
+          "title": "MHA, GQA, and MQA Trade Cache Size for Quality",
+          "body": "The grouping factor is the one knob that moves you along this curve.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Scheme",
+              "KV heads",
+              "Relative cache size",
+              "Quality vs MHA"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "= num query heads",
+                "1x (largest)",
+                "Baseline (best)"
+              ],
+              [
+                "GQA (e.g. Llama 2 70B)",
+                "num query heads / 8",
+                "1/8x",
+                "~Matches MHA (<1% gap)"
+              ],
+              [
+                "MQA",
+                "1 (shared by all)",
+                "Smallest",
+                "Noticeably lower on some evals"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "c26788cc-b2ce-4d8d-8bd2-a61e4831f6af",
+          "kind": "concept",
+          "title": "Pitfalls: You're Committing to a Grouping Factor Up Front",
+          "body": "GQA isn't a free knob you tune after the fact — the choice shapes both training and every future deployment of the model.",
+          "bullets": [
+            "The grouping factor is baked into the architecture at (pre)training time; changing it later means re-uptraining, not a config flag",
+            "Too aggressive a grouping factor (too few KV heads) starts to show up as real quality loss, especially on tasks sensitive to fine-grained retrieval within long context",
+            "GQA reduces memory-bandwidth cost, not compute — the query-side matmuls are unchanged, so it mainly helps memory-bound decode, not compute-bound prefill",
+            "When NOT to bother: short-context, low-concurrency deployments where the KV cache was never close to the memory ceiling gain little from GQA and can keep plain MHA's slightly better quality"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "aefedb9b-adbc-4be6-8409-e525c83df6c9",
+          "kind": "takeaways",
+          "title": "GQA Is Why Modern Open Models Serve Long Context Affordably",
+          "body": "It's a small architectural change with an outsized effect on serving cost.",
+          "bullets": [
+            "GQA interpolates between MHA (best quality, biggest cache) and MQA (smallest cache, quality risk) by giving groups of query heads one shared KV head each",
+            "Cache size drops by exactly the grouping factor — Llama 2 70B's 8x reduction is why it can serve much longer contexts per GPU than an equivalent MHA model",
+            "You can retrofit GQA onto an existing MHA checkpoint via mean-pooling KV heads plus a short uptraining run, instead of training from scratch",
+            "It composes with other cache tricks — PagedAttention and quantized KV caches both still apply on top of GQA's already-smaller cache"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b2376762-b8ab-402b-a0dd-c6aff8e784df",
+            "prompt": "What does Grouped-Query Attention actually change compared to standard multi-head attention?",
+            "options": [
+              "It removes the KV cache entirely",
+              "It clusters query heads into groups that each share one key/value head, instead of every query head having its own",
+              "It increases the number of key/value heads beyond the number of query heads",
+              "It replaces attention with a convolution"
+            ],
+            "correctIndex": 1,
+            "explanation": "GQA keeps the number of query heads the same but reduces the number of distinct KV heads, grouping several query heads onto one shared key/value pair — shrinking the cache without touching the query-side computation."
+          },
+          {
+            "id": "47d36c6f-6fc1-4e26-bcc8-f6675cd55ef2",
+            "prompt": "Llama 2 70B uses 64 query heads and 8 KV heads. Roughly how much smaller is its KV cache than an equivalent full multi-head attention model?",
+            "options": [
+              "About 2x smaller",
+              "About 8x smaller",
+              "About 64x smaller",
+              "The same size — GQA doesn't affect cache size"
+            ],
+            "correctIndex": 1,
+            "explanation": "The cache shrinks by the grouping factor, which is num_query_heads / num_kv_heads = 64 / 8 = 8. Cache size scales with the number of KV heads, not query heads, so going from 64 KV heads (MHA) to 8 (GQA) is an 8x reduction."
+          },
+          {
+            "id": "41ea6b31-54c0-451c-a9dd-1d5a2bc2b57a",
+            "prompt": "Why might a team choose plain multi-head attention (MHA) over GQA for a given model?",
+            "options": [
+              "MHA is always faster to train",
+              "GQA cannot be implemented on GPUs",
+              "If the deployment is short-context and low-concurrency, the KV cache was never the bottleneck, so MHA's slightly better quality can be worth keeping",
+              "MHA uses less GPU memory than GQA"
+            ],
+            "correctIndex": 2,
+            "explanation": "GQA trades a small amount of quality for a smaller, cheaper-to-serve KV cache. If your deployment never gets close to the memory ceiling that cache size would cause, that trade isn't worth making — MHA's full quality comes for free in that regime."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "9d47a38e-b4c3-4c26-b960-73fbdb9b9952",
+          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)",
+          "url": "https://arxiv.org/abs/2305.13245"
+        }
+      ],
+      "publishedDate": "2026-07-26T18:40:31Z"
+    },
+    {
       "id": "74bda738-8595-4874-9b8c-f80b3e043248",
       "title": "Quantization: Fewer Bits Per Weight, Almost the Same Model",
       "subtitle": "How LLMs shrink 4x in memory without losing their minds",
@@ -11142,182 +11326,6 @@
         }
       ],
       "id": "3b6dbb32-5832-4729-8e5c-1537d7182e39",
-      "publishedDate": "2026-07-18T12:46:44Z",
-      "body": null
-    },
-    {
-      "title": "Robostral Navigate: One Camera Is Enough to Steer a Robot",
-      "subtitle": "Mistral's first robotics model beats multi-sensor rivals using nothing but a single RGB feed",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "robotics",
-        "mistral",
-        "vision-language-action",
-        "navigation",
-        "embodied-ai"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "camera.viewfinder",
-      "summary": "Mistral AI shipped Robostral Navigate, an 8B-parameter model that lets wheeled, legged, and flying robots navigate unfamiliar spaces from a single RGB camera and plain-language instructions. Trained entirely in simulation on ~400,000 paths across ~6,000 virtual environments, it beats both single-camera and multi-sensor baselines on the R2R-CE benchmark — but ships as an enterprise-only, proprietary model, not open weights.",
-      "slides": [
-        {
-          "id": "fff4a43b-af8a-4688-8540-4a8b2f4387d2",
-          "kind": "cover",
-          "title": "Mistral's First Robot Model Skips the Sensor Stack",
-          "body": "Robostral Navigate steers wheeled, legged, and flying robots through spaces they've never seen, using one RGB camera and a plain-language instruction — no depth sensor, no LIDAR, no multi-camera rig.",
-          "bullets": [],
-          "symbol": "camera.viewfinder",
-          "table": null
-        },
-        {
-          "id": "f6e60599-4bb2-43d9-bf7e-274a041ad8df",
-          "kind": "problem",
-          "title": "Robot Navigation Usually Means Expensive Hardware",
-          "body": null,
-          "bullets": [
-            "Most vision-language navigation systems lean on depth sensors, LIDAR, or multiple cameras to build a reliable 3D understanding of the space",
-            "That hardware adds cost, weight, and calibration overhead — a real constraint for cheaper wheeled robots or small drones",
-            "Sim-to-real transfer is notoriously hard: a policy trained in simulation often falls apart on real camera noise, lighting, and clutter",
-            "The open question: can a robot navigate purely from what a single, ordinary camera sees, and still hold up against sensor-rich baselines?"
-          ],
-          "symbol": "questionmark.diamond.fill",
-          "table": null
-        },
-        {
-          "id": "ca07b9a6-3233-47ba-be0d-276ca7d4d9e0",
-          "kind": "solution",
-          "title": "An 8B Model, Trained Entirely in Simulation",
-          "body": "Robostral Navigate is an 8B-parameter model built in-house by Mistral, taking a single RGB stream plus a language instruction and outputting navigation commands.",
-          "bullets": [
-            "Training data: roughly 400,000 recorded navigation paths across about 6,000 distinct simulated environments — no real-world data used in training",
-            "Works across robot embodiments: wheeled, legged, and flying platforms all steer from the same model",
-            "Commands are plain language ('go to the kitchen and stop near the fridge'), not coordinates or waypoints",
-            "The bet: a model that never sees real pixels during training can still generalize to real cameras at deployment, purely from monocular RGB"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "bdc987ee-d83d-4ff4-8ce7-9cb8f0eaad2c",
-          "kind": "example",
-          "title": "Worked Example: Navigating a Space It's Never Seen",
-          "body": "Drop the robot into an unfamiliar building and give it a plain-language goal.",
-          "bullets": [
-            "Instruction: 'go to the kitchen and stop near the fridge'",
-            "The model reads the live monocular RGB stream frame by frame, builds an implicit sense of layout and progress toward the goal, and issues movement commands",
-            "No pre-built map, no depth channel, no waypoint list — just camera plus language, continuously, until the goal is reached or the episode ends",
-            "This is evaluated on R2R-CE, a continuous 3D navigation benchmark (harder than the original graph-based Room-to-Room task, since the robot moves freely rather than hopping between fixed viewpoints)"
-          ],
-          "symbol": "location.north.line.fill",
-          "table": null
-        },
-        {
-          "id": "b1a6039b-08b0-4d99-aa93-37c31c3fd028",
-          "kind": "comparison",
-          "title": "Beating Multi-Sensor Rigs With Fewer Sensors",
-          "body": "On R2R-CE validation-unseen, Mistral reports Robostral Navigate at 76.6% success — 9.7 points above the best single-camera system and 4.5 points above the best system using depth or multiple cameras. On validation-seen it reaches 79.4%.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "System",
-              "R2R-CE Validation-Unseen Success"
-            ],
-            "rows": [
-              [
-                "Best single-camera baseline",
-                "~66.9% (approx., derived from reported gap)"
-              ],
-              [
-                "Best multi-sensor baseline (depth/multi-camera)",
-                "~72.1% (approx., derived from reported gap)"
-              ],
-              [
-                "Robostral Navigate (single RGB camera)",
-                "76.6%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "cf4cc7c4-28be-4572-afcd-188b953117c5",
-          "kind": "problem",
-          "title": "The Catch: Proprietary, Simulation-Only Training",
-          "body": null,
-          "bullets": [
-            "Unlike most of Mistral's language models, Robostral Navigate ships under a proprietary license — enterprise access only, no open weights on release",
-            "Trained purely on simulated environments, so the real-world sim-to-real gap in cluttered, dynamic, or poorly-lit spaces is still an open question outside Mistral's own reporting",
-            "A single RGB camera has no direct depth signal, which is a real failure mode in low-light, glass, or texture-less environments where depth sensors would normally help",
-            "When not to reach for it: safety-critical navigation (warehouses with fast-moving forklifts, outdoor autonomous delivery) where certified redundant depth sensing is a hard requirement, not a nice-to-have"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "689b7bc9-3455-4409-9588-7f18d25042cc",
-          "kind": "takeaways",
-          "title": "Why This Release Matters",
-          "body": null,
-          "bullets": [
-            "It's Mistral's first robotics model — a new front for a company best known for open-weight LLMs",
-            "It's a real engineering result: beating sensor-rich baselines with less hardware lowers the cost floor for deploying navigating robots",
-            "It reinforces a 2026 trend — foundation-model labs moving from chat models into physical/embodied AI",
-            "Enterprise-only access means most developers will only get to evaluate it through Mistral's hosted offering, not by downloading weights"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8a794769-16ba-4214-9364-fa9f7627c818",
-            "prompt": "What's unusual about Robostral Navigate's sensor requirements compared to typical robot navigation systems?",
-            "options": [
-              "It requires LIDAR plus stereo cameras",
-              "It navigates using only a single RGB camera, no depth sensor or multi-camera rig",
-              "It needs a pre-built 3D map of every environment",
-              "It only works indoors with fixed cameras"
-            ],
-            "correctIndex": 1,
-            "explanation": "Most vision-language navigation systems lean on depth sensors or multiple cameras. Robostral Navigate is trained to navigate from a single monocular RGB stream, which is the whole point of the release — it beats sensor-richer baselines with less hardware."
-          },
-          {
-            "id": "b55dacf6-24ef-4dc7-b76f-960a8e401568",
-            "prompt": "Where did Robostral Navigate's training data come from?",
-            "options": [
-              "Real-world robot footage collected by Mistral's field team",
-              "Roughly 400,000 recorded paths across about 6,000 simulated environments, with no real-world training data",
-              "User-submitted videos from the Le Chat app",
-              "A single very large real-world warehouse dataset"
-            ],
-            "correctIndex": 1,
-            "explanation": "Robostral Navigate was trained entirely in simulation — about 400,000 recorded navigation paths across roughly 6,000 distinct virtual spaces — betting on sim-to-real transfer rather than real-world data collection."
-          },
-          {
-            "id": "54903465-ca11-4392-a69b-3a7a87a9cf8f",
-            "prompt": "Is Robostral Navigate available as open weights, the way many of Mistral's language models are?",
-            "options": [
-              "Yes, it's fully open-weight under Apache 2.0",
-              "No — at launch it's a proprietary model available only through enterprise access",
-              "It's open-weight but only for academic researchers",
-              "It's open-weight but requires a paid HuggingFace subscription"
-            ],
-            "correctIndex": 1,
-            "explanation": "Unlike much of Mistral's LLM lineup, Robostral Navigate shipped as a proprietary, enterprise-access model — a notable departure from the open-weight release pattern the company is best known for."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "864a8cad-4d6d-479a-9111-6ae9c32675ec",
-          "title": "Robostral Navigate: single-camera AI navigation | Mistral AI",
-          "url": "https://mistral.ai/news/robostral-navigate/"
-        }
-      ],
-      "id": "e2697754-a1e0-4731-bd15-f24d2b5b747c",
       "publishedDate": "2026-07-18T12:46:44Z",
       "body": null
     }
