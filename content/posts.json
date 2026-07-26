@@ -1,6 +1,181 @@
 {
   "posts": [
     {
+      "id": "74bda738-8595-4874-9b8c-f80b3e043248",
+      "title": "Quantization: Fewer Bits Per Weight, Almost the Same Model",
+      "subtitle": "How LLMs shrink 4x in memory without losing their minds",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "int8",
+        "gptq",
+        "awq",
+        "inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.down.right.and.arrow.up.left",
+      "summary": "Quantization stores model weights in fewer bits (int8 or int4 instead of fp16) to cut memory and speed up inference, at the cost of some precision. Naive rounding breaks on the small number of outlier activation channels every LLM has, so real methods like LLM.int8(), GPTQ, and AWQ either isolate outliers or compensate for the error layer-by-layer. The payoff: a 7B model that needs 14GB in fp16 fits in roughly 3.5GB at int4, often with only a small, measurable quality cost.",
+      "body": null,
+      "slides": [
+        {
+          "id": "4bd634c6-eaa1-46ab-b7b4-095dec206977",
+          "kind": "cover",
+          "title": "Every Weight Is a Number. Quantization Asks: How Few Bits Does It Need?",
+          "body": "Models are trained in 16 or 32-bit floating point. Quantization stores the same weights in 8 or even 4 bits, shrinking memory and speeding up matrix multiplies — the technique behind every model you've run on a laptop or phone.",
+          "bullets": [],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null
+        },
+        {
+          "id": "2e14b5ba-7221-4b17-8cf2-e3de8d3e02ec",
+          "kind": "problem",
+          "title": "fp16 Weights Are the Single Biggest Cost of Serving an LLM",
+          "body": "Every parameter in fp16 costs 2 bytes, before you even add the KV cache or activation memory needed at inference time.",
+          "bullets": [
+            "A 7B-parameter model in fp16 is ~14GB of weights alone — already close to a single consumer GPU's VRAM",
+            "A 70B model is ~140GB, requiring multiple datacenter GPUs just to hold the weights",
+            "Bigger weights also mean slower inference: on memory-bound decode steps, moving weights from HBM to compute is the bottleneck, not the math",
+            "Halving or quartering the bytes per weight directly cuts both memory footprint and memory-bandwidth-bound latency"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "636b60e6-5240-4cf3-92f1-13f4e1cdf3f8",
+          "kind": "solution",
+          "title": "Round Weights to a Grid, But Handle the Outliers Separately",
+          "body": "Naive quantization picks a scale factor and rounds every weight to the nearest representable value. It fails on LLMs because a small number of activation dimensions carry enormous, systematic outlier magnitudes that blow up the rounding error for the whole tensor.",
+          "bullets": [
+            "LLM.int8() splits out the ~0.1% of outlier feature dimensions to run in fp16, quantizing everything else to int8 — a mixed-precision decomposition, not uniform rounding",
+            "GPTQ quantizes one column of a weight matrix at a time and immediately updates the remaining unquantized columns to compensate for the rounding error just introduced (an approximate second-order correction)",
+            "AWQ observes that a small fraction of weight channels matter disproportionately (based on activation magnitude) and protects just those via per-channel scaling before quantizing the rest to 4-bit",
+            "All three are post-training methods: no retraining needed, just a small calibration set to measure activation statistics"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "9e97318a-b0a5-4d00-a5c1-10e014792c76",
+          "kind": "example",
+          "title": "Fitting a 7B Chat Model on a 24GB Consumer GPU",
+          "body": "The arithmetic is just bytes-per-parameter times parameter count — no benchmark needed to see why this matters.",
+          "bullets": [
+            "fp16: 7B params x 2 bytes = ~14GB of weights, leaving little of a 24GB card for KV cache or batch size",
+            "int8: 7B params x 1 byte = ~7GB of weights — frees up ~7GB for a much larger context window",
+            "int4 (GPTQ/AWQ): 7B params x 0.5 byte = ~3.5GB of weights — now the same card can serve several concurrent long-context sessions",
+            "This is why nearly every locally-runnable open-weight model ships with GPTQ or AWQ quantized variants alongside the original fp16 release"
+          ],
+          "symbol": "memorychip",
+          "table": null
+        },
+        {
+          "id": "86136b7a-b1f2-43c2-8e98-56ff164b7618",
+          "kind": "comparison",
+          "title": "Memory Scales Linearly With Bits Per Parameter",
+          "body": "Bytes-per-parameter is exact arithmetic; quality impact is a general trend, not a fixed number, since it depends on the model and calibration data.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Precision",
+              "Bytes/param",
+              "7B model size",
+              "Typical tradeoff"
+            ],
+            "rows": [
+              [
+                "fp16",
+                "2",
+                "~14 GB",
+                "Full quality, largest footprint"
+              ],
+              [
+                "int8",
+                "1",
+                "~7 GB",
+                "Small, often near-negligible quality loss"
+              ],
+              [
+                "int4 (GPTQ/AWQ)",
+                "0.5",
+                "~3.5 GB",
+                "Noticeable-to-small loss depending on calibration"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "d628807a-fd37-4b17-b90b-f051a72f04b0",
+          "kind": "concept",
+          "title": "Pitfalls: Calibration Data, Kernel Support, and the Sub-4-Bit Cliff",
+          "body": "Quantization isn't a free lunch — it shifts costs from memory to engineering effort and calibration risk.",
+          "bullets": [
+            "Calibration data must resemble the deployment distribution — quantizing on the wrong domain's text skews which channels get protected and can silently hurt quality on your actual traffic",
+            "Speedups aren't automatic: you need kernels that natively compute in low-bit formats (e.g. int4 matmul kernels); without them you pay a dequantize-then-multiply tax that can erase the gain",
+            "Quality degradation is non-linear — int8 is often nearly free, but going below 4-bit without quantization-aware training tends to degrade quality sharply, especially on reasoning-heavy tasks",
+            "When NOT to use: if you're about to do heavy further fine-tuning on a very different domain, quantizing first can make training less stable — consider QLoRA-style quantized fine-tuning instead of plain PTQ then fine-tune"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "b75a9002-bdfd-4bcf-aba9-7bbbd9a91106",
+          "kind": "takeaways",
+          "title": "Fewer Bits, Same Model, Different Tradeoff Curve",
+          "body": "Quantization trades a small, controllable amount of precision for large, predictable gains in memory and often latency.",
+          "bullets": [
+            "int8 quantization is close to a free lunch for most LLMs — use it as the default when memory is tight",
+            "int4 (GPTQ/AWQ) roughly quarters memory versus fp16 but requires good calibration data and hardware kernel support to pay off",
+            "The core engineering problem isn't rounding — it's handling the small number of outlier weights/activations that naive rounding destroys",
+            "Below 4 bits, expect real quality loss unless you invest in quantization-aware training"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why does naive uniform int8 quantization often degrade LLMs more than you'd expect from just 'losing a few bits'?",
+            "options": [
+              "int8 arithmetic isn't supported on GPUs",
+              "A small number of outlier activation/weight dimensions have unusually large magnitudes that a single uniform scale factor can't represent well",
+              "int8 requires retraining the entire model from scratch",
+              "LLMs don't use matrix multiplication internally"
+            ],
+            "correctIndex": 1,
+            "explanation": "LLMs have a small number of systematic outlier dimensions with much larger magnitude than the rest. A single scale factor sized to cover those outliers wastes precision on every normal-sized weight, which is why methods like LLM.int8() isolate outliers into a separate fp16 path instead of quantizing everything uniformly."
+          },
+          {
+            "prompt": "What is the key idea behind AWQ (Activation-aware Weight Quantization)?",
+            "options": [
+              "It retrains the model from scratch at 4-bit precision",
+              "It quantizes activations but leaves all weights in fp16",
+              "It identifies the small set of weight channels that matter most (based on activation magnitude) and protects them with per-channel scaling before quantizing the rest",
+              "It only works on models under 1B parameters"
+            ],
+            "correctIndex": 2,
+            "explanation": "AWQ doesn't touch every channel equally — it uses activation statistics to find which weight channels are most salient, scales those to reduce their quantization error, and quantizes the remaining majority of weights to low bit-width with much less quality loss than uniform rounding."
+          },
+          {
+            "prompt": "Roughly how much smaller is a model's weight memory at int4 versus fp16, for the same parameter count?",
+            "options": [
+              "About 1.5x smaller",
+              "About 2x smaller",
+              "About 4x smaller",
+              "About 10x smaller"
+            ],
+            "correctIndex": 2,
+            "explanation": "fp16 uses 2 bytes per parameter; int4 uses 0.5 bytes per parameter. 2 / 0.5 = 4x, so a 7B model shrinks from ~14GB to ~3.5GB of weights — pure arithmetic on bytes-per-parameter, independent of the specific quantization method used."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-07-26T12:39:27Z"
+    },
+    {
       "id": "042790e0-0a6d-4bc7-803c-9bb3313c429c",
       "title": "LoRA: Fine-Tune a Billion Params by Training a Few Million",
       "subtitle": "Freeze the model, learn a low-rank patch instead of the whole matrix",
@@ -11143,205 +11318,6 @@
         }
       ],
       "id": "e2697754-a1e0-4731-bd15-f24d2b5b747c",
-      "publishedDate": "2026-07-18T12:46:44Z",
-      "body": null
-    },
-    {
-      "title": "Event-Driven Architecture: Stop Calling, Start Announcing",
-      "subtitle": "Why services that publish facts instead of making requests scale, fail, and deploy differently",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "event-driven-architecture",
-        "distributed-systems",
-        "microservices",
-        "kafka",
-        "system-design"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "bolt.horizontal.circle.fill",
-      "summary": "Event-driven architecture replaces direct service-to-service calls with published events that any number of consumers can react to independently. It trades immediate consistency and simple debugging for loose coupling, failure isolation, and independent scaling — but only pays off once you accept eventual consistency, idempotent consumers, and distributed tracing as the cost of admission.",
-      "slides": [
-        {
-          "id": "618496c5-580e-4b79-9785-1fa83ae70b37",
-          "kind": "cover",
-          "title": "What If Services Never Called Each Other Directly?",
-          "body": "Event-driven architecture (EDA) has producers publish facts about what happened, and lets any number of consumers react — without the producer ever knowing who's listening.",
-          "bullets": [],
-          "symbol": "bolt.horizontal.circle.fill",
-          "table": null
-        },
-        {
-          "id": "02314500-be18-41c6-8500-3436b4520933",
-          "kind": "problem",
-          "title": "Synchronous Calls Create Hidden Coupling",
-          "body": "A checkout API that calls inventory, payment, shipping, and notification services directly, one after another, looks simple — until one of them is slow.",
-          "bullets": [
-            "Temporal coupling: every downstream service must be up and responsive right now, or the whole request fails or blocks",
-            "Cascading failures: a slow payment service backs up threads in the checkout service, which backs up its callers, and so on up the chain",
-            "Deployment coupling: changing inventory's API shape means coordinating a release with every service that calls it directly",
-            "The caller pays the full latency of every downstream call, even ones whose result it doesn't need before responding to the user"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "36ea85bc-febb-42a5-bfd5-21e0bebb7950",
-          "kind": "solution",
-          "title": "Publish Facts, Let Consumers Decide",
-          "body": "Instead of calling inventory/payment/shipping directly, the checkout service publishes one event — OrderPlaced — to a broker (Kafka, RabbitMQ, SNS/SQS, EventBridge) and returns immediately.",
-          "bullets": [
-            "Producers don't know or care who consumes an event, or how many consumers there are",
-            "Consumers subscribe independently and can be added or removed without touching the producer at all",
-            "The checkout API can acknowledge the order the instant the event is durably published — it doesn't wait for inventory, payment, or shipping to finish",
-            "New functionality (fraud scoring, analytics, a loyalty-points service) can subscribe to the same event stream without a single line of checkout code changing"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "cc03d156-9b6c-461a-ae4c-637e152749c6",
-          "kind": "architecture",
-          "title": "Three Flavors of 'Event', Not One",
-          "body": null,
-          "bullets": [
-            "Event Notification: a thin event ('OrderPlaced, id=123') — consumers call back to fetch details they need. Small events, but adds a network round-trip and a dependency on the producer's API staying up",
-            "Event-Carried State Transfer: the event carries the full payload (order id, items, totals) — no callback needed, but the schema now has to be versioned carefully as it grows",
-            "Event Sourcing: the event log itself is the source of truth; current state is derived by replaying events, not stored separately — powerful for audit trails, but a bigger architectural commitment",
-            "Most systems use event-carried state transfer for everyday integration and reach for full event sourcing only where an audit trail or time-travel debugging genuinely pays for its complexity"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "6a9c84ed-2124-40e1-9352-092d47cb27f9",
-          "kind": "example",
-          "title": "Worked Example: One Event, Three Independent Reactions",
-          "body": "Checkout publishes a single OrderPlaced event with orderId, userId, and items.",
-          "bullets": [
-            "Inventory service consumes it and reserves stock — if it's briefly down, the event waits in the broker and gets processed when it's back, instead of failing the checkout",
-            "Payment service consumes the same event and charges the card, publishing its own PaymentCharged event when done",
-            "Notification service consumes OrderPlaced independently and emails a receipt — it doesn't need to know payment succeeded first",
-            "None of these three services call each other; each only knows about events, which is what makes it safe to add a fourth consumer later with zero coordination"
-          ],
-          "symbol": "tablecells",
-          "table": null
-        },
-        {
-          "id": "01fec561-57f7-40e1-b28c-da344500481d",
-          "kind": "comparison",
-          "title": "Synchronous REST vs. Event-Driven",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Property",
-              "Synchronous REST",
-              "Event-Driven"
-            ],
-            "rows": [
-              [
-                "Coupling",
-                "Tight — caller knows every callee",
-                "Loose — producer doesn't know consumers"
-              ],
-              [
-                "Failure isolation",
-                "A slow/down callee blocks the caller",
-                "A down consumer just falls behind, doesn't block the producer"
-              ],
-              [
-                "Consistency",
-                "Immediate",
-                "Eventual"
-              ],
-              [
-                "Debugging",
-                "One call stack to trace",
-                "Requires distributed tracing across async hops"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "f461e09a-0fad-4422-a6f3-a14c44dbf789",
-          "kind": "problem",
-          "title": "The Costs Nobody Mentions in the Diagram",
-          "body": null,
-          "bullets": [
-            "Eventual consistency confuses users: 'my order shows placed' but inventory hasn't reserved stock yet — UX has to account for that lag",
-            "Most brokers guarantee at-least-once delivery, not exactly-once — consumers must be idempotent (dedupe by event ID) or they'll double-charge, double-ship, or double-email",
-            "Event schemas evolve; a field renamed without versioning silently breaks every consumer that reads it",
-            "When NOT to use it: a 2-3 service CRUD app with no real scaling or failure-isolation need, or any interaction where the caller genuinely needs a synchronous yes/no answer right now (e.g., 'is this card valid') before it can proceed"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "565242bd-9833-489c-8bd8-2561ba87b526",
-          "kind": "takeaways",
-          "title": "The Real Trade You're Making",
-          "body": null,
-          "bullets": [
-            "EDA buys independent scaling, deployment, and failure isolation — it costs you immediate consistency and a simple call stack",
-            "Keep events small and versioned; treat the event schema like a public API contract, because it is one",
-            "Make every consumer idempotent by default — 'at-least-once delivery' is the norm, not the exception",
-            "Pick sync vs. async per interaction, not architecture-wide — the best systems mix both deliberately"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "64fe41d9-4141-41fc-a412-0dfedd5f8d02",
-            "prompt": "In event-driven architecture, who decides which services react to a given event?",
-            "options": [
-              "The producer, which maintains a list of authorized consumers",
-              "A central orchestrator service that routes every event manually",
-              "The consumers themselves — they subscribe independently, and the producer doesn't know who's listening",
-              "The database administrator, via stored procedures"
-            ],
-            "correctIndex": 2,
-            "explanation": "The core of the decoupling is that producers publish events without any knowledge of who consumes them. Consumers opt in by subscribing, which means new consumers can be added with zero changes to the producer."
-          },
-          {
-            "id": "6487d420-7c96-49cb-a935-c00af60dd838",
-            "prompt": "Most message brokers guarantee 'at-least-once' delivery. What problem does that create, and how do you fix it?",
-            "options": [
-              "Messages can be lost entirely; fix by polling more frequently",
-              "Consumers may receive the same event more than once; fix by making consumers idempotent, e.g. deduping by event ID",
-              "Events arrive out of order across all topics; fix by using synchronous calls instead",
-              "The broker becomes a single point of failure; fix by removing the broker entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "At-least-once delivery means a consumer might see the same event twice (after a retry, a rebalance, etc.). The standard fix is idempotent processing — tracking which event IDs have already been handled — so a duplicate delivery doesn't double-charge or double-ship."
-          },
-          {
-            "id": "cde848d5-5e0b-45df-8ca6-f335ba1e72e0",
-            "prompt": "What's the key difference between Event Notification and Event-Carried State Transfer?",
-            "options": [
-              "Event Notification is only used in event sourcing, Event-Carried State Transfer never is",
-              "Event Notification sends a thin 'something happened' event requiring a callback for details; Event-Carried State Transfer includes the full payload so no callback is needed",
-              "They are two names for the exact same pattern",
-              "Event-Carried State Transfer can only be used with synchronous REST"
-            ],
-            "correctIndex": 1,
-            "explanation": "Event Notification keeps events small but forces consumers to call back to the producer's API for details, re-adding a runtime dependency. Event-Carried State Transfer avoids that callback by putting the needed data directly in the event, at the cost of a larger, more carefully versioned payload."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "2b7bc205-1b7c-4daf-a3fe-184149ff4c36",
-          "title": "What do you mean by \"Event-Driven\"? — Martin Fowler",
-          "url": "https://martinfowler.com/articles/201701-event-driven.html"
-        }
-      ],
-      "id": "03c2d33d-0137-4065-b535-426eb45dadf4",
       "publishedDate": "2026-07-18T12:46:44Z",
       "body": null
     }
