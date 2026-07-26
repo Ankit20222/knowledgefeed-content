@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "id": "042790e0-0a6d-4bc7-803c-9bb3313c429c",
+      "title": "LoRA: Fine-Tune a Billion Params by Training a Few Million",
+      "subtitle": "Freeze the model, learn a low-rank patch instead of the whole matrix",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "peft",
+        "qlora",
+        "adapters"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "puzzlepiece.extension.fill",
+      "summary": "LoRA freezes a pretrained model's weights and learns a small low-rank update (two skinny matrices, B and A) for the attention projections instead of touching every parameter. It cuts trainable parameters and optimizer memory by orders of magnitude, adds zero inference latency once merged, and is the reason task-specific adapters can be swapped in and out of one base model.",
+      "body": null,
+      "publishedDate": "2026-07-26T06:40:19Z",
+      "slides": [
+        {
+          "id": "9725a2fd-04eb-4496-a530-b9d7cf36efc9",
+          "kind": "cover",
+          "title": "Full Fine-Tuning Trains Every Weight. LoRA Trains a Detour Around It.",
+          "body": "Low-Rank Adaptation (LoRA) freezes the pretrained weight matrix and learns a small additive update instead — the idea behind almost every 'adapter' or 'LoRA file' you've seen for LLMs and diffusion models.",
+          "bullets": [],
+          "symbol": "puzzlepiece.extension.fill",
+          "table": null
+        },
+        {
+          "id": "e9cd6f81-8979-40a5-ba8c-893f68dd2864",
+          "kind": "problem",
+          "title": "Full Fine-Tuning Means Storing a Second Copy of Everything",
+          "body": "To fine-tune a model you don't just need its weights in memory — Adam-style optimizers keep two extra moment buffers per parameter, and gradients need a third copy.",
+          "bullets": [
+            "A 7B-parameter model at fp16 is ~14GB of weights alone",
+            "Adam's first/second moment buffers (fp32) add roughly 4x the parameter count in extra memory",
+            "Result: full fine-tuning a 7B model commonly needs 60-80GB+ of GPU memory, well past a single consumer GPU",
+            "Ship 10 fine-tuned variants and you store 10 full model copies on disk"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "7b1d720a-cff4-4626-ad85-b2a6be16f506",
+          "kind": "solution",
+          "title": "Freeze W, Learn ΔW = B·A Where B and A Are Skinny",
+          "body": "For a frozen weight matrix W (size d×k), LoRA adds an update ΔW = B·A, where B is d×r and A is r×k, and the rank r is tiny — usually 4 to 64 — compared to d and k, which run into the thousands.",
+          "bullets": [
+            "Only B and A are trained; W never changes during training",
+            "A is initialized random-Gaussian, B is initialized to zero, so training starts as a true no-op (ΔW = 0)",
+            "A learned scaling factor alpha/r controls how much the update contributes",
+            "Typically applied to the attention projections (Wq and Wv) rather than every layer"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "3046e06f-0c09-413a-9f4c-c0231e936a06",
+          "kind": "example",
+          "title": "GPT-3 175B: 10,000x Fewer Trainable Parameters, No Slower at Inference",
+          "body": "The original LoRA paper (Hu et al., 2021) fine-tuned GPT-3 175B by only training rank-4 LoRA matrices on Wq and Wv, while matching or beating full fine-tuning quality on several benchmarks.",
+          "bullets": [
+            "Reported ~10,000x fewer trainable parameters versus full fine-tuning GPT-3",
+            "Reported ~3x lower GPU memory requirement during training",
+            "At inference, B·A is simply added into W once (W' = W + B·A) — zero extra latency, unlike adapter layers inserted in the forward pass",
+            "Swapping tasks means swapping a few MB of B/A matrices, not reloading a 175B-parameter model"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "0f8b35df-9840-4784-b827-174808c339d8",
+          "kind": "comparison",
+          "title": "LoRA vs QLoRA vs Full Fine-Tuning vs Prefix Tuning",
+          "body": "Rank r and which layers get adapters are the main knobs — QLoRA adds 4-bit quantization of the frozen base model on top of the same LoRA math to shrink memory further.",
+          "bullets": [],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "Method",
+              "Trainable params",
+              "Extra inference cost",
+              "Typical use case"
+            ],
+            "rows": [
+              [
+                "Full fine-tune",
+                "100%",
+                "None",
+                "Max quality, have the GPUs to spare"
+              ],
+              [
+                "LoRA",
+                "~0.1-1%",
+                "None (merged into W)",
+                "Task adapters on a frozen base model"
+              ],
+              [
+                "QLoRA",
+                "~0.1-1%",
+                "None (merged after dequant)",
+                "Fine-tune a 65B+ model on a single GPU"
+              ],
+              [
+                "Prefix/prompt tuning",
+                "<0.1%",
+                "Small (longer sequence)",
+                "Cheap steering, weaker capacity"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "75426e68-d8bd-4584-b40f-9eda15e92122",
+          "kind": "concept",
+          "title": "When a Low-Rank Patch Isn't Enough",
+          "body": "LoRA assumes the needed weight update lives in a low-rank subspace — true for many style/domain/instruction shifts, but not guaranteed for every task.",
+          "bullets": [
+            "Picking rank too low can underfit large distribution shifts (e.g. teaching a genuinely new language or skill from scratch)",
+            "Serving many different LoRA adapters at once behind one base model needs adapter-aware batching, or you lose the throughput benefit",
+            "Merging several LoRA adapters into one model can cause interference between the tasks they were trained for",
+            "LoRA can't reduce the base model's inference cost — it only shrinks training cost; the frozen weights still have to run"
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "table": null
+        },
+        {
+          "id": "aa30ffbd-e172-4130-9b36-4af350dddf73",
+          "kind": "takeaways",
+          "title": "The Core Trick: Approximate the Weight Update, Not the Weight",
+          "body": "LoRA doesn't shrink the model — it shrinks what has to be learned, by betting that a fine-tuning update is low-rank.",
+          "bullets": [
+            "Freeze the pretrained matrix W; train a low-rank ΔW = B·A instead",
+            "Rank r (commonly 4-64) trades adapter capacity for trainable-parameter count",
+            "Merge B·A into W after training for zero added inference latency",
+            "QLoRA stacks 4-bit base-model quantization on the same idea to fine-tune huge models on one GPU"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "48fbb960-4dd8-4803-b9e4-08bcde1b9533",
+            "prompt": "In LoRA, what actually gets trained?",
+            "options": [
+              "Every weight in the original matrix W",
+              "Two small matrices B and A whose product approximates a weight update",
+              "Only the model's bias terms",
+              "A separate full-size copy of W"
+            ],
+            "correctIndex": 1,
+            "explanation": "LoRA freezes W entirely and trains B (d×r) and A (r×k) so that ΔW = B·A approximates the needed update — that's where nearly all the parameter savings come from."
+          },
+          {
+            "id": "203b27e3-ff55-4b52-a2c4-24aee0d8c760",
+            "prompt": "Why does LoRA add zero extra latency at inference time, unlike inserting adapter layers into the forward pass?",
+            "options": [
+              "It doesn't — LoRA models are always slower to run",
+              "B·A can be merged directly into W (W' = W + B·A) before serving, so inference runs through one matrix like the original model",
+              "LoRA deletes the original weights entirely",
+              "Inference always uses B and A separately, in parallel with W"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the update is additive and linear, B·A can be folded into W once training is done — the served model looks exactly like the base model architecture, just with updated weights."
+          },
+          {
+            "id": "387db7f1-e9d6-4fd2-b6de-03f76c899b1f",
+            "prompt": "What does QLoRA add on top of standard LoRA?",
+            "options": [
+              "A larger rank r by default",
+              "4-bit quantization of the frozen base model, so a much bigger model fits on one GPU during fine-tuning",
+              "Removing the low-rank assumption entirely",
+              "Training the full weight matrix instead of B and A"
+            ],
+            "correctIndex": 1,
+            "explanation": "QLoRA keeps the base model frozen in 4-bit precision while still training LoRA's B/A matrices in higher precision, cutting memory enough to fine-tune 65B+ models on a single consumer-class GPU."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "ce3a684e-bb69-4f55-b2a3-402622773184",
       "title": "Mage-Flow: A 4B Model That Beats 20B-32B Rivals",
       "subtitle": "Microsoft's compact image generation-and-editing stack trades brute-force scale for codec-aligned efficiency.",
@@ -11159,214 +11343,6 @@
       ],
       "id": "03c2d33d-0137-4065-b535-426eb45dadf4",
       "publishedDate": "2026-07-18T12:46:44Z",
-      "body": null
-    },
-    {
-      "title": "SearchOS: Search Agents Get an Operating System",
-      "subtitle": "Treating open-domain research like process scheduling, not chat",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "ai-agents",
-        "multi-agent",
-        "information-retrieval",
-        "context-engineering",
-        "rag"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "SearchOS-V1 reframes open-domain information seeking as filling out a structured table with cited evidence instead of stuffing findings into a chat transcript. By giving agents a shared Frontier Memory, Evidence Graph, Coverage Map, and Strategy Memory, it leads every baseline on the WideSearch and GISA benchmarks, especially on tasks that need broad, verifiable enumeration.",
-      "slides": [
-        {
-          "id": "57058774-c33c-4a45-885b-88634da7f12f",
-          "kind": "cover",
-          "title": "Search Agents Keep Losing the Plot",
-          "body": "SearchOS-V1 gives multi-agent search systems something they've never had: durable, shared memory of what's been found, what's missing, and what already failed.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "5899a1f5-1dd9-4b88-9025-1b3a462a1eb4",
-          "kind": "problem",
-          "title": "Chat History Is a Terrible Database",
-          "body": null,
-          "bullets": [
-            "Single- and multi-agent search systems track progress implicitly, buried in a growing conversation transcript",
-            "As the history grows, agents lose track of what they already tried and repeat failed queries",
-            "When a search comes up empty, systems get stuck in retry loops that burn the search budget",
-            "The end result: incomplete tables, missing entities, and unverifiable answers on broad research questions"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "1efd7f1e-3a75-4638-829c-04449acf012b",
-          "kind": "solution",
-          "title": "Reframe the Task as Filling a Table",
-          "body": "SearchOS treats open-domain information seeking as relational schema completion: discover entities, populate their attributes across linked tables, and anchor every value to a source.",
-          "bullets": [
-            "Search-Oriented Context Management (SOCM) externalizes state into four shared structures instead of conversation history",
-            "Frontier Memory: a task queue with a dependency DAG tracking what's blocked, what's ready, and what's done",
-            "Evidence Graph: every finding stored with its source and a confidence score, plus edges marking support or conflict",
-            "Coverage Map: an entity x attribute schema with per-column type rules, so the system always knows what cell is still empty"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "0e819f66-9595-4c64-a502-54a81a1eb8d3",
-          "kind": "architecture",
-          "title": "Four Agent Roles, One Shared State",
-          "body": null,
-          "bullets": [
-            "Orchestrator: the sole decision-maker, dispatching empty cells from the Coverage Map to sub-agents",
-            "Explore agent: handles query typing and entity discovery before the real search begins",
-            "Search agents: run in pipelined parallel, each retrieving evidence for one assigned cell",
-            "A Search Tool Middleware Harness auto-extracts evidence into the graph after every page retrieval, and a Strategy Memory logs which methods already failed so agents stop repeating them"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "e818b930-82cf-4e2e-a021-e06e7c82af1c",
-          "kind": "comparison",
-          "title": "It Wins Hardest on Broad Enumeration",
-          "body": "Across two open-domain benchmarks, SearchOS leads every F1 metric against five strong single- and multi-agent baselines — with the largest gap on tasks that require recalling many items, not just one fact.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Benchmark / Metric",
-              "Best baseline",
-              "SearchOS"
-            ],
-            "rows": [
-              [
-                "WideSearch Item F1",
-                "76.0 (A-MapReduce)",
-                "80.3"
-              ],
-              [
-                "WideSearch Row F1",
-                "54.5 (Web2BigTable)",
-                "56.5"
-              ],
-              [
-                "GISA Set F1",
-                "63.1 (Plan-and-Solve)",
-                "76.5 (+13.4)"
-              ],
-              [
-                "GISA Table Item F1",
-                "74.8 (ReAct)",
-                "76.9"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e879e631-7c9f-4056-b5fb-f99ac1bdb398",
-          "kind": "example",
-          "title": "Worked Example: 'Every AI Lab's Flagship Model in 2026'",
-          "body": "Ask a plain ReAct agent this and it drifts: it finds five labs, forgets to check a sixth, and can't tell you which answers it's actually sure of.",
-          "bullets": [
-            "SearchOS first builds a Coverage Map: rows = AI labs, columns = model name, release date, parameter count, source",
-            "The Orchestrator dispatches each empty cell to a Search agent instead of one agent chasing the whole question",
-            "Each finding lands in the Evidence Graph tagged with its source URL and a confidence score — no source, no cell fill",
-            "The Frontier Memory tracks which labs are still unresolved, so the run ends only when the table is actually complete"
-          ],
-          "symbol": "tablecells",
-          "table": null
-        },
-        {
-          "id": "92a658ae-cf5b-488f-b2f9-3aee7d3b4222",
-          "kind": "takeaways",
-          "title": "Why This Matters Beyond One Benchmark",
-          "body": null,
-          "bullets": [
-            "Separating search STATE from conversation HISTORY is the real contribution — it's what makes long research runs reproducible",
-            "Grounding every cell to a citation turns 'the agent said so' into 'the agent can show you where'",
-            "The biggest wins show up on enumeration-heavy tasks (compile all X), not single-fact lookups",
-            "This is a template other agentic-RAG systems can borrow even without adopting the full SearchOS stack"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        },
-        {
-          "id": "048b519c-e6b2-424b-aa75-3c05cab2e3ea",
-          "kind": "problem",
-          "title": "When Not to Reach for This",
-          "body": null,
-          "bullets": [
-            "For a single, narrow factual question, the Coverage Map / Evidence Graph overhead is pure latency with no payoff",
-            "The framework assumes a schema (rows/columns) exists or can be inferred — open-ended exploratory research fits less cleanly",
-            "Maintaining a Strategy Memory of failed approaches only pays off on long, multi-step runs, not quick lookups"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "13067159-24b1-4100-8cdc-72e32a345d4d",
-            "prompt": "What's the core reframing SearchOS applies to open-domain information seeking?",
-            "options": [
-              "Treating it as a single long chat conversation with more retries",
-              "Treating it as relational schema completion with grounded citations",
-              "Replacing all search agents with one large reasoning model",
-              "Skipping retrieval entirely and relying on parametric memory"
-            ],
-            "correctIndex": 1,
-            "explanation": "SearchOS models the task as populating an entity x attribute table (a schema), where every cell must be filled with source-anchored evidence — not as an open-ended chat."
-          },
-          {
-            "id": "d9db3171-bd31-438a-b4d0-587fd2419dfb",
-            "prompt": "Where does SearchOS store the fact that a particular search strategy already failed?",
-            "options": [
-              "Evidence Graph",
-              "Coverage Map",
-              "Strategy Memory",
-              "Frontier Memory"
-            ],
-            "correctIndex": 2,
-            "explanation": "Strategy Memory specifically tracks methodology failures and budget consumption, so agents don't repeat approaches that already didn't work."
-          },
-          {
-            "id": "1c7eb0b7-edb5-421a-99e0-60c8412d997f",
-            "prompt": "On which kind of benchmark did SearchOS show its largest advantage over baselines like ReAct and Plan-and-Solve?",
-            "options": [
-              "Single-fact lookup questions",
-              "Broad enumeration tasks requiring many linked items (GISA Set F1)",
-              "Code generation benchmarks",
-              "Image classification tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "SearchOS's GISA Set F1 score beat the best baseline by +13.4 points — its structured, parallel-dispatch approach pays off most when a task requires recalling and verifying many items, not just one."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "51d881e9-cb2a-4345-9090-7a860bb5e254",
-          "title": "SearchOS-V1: Towards Robust Open-Domain Information-Seeking Agent Collaboration (arXiv:2607.15257)",
-          "url": "https://arxiv.org/abs/2607.15257"
-        },
-        {
-          "id": "8273fff8-bd34-4e28-ac73-8bfe70ad58a0",
-          "title": "SearchOS on Hugging Face Daily Papers",
-          "url": "https://huggingface.co/papers/2607.15257"
-        },
-        {
-          "id": "302b8aa0-ed72-4fe1-b2c3-3398121e9a56",
-          "title": "SearchOS official code repository",
-          "url": "https://github.com/antins-labs/SearchOS"
-        }
-      ],
-      "id": "776dd262-2967-4fb8-ac2b-cbd76f7a3005",
-      "publishedDate": "2026-07-18T06:41:26Z",
       "body": null
     }
   ]
