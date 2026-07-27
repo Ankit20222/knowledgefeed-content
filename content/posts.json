@@ -1,6 +1,183 @@
 {
   "posts": [
     {
+      "id": "c3cecf35-a086-48b6-800f-16baf26c0af0",
+      "title": "RoPE: Encoding Position by Rotating Vectors, Not Adding to Them",
+      "subtitle": "The trick that lets a dot product 'know' the distance between two tokens",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "positional-encoding",
+        "transformers",
+        "attention",
+        "context-length",
+        "llama"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Rotary Position Embedding (RoPE) encodes a token's position by rotating its query and key vectors by an angle proportional to that position, instead of adding a position vector to the input. Because rotation matrices compose, the attention dot product between a rotated query and key ends up depending only on their relative distance — giving relative position awareness for free at every layer. It's why LLaMA, Mistral, Qwen, PaLM, and GPT-NeoX all use it, and why extending context length usually means rescaling RoPE's rotation frequencies rather than retraining from scratch.",
+      "body": null,
+      "slides": [
+        {
+          "id": "8ddf0a8d-048e-4001-8807-edf8ad636fff",
+          "kind": "cover",
+          "title": "What If Position Was a Rotation, Not an Addition?",
+          "body": "Early transformers (BERT, GPT-2) gave each position its own learned vector and added it to the token embedding. RoPE (Su et al., 2021) does something stranger and more elegant: it rotates the query and key vectors by an angle proportional to position, inside every attention layer.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "b1730ddc-bc67-4a90-99b1-6abd5a36b71f",
+          "kind": "problem",
+          "title": "Absolute Position Vectors Don't Compose Into Relative Distance",
+          "body": "Attention should care about how far apart two tokens are, not their raw index in the sequence — 'the word 3 tokens back' should mean the same thing whether it's tokens 5-8 or tokens 500-503.",
+          "bullets": [
+            "Learned absolute position embeddings (GPT-2, BERT) add a fixed per-index vector once, at the input — attention then has to indirectly infer relative distance from the sum, which it does imperfectly",
+            "A model trained on 512 or 1024 positions has literally never seen an embedding for position 2000 — there's nothing principled to do at longer lengths",
+            "Sinusoidal absolute embeddings (original 'Attention Is All You Need') were designed to let relative position be recovered via a linear function, but in practice models still generalize poorly past their training length",
+            "What you actually want: a scheme where the interaction between token m and token n depends mathematically only on (m - n), automatically, in every layer"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "143a4368-737c-45ed-b082-193d9e2e9e5e",
+          "kind": "solution",
+          "title": "Rotate Q and K by an Angle Proportional to Position",
+          "body": "RoPE splits each query/key vector into pairs of dimensions and treats each pair as a 2D point, then rotates that point by angle m·θᵢ, where m is the token's position and θᵢ = base^(-2i/d) gives each dimension pair its own rotation frequency (base is typically 10000, exposed in configs as 'rope_theta').",
+          "bullets": [
+            "Low-index dimension pairs (small i) get a large θᵢ and rotate fast, capturing fine-grained local position; high-index pairs rotate slowly, capturing coarse long-range position — one embedding, many frequencies at once",
+            "The rotation is applied fresh to Q and K inside every attention layer, not once at the input — so every layer gets direct access to position, not a diluted signal passed up from layer 1",
+            "Key algebraic fact: rotation matrices compose, so R(mθ)ᵀ · R(nθ) = R((n-m)θ) — when you dot a rotated query at position m against a rotated key at position n, the absolute positions cancel and only (n-m) survives",
+            "No extra parameters, no added vectors, no lookup table — it's a deterministic function of position applied to the same Q/K projections you already compute"
+          ],
+          "symbol": "arrow.clockwise",
+          "table": null
+        },
+        {
+          "id": "2e727ef5-c5d7-429f-a9ec-0df86e9cd100",
+          "kind": "example",
+          "title": "A Minimal Worked Example",
+          "body": "Take a toy 4-dimensional query vector split into two 2D pairs. Each pair gets its own frequency, and rotating by position turns 'where am I' into 'how far apart are we' automatically once you take a dot product.",
+          "bullets": [
+            "Pair 1 uses θ₁ = 10000^(0/4) = 1.0 rad/position — rotates a full circle roughly every 6 tokens, encoding fine local offsets",
+            "Pair 2 uses θ₂ = 10000^(-2/4) = 0.01 rad/position — takes ~628 tokens per full rotation, encoding coarse long-range position",
+            "At position m=50, pair 1 has rotated 50 radians (wrapped many times); at position n=53, the *difference* between the two pairs' rotation is exactly 3θ₁ regardless of whether m,n were 50,53 or 5000,5003",
+            "This is exactly what LLaMA, Mistral, Qwen2, PaLM, and GPT-NeoX compute for every one of their (typically 64-128) dimension pairs per head, at every layer"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "69209715-4da1-40d5-a348-9270b19bbecc",
+          "kind": "comparison",
+          "title": "Three Ways to Tell Attention Where a Token Is",
+          "body": "RoPE isn't the only answer — ALiBi skips rotation entirely and just penalizes attention scores by distance.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Scheme",
+              "How it works",
+              "Extrapolation beyond training length"
+            ],
+            "rows": [
+              [
+                "Learned absolute (GPT-2, BERT)",
+                "Add a per-index vector to the input once",
+                "Poor — undefined past the max trained index"
+              ],
+              [
+                "RoPE (LLaMA, Mistral, Qwen, PaLM)",
+                "Rotate Q/K per layer; dot product depends on relative distance",
+                "Degrades past training length unless frequencies are rescaled"
+              ],
+              [
+                "ALiBi (BLOOM, MPT)",
+                "Add a fixed linear distance-based penalty to attention scores",
+                "Strong zero-shot extrapolation, no rescaling needed"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "bbb0a804-83bb-49ed-8e72-f02f529b39f0",
+          "kind": "example",
+          "title": "Extending Context Without Retraining From Scratch",
+          "body": "A model trained with RoPE at a 4096-token context still breaks down well before 8192 tokens, because the low-frequency dimension pairs never saw rotation angles that large during training — it's out-of-distribution, not a hard limit.",
+          "bullets": [
+            "Position Interpolation (Chen et al., 2023): linearly compress position indices by the scale-up factor so angles stay in the trained range — cheap, but blurs fine-grained local resolution",
+            "NTK-aware scaling: instead of compressing positions, increase the base frequency itself so high-frequency (local) pairs keep their resolution while low-frequency pairs stretch to cover the new range",
+            "YaRN (2023) combines NTK-aware interpolation with a per-frequency ramp, and was used to stretch LLaMA-family models to 128K context with a comparatively small amount of continued fine-tuning",
+            "Code Llama's long-context variant took a blunter route: it raised the RoPE base frequency from 10000 to 1,000,000 and continued pretraining, pushing usable context out to 100K tokens"
+          ],
+          "symbol": "arrow.left.and.right",
+          "table": null
+        },
+        {
+          "id": "b7fea591-e817-4d91-a1ad-eaad5ac51db2",
+          "kind": "takeaways",
+          "title": "When RoPE Helps — and Where It Bites",
+          "body": "RoPE is now close to a default choice for decoder-only LLMs, but it's not free of sharp edges.",
+          "bullets": [
+            "Pitfall: RoPE is easy to implement subtly wrong — mixing up the 'rotate half' interleaving convention between training and inference silently corrupts every position past the first few tokens",
+            "Pitfall: naive fine-tuning at a longer context without adjusting rope_theta just extrapolates into untrained rotation angles — you'll get degraded, not absent, outputs, which can hide the bug",
+            "When NOT to reach for it: for encoder-only bidirectional models or very short fixed-length inputs, the extrapolation problem barely matters, so simpler learned absolute embeddings are fine and cheaper to reason about",
+            "RoPE composes cleanly with GQA and KV-caching (it's applied to Q/K before caching, so cached K vectors already carry their rotation) — but that also means changing rope_theta after training invalidates any KV cache computed under the old base"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Where does RoPE apply its rotation?",
+            "options": [
+              "Once, to the token embeddings before the first transformer layer",
+              "To the query and key vectors, freshly, inside every attention layer",
+              "Only to the final output logits before the softmax",
+              "To a separate learned position-embedding table indexed by distance"
+            ],
+            "correctIndex": 1,
+            "explanation": "RoPE rotates Q and K inside every attention layer rather than once at the input. That's what lets every layer directly read off relative position from the dot product, instead of relying on a diluted signal passed up from layer 1."
+          },
+          {
+            "prompt": "Why does rotating Q and K make attention depend on relative rather than absolute position?",
+            "options": [
+              "Because the rotation angles are learned to memorize each pair's distance",
+              "Because rotation matrices compose: R(mθ)ᵀ·R(nθ) = R((n−m)θ), so the dot product only retains (n−m)",
+              "Because longer sequences automatically get larger vector norms",
+              "Because RoPE discards absolute position information entirely before attention runs"
+            ],
+            "correctIndex": 1,
+            "explanation": "The composition property of rotation matrices is the whole trick: rotating a query by mθ and a key by nθ makes their dot product a function of (n−m) alone. No relative-position lookup table is needed — it falls out of the math."
+          },
+          {
+            "prompt": "A RoPE-based model trained at a 4096-token context degrades sharply past that length. What's the standard fix that avoids retraining from scratch?",
+            "options": [
+              "Remove positional information from the model entirely",
+              "Simply increase the inference batch size",
+              "Rescale the rotation frequencies (position interpolation, NTK-aware scaling, or YaRN) and briefly continue pretraining",
+              "Switch the model to learned absolute embeddings at inference time"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because the degradation comes from out-of-distribution rotation angles, the fix is to rescale how those angles map to position — via position interpolation, NTK-aware scaling, or YaRN — then do a short continued-pretraining pass, which is far cheaper than training a new model at the longer length."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding (Su et al., 2021)",
+          "url": "https://arxiv.org/abs/2104.09864"
+        }
+      ],
+      "publishedDate": "2026-07-27T00:42:39Z"
+    },
+    {
       "id": "9cf6acf7-e935-4fb5-a26e-e7c9a59c8f26",
       "title": "Grouped-Query Attention: The Middle Ground on KV Cache Size",
       "subtitle": "Why Llama 2 70B gives 64 query heads only 8 sets of keys and values",
@@ -11147,187 +11324,6 @@
       ],
       "id": "0c9fa8ba-a48b-4a36-a130-e28572d48481",
       "publishedDate": "2026-07-18T18:42:48Z"
-    },
-    {
-      "title": "BadWAM: When Robot Brains Dream Right, Act Wrong",
-      "subtitle": "A new attack proves a robot's imagined future can look perfect while its hands do something else",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "world-action-models",
-        "adversarial-attacks",
-        "robotics",
-        "ai-safety",
-        "embodied-ai"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "eye.trianglebadge.exclamationmark",
-      "summary": "BadWAM shows that World-Action Models — networks that jointly imagine a robot's future and choose its next action — can be attacked so the imagined future stays believable while the executed action silently drifts. An action-only attack collapses task success from 96.5% to 43.1%, and a stealthier variant preserves the model's predicted future almost unchanged while still hijacking the action.",
-      "slides": [
-        {
-          "id": "8522e236-5d49-46fc-845b-798e741c0d3f",
-          "kind": "cover",
-          "title": "A Robot Can Imagine the Right Future and Still Do the Wrong Thing",
-          "body": "BadWAM (Li, Yang & Wang, NUS) introduces World-Action Drift Attacks: tiny pixel perturbations that break the link between what a robot's model predicts will happen and what it actually commands the robot to do.",
-          "bullets": [],
-          "symbol": "eye.trianglebadge.exclamationmark",
-          "table": null
-        },
-        {
-          "id": "d384d8bc-305c-4735-a018-2e4cdc7f8305",
-          "kind": "problem",
-          "title": "One Network, Two Jobs, One Unchecked Assumption",
-          "body": null,
-          "bullets": [
-            "World-Action Models (WAMs) fuse two jobs into one network: predict the future frame an action produces, and choose that action",
-            "Three common WAM designs tested: Direct (action straight from observation), Joint (action and imagined future predicted together), and IDM (Inverse Dynamics Model, action inferred from a predicted future)",
-            "Robotics teams have started trusting 'if the imagined future looks right, the action must be right' — that link was never adversarially tested",
-            "BadWAM is the first paper to specifically target the imagination-to-action alignment inside a WAM, not just its final output"
-          ],
-          "symbol": "questionmark.diamond.fill",
-          "table": null
-        },
-        {
-          "id": "679269c2-be43-4ec2-82a9-2323e5eb149a",
-          "kind": "solution",
-          "title": "Two Attacks: One Loud, One Silent",
-          "body": "Both attacks add a small ℓ∞-bounded pixel perturbation (bound 0.06) to the camera input, within a 16-query attack budget — nothing a human watching the video feed would notice.",
-          "bullets": [
-            "Action-only attack: perturbs the observation purely to maximize how far the commanded action shifts from the clean action — fast and effective, doesn't care what the model 'thinks' will happen",
-            "Imagination-preserving attack: perturbs the observation to shift the action while keeping the model's predicted future frame close to its clean (unattacked) prediction",
-            "That second attack is the dangerous one: an operator monitoring the model's imagined rollout sees a normal, plausible future — while the robot's real action has already been hijacked",
-            "Attacks are evaluated in patch or full-image (full_linf) perturbation modes, tested against Direct, Joint, and IDM model variants"
-          ],
-          "symbol": "bolt.trianglebadge.exclamationmark",
-          "table": null
-        },
-        {
-          "id": "0eea7670-86c3-4492-b539-a43d344c1137",
-          "kind": "example",
-          "title": "Worked Example: A Manipulation Task Goes Quietly Wrong",
-          "body": "In LIBERO, a robot arm is instructed to pick up an object it can see clearly on a table.",
-          "bullets": [
-            "Clean run: camera feed → WAM imagines the gripper closing on the object → arm executes that action → task succeeds",
-            "Attacked run (imagination-preserving): attacker adds an imperceptible perturbation to the camera frame",
-            "The WAM's predicted future frame still shows the gripper correctly closing on the object — indistinguishable from the clean prediction",
-            "But the action actually sent to the arm has drifted just enough that the gripper closes on empty air — the dashboard 'looks fine,' the task fails"
-          ],
-          "symbol": "camera.metering.center.weighted",
-          "table": null
-        },
-        {
-          "id": "f04e5cec-c6d1-4e86-a38a-794d62fbfc3a",
-          "kind": "comparison",
-          "title": "The Numbers: A Robot That Looks Unshaken",
-          "body": "Evaluated across LIBERO (closed-loop manipulation) and RoboTwin, the action-only attack alone is enough to gut task performance.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Condition",
-              "Task Success Rate"
-            ],
-            "rows": [
-              [
-                "Clean (no attack)",
-                "96.5%"
-              ],
-              [
-                "Under action-only attack",
-                "43.1%"
-              ],
-              [
-                "Under imagination-preserving attack",
-                "Action drifts; predicted future stays visually close to clean"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "57c684d3-dcd8-4567-9615-6fb21cc17c1a",
-          "kind": "problem",
-          "title": "Why This Is a Blind Spot, Not Just a New CVE",
-          "body": null,
-          "bullets": [
-            "Most robot-safety review today watches the model's imagined rollout as a proxy for whether the action is safe — BadWAM shows that proxy can be actively fooled",
-            "It only requires camera-level perturbation, not any access to the model's weights, controller, or action head",
-            "The attack transfers across model designs (Direct, Joint, IDM), so it isn't a quirk of one architecture",
-            "Not a reason to panic about every deployed robot — LIBERO/RoboTwin are controlled benchmarks, and real deployments add sensor fusion and physical guards the paper doesn't attack"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "8550280a-f783-4348-b1c1-6c466540a5b8",
-          "kind": "takeaways",
-          "title": "What Defenders Should Take From This",
-          "body": null,
-          "bullets": [
-            "Don't certify a WAM's safety by eyeballing its imagined future alone — the two can be deliberately decoupled",
-            "Cross-check the executed action against the imagined future with an independent consistency check, not the same network that generated both",
-            "Code is open-sourced (MIT license) specifically so red teams can reproduce and probe further",
-            "This is a template for a whole new class of embodied-AI security testing: attack the seam between perception, imagination, and control, not just the final classifier output"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "1e3b4103-5435-4dea-b8e3-9b131866d7c7",
-            "prompt": "What does the 'imagination-preserving' attack specifically try to keep unchanged?",
-            "options": [
-              "The robot's battery level",
-              "The model's predicted future frame, even as it shifts the executed action",
-              "The camera's resolution",
-              "The training dataset"
-            ],
-            "correctIndex": 1,
-            "explanation": "That's the stealthy part of BadWAM: the attack keeps the WAM's imagined future close to what it would predict without the attack, so a human or dashboard watching the 'imagination' sees nothing wrong, while the actual commanded action has drifted."
-          },
-          {
-            "id": "25559952-bd0b-4ab2-b82f-c4c6e0e66e17",
-            "prompt": "Roughly what happened to task success rate under the action-only attack in BadWAM's evaluation?",
-            "options": [
-              "It stayed at 96.5%",
-              "It rose slightly to 99%",
-              "It collapsed from about 96.5% to about 43.1%",
-              "It dropped to exactly 0%"
-            ],
-            "correctIndex": 2,
-            "explanation": "The action-only attack — which doesn't even try to preserve a plausible imagined future — was enough to cut task success from 96.5% down to roughly 43.1%, showing how fragile the action head can be to small, targeted perturbations."
-          },
-          {
-            "id": "71299698-d5ca-4a2d-bcaa-fa245f2df7c8",
-            "prompt": "Why is BadWAM a different kind of threat model than a typical adversarial attack on an image classifier?",
-            "options": [
-              "It requires physical access to the robot's motors",
-              "It only works on text models",
-              "It targets the alignment between a model's internal imagined future and its externally executed action, not just a single output label",
-              "It needs the attacker to retrain the model first"
-            ],
-            "correctIndex": 2,
-            "explanation": "Classic adversarial attacks push a classifier's output label across a decision boundary. BadWAM instead exploits that a World-Action Model produces two correlated outputs — a predicted future and an action — and shows those two outputs can be deliberately pulled apart."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "cbfbb195-5198-4c7f-8967-ba0878d74ddb",
-          "title": "BadWAM: When World-Action Models Dream Right but Act Wrong (arXiv:2607.15207)",
-          "url": "https://arxiv.org/abs/2607.15207"
-        },
-        {
-          "id": "e39c1047-3ffb-4a3b-943b-f9da2db29b39",
-          "title": "BadWAM official code repository",
-          "url": "https://github.com/LiQiiiii/BadWAM"
-        }
-      ],
-      "id": "3b6dbb32-5832-4729-8e5c-1537d7182e39",
-      "publishedDate": "2026-07-18T12:46:44Z",
-      "body": null
     }
   ]
 }
