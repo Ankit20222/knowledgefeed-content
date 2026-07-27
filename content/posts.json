@@ -1,6 +1,197 @@
 {
   "posts": [
     {
+      "id": "2febee01-e6da-4b1e-a4dd-afd2728c2af9",
+      "title": "The Outbox Pattern: Making a DB Write and an Event Publish Atomic",
+      "subtitle": "How to stop losing (or duplicating) events when a database commit and a broker publish can't share a transaction",
+      "category": "System Design",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "distributed-systems",
+        "event-driven-architecture",
+        "outbox-pattern",
+        "microservices",
+        "kafka",
+        "idempotency"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "tray.and.arrow.up.fill",
+      "summary": "Updating a database and publishing an event to a message broker look like one logical action but are really two separate systems with no shared transaction — so a crash between them silently drops or duplicates the event. The transactional outbox pattern fixes this by writing the event into a table in the SAME local database transaction as the business row, then relaying it to the broker asynchronously via a poller or a change-data-capture tool like Debezium. It guarantees at-least-once delivery, not exactly-once, so downstream consumers still need to be idempotent.",
+      "body": null,
+      "slides": [
+        {
+          "id": "cfc74394-0305-40bc-9f32-f611ad100ce0",
+          "kind": "cover",
+          "title": "One Business Action, Two Systems That Must Agree",
+          "body": "Modern services often need to update a database AND publish an event ('OrderCreated', 'PaymentCaptured') so other services can react. Doing both reliably — without losing the event or duplicating it — is a surprisingly hard distributed-systems problem, and the fix has a name: the Transactional Outbox pattern.",
+          "bullets": [],
+          "symbol": "tray.and.arrow.up.fill",
+          "table": null
+        },
+        {
+          "id": "d8cb169c-e576-4a18-b0d4-056be2815951",
+          "kind": "problem",
+          "title": "The Dual-Write Problem: Two Writes, No Shared Transaction",
+          "body": "A database and a message broker are separate systems with separate commit protocols — ordinary client libraries can't wrap both in one ACID transaction.",
+          "bullets": [
+            "Commit-then-publish: if the process crashes or the broker call fails between the two steps, the order exists but the event never fires — billing, shipping, and inventory never find out",
+            "Publish-then-commit: a consumer can react to an order that the database transaction later rolls back, so downstream systems see something that never really happened",
+            "Distributed transactions (XA/2PC) could cover both, but most modern brokers (Kafka, SNS/SQS, most cloud pub/sub) don't support two-phase commit at all, and the 2PC that does exist is slow and fragile across a network partition",
+            "This isn't a rare edge case — it fires on every deploy restart, every broker blip, every OOM-kill, at whatever rate those events already occur in production"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2c04fc40-64fc-4bd1-a7c5-9880aef90d78",
+          "kind": "solution",
+          "title": "Write the Event to Your Own Database, Not the Broker",
+          "body": "The outbox pattern turns a two-system atomicity problem into a one-system one: write the business row and the event into the SAME database transaction, then relay the event out asynchronously.",
+          "bullets": [
+            "Add an 'outbox' table (id, event_type, payload, created_at, published) in the same schema as your business tables",
+            "One local transaction inserts both the Order row and the matching OutboxEvent row — a single-database transaction is something every relational DB already guarantees atomically",
+            "Because the business write and the event write commit or roll back together, it's now impossible to get one without the other — the dual-write race is eliminated at the source, not patched around afterward",
+            "A separate relay process (poller or CDC reader) later reads unpublished outbox rows and forwards them to the broker, marking each one published once the broker acknowledges"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        },
+        {
+          "id": "9a4176d4-46e0-4a1a-852e-4f4286517ce1",
+          "kind": "architecture",
+          "title": "Two Ways to Build the Relay: Poll or Tail the Log",
+          "body": "Moving rows from the outbox table to the broker can be done two ways, with a real tradeoff between simplicity and latency/load.",
+          "bullets": [
+            "Polling relay: a background job runs a 'WHERE published = false' query every N milliseconds, publishes each row, then flags it — simple to build, but adds polling latency and steady read load on the hot table",
+            "CDC relay: a tool like Debezium tails the database's write-ahead log / binlog directly and streams new outbox rows to Kafka the instant they commit — near-zero added latency and no polling load, at the cost of running an extra CDC pipeline",
+            "Either relay only ever needs at-least-once delivery, never exactly-once — it can crash and safely redeliver, which keeps the relay's own logic simple",
+            "Cleanup matters: outbox rows need a TTL or archival job, or the table grows unbounded — most teams delete or archive rows some fixed time after they're marked published"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "fbed3e28-4111-47db-ac7f-414ab62ff0b8",
+          "kind": "example",
+          "title": "Walking Through an Order Being Placed",
+          "body": "A concrete trace of the pattern end to end for an e-commerce checkout.",
+          "bullets": [
+            "1) Checkout service opens one local transaction: insert into 'orders' and insert into 'outbox' (event_type='OrderCreated') — both commit together, or neither does",
+            "2) Checkout service returns '201 Created' to the customer immediately — it never waited on the broker, so a Kafka outage can't block checkout",
+            "3) A Debezium connector notices the new outbox row in the binlog within milliseconds and publishes an 'OrderCreated' event onto the 'orders' Kafka topic",
+            "4) Billing and Inventory each consume that event independently and record the order_id in their own dedup table, so if the event is ever redelivered, the second delivery is a safe no-op"
+          ],
+          "symbol": "cart.fill",
+          "table": null
+        },
+        {
+          "id": "759b1b62-9b78-4f43-a482-8c507205d372",
+          "kind": "comparison",
+          "title": "Outbox vs. the Alternatives",
+          "body": "The other options either fail under failure or cost far more to operate.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "Atomicity guarantee",
+              "Operational cost"
+            ],
+            "rows": [
+              [
+                "Naive dual write (commit, then publish)",
+                "None — a crash between the two calls silently drops or duplicates the event",
+                "Lowest, but incorrect under failure"
+              ],
+              [
+                "Distributed transaction (XA / 2PC)",
+                "Strong, only if every participant supports 2PC",
+                "High — most brokers don't support it; adds coordinator latency and blocks under partition"
+              ],
+              [
+                "Transactional outbox + poller",
+                "Strong — one local DB transaction covers both writes",
+                "Low — one extra table, one background job"
+              ],
+              [
+                "Transactional outbox + CDC (Debezium)",
+                "Strong, with near-real-time delivery",
+                "Medium — requires operating a CDC/Kafka Connect pipeline"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8b1900d0-0ceb-4c2a-8a4a-984ed4625c03",
+          "kind": "concept",
+          "title": "What the Pattern Doesn't Solve For You",
+          "body": "Outbox fixes the dual-write race, not every downstream ordering or delivery concern — those still need explicit design.",
+          "bullets": [
+            "Delivery is at-least-once, never exactly-once — every consumer MUST be idempotent (dedupe by event id or order id), or a redelivered event double-charges a customer or double-decrements inventory",
+            "Ordering is only guaranteed per partition key, not globally — partition Kafka by aggregate id (e.g., order_id) if a consumer needs to see 'OrderCreated' before 'OrderShipped' for the same order",
+            "It adds a small write to the local transaction (one more insert) and a small end-to-end delay between commit and downstream visibility — typically milliseconds with CDC, seconds with a naive poller",
+            "Skip it for a genuinely single-service feature with no external consumers — the pattern earns its complexity only once another service or system needs to react to your write"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "60a50239-9a90-4c29-9843-0f9a7333bc03",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "The transactional outbox pattern turns a two-system atomicity problem you can't solve into a one-system atomicity problem your database already solves.",
+          "bullets": [
+            "The same local transaction writes the business row and the event row — the database's own ACID guarantee is what makes the pattern work",
+            "A relay (poller or CDC like Debezium) asynchronously moves outbox rows to the broker, retrying freely since delivery is at-least-once",
+            "Consumers must be idempotent — the pattern relocates the atomicity problem, it doesn't erase the need for dedup logic downstream",
+            "Used under the hood by most serious event-driven systems — order pipelines, payment flows, saga orchestrators — wherever a DB write must reliably trigger a downstream event"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In the naive 'commit to the DB, then publish to the broker' approach, what specifically can go wrong?",
+            "options": [
+              "Nothing — it's safe as long as the broker has high availability",
+              "If the process crashes or the broker call fails after the DB commit, the event is silently lost even though the business write succeeded",
+              "The database transaction automatically rolls back whenever the broker publish fails",
+              "The broker automatically polls the database to recover any missed writes"
+            ],
+            "correctIndex": 1,
+            "explanation": "The DB commit and the broker publish are two independent operations with no shared transaction. A crash or network failure between them loses the event while the business data quietly stays committed — that's the dual-write problem."
+          },
+          {
+            "prompt": "Why does writing the event into an 'outbox' table in the same database solve the dual-write problem?",
+            "options": [
+              "Because outbox tables are replicated automatically to the message broker",
+              "Because it turns two separate-system writes into one local ACID transaction, so both commit or neither does",
+              "Because outbox tables have no schema, so writes to them are instantaneous",
+              "Because the broker reads directly from the outbox table instead of from a topic"
+            ],
+            "correctIndex": 1,
+            "explanation": "The core trick is reducing two systems to one: the business row and the event row both live in the same database, so the database's existing transactional guarantee makes them atomic together — no distributed transaction protocol required."
+          },
+          {
+            "prompt": "A CDC-based relay (e.g., Debezium) redelivers an 'OrderCreated' event after a consumer restart. What must the consumer do to handle this safely?",
+            "options": [
+              "Reject all events that arrive after any consumer restart",
+              "Process the event again unconditionally, since duplicates don't matter",
+              "Track processed event or order ids and treat the redelivery as a no-op (idempotent processing)",
+              "Configure the outbox table to guarantee exactly-once delivery instead"
+            ],
+            "correctIndex": 2,
+            "explanation": "Outbox relays only guarantee at-least-once delivery, so redelivery is expected and normal. Consumers must dedupe (e.g., by event id or order id) so a repeated event is a safe no-op rather than a double-charge or double-decrement."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-07-27T06:40:15Z"
+    },
+    {
       "id": "c3cecf35-a086-48b6-800f-16baf26c0af0",
       "title": "RoPE: Encoding Position by Rotating Vectors, Not Adding to Them",
       "subtitle": "The trick that lets a dot product 'know' the distance between two tokens",
@@ -11138,192 +11329,6 @@
           "url": "https://dl.acm.org/doi/10.1145/1571941.1572114"
         }
       ]
-    },
-    {
-      "title": "PagedAttention: The GPU Memory Trick Behind vLLM",
-      "subtitle": "How treating the KV cache like OS virtual memory cut serving waste from 60-80% to under 4%",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "inference",
-        "llm-serving",
-        "vllm",
-        "kv-cache",
-        "gpu-memory",
-        "systems"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.grid.3x3.fill",
-      "summary": "PagedAttention splits each request's KV cache into small fixed-size blocks addressed through a block table, instead of reserving one worst-case contiguous slab per request. That single idea, borrowed from OS virtual memory paging, is what lets vLLM pack far more concurrent requests onto the same GPU and became the default memory-management strategy across modern LLM serving engines.",
-      "slides": [
-        {
-          "id": "eef60f6c-2833-4695-a32d-7945c6d2b536",
-          "kind": "cover",
-          "title": "The GPU Memory Trick Behind Every Fast LLM Server",
-          "body": "PagedAttention is the memory-management technique inside vLLM that turned LLM serving from wasteful, worst-case guesswork into something as disciplined as an OS managing RAM.",
-          "bullets": [],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "54a14e2d-3f9d-4e2a-b89d-9313ca1061c3",
-          "kind": "problem",
-          "title": "Naive KV Caching Wastes 60-80% of GPU Memory",
-          "body": null,
-          "bullets": [
-            "Every generated token needs its key/value vectors cached so future tokens can attend back to it — the KV cache grows with every decoding step of every active request",
-            "Early serving systems reserved one long contiguous memory slab per request, sized for the *maximum possible* sequence length, before generation even started",
-            "Most requests finish far short of that max — the reserved-but-unused space (internal fragmentation) plus memory carved out but never reused (external fragmentation) can waste 60-80% of allocated KV cache memory",
-            "That waste directly caps batch size: fewer concurrent requests fit in GPU memory, so throughput suffers even while the GPU's compute sits idle"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "464c0eb3-e89b-4635-a895-9c888bef0209",
-          "kind": "solution",
-          "title": "Treat the KV Cache Like Virtual Memory Pages",
-          "body": "PagedAttention borrows the classic OS trick: don't allocate memory in one contiguous slab — allocate small fixed-size blocks and let a table point to wherever they physically live.",
-          "bullets": [
-            "Each sequence's KV cache is split into fixed-size blocks (vLLM's default is 16 tokens per block)",
-            "Blocks are allocated on demand, one at a time, as generation produces new tokens — no need to guess a max length upfront",
-            "A per-sequence 'block table' maps logical block index to physical block location in GPU memory, exactly like a page table maps virtual addresses to physical ones",
-            "Because blocks don't need to be contiguous, the allocator packs GPU memory almost perfectly — internal fragmentation is limited to at most one partially-filled block per sequence"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "7e00ce3c-e13a-40ba-bd2d-af981bd3211c",
-          "kind": "concept",
-          "title": "Bonus: Blocks Can Be Shared, Not Just Packed",
-          "body": null,
-          "bullets": [
-            "Parallel sampling and beam search often share a common prompt prefix across multiple candidate sequences",
-            "Because each block is reference-counted, PagedAttention lets multiple sequences point their block tables at the same physical blocks for that shared prefix",
-            "When one branch needs to diverge — write a new token into a shared block — vLLM copies just that one block first: copy-on-write, straight out of OS memory management",
-            "This can cut memory use substantially for beam search and parallel sampling, since the shared prompt is stored once instead of once per candidate"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "75388936-7e5c-4375-b7fd-7a1c56436256",
-          "kind": "example",
-          "title": "Worked Example: 3 Requests, One GPU",
-          "body": "Say a GPU has room for 256 KV-cache blocks of 16 tokens each — 4,096 tokens of total capacity.",
-          "bullets": [
-            "Naive allocator: reserves a 2,048-token contiguous slab per request 'just in case' — only 2 requests fit, even if both actually finish after 100 tokens",
-            "PagedAttention: request A gets blocks as it generates — after 100 tokens it holds 7 blocks (112 tokens of capacity), not 128 reserved-but-empty blocks",
-            "Blocks freed by a request that finishes early become available immediately, so a 3rd or 4th request can start as soon as blocks free up — no waiting on one giant reserved slab to close out",
-            "Net effect: far more concurrent sequences fit in the same physical memory, which is what actually drives serving throughput"
-          ],
-          "symbol": "list.number",
-          "table": null
-        },
-        {
-          "id": "4f91e975-a24d-4e45-8607-9347140d34f9",
-          "kind": "comparison",
-          "title": "The Headline Numbers",
-          "body": "vLLM's own reporting on the naive-vs-paged comparison for KV cache memory:",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Approach",
-              "KV cache memory waste",
-              "Concurrent requests per GPU"
-            ],
-            "rows": [
-              [
-                "Naive contiguous pre-allocation",
-                "60-80%",
-                "Low — capped by worst-case reservations"
-              ],
-              [
-                "PagedAttention (vLLM)",
-                "Under 4%",
-                "Much higher — memory packed near-optimally"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "04dd27a4-97c0-4c79-8c16-a3283849f4e3",
-          "kind": "problem",
-          "title": "Where Paging Costs You Something",
-          "body": null,
-          "bullets": [
-            "Non-contiguous blocks mean the attention kernel must gather scattered memory instead of reading one linear array — vLLM ships custom CUDA kernels specifically to make that gather fast, it isn't free on arbitrary hardware",
-            "Block size is a tuning knob: smaller blocks reduce internal fragmentation but add more block-table bookkeeping overhead per token processed",
-            "For workloads with short, uniform-length outputs and small batch sizes, naive allocation wastes little anyway — paging's win shrinks when there's little fragmentation to reclaim",
-            "Copy-on-write sharing specifically helps beam search and parallel sampling; it does nothing for unrelated concurrent requests that share no prefix"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "06babce4-dde6-46b5-8129-bc0808aa4b2d",
-          "kind": "takeaways",
-          "title": "Why This Became the Default",
-          "body": null,
-          "bullets": [
-            "PagedAttention turned KV cache memory from a hard-coded worst-case reservation into an on-demand, near-fully-packed resource",
-            "It's the core idea inside vLLM, now one of the most widely deployed open-source LLM inference engines",
-            "The lesson generalizes: LLM serving increasingly borrows decades-old OS techniques — paging, copy-on-write, scheduling — because GPU memory pressure looks a lot like the RAM problem operating systems solved long ago",
-            "Pair it with continuous batching (scheduling) and you get the two pillars most modern LLM serving stacks are built on"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What specific problem does PagedAttention solve in LLM serving?",
-            "options": [
-              "It reduces the number of floating-point operations in the attention computation",
-              "It eliminates KV cache memory waste caused by reserving contiguous max-length blocks upfront",
-              "It makes tokenization faster",
-              "It removes the need for a KV cache entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "PagedAttention doesn't change attention's math — it changes how the resulting KV cache is stored in memory, replacing wasteful worst-case contiguous pre-allocation with on-demand fixed-size blocks."
-          },
-          {
-            "prompt": "In vLLM, what maps a sequence's logical KV cache blocks to their physical location in GPU memory?",
-            "options": [
-              "The tokenizer vocabulary",
-              "A block table, analogous to an OS page table",
-              "The attention mask",
-              "The model's positional embeddings"
-            ],
-            "correctIndex": 1,
-            "explanation": "The block table is the indirection layer that lets each sequence's blocks live scattered anywhere in physical GPU memory while still being addressed in logical order — exactly like a page table in virtual memory."
-          },
-          {
-            "prompt": "Why can beam search or parallel sampling save memory under PagedAttention?",
-            "options": [
-              "Beam search automatically switches to a smaller model",
-              "Candidate sequences sharing a prompt prefix can share the same physical blocks via copy-on-write",
-              "PagedAttention disables the extra candidate branches",
-              "The KV cache is skipped entirely for beam search"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because blocks are reference-counted, multiple sequences can point to the same physical block for a shared prefix; only when a branch writes a new, diverging token does vLLM copy that one block — copy-on-write."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "34f68e49-5396-4904-9a10-699b1bdf8210",
-          "title": "vLLM — high-throughput LLM inference and serving engine built on PagedAttention (GitHub)",
-          "url": "https://github.com/vllm-project/vllm"
-        }
-      ],
-      "id": "0c9fa8ba-a48b-4a36-a130-e28572d48481",
-      "publishedDate": "2026-07-18T18:42:48Z"
     }
   ]
 }
