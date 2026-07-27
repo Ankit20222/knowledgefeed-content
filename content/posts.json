@@ -1,6 +1,222 @@
 {
   "posts": [
     {
+      "id": "f3b41438-63e5-499f-a89d-66895f374050",
+      "title": "Multi-Head Latent Attention: Shrinking the KV Cache Without Shrinking Quality",
+      "subtitle": "DeepSeek's trick to cache one compressed vector instead of every head's key and value",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "mla",
+        "kv-cache",
+        "deepseek",
+        "transformers",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.down.right.and.arrow.up.left",
+      "summary": "Multi-Head Latent Attention compresses every token's keys and values into one small low-rank latent vector instead of caching them per-head, cutting KV-cache memory far more than GQA while keeping a separate small slice for RoPE. A 'weight absorption' trick at inference means the model never has to reconstruct full-size keys, so the savings are real, not just a compress-then-decompress illusion.",
+      "publishedDate": "2026-07-27T12:42:37Z",
+      "slides": [
+        {
+          "id": "aad0aafb-88cd-4f8b-aecd-b82dbdf8f3a8",
+          "kind": "cover",
+          "title": "One Vector to Cache Them All",
+          "body": "Every token an LLM generates forces it to store a key and value vector per attention head, per layer, for the rest of the conversation. Multi-Head Latent Attention (MLA) — the mechanism behind DeepSeek-V2/V3 — replaces that whole per-head cache with one small compressed vector per token.",
+          "bullets": [],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null
+        },
+        {
+          "id": "63bff713-33ae-403b-8f87-9b19f9a69ba3",
+          "kind": "problem",
+          "title": "The KV Cache Is the Real Memory Bottleneck",
+          "body": "Model weights are a fixed cost. The KV cache is not — it grows with every token in context, across every request you're serving concurrently.",
+          "bullets": [
+            "Standard multi-head attention (MHA) caches a separate K and V vector per head per layer: total size scales with n_heads × d_head × n_layers × sequence_length.",
+            "At 128K context with dozens of layers and heads, the KV cache per request can rival or exceed the size of the model's own activations in flight.",
+            "Multi-Query Attention (MQA) and Grouped-Query Attention (GQA) cut this by sharing K/V across heads — but they throw away per-head expressiveness to do it, trading some quality for memory.",
+            "The real question MLA asks: can you shrink the cache without sharing away information, by compressing it instead?"
+          ],
+          "symbol": "memorychip",
+          "table": null
+        },
+        {
+          "id": "19fe0860-fc3e-4615-b3ca-bccc0f27ace1",
+          "kind": "solution",
+          "title": "Compress K and V Into One Latent Vector",
+          "body": "Instead of projecting each token into n_heads separate key/value pairs and caching all of them, MLA first projects the token down into a single low-rank latent vector, then expands back up to per-head keys and values only when needed.",
+          "bullets": [
+            "A down-projection matrix maps the token's hidden state to a compressed latent c (e.g. a few hundred dimensions) — this is the only thing that gets cached per token.",
+            "Separate up-projection matrices reconstruct the full per-head K and per-head V from that same latent c on demand.",
+            "Because c is shared across all heads, the cache no longer scales with n_heads at all — only with the latent dimension, which is far smaller than n_heads × d_head.",
+            "Unlike GQA's sharing, no information about individual heads is discarded ahead of time — it's recoverable from c, just compressed."
+          ],
+          "symbol": "arrow.down.forward.and.arrow.up.backward",
+          "table": null
+        },
+        {
+          "id": "95c9bb8a-a40c-4e16-95d6-1e3fb047a23f",
+          "kind": "concept",
+          "title": "Why RoPE Needs Its Own Lane",
+          "body": "Rotary Position Embedding (RoPE) works by rotating query/key vectors by an angle proportional to position — but rotation doesn't commute cleanly with the low-rank compression MLA relies on.",
+          "bullets": [
+            "If you compress a token's content into c and then try to apply a position-dependent rotation afterward, the relative-position math RoPE depends on breaks down.",
+            "MLA's fix: split each key into two parts — a compressed 'content' key (from the shared latent c) and a small separate 'decoupled RoPE' key computed directly per head, carrying only positional information.",
+            "The decoupled RoPE slice is small (a few dozen dimensions) and IS cached per-token, alongside the compressed latent — so the total cache is latent + small RoPE slice, not zero.",
+            "This split is why MLA isn't simply 'GQA with a smaller rank' — it's a structurally different way of separating content from position."
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "231ab8af-7da2-4de4-ac0d-3432e6d5a26e",
+          "kind": "architecture",
+          "title": "The Weight-Absorption Trick Makes the Savings Real",
+          "body": "Compressing and then decompressing on every attention step would just move the memory problem into extra compute. MLA avoids that by folding the projection matrices together algebraically.",
+          "bullets": [
+            "At inference, the query's up-projection and the key's up-projection are combined ('absorbed') into a single matrix applied directly to the query and the cached latent c.",
+            "This means the model never actually materializes full per-head keys during decoding — the score is computed straight from the compressed latent, so only c (plus the small RoPE slice) ever needs to sit in the cache.",
+            "The same absorption trick applies to values on the output side, folding the value up-projection into the attention-output projection.",
+            "This is the detail that makes MLA a genuine cache-size win rather than a compress-then-expand illusion — but it also means inference kernels have to be written specifically to exploit it (see the pitfalls slide)."
+          ],
+          "symbol": "square.stack.3d.down.forward",
+          "table": null
+        },
+        {
+          "id": "98fed644-8fb9-444f-8389-8131e08b2e9e",
+          "kind": "comparison",
+          "title": "MLA vs. the Alternatives",
+          "body": "Each attention variant sits on a different point of the memory-vs-quality tradeoff curve.",
+          "bullets": [
+            "DeepSeek's own reported comparison (DeepSeek-V2 vs. its dense DeepSeek 67B predecessor): about a 93% cut in KV cache size and roughly 5.7x higher max generation throughput, while matching or beating the dense model on benchmarks.",
+            "That combination — cache smaller than GQA typically achieves, with no measured quality loss versus full MHA — is the headline claim MLA is built around."
+          ],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Variant",
+              "What's cached per token",
+              "Quality vs. full MHA"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "Full K, V for every head",
+                "Baseline"
+              ],
+              [
+                "MQA",
+                "One shared K, V for all heads",
+                "Noticeable quality drop"
+              ],
+              [
+                "GQA",
+                "K, V shared within small head groups",
+                "Small quality drop, moderate cache cut"
+              ],
+              [
+                "MLA",
+                "One compressed latent + small RoPE slice",
+                "Matches/beats MHA in DeepSeek's reported results"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "d873a69d-394f-4dd8-8436-dfceba6efb59",
+          "kind": "example",
+          "title": "Worked Example: Serving Long-Context Requests",
+          "body": "Picture a 64-layer model with 128 attention heads of dimension 128, serving requests at a 128K-token context length.",
+          "bullets": [
+            "Full MHA cache per token across all layers: 64 layers × 128 heads × 128 dims × 2 (K and V) = over 2 million values per token — at 128K context, that's the dominant cost of serving even a single long request.",
+            "GQA with, say, 8 shared groups cuts that by roughly 16x versus full MHA — a real win, but the cache still scales with sequence length × groups × head_dim.",
+            "MLA replaces the per-head total with one shared latent (e.g. ~512 dims) plus a small RoPE slice (e.g. ~64 dims) per token — independent of how many heads the model has.",
+            "The practical payoff: on the same GPU memory budget, a serving system can hold far more concurrent long-context requests in flight, which is exactly what made DeepSeek-V2/V3's low API pricing viable at scale."
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "89cedd98-54d7-4afa-9314-520be48cd96c",
+          "kind": "problem",
+          "title": "Where MLA Costs You Something",
+          "body": "MLA is not a free lunch — it trades implementation complexity for memory, and that trade isn't always worth making.",
+          "bullets": [
+            "It only helps the KV cache (memory during decoding) — prefill compute is still the same attention cost as before; MLA doesn't speed up processing a long prompt for the first time.",
+            "The weight-absorption trick requires custom attention kernels (frameworks like vLLM and SGLang needed dedicated MLA kernels) — a naive implementation that decompresses c on every step loses most of the benefit.",
+            "The extra architectural pieces (down-projection, two up-projections, decoupled RoPE slice) add real training and debugging complexity versus GQA's simple head-grouping.",
+            "For smaller models or short-context workloads where the KV cache was never the bottleneck, GQA's simplicity is usually the better engineering call — MLA earns its complexity at large scale and long context."
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "027f1120-5f03-452a-a297-fa47f960e98d",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "MLA caches one shared compressed latent vector per token instead of per-head keys and values, decoupling cache size from head count entirely.",
+            "A separate small RoPE-carrying slice is needed alongside the latent, because rotation and low-rank compression don't commute.",
+            "Weight absorption at inference means the model scores attention directly against the compressed latent — full keys are never reconstructed, so the cache savings are real.",
+            "It's a scale play: worth the added kernel and training complexity mainly when long context and high concurrency make KV cache the actual bottleneck."
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b674583b-79be-45ef-a6e2-02fa850ae28b",
+            "prompt": "What does Multi-Head Latent Attention actually store in the KV cache per token?",
+            "options": [
+              "A full key and value vector for every attention head, same as standard MHA",
+              "One compressed low-rank latent vector shared across heads, plus a small decoupled RoPE slice",
+              "Only the value vectors, discarding keys entirely",
+              "A single shared key and value vector for all heads, identical to MQA"
+            ],
+            "correctIndex": 1,
+            "explanation": "MLA's core idea is compression, not sharing: it caches one small latent vector (reconstructable into per-head K/V via up-projections) plus a tiny separate slice that carries RoPE's positional information. That's structurally different from MQA/GQA, which cache actual shared K/V vectors."
+          },
+          {
+            "id": "ae0fe241-2b1c-4ab3-9672-76ae94cc58d0",
+            "prompt": "Why can't RoPE just be applied directly to the compressed latent vector?",
+            "options": [
+              "RoPE only works on value vectors, never on keys",
+              "Rotation by a position-dependent angle doesn't commute with the low-rank compression, breaking the relative-position property RoPE relies on",
+              "RoPE requires floating point precision that compressed vectors can't provide",
+              "It can be applied directly — MLA doesn't actually need a separate RoPE path"
+            ],
+            "correctIndex": 1,
+            "explanation": "RoPE's relative-position trick depends on applying rotation directly to the vectors used in the dot product. Compressing first (or after) and rotating breaks that algebraic relationship, so MLA carves out a small separate per-head slice computed and rotated independently of the shared compressed content."
+          },
+          {
+            "id": "0f077c6c-1af1-4f8b-9add-c7aced27ed4f",
+            "prompt": "What problem does the 'weight absorption' trick solve at inference time?",
+            "options": [
+              "It compresses the model's weights to reduce disk storage",
+              "It lets the model skip computing attention scores entirely for cached tokens",
+              "It folds up-projection matrices into the query/output projections so full per-head keys never need to be reconstructed, keeping only the compressed latent in the cache",
+              "It removes the need for a separate value projection"
+            ],
+            "correctIndex": 2,
+            "explanation": "Without absorption, you'd have to decompress the latent back into full per-head keys on every step to compute attention — defeating the memory savings. Folding the projections together lets the model score directly against the compressed latent, so decompression never has to happen explicitly."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "76060dac-4c30-49c1-abd3-6bfb9ef463d1",
+          "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model",
+          "url": "https://arxiv.org/abs/2405.04434"
+        }
+      ]
+    },
+    {
       "id": "2febee01-e6da-4b1e-a4dd-afd2728c2af9",
       "title": "The Outbox Pattern: Making a DB Write and an Event Publish Atomic",
       "subtitle": "How to stop losing (or duplicating) events when a database commit and a broker publish can't share a transaction",
@@ -11151,184 +11367,6 @@
         }
       ],
       "publishedDate": "2026-07-19T06:40:44Z"
-    },
-    {
-      "id": "f646ea41-f4cc-4478-ba76-7c6e446a4007",
-      "title": "Hybrid Search: Fusing Keyword and Vector Retrieval",
-      "subtitle": "Why the best RAG pipelines never trust embeddings alone",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "hybrid-search",
-        "bm25",
-        "vector-search",
-        "reciprocal-rank-fusion"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.merge",
-      "summary": "Vector search finds meaning but blurs exact terms; BM25 finds exact terms but misses meaning. Hybrid search runs both and merges their rankings with Reciprocal Rank Fusion, a simple formula that beats either retriever alone without needing to normalize incompatible scores.",
-      "publishedDate": "2026-07-19T00:40:29Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Query, Two Search Engines",
-          "body": "Production RAG systems rarely pick embeddings or keyword search — they run both, in parallel, every time.",
-          "bullets": [],
-          "symbol": "arrow.triangle.merge"
-        },
-        {
-          "kind": "problem",
-          "title": "Embeddings Blur the Exact Term You Needed",
-          "body": "Dense vectors are trained to capture meaning, which means they compress away the precise tokens that rare terms depend on.",
-          "bullets": [
-            "Query 'error code ECONNRESET' — an embedding model may rank a doc about 'connection timeout troubleshooting' above the one page that names ECONNRESET",
-            "Product SKUs, part numbers, legal citations, and person names look like noise to a model trained on semantic similarity",
-            "BM25 (term-frequency × inverse-document-frequency) nails exact matches instantly but is blind to paraphrase: 'car' and 'automobile' share no tokens"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "kind": "solution",
-          "title": "Reciprocal Rank Fusion Merges Rankings, Not Scores",
-          "body": "RRF sidesteps the hardest part of combining retrievers: BM25 scores and cosine similarities live on incompatible scales, so you can't just average them. RRF only looks at each document's rank position.",
-          "bullets": [
-            "RRF(d) = Σ over retrievers of 1 / (k + rank(d)) — sum the reciprocal ranks a document gets from each system",
-            "k is a small constant (60 in the original 2009 paper) that dampens the impact of a #1 vs #2 finish so one retriever can't dominate",
-            "A document that's rank 3 in BM25 and rank 5 in vector search often outscores one that's rank 1 in only one list"
-          ],
-          "symbol": "sum"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Merging Two Top-5 Lists",
-          "body": "Query: 'impedance mismatch ORM'. BM25 nails the exact phrase; vector search surfaces conceptually related docs it never mentions by name.",
-          "bullets": [
-            "BM25 top result: Doc C (rank 1) — contains the literal phrase 'impedance mismatch'",
-            "Vector top result: Doc A (rank 1) — a general 'ORM design patterns' doc with no exact phrase match",
-            "Doc B appears rank 2 in BM25 and rank 3 in vector search — it wins the fusion despite never being #1 anywhere"
-          ],
-          "symbol": "list.number",
-          "table": {
-            "headers": [
-              "Doc",
-              "BM25 rank",
-              "Vector rank",
-              "RRF score (k=60)"
-            ],
-            "rows": [
-              [
-                "Doc B",
-                "2",
-                "3",
-                "1/62 + 1/63 ≈ 0.0320"
-              ],
-              [
-                "Doc C",
-                "1",
-                "6",
-                "1/61 + 1/66 ≈ 0.0316"
-              ],
-              [
-                "Doc A",
-                "5",
-                "1",
-                "1/65 + 1/61 ≈ 0.0318"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "comparison",
-          "title": "Vector-Only vs BM25-Only vs Hybrid",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Retriever",
-              "Exact-term recall",
-              "Paraphrase recall",
-              "Extra cost"
-            ],
-            "rows": [
-              [
-                "BM25 only",
-                "High",
-                "Low",
-                "None — inverted index is cheap"
-              ],
-              [
-                "Vector only",
-                "Low",
-                "High",
-                "Embedding + ANN index storage"
-              ],
-              [
-                "Hybrid + RRF",
-                "High",
-                "High",
-                "Run both, fuse rank lists (~1-2ms)"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis"
-        },
-        {
-          "kind": "takeaways",
-          "title": "When to Reach for Hybrid Search",
-          "body": null,
-          "bullets": [
-            "Skip it for small, narrow-domain corpora where one retriever already covers both exact and semantic queries well",
-            "Deduplicate documents across the two candidate lists before fusing — otherwise the same doc's two ranks silently double-count",
-            "RRF needs no score normalization or trained weights, which is why it's the default fusion method in Elasticsearch, Weaviate, and Vespa",
-            "Tune candidate depth (top-k per retriever, typically 20-100) before tuning k — starving either retriever of candidates hurts fusion more than the constant does"
-          ],
-          "symbol": "checklist"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does Reciprocal Rank Fusion combine rank positions instead of raw retriever scores?",
-            "options": [
-              "Rank positions are faster to compute than similarity scores",
-              "BM25 scores and cosine similarities live on incompatible scales, so averaging them directly is meaningless",
-              "Ranks are required by the RAG specification",
-              "Scores are not available from vector databases"
-            ],
-            "correctIndex": 1,
-            "explanation": "A BM25 score of 8.2 and a cosine similarity of 0.71 aren't comparable numbers. Rank position (1st, 2nd, 3rd...) is retriever-agnostic, so RRF can fuse any set of ranked lists without normalization or calibration."
-          },
-          {
-            "prompt": "In RRF(d) = Σ 1/(k + rank(d)), what does the constant k (typically 60) primarily control?",
-            "options": [
-              "The maximum number of documents returned",
-              "How much a document's exact position (1st vs 2nd) swings its final score",
-              "The embedding dimensionality used by the vector retriever",
-              "The number of retrievers that must agree on a document"
-            ],
-            "correctIndex": 1,
-            "explanation": "A larger k flattens the curve — being rank 1 vs rank 2 matters less to the final score. A small k would let a single #1 finish dominate the fusion, defeating the point of combining multiple retrievers."
-          },
-          {
-            "prompt": "A document ranks #1 in vector search but doesn't appear at all in the BM25 top-k. What happens to it under RRF?",
-            "options": [
-              "It's automatically disqualified for lacking a keyword match",
-              "It still gets an RRF score from its vector rank alone, and can still win if other candidates score lower overall",
-              "Its score is forced to zero because fusion requires appearing in every list",
-              "RRF throws an error and falls back to BM25-only"
-            ],
-            "correctIndex": 1,
-            "explanation": "RRF sums whatever ranks a document has — missing from one list just means that term contributes 0, not that the document is excluded. This is exactly how hybrid search rescues a strong semantic match that shares no keywords with the query."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods (Cormack, Clarke, Büttcher — SIGIR 2009)",
-          "url": "https://dl.acm.org/doi/10.1145/1571941.1572114"
-        }
-      ]
     }
   ]
 }
