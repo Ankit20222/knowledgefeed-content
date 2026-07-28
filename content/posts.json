@@ -1,6 +1,217 @@
 {
   "posts": [
     {
+      "id": "41fc5b2b-6765-4685-92b2-9a159c770605",
+      "title": "MCP Sampling: When the Server Asks the Model, Not the Other Way Around",
+      "subtitle": "The one MCP primitive that runs backwards — the server requests a completion, and the client's LLM (and the human) stay in control.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "sampling",
+        "agents",
+        "llm",
+        "protocol",
+        "human-in-the-loop"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Sampling flips MCP's usual direction: instead of a client's LLM calling a tool on a server, a server sends a sampling/createMessage request asking the client to run an LLM completion on its behalf. The server never holds its own API key or model access — the client owns the model, the cost, and (per spec) a human review step before the prompt goes out and before the completion comes back.",
+      "body": null,
+      "publishedDate": "2026-07-28T06:41:11Z",
+      "slides": [
+        {
+          "id": "97ee24ea-eea7-4797-8669-ef0df0948413",
+          "kind": "cover",
+          "title": "MCP Has a Reverse Gear",
+          "body": "Every other MCP primitive runs the same direction: the client's LLM decides to call a tool, read a resource, or use a prompt on some server. Sampling is the one exception — the server initiates, and it's asking for a completion, not data.",
+          "bullets": [
+            "sampling/createMessage is a request a SERVER sends TO the client, not the reverse",
+            "It exists because agentic servers sometimes need to 'think' mid-task — summarize a scrape, pick a next step, draft text — without owning an LLM API key",
+            "The client stays the gatekeeper: it can inspect, edit, approve, or reject both the outgoing prompt and the incoming completion"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "f28fdcd3-ff4d-4cd8-8acc-3fffbb3397db",
+          "kind": "problem",
+          "title": "A Tool Server That Needs to Think Has No Good Options",
+          "body": "Say an MCP server crawls a webpage, or walks a big log file, and the raw output is too large to hand back untouched — it needs an LLM to condense it first.",
+          "bullets": [
+            "Option A: give the server its own OpenAI/Anthropic API key. Now every server operator manages separate billing, and the user has no visibility into what that server is saying to which model",
+            "Option B: return the raw, unprocessed data and make the client's main LLM do all the summarizing. That burns the primary context window on work a small aside-call could have handled",
+            "Neither option lets a server borrow reasoning power the way it borrows filesystem access via Roots — cheaply, and under the client's control"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "1fafc159-72f1-42a8-bd24-63234e661137",
+          "kind": "solution",
+          "title": "sampling/createMessage: A Completion Request, Mediated",
+          "body": "A server sends messages plus modelPreferences to the client. The client — not the server — decides which actual model handles it, and can show a human the prompt before it's sent.",
+          "bullets": [
+            "messages: the conversation turns the server wants completed, same shape as a normal chat request",
+            "modelPreferences: hints (e.g. 'claude-3-sonnet'), plus costPriority / speedPriority / intelligencePriority (0-1 floats) — soft guidance, not a hard model pin, since the client may not have that exact model",
+            "systemPrompt (optional override), maxTokens, temperature, stopSequences, and includeContext ('none' | 'thisServer' | 'allServers') to control how much surrounding MCP context gets folded in",
+            "The client can modify the prompt, deny the request outright, or let it through — then does the same review pass on the completion before returning it to the server"
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "b66d285d-e4ac-48a1-896a-7dd21f69cdc5",
+          "kind": "concept",
+          "title": "Human-in-the-Loop Is Not Optional Polish",
+          "body": "The spec doesn't treat approval as a nice-to-have UI feature — it's the reason sampling is safe to expose at all.",
+          "bullets": [
+            "Without review, a compromised or buggy server could craft prompts that exfiltrate context, waste the user's model budget, or steer the client's LLM into unsafe output — all using credentials the server never even sees",
+            "Because the server has zero direct model access, the worst it can do is ask; the client can always say no",
+            "In practice this means UIs typically show the outgoing prompt with an approve/edit/deny step, similar to a permission dialog for a risky tool call"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "4832b823-86e7-4ed4-afb0-fc1d1940d661",
+          "kind": "example",
+          "title": "A Log-Analysis Server That Delegates the Summary",
+          "body": "Picture an MCP server exposing a tail_errors tool that just pulled 400 lines of stack traces from a production log.",
+          "bullets": [
+            "Instead of returning all 400 lines, the server sends sampling/createMessage: messages = [{role: 'user', content: '<400 lines>\\n\\nSummarize the distinct failure modes.'}], modelPreferences = {intelligencePriority: 0.3, speedPriority: 0.8}",
+            "The client sees a low-stakes, cheap-and-fast request, may auto-approve it under a saved policy, and routes it to a small fast model rather than its main conversational one",
+            "The completion — a 5-bullet summary of failure clusters — comes back to the server, which returns just that summary as the tool's result, keeping the primary agent's context window untouched"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "c8ee1dca-4cb4-4e6b-b142-435faaf1f983",
+          "kind": "comparison",
+          "title": "Sampling vs. Tools: Who's Calling Whom",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "Tools",
+              "Sampling"
+            ],
+            "rows": [
+              [
+                "Initiator",
+                "Client's LLM decides to call",
+                "Server decides to request"
+              ],
+              [
+                "Direction",
+                "Client → Server",
+                "Server → Client"
+              ],
+              [
+                "What's returned",
+                "Structured tool result / data",
+                "A generated message"
+              ],
+              [
+                "Who picks the model",
+                "N/A — client's LLM is already running",
+                "Client, guided by the server's modelPreferences hints"
+              ],
+              [
+                "Credentials needed on server",
+                "None for the LLM itself",
+                "None — server never holds an API key"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "44caf6f4-39e9-4467-b767-f7fb543c28eb",
+          "kind": "concept",
+          "title": "Where This Breaks Down",
+          "body": "Sampling is powerful precisely because it's constrained — but the constraints have real costs worth knowing before reaching for it.",
+          "bullets": [
+            "It's an OPTIONAL client capability, negotiated at initialize — a server has to check the client actually advertises sampling support and have a fallback path (usually: degrade to returning raw data) if it doesn't",
+            "modelPreferences are hints, not guarantees — a server that hardcodes assumptions about which exact model will answer will eventually be surprised",
+            "Every sampling call is a blocking round trip through a human-review UI in the reference implementation — chaining several of them inside one tool call turns a single user action into a string of approval dialogs",
+            "The completion is unstructured text; a server that needs guaranteed JSON back should not rely on sampling alone — it should validate/re-prompt, since there's no schema enforcement like Elicitation has"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "b48b3e13-5234-492a-8d0c-6e31e44a76a6",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Sampling is the one MCP primitive that runs server-to-client: a server asks the client to run an LLM completion, instead of the client's LLM calling into the server",
+            "Servers never hold model credentials — the client owns model choice, cost, and (by spec intent) a human approval step on both the prompt and the completion",
+            "modelPreferences (cost/speed/intelligence priorities + model hints) let a server signal what it needs without dictating exactly which model answers",
+            "It's optional, unstructured, and a blocking round trip per call — reserve it for genuine 'the server needs to think' moments, not routine data formatting"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b7937993-5913-4ad7-8651-06305e8703c4",
+            "prompt": "Which direction does a sampling/createMessage request travel?",
+            "options": [
+              "Client to server, like a tool call",
+              "Server to client",
+              "Directly from the server to the LLM provider's API",
+              "It's broadcast to every connected MCP server at once"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sampling is the reverse of the usual MCP flow: the SERVER sends sampling/createMessage TO the client, asking the client to run a completion. Every other primitive (tools, resources, prompts) is the client reaching into the server."
+          },
+          {
+            "id": "72ab57b2-54f0-4017-ba27-94e6bf7fafb2",
+            "prompt": "Why doesn't an MCP server that uses sampling need its own LLM API key?",
+            "options": [
+              "Because MCP provides a shared free API key to all servers",
+              "Because the client executes the completion using its own model access, and only returns the result to the server",
+              "Because sampling requests are answered by a rule-based system, not a real LLM",
+              "Because servers are required to run their own local open-source model"
+            ],
+            "correctIndex": 1,
+            "explanation": "The whole point of sampling is that the server delegates the actual model call to the client. The client owns credentials, picks the model, and can review the request — the server only ever sees the final completion."
+          },
+          {
+            "id": "4cc481a0-a223-4812-8b61-75f513046f78",
+            "prompt": "A server sets modelPreferences with high speedPriority and low intelligencePriority. What should you expect?",
+            "options": [
+              "The client is guaranteed to use the exact model named",
+              "This is a hard error — priorities aren't part of the sampling spec",
+              "A soft hint that the client should prefer a fast, cheap model if it has one — the client can still choose otherwise",
+              "The server bypasses the client and calls a fast model directly"
+            ],
+            "correctIndex": 2,
+            "explanation": "modelPreferences (cost/speed/intelligence priorities plus model name hints) are guidance for the client's model-selection, not a binding contract. The client makes the final call, since it owns the actual model access."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "57bbfdfd-7bce-4cad-b625-77d9e63449b2",
+          "title": "Sampling — Model Context Protocol Specification",
+          "url": "https://modelcontextprotocol.io/specification/draft/client/sampling"
+        },
+        {
+          "id": "e6cc486b-911d-4ce8-bdf7-3b6b9e71629c",
+          "title": "modelcontextprotocol/modelcontextprotocol — sampling.mdx source",
+          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/sampling.mdx"
+        }
+      ]
+    },
+    {
       "title": "RLHF: Teaching a Model What 'Good' Actually Means",
       "subtitle": "Pretraining predicts the next token. RLHF teaches the model which next token humans actually want.",
       "category": "LLMs",
@@ -11151,206 +11362,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "title": "From Pixels to States: Rethinking World Models as Game Engines",
-      "subtitle": "The #1 trending paper on Hugging Face this week argues video world models should simulate state, then render — not just predict pixels.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "world models",
-        "game engines",
-        "video generation",
-        "arxiv paper",
-        "state representation",
-        "interactive ai"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "gamecontroller.fill",
-      "summary": "Most interactive world models generate the next frame from pixels and an action, with no explicit game state carried forward — so long rollouts silently drift (health bars 'heal', positions slip). This paper reframes the problem around how real game engines work: simulate authoritative state first, render pixels second. It's backed by a purpose-built dataset of 90+ hours of Black Myth: Wukong footage with frame-aligned actions and ground-truth state, and was the most-upvoted paper on Hugging Face Daily Papers for July 19, 2026.",
-      "slides": [
-        {
-          "id": "8d546bb2-891c-4f2a-8e9b-a666c5654fd4",
-          "bullets": [],
-          "body": "Most 'playable' video-generation world models predict pixels frame by frame, with no notion of health, position, or which attack just landed. This paper argues that's backwards: treat the model like a game engine, not a camera.",
-          "table": null,
-          "kind": "cover",
-          "title": "A Video Generator That Forgot It Was Playing a Game",
-          "symbol": "gamecontroller.fill"
-        },
-        {
-          "id": "1be3d939-9076-482e-bead-112f65e85530",
-          "bullets": [
-            "Diffusion/video world models generate the next frame conditioned on pixels plus an action, with no explicit game state carried forward between frames.",
-            "Without a state channel, small per-frame errors compound: a character's HP, position, or which enemies are alive can silently drift from what actually happened in the rollout.",
-            "Long rollouts (minutes, not seconds) break this hardest — the model has no ground truth to re-anchor to, unlike a real game engine that stores authoritative state and only renders it.",
-            "Most training datasets for these models pair frames only with pixels and actions, not the actual internal game state, so there's nothing to supervise state-tracking against even if you wanted to."
-          ],
-          "body": null,
-          "table": null,
-          "kind": "problem",
-          "title": "Pixels-Only World Models Drift and Forget",
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "0558085e-575a-4f0d-8409-9b81495aafc6",
-          "bullets": [
-            "Four axes the model is built and evaluated around: player action control, game-state dynamics, state–observation persistence, and real-time generation.",
-            "State–observation persistence is the key addition — the model is pushed to keep an explicit, checkable game-state representation across the rollout, not just whatever the pixels happen to imply, and render observations from that state.",
-            "This mirrors a real game engine: a simulation step updates authoritative state (HP, position, cooldowns); rendering is a separate, later step that reads that state — so visual drift can't silently corrupt the game logic."
-          ],
-          "body": "The paper organizes an interactive world model along a real game engine's own separation of concerns: simulate state, then render.",
-          "table": null,
-          "kind": "solution",
-          "title": "Treat State as First-Class, Pixels as the Last Step",
-          "symbol": "cube.transparent"
-        },
-        {
-          "id": "17aadf3e-8ad3-4c2d-86d2-2dfb1f304e0a",
-          "bullets": [
-            "90+ hours of gameplay footage captured with frame-aligned actions, ground-truth game state, and visual observations, all with structured annotations.",
-            "Frame-aligned actions means every input (attack, dodge, cast) is timestamped to the exact frame it affected — supervision a pixels-only model never had access to.",
-            "The same research group previously released WildWorld, a related open dataset (100M+ annotated frames, hundreds of hours, 450+ semantic actions) for action-conditioned world modeling — this paper extends that state-centric approach to a full game-engine framing."
-          ],
-          "body": "To train and evaluate this, the authors built a data pipeline around the action game Black Myth: Wukong.",
-          "table": null,
-          "kind": "architecture",
-          "title": "A Purpose-Built Data Engine: Black Myth Wukong",
-          "symbol": "video.fill"
-        },
-        {
-          "id": "4100d9ec-8b2f-4700-95bc-b9f239eec931",
-          "bullets": [
-            "A pixels-only model asked to generate a long boss fight will often let the boss's health visually 'heal' after a hit lands, because nothing but pixel continuity is tracking damage.",
-            "A state-aware, game-engine-style model instead decrements an explicit HP value on a landed hit, and pixels are generated to stay consistent with that state — so the fight stays mechanically coherent over a long horizon.",
-            "That's the practical difference between a world model you can only watch and one you could actually play, where inputs have consequences that persist."
-          ],
-          "body": "Concrete scenario — generating several minutes of continuous combat.",
-          "table": null,
-          "kind": "example",
-          "title": "Worked Example: A Sustained Boss Fight",
-          "symbol": "bolt.fill"
-        },
-        {
-          "id": "c24d93cc-0a15-4907-98ef-69ce0e984b9c",
-          "bullets": [],
-          "body": null,
-          "table": {
-            "headers": [
-              "",
-              "Pixels-only world models",
-              "State-centric (this paper)"
-            ],
-            "rows": [
-              [
-                "What's carried forward",
-                "Only prior generated frames",
-                "Explicit game state + frames"
-              ],
-              [
-                "Long-horizon consistency",
-                "Drifts — no ground truth to check against",
-                "State acts as an anchor at every step"
-              ],
-              [
-                "Training supervision",
-                "Pixels + action only",
-                "Pixels + action + ground-truth state (Wukong capture)"
-              ],
-              [
-                "Core framing",
-                "World model as a camera",
-                "World model as a game engine: simulate, then render"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Pixels-Only vs. State-Centric World Models",
-          "symbol": "tablecells"
-        },
-        {
-          "id": "e1a80886-3dcd-4e9f-8b10-eb33b2154300",
-          "bullets": [
-            "Ground-truth state capture is expensive and game-specific — it requires instrumenting a real game engine to log state alongside footage, which doesn't scale to arbitrary web video the way pixels-only training does.",
-            "The evaluation is demonstrated on action-RPG combat in one game — it isn't yet shown to generalize to open-world exploration, puzzle mechanics, or non-game interactive video.",
-            "Explicit state improves mechanical consistency but adds a harder joint objective: the system has to learn to keep pixels faithful to state, not just plausible-looking, which is more demanding than pixel prediction alone."
-          ],
-          "body": null,
-          "table": null,
-          "kind": "problem",
-          "title": "Where This Approach Is Limited",
-          "symbol": "xmark.octagon.fill"
-        },
-        {
-          "id": "4b27c7a0-2fac-4a62-b209-5a94cb660822",
-          "bullets": [
-            "Core reframe: an interactive world model should behave like a game engine — simulate authoritative state, then render — not like a camera that only predicts pixels.",
-            "State–observation persistence is the missing piece that keeps long rollouts coherent instead of drifting.",
-            "It's backed by a purpose-built dataset: 90+ hours of Black Myth: Wukong footage with frame-aligned actions and ground-truth state, from the same group behind the WildWorld dataset.",
-            "It was the top trending paper on Hugging Face's Daily Papers for July 19, 2026, with well over 400 upvotes — far ahead of the next most-upvoted paper that week."
-          ],
-          "body": null,
-          "table": null,
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "bc43167d-befa-40df-8186-d3f7909de640",
-            "prompt": "What does \"state–observation persistence\" mean in this paper?",
-            "options": [
-              "Compressing video frames to save storage",
-              "Keeping an explicit, checkable game state across the rollout that observations are rendered from",
-              "Persisting user preferences between sessions",
-              "A caching layer for repeated API calls"
-            ],
-            "correctIndex": 1,
-            "explanation": "It's the core addition that lets the model act like a game engine: authoritative state is tracked separately from pixels, so long rollouts don't silently drift."
-          },
-          {
-            "id": "438ea2f2-0acd-4519-ba7b-5c0f9e3b7e79",
-            "prompt": "Why do pixels-only world models tend to drift over long rollouts?",
-            "options": [
-              "They run out of GPU memory",
-              "They intentionally randomize outcomes for diversity",
-              "They have no explicit state to anchor to — only prior frames, so small errors compound",
-              "The training data is too small"
-            ],
-            "correctIndex": 2,
-            "explanation": "Without ground-truth state as supervision, a model has nothing but its own previous (possibly already-wrong) frames to condition on, so small errors accumulate over a long horizon."
-          },
-          {
-            "id": "15f59214-5eca-478c-b463-bdbd0fa5b2f9",
-            "prompt": "What data did the authors build to train and evaluate this approach?",
-            "options": [
-              "A synthetic dataset generated entirely by another LLM",
-              "A dataset of chess games",
-              "Public web video scraped without any state annotations",
-              "90+ hours of Black Myth: Wukong gameplay with frame-aligned actions and ground-truth state"
-            ],
-            "correctIndex": 3,
-            "explanation": "The instrumented gameplay capture is what supplies the ground-truth state signal that pixels-only datasets lack."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "439013b8-72f0-4cda-89e3-3ab5344f0606",
-          "title": "From Pixels to States: Rethinking Interactive World Models as Game Engines (arXiv:2607.14076)",
-          "url": "https://arxiv.org/abs/2607.14076"
-        },
-        {
-          "id": "e318629a-47b6-4faa-8283-7fb8ffaada18",
-          "title": "WildWorld dataset (related dataset from the same research group)",
-          "url": "https://github.com/AlayaLab/WildWorld"
-        }
-      ],
-      "id": "f61eae1b-3961-4c1e-a53d-d4d1cb69db64",
-      "publishedDate": "2026-07-19T18:43:47Z"
     }
   ]
 }
