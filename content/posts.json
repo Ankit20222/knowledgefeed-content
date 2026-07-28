@@ -1,6 +1,219 @@
 {
   "posts": [
     {
+      "id": "3ad12326-e6a3-402d-8bf4-22ebfa9a2ac6",
+      "title": "PagedAttention: What Serving LLMs Borrowed From Virtual Memory",
+      "subtitle": "vLLM stopped reserving a worst-case slab of GPU memory per request and started paging the KV cache instead — throughput went up by an order of magnitude.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "kv-cache",
+        "vllm",
+        "memory-management",
+        "throughput",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Naive LLM serving reserves a contiguous, worst-case-sized block of GPU memory for every request's KV cache, wasting most of it to fragmentation. PagedAttention (vLLM) borrows the OS's virtual-memory trick: split the KV cache into small fixed-size blocks, map them through a block table, and allocate on demand — cutting memory waste from ~60-80% to under 4% and letting far more requests share a GPU at once.",
+      "body": null,
+      "publishedDate": "2026-07-28T12:41:51Z",
+      "slides": [
+        {
+          "id": "65e8555f-813d-4771-96e3-e5fa309e4292",
+          "kind": "cover",
+          "title": "The KV Cache Problem Nobody Solved Until 2023",
+          "body": "Every generated token needs its key/value vectors kept around for every future token to attend back to. That cache grows for the life of a request — and until PagedAttention, serving systems handled its memory the crudest way possible: reserve the max up front.",
+          "bullets": [
+            "PagedAttention comes from the vLLM paper (Kwon et al., UC Berkeley, SOSP 2023) — 'Efficient Memory Management for Large Language Model Serving'",
+            "The core move: treat GPU memory for the KV cache like an OS treats RAM — paged, non-contiguous, allocated on demand",
+            "Result the paper reports: up to 24x higher throughput than HuggingFace Transformers at the same latency, serving the same model on the same hardware"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "783f7175-e1c7-429c-ac0a-37cd4cfba46a",
+          "kind": "problem",
+          "title": "Reserving for the Worst Case Wastes Most of the Memory",
+          "body": "Before PagedAttention, serving frameworks stored each request's KV cache in one contiguous chunk of memory, sized for the maximum sequence length the request could reach.",
+          "bullets": [
+            "A request might generate 40 tokens but reserve space for 2048 — the unused remainder (internal fragmentation) sits locked, unusable by any other request, for the whole request's lifetime",
+            "Because sizes vary and allocations are contiguous, the allocator also can't reuse the odd-shaped gaps left behind when requests finish (external fragmentation)",
+            "The vLLM paper measured existing systems wasting 60-80% of allocated KV cache memory this way — memory that directly limits how many requests you can batch together on one GPU"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "f258527c-ff0b-4b6c-8a51-45494aa822ce",
+          "kind": "solution",
+          "title": "Split the Cache Into Blocks; Map Them Through a Table",
+          "body": "PagedAttention divides each sequence's KV cache into fixed-size blocks (16 tokens each, by default in vLLM) that don't need to sit next to each other in physical memory.",
+          "bullets": [
+            "A per-sequence block table maps logical block numbers (0, 1, 2, ...) to wherever the physical block actually lives on the GPU — exactly like a page table maps virtual to physical pages",
+            "Blocks are allocated lazily, one at a time, as generation actually produces enough tokens to fill the next one — no upfront reservation for tokens that may never be generated",
+            "A custom attention kernel reads KV vectors through the block table at attention time, so the model never needs its cache to be physically contiguous",
+            "Because allocation happens in fixed 16-token units, the only waste left is internal fragmentation in the last, partially-filled block of a sequence"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "68d42c8e-0b7c-467f-b02d-3bb679f263db",
+          "kind": "concept",
+          "title": "The Bonus: Copy-on-Write Sharing",
+          "body": "Paging isn't just about avoiding waste — it also makes memory sharing between sequences cheap, the same way fork() shares pages between processes.",
+          "bullets": [
+            "Parallel sampling (asking for N completions of the same prompt) and beam search both start multiple sequences from an identical prompt prefix",
+            "Those sequences can point their block tables at the SAME physical blocks for the shared prefix — no copy needed until one sequence's generation diverges and writes a new token into a shared block",
+            "Only at that divergence point does vLLM copy-on-write the block, so two sequences share memory for as long as their content is identical",
+            "For beam search with width 4 sharing a 500-token prompt, this can mean allocating that prompt's KV cache once instead of four times"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "16dc2770-0305-4c18-a25f-15eddfcf2916",
+          "kind": "example",
+          "title": "Worked Example: 100 Concurrent Chat Requests on One GPU",
+          "body": "Say each request has an average prompt of 200 tokens and generates 300 tokens, on a model where each token's KV cache is small enough that a naive system reserves 2048 tokens' worth of space per request just in case.",
+          "bullets": [
+            "Naive contiguous allocation: 100 requests x 2048-token reservation each = memory sized for 204,800 tokens, even though only ~50,000 tokens of KV cache are ever actually used — roughly 75% wasted, capping how many of the 100 requests can even fit at once",
+            "PagedAttention: each request allocates blocks of 16 tokens as it goes, so memory used tracks actual usage (~50,000 tokens' worth of blocks, plus a few tokens of waste in each sequence's last partial block)",
+            "That freed memory becomes room for more concurrent sequences in the batch, which is exactly what continuous batching (iteration-level scheduling that swaps sequences in and out every step) needs to keep the GPU fed",
+            "This is why vLLM's throughput gains show up most in high-concurrency serving, not in a single isolated request's latency"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "db5456e6-bfca-4c6a-a994-b1803b8d260d",
+          "kind": "comparison",
+          "title": "Naive Contiguous Allocation vs. PagedAttention",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "Naive contiguous (pre-2023 norm)",
+              "PagedAttention (vLLM)"
+            ],
+            "rows": [
+              [
+                "Allocation unit",
+                "One contiguous slab per request, sized for max length",
+                "Fixed-size blocks (16 tokens each), allocated on demand"
+              ],
+              [
+                "Memory waste",
+                "~60-80% (paper's measurement)",
+                "Under 4% (only the last partial block per sequence)"
+              ],
+              [
+                "Sharing across sequences",
+                "Not possible — each reservation is private and contiguous",
+                "Copy-on-write block sharing for common prefixes"
+              ],
+              [
+                "Reported throughput vs. HF Transformers",
+                "baseline",
+                "Up to 24x higher at same latency"
+              ],
+              [
+                "What it costs you",
+                "Simplicity — allocation is a single pointer + length",
+                "A block table per sequence and a non-contiguous attention kernel"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "f930d3eb-b5f9-4012-85f5-71241ae2405d",
+          "kind": "concept",
+          "title": "Where It Doesn't Help — and What It Costs",
+          "body": "PagedAttention is a memory-management win, not a compute one, and it's worth being precise about what it does and doesn't fix.",
+          "bullets": [
+            "It doesn't reduce FLOPs — attention still computes the same math over the same KV vectors; the win is entirely about fitting more sequences into GPU memory at once",
+            "For low-concurrency workloads (one request at a time, no batching), memory waste was never the bottleneck, so the speedup mostly disappears",
+            "The indirection has a real cost: every attention read now goes through a block table lookup instead of a flat contiguous read, and the system has to maintain a reference-counted block allocator with copy-on-write logic",
+            "It's a serving-layer optimization, not a training one — training already uses different, more predictable memory access patterns and doesn't face this fragmentation problem the same way"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "3b16f166-1626-4e25-923a-4b5e174f26b1",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "PagedAttention manages the KV cache the way an OS manages RAM: fixed-size blocks, a per-sequence block table, allocation on demand instead of worst-case upfront reservation",
+            "It cuts KV cache memory waste from the paper's measured 60-80% down to under 4%, which is what lets far more requests share one GPU concurrently",
+            "Copy-on-write block sharing is a free bonus for parallel sampling and beam search, where sequences share an identical prompt prefix",
+            "It boosts throughput under concurrency and batching — it does not speed up a single isolated request or reduce the underlying compute cost of attention"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "0cef8644-c055-4b79-99b3-0490bc8fc3bc",
+            "prompt": "What is the core idea PagedAttention borrows from operating systems?",
+            "options": [
+              "Preemptive multitasking for GPU kernels",
+              "Splitting memory into fixed-size blocks mapped through a page-table-like structure, instead of reserving one contiguous region",
+              "Swapping the KV cache out to disk when GPU memory runs low",
+              "Compressing KV vectors the way OSes compress swap memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "PagedAttention's central borrowed idea is virtual memory paging: fixed-size blocks that don't need to be physically contiguous, addressed through a block table — exactly like a page table maps virtual addresses to physical ones."
+          },
+          {
+            "id": "12cae309-4318-4047-b76a-190a20a2988a",
+            "prompt": "Why does naive contiguous KV cache allocation waste so much memory?",
+            "options": [
+              "Because attention math itself requires extra scratch space",
+              "Because it reserves space for the maximum possible sequence length upfront, even though most requests finish far short of that, and leftover gaps can't be reused",
+              "Because every token requires 10x more memory than necessary due to floating point overhead",
+              "Because GPUs cannot allocate memory in small increments"
+            ],
+            "correctIndex": 1,
+            "explanation": "The waste comes from sizing each request's reservation for the worst case (internal fragmentation) plus being unable to reuse oddly-shaped freed gaps between finished requests (external fragmentation) — the vLLM paper measured this at 60-80% waste in prior systems."
+          },
+          {
+            "id": "d5732f16-9f6c-4a16-a89e-4faf7eb2d0dd",
+            "prompt": "What kind of workload benefits most from PagedAttention's throughput gains?",
+            "options": [
+              "A single isolated request run alone on an otherwise idle GPU",
+              "Training a model from scratch on a large text corpus",
+              "High-concurrency serving with many simultaneous requests batched together on one GPU",
+              "Any workload — the speedup is constant regardless of concurrency"
+            ],
+            "correctIndex": 2,
+            "explanation": "PagedAttention's win is fitting more concurrent sequences into the same GPU memory. With only one request running, there's no fragmentation-driven capacity limit to relieve, so the benefit largely disappears — the gains show up under batching and concurrency."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "cfceb77d-f1e3-4a7c-a22d-dda23f92aae0",
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., SOSP 2023)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "id": "5edddefd-e759-4894-b0d1-df3405a4fc0a",
+          "title": "vLLM documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
+    },
+    {
       "id": "41fc5b2b-6765-4685-92b2-9a159c770605",
       "title": "MCP Sampling: When the Server Asks the Model, Not the Other Way Around",
       "subtitle": "The one MCP primitive that runs backwards — the server requests a completion, and the client's LLM (and the human) stay in control.",
@@ -11174,194 +11387,6 @@
       ],
       "id": "6e74614e-595e-4a62-b341-af099b07133f",
       "publishedDate": "2026-07-20T06:42:21Z"
-    },
-    {
-      "id": "1bab340c-44e9-450b-8f3f-0cc5fa45d6ad",
-      "title": "Test-Time Compute: Making Models Think Longer, Not Just Bigger",
-      "subtitle": "Why the newest reasoning models spend seconds (or minutes) computing before they answer — and how that trades latency for accuracy.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "test-time compute",
-        "reasoning models",
-        "chain-of-thought",
-        "inference scaling",
-        "self-consistency"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "Test-time compute lets a model trade extra inference-time work — longer reasoning, multiple sampled attempts, or search over candidate solutions — for higher accuracy, instead of only relying on a bigger pretrained model. It's powerful on hard, verifiable problems but wasteful on easy ones, so production systems route by difficulty.",
-      "publishedDate": "2026-07-20T00:39:49Z",
-      "slides": [
-        {
-          "id": "bd62492a-dc15-44ca-9c40-ee8fdebdc885",
-          "kind": "cover",
-          "title": "Two Ways to Make a Model Smarter",
-          "body": "For years, 'smarter' meant more parameters and more training data. Reasoning models added a second lever: spend more compute per answer, at inference time.",
-          "bullets": [],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "9fbaf8a4-ed3b-4d09-962d-896def1c065c",
-          "kind": "problem",
-          "title": "Train-Time Scaling Hits Diminishing Returns",
-          "body": "Scaling laws show accuracy improves with model size and training compute, but each doubling costs more and yields less. A model with more parameters also answers every query at the same fixed cost — a one-line question and a multi-step proof get identical compute.",
-          "bullets": [
-            "Fixed forward pass = fixed thinking budget, no matter how hard the question",
-            "Bigger pretraining runs cost more to train AND more to serve, forever",
-            "Some problems (multi-step math, debugging, planning) need iteration, not just recall"
-          ],
-          "symbol": "hourglass",
-          "table": null
-        },
-        {
-          "id": "8738210a-8b49-4910-abe6-c84073722e3f",
-          "kind": "solution",
-          "title": "Spend Compute Where It's Needed: At Answer Time",
-          "body": "Test-time compute keeps the model fixed and instead lets it do more work per query: generate a longer chain of thought, produce multiple candidate answers, or search over reasoning paths before committing to a final response.",
-          "bullets": [
-            "Sequential scaling: let the model reason step-by-step for longer before answering",
-            "Parallel scaling: sample N independent attempts, then pick the best one",
-            "Search-guided scaling: use a verifier or reward model to steer which reasoning branches to keep exploring"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "00b5cdd1-8acf-47d9-8272-99653a684990",
-          "kind": "concept",
-          "title": "Three Concrete Techniques",
-          "body": "These aren't mutually exclusive — production reasoning systems often combine them.",
-          "bullets": [
-            "Extended chain-of-thought: the model writes out intermediate reasoning tokens before the final answer, effectively 'thinking out loud'",
-            "Self-consistency / best-of-N: sample the model many times at nonzero temperature, then take a majority vote (or rerank with a verifier) over the final answers",
-            "Tree/beam search over reasoning: branch at each reasoning step, score partial paths with a verifier, and prune weak branches — closer to how a person double-checks work"
-          ],
-          "symbol": "square.stack.3d.up",
-          "table": null
-        },
-        {
-          "id": "96ff7f5e-7807-4953-bb5b-e6281a70da08",
-          "kind": "comparison",
-          "title": "Train-Time vs. Test-Time Scaling",
-          "body": "Neither replaces the other — they're different knobs with different cost profiles.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "",
-              "Train-time scaling",
-              "Test-time scaling"
-            ],
-            "rows": [
-              [
-                "Cost paid",
-                "Once, during training",
-                "Every single query"
-              ],
-              [
-                "Benefits",
-                "All future queries",
-                "Only the queries you spend it on"
-              ],
-              [
-                "Best for",
-                "Raising the model's baseline ability",
-                "Hard, verifiable problems (math, code, planning)"
-              ],
-              [
-                "Weak point",
-                "Expensive to keep scaling up",
-                "Wasteful on easy queries; adds latency"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "ef365bef-67b0-476d-bad2-4945c3ffaf89",
-          "kind": "example",
-          "title": "Worked Example: A Tricky Coding Bug",
-          "body": "Ask a model to fix a race condition in concurrent code.",
-          "bullets": [
-            "Single-pass answer: model pattern-matches to a common fix, misses the actual race window, ships a plausible-looking but wrong patch",
-            "With test-time compute: model drafts a fix, reasons through a step-by-step trace of thread interleavings, notices the draft still allows a bad interleaving, revises, and only then outputs the patch",
-            "With self-consistency: the model is sampled 5 times independently; 4 of 5 attempts converge on the same root cause, which is a strong signal the diagnosis is correct even without running the code"
-          ],
-          "symbol": "ladybug.fill",
-          "table": null
-        },
-        {
-          "id": "a2ad7e4b-8a3c-41ec-b151-c054e8403713",
-          "kind": "problem",
-          "title": "Tradeoffs and When Not to Use It",
-          "body": "More thinking isn't free, and it isn't always helpful.",
-          "bullets": [
-            "Latency cost: a query that took 1 second can take 10-60+ seconds with heavy reasoning or multi-sample voting",
-            "Compute cost multiplies directly with samples/search width — best-of-32 is roughly 32x the inference cost of one pass",
-            "Diminishing returns: on problems the model already answers reliably in one pass, extra thinking adds cost with near-zero accuracy gain",
-            "Needs a way to judge quality: self-consistency and search work best when answers are checkable (math, code, structured tasks) — much weaker signal on open-ended writing or subjective questions"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "30c28c0b-3b05-475f-a0a4-b5ca062707ad",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "Test-time compute trades inference cost for accuracy by letting a model reason longer, sample more, or search over candidate answers",
-            "It is a second scaling axis alongside model/data size — not a replacement for it",
-            "It shines on hard, verifiable problems (math, code, planning) and struggles to pay off on easy or unverifiable ones",
-            "Real systems route by difficulty: cheap fast pass for easy queries, heavier reasoning budget only when needed"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6e4f97db-8c68-4f97-bf89-bef006084bbc",
-            "prompt": "What is 'test-time compute' scaling, in contrast to traditional model scaling?",
-            "options": [
-              "Training on a larger dataset before deployment",
-              "Spending more inference-time computation per query (longer reasoning, more samples, or search) instead of only growing the model",
-              "Running the model on faster GPUs at inference",
-              "Compressing the model with quantization to reduce serving cost"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time (inference-time) compute keeps the trained model fixed and instead lets it do more work per query — reasoning longer, sampling multiple attempts, or searching over paths — trading latency/cost for accuracy on that specific query."
-          },
-          {
-            "id": "0a7bfae8-68d1-4b39-9588-b125d6d999cb",
-            "prompt": "Why does self-consistency (best-of-N with majority voting) work particularly well on math and code problems?",
-            "options": [
-              "Because math and code answers are shorter than other text",
-              "Because those domains have a checkable notion of correctness, so independent correct attempts tend to converge on the same answer while wrong attempts scatter",
-              "Because it only works when temperature is set to zero",
-              "Because math and code require less reasoning than other tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "When there is a verifiable right answer, sampling multiple independent attempts and taking the majority vote works because correct reasoning paths tend to agree, while errors are more randomly distributed — a much weaker signal on subjective or open-ended tasks."
-          },
-          {
-            "id": "33d3560f-af22-4b8a-8e59-8c82f5d8f84d",
-            "prompt": "Why might a production system skip test-time compute for a simple factual query like \"what is the capital of France\"?",
-            "options": [
-              "Because reasoning models can't answer factual questions",
-              "Because the extra latency and multiplied inference cost buy almost no accuracy gain on a query the model already answers reliably in one pass",
-              "Because test-time compute only works on multiple-choice questions",
-              "Because factual queries require training-time scaling instead"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time compute has diminishing returns on problems the model already solves reliably — spending 10-60x more latency and compute for a negligible accuracy bump is a bad tradeoff, so systems typically route easy queries to a fast single-pass answer."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
