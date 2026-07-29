@@ -1,6 +1,186 @@
 {
   "posts": [
     {
+      "id": "250ab16a-c7c0-4a52-a969-e7de6356d182",
+      "title": "Consistent Hashing: Why Scaling a Cluster Doesn't Reshuffle Everything",
+      "subtitle": "Add one server, move one server's worth of keys — not all of them",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "consistent-hashing",
+        "distributed-systems",
+        "sharding",
+        "caching",
+        "system-design"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "circle.grid.cross.fill",
+      "summary": "Naive mod-N hashing reshuffles almost every key when a node joins or leaves a cluster. Consistent hashing maps both keys and nodes onto a ring so only a small, predictable slice of keys ever moves — the trick behind DynamoDB, Cassandra, and memcached sharding.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "One node change shouldn't move everyone's data",
+          "body": "Distributed caches and databases split keys across many nodes. The hard part isn't splitting them once — it's re-splitting them cleanly every time a node is added or removed.",
+          "bullets": [],
+          "symbol": "circle.grid.cross.fill",
+          "id": "45e3b60e-146a-4b8a-a56a-5cd4ac164d6e"
+        },
+        {
+          "kind": "problem",
+          "title": "Naive mod-N hashing breaks on every resize",
+          "body": "The obvious approach — node = hash(key) % N — ties every key's location to the total node count N. Change N by one, and almost every key's owner changes too.",
+          "bullets": [
+            "Going from 4 nodes to 5: hash(key) % 4 vs hash(key) % 5 agree for only a tiny fraction of keys",
+            "In practice, roughly N/(N+1) of all keys — about 80% at N=4 — get remapped to a different node",
+            "Every remap means a cache miss or a data migration, right when the cluster is already changing",
+            "This makes horizontal scaling and rolling node replacement expensive, not routine"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "95333a69-7b62-4bbb-87a8-7d4f67ecc3b1"
+        },
+        {
+          "kind": "concept",
+          "title": "Put keys and nodes on the same ring",
+          "body": "Consistent hashing (Karger et al., 1997) hashes both nodes and keys into the same numeric space, arranged as a circle (0 to 2^32-1, wrapping around). A key belongs to the first node found walking clockwise from its position.",
+          "bullets": [
+            "Node identity (e.g. its IP) is hashed to a point on the ring",
+            "Key identity is hashed to its own point on the same ring",
+            "Lookup rule: walk clockwise from the key's point, first node you hit owns that key",
+            "Adding node X only steals the keys between X and its counter-clockwise neighbor — nowhere else"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "482b50e6-7c19-4a1c-8983-cc152869b754"
+        },
+        {
+          "kind": "concept",
+          "title": "Virtual nodes fix the load-balance problem",
+          "body": "With only one ring position per physical node, placement is random and lumpy — some nodes cover a big arc, others a sliver. The fix: give each physical node many points on the ring instead of one.",
+          "bullets": [
+            "Each physical node gets ~100-200 virtual points scattered around the ring",
+            "Load imbalance drops sharply: with 1 point/node, standard deviation of load can exceed 50%; with ~150 vnodes/node it typically falls to single digits",
+            "Removing a node redistributes its many small arcs across many surviving nodes, not one unlucky neighbor",
+            "Amazon's Dynamo (2007) and Cassandra both use this exact vnode technique in production"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "id": "ff4eb5e2-f8ce-499e-9ed6-285a6f06ee9d"
+        },
+        {
+          "kind": "comparison",
+          "title": "Mod-N vs. consistent hashing, scaling 4 → 5 nodes",
+          "bullets": [
+            "The whole point of the ring is bounding the blast radius of a resize"
+          ],
+          "table": {
+            "headers": [
+              "Approach",
+              "Keys remapped on resize",
+              "Needs vnodes?"
+            ],
+            "rows": [
+              [
+                "hash(key) % N",
+                "~N/(N+1) of all keys (≈80% at N=4)",
+                "N/A"
+              ],
+              [
+                "Consistent hashing, 1 pt/node",
+                "~1/(N+1) of all keys",
+                "No, but load is uneven"
+              ],
+              [
+                "Consistent hashing, ~150 vnodes/node",
+                "~1/(N+1) of all keys",
+                "Yes — smooths load too"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "id": "2130d7ee-e9f5-4932-9ed5-6efcaa606e5b"
+        },
+        {
+          "kind": "example",
+          "title": "Walking through a 4-node cache scaling to 5",
+          "body": "Say a memcached-style layer holds 1,000,000 keys across nodes A, B, C, D, each owning roughly a 90° arc of the ring.",
+          "bullets": [
+            "Node E joins and its ~150 vnodes land in small gaps scattered across all four arcs",
+            "Only the keys whose nearest clockwise neighbor used to be A/B/C/D but is now one of E's vnodes get moved — about 200,000 keys (1/5), not 800,000",
+            "Those 200,000 are pulled roughly evenly from A, B, C, and D, not all from one node",
+            "The other 800,000 keys never move and never miss cache"
+          ],
+          "symbol": "arrow.left.arrow.right",
+          "id": "1bcd7d06-f920-4ac6-9320-80a3a263441f"
+        },
+        {
+          "kind": "problem",
+          "title": "Tradeoffs and when to skip it",
+          "body": "Consistent hashing solves rebalancing cost, not every sharding problem — it adds real complexity for clusters that don't need it.",
+          "bullets": [
+            "Fixed, rarely-changing cluster size: mod-N is simpler and the resize cost never gets paid",
+            "Hot keys stay hot: the ring only spreads load evenly in aggregate — one viral key still hammers one node",
+            "Picking a bad or low-entropy hash function clusters points on the ring and defeats the whole benefit",
+            "Range queries suffer: the ring is great for point lookups by key, poor for 'give me all keys between X and Y' unless paired with range-aware partitioning"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "id": "18a4e35f-7c9e-4dad-8c21-dd66102b3d08"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Mod-N hashing ties every key to the total node count — any resize remaps almost everything",
+            "Consistent hashing hashes keys and nodes onto the same ring so only ~1/N of keys move per node added or removed",
+            "Virtual nodes (100-200 per physical node) are what make the load distribution actually even, not just the rebalancing cheap",
+            "Used in production by DynamoDB, Cassandra, Riak, and memcached client sharding (ketama) — this is a load-bearing idea, not academic trivia"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "4266d604-66b2-4296-9b60-1d11f1b1c11f"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why does naive hash(key) % N break down when a node is added or removed?",
+            "options": [
+              "Because hashing is too slow to recompute at runtime",
+              "Because N changes, so nearly every key's modulo result — and therefore its owning node — changes too",
+              "Because it only works for string keys, not integers",
+              "Because it requires a central coordinator to run"
+            ],
+            "correctIndex": 1,
+            "explanation": "Mod-N hashing bakes the total node count into every key's placement. Changing N shifts almost all remainders, so almost every key gets a new owner — even though only one node actually changed.",
+            "id": "a53d0bcf-6d66-41bd-883f-215de0615a2c"
+          },
+          {
+            "prompt": "In consistent hashing, what determines which node owns a given key?",
+            "options": [
+              "The node with the lowest IP address",
+              "A round-robin counter incremented per request",
+              "The first node encountered walking clockwise from the key's position on the hash ring",
+              "Whichever node has the most free memory at request time"
+            ],
+            "correctIndex": 2,
+            "explanation": "Both keys and nodes are hashed onto the same ring. Ownership is purely positional: walk clockwise from the key until you hit a node's point. Only the small arc near a changed node's position is affected by that change.",
+            "id": "a739ea3a-68c2-4439-b7db-9f6c45bc4b11"
+          },
+          {
+            "prompt": "Why do production systems like Cassandra give each physical node ~100-200 virtual points on the ring instead of just one?",
+            "options": [
+              "To make the hash function run faster",
+              "Virtual nodes are required by the TCP protocol for cluster membership",
+              "One point per node produces random, uneven arc sizes and lumpy load; many small points per node average out to a much more even load distribution",
+              "It doubles the storage capacity of each node"
+            ],
+            "correctIndex": 2,
+            "explanation": "A single random point per node means some nodes cover much bigger ring arcs than others by chance, causing uneven load. Spreading ~150 virtual points per node across the ring smooths this out — the underlying reason vnodes exist alongside consistent hashing.",
+            "id": "ea04fb9e-9caf-4112-ad30-0ac5ad323e69"
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-07-29T18:40:26Z"
+    },
+    {
       "title": "TRACE: Watermarking an AI Agent So Its Owner Can Prove It",
       "subtitle": "A two-channel watermark for agent trajectories that survives a reseller deleting 70% of the steps or rewriting the rest with another LLM.",
       "category": "AI Innovations",
@@ -11269,204 +11449,6 @@
           "id": "bc4509db-a0b3-4b8a-93eb-ad4a546edf77",
           "title": "modelcontextprotocol/modelcontextprotocol — elicitation.mdx source",
           "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/elicitation.mdx"
-        }
-      ]
-    },
-    {
-      "id": "30da2c62-fe6a-4c30-abbb-3a05e82e5757",
-      "title": "SpidR: Faster, More Stable Codebooks for Spoken Language Models",
-      "subtitle": "Meta FAIR stabilizes online clustering in self-supervised speech models — and cuts pretraining to a day on 16 GPUs.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "speech",
-        "self-supervised-learning",
-        "spoken-language-models",
-        "meta-fair",
-        "representation-learning"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "waveform",
-      "summary": "SpidR, from Meta FAIR (published at TMLR), targets a specific weak point in self-supervised speech models: the online clustering step used to turn raw audio into discrete \"linguistic units\" is unstable and prone to collapse. By having a student model predict cluster assignments derived from a teacher's intermediate layers — rather than clustering the student's own shifting representations — SpidR reports more stable training and higher-quality codebooks than wav2vec2, HuBERT, WavLM, and DinoSR on standard spoken-language-modeling probes, while pretraining in about a day on 16 A100s.",
-      "body": null,
-      "publishedDate": "2026-07-21T12:42:58Z",
-      "slides": [
-        {
-          "id": "b347e155-f4d9-4141-b35d-673228883be8",
-          "kind": "cover",
-          "title": "Turning Raw Audio Into a Vocabulary a Language Model Can Use",
-          "body": "Spoken language models need discrete \"linguistic units\" — a vocabulary — before a transformer can be trained over speech the way GPT is trained over text. SpidR is Meta FAIR's self-supervised method for learning that vocabulary.",
-          "bullets": [
-            "Published by Meta FAIR at Transactions on Machine Learning Research (TMLR)",
-            "Code, training recipe, and pretrained checkpoints (LibriSpeech 960h) are public on GitHub under CC BY-NC 4.0",
-            "The core problem it targets: the online clustering step that produces those units is notoriously unstable to train"
-          ],
-          "symbol": "waveform",
-          "table": null
-        },
-        {
-          "id": "aee2ab84-6dd0-4f31-bb88-f5cc3a5f002b",
-          "kind": "problem",
-          "title": "Online Clustering Is Prone to Collapse",
-          "body": "Prior self-supervised speech models (HuBERT-style approaches, DinoSR) learn their discrete units by clustering the model's own hidden representations while those representations are still changing during training.",
-          "bullets": [
-            "The clustering target and the representations being clustered move together — a moving-target problem that can destabilize training or collapse many clusters into a handful of overused ones",
-            "A collapsed or low-quality codebook means the discrete units downstream language models are trained on are a poor proxy for actual linguistic structure (phonemes, words)",
-            "That weak vocabulary caps how well any spoken language model built on top can perform, no matter how good the downstream transformer is"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "3af1634c-65bb-41ed-83e5-c0d050802a7e",
-          "kind": "solution",
-          "title": "Let the Teacher's Intermediate Layers Anchor the Clusters",
-          "body": "SpidR trains with a masked-prediction objective combined with self-distillation between a student and a teacher, plus online clustering — but changes what gets clustered.",
-          "bullets": [
-            "Intermediate layers of the student model are trained to predict cluster assignments derived from the teacher's intermediate layers, not from the student's own unstable representations",
-            "Because the teacher (typically an exponential moving average of the student) evolves more slowly and smoothly, the clustering target is far more stable turn to turn",
-            "The paper reports this stabilizes the online clustering procedure compared to prior approaches and yields higher-quality codebooks as a result"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "287eb38c-8ecd-44c0-8634-959bf495b45e",
-          "kind": "concept",
-          "title": "Why the Vocabulary Quality Matters Downstream",
-          "body": "The units SpidR learns aren't the end product — they're the tokens a separate spoken language model is later trained on, the same way BPE tokens feed a text LLM.",
-          "bullets": [
-            "Standard probes for judging that vocabulary: sWUGGY (can the model tell a real word from a similar-sounding fake one?), sBLIMP (does it prefer grammatical over ungrammatical sentences?), tSC (topic/semantic coherence over longer spans)",
-            "A noisier codebook shows up downstream as worse scores on exactly these lexical, syntactic, and semantic probes — the paper reports SpidR outperforming wav2vec2, HuBERT, WavLM, and DinoSR across this benchmark suite",
-            "This is why the paper frames stability as the headline contribution, not just a speed trick — a more stable codebook is a better codebook"
-          ],
-          "symbol": "textformat.abc",
-          "table": null
-        },
-        {
-          "id": "28fdc4ab-eed6-4dba-b42e-89100768fc6b",
-          "kind": "example",
-          "title": "What a Lab Actually Gets: A Day, Not a Week",
-          "body": "The practical payoff the repo highlights is training cost, which matters because self-supervised speech pretraining has historically required large clusters for long stretches.",
-          "bullets": [
-            "SpidR reaches 400k pretraining steps in about a day on 16 A100 GPUs, or in about 15 hours on 16 H100 GPUs, per the released training recipe",
-            "That's a modest, single-node-scale cluster and a single-day budget — a meaningful difference from setups that need multi-day, multi-node runs to reach a usable checkpoint",
-            "Two checkpoints ship directly: spidr_base and a reproduced dinosr_base baseline, both pretrained on LibriSpeech 960h, so results are directly comparable out of the box"
-          ],
-          "symbol": "clock.fill",
-          "table": null
-        },
-        {
-          "id": "e17c5d7e-b160-4fa1-9427-44cd5e524e56",
-          "kind": "comparison",
-          "title": "SpidR vs. Prior Self-Supervised Speech Models",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Method",
-              "Clustering target",
-              "Reported result vs. SpidR"
-            ],
-            "rows": [
-              [
-                "wav2vec 2.0 / HuBERT",
-                "Student's own (or offline, fixed) representations",
-                "SpidR reports outperforming on sWUGGY / sBLIMP / tSC"
-              ],
-              [
-                "WavLM",
-                "HuBERT-style clustering + denoising objective",
-                "SpidR reports outperforming on the same probe suite"
-              ],
-              [
-                "DinoSR",
-                "Online clustering of student representations directly",
-                "Same online-clustering family as SpidR, but SpidR's teacher-derived targets reportedly give more stable training and better codebooks"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "86ee12da-a49c-487c-8693-0efaa6a84c00",
-          "kind": "concept",
-          "title": "Limits Worth Knowing Before You Reach for It",
-          "body": "SpidR is a targeted fix for a specific instability, not a general speech-model breakthrough — and it comes with real constraints.",
-          "bullets": [
-            "Licensing: code and checkpoints are CC BY-NC 4.0 — non-commercial use only, which rules it out as a drop-in for a commercial product without a separate license",
-            "It still needs a real multi-GPU cluster (16 A100s/H100s) — cheaper than prior multi-node setups, but not something you train on a single workstation",
-            "Evaluation is on LibriSpeech (English, read speech) and the standard sWUGGY/sBLIMP/tSC probes — the paper doesn't claim these stability gains are proven across noisy, multilingual, or conversational speech domains"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "679c8c06-679b-4771-a85f-60c2e2e2c3e5",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "SpidR fixes a specific failure mode in self-supervised speech pretraining: online clustering targets that move with the student's own unstable representations",
-            "The fix is to derive cluster assignments from the teacher's intermediate layers instead — a more stable target that the paper reports yields higher-quality discrete linguistic units",
-            "Reported result: outperforms wav2vec2, HuBERT, WavLM, and DinoSR on sWUGGY/sBLIMP/tSC, while pretraining in about a day on 16 A100 GPUs",
-            "Non-commercial license and English-only, read-speech evaluation are real limits — treat it as a research recipe, not a production-ready drop-in"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "02576cb9-78e9-42a8-890a-375d83a52e27",
-            "prompt": "What specific instability does SpidR target in prior self-supervised speech models like DinoSR?",
-            "options": [
-              "Slow inference speed at deployment time",
-              "Online clustering targets that shift because they're derived from the student's own still-changing representations",
-              "A lack of any clustering step at all",
-              "Excessive GPU memory use during fine-tuning"
-            ],
-            "correctIndex": 1,
-            "explanation": "DinoSR-style online clustering computes cluster targets from the student's own representations while those representations are still being updated — a moving-target problem that can destabilize training or collapse the codebook."
-          },
-          {
-            "id": "ea43a69d-ad59-43af-93d4-4f6176164cb7",
-            "prompt": "How does SpidR stabilize the clustering target?",
-            "options": [
-              "By freezing the student model entirely during pretraining",
-              "By deriving the student's cluster-assignment targets from the teacher's intermediate layers instead of the student's own",
-              "By removing masked prediction from the objective",
-              "By training on text data instead of audio"
-            ],
-            "correctIndex": 1,
-            "explanation": "The student is trained to predict cluster assignments derived from the teacher's (typically an EMA of the student) intermediate layers. The teacher moves more slowly, so the clustering target is smoother and less prone to collapse."
-          },
-          {
-            "id": "1fb1b85e-2a5d-42ae-9c37-e00a5d7c368c",
-            "prompt": "What do sWUGGY, sBLIMP, and tSC actually measure?",
-            "options": [
-              "GPU throughput during training",
-              "Lexical, syntactic, and semantic quality of the discrete units, via downstream language-modeling probes",
-              "Audio compression ratio",
-              "Licensing compliance"
-            ],
-            "correctIndex": 1,
-            "explanation": "These are standard probes for spoken language models: sWUGGY tests real-vs-fake word discrimination (lexical), sBLIMP tests grammaticality preference (syntactic), and tSC tests topic/semantic coherence over longer spans — together they judge how good the learned \"vocabulary\" actually is."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "d504c18d-9eec-4e57-864c-8ca0bea4d9cb",
-          "title": "facebookresearch/spidr — official code, checkpoints, and paper links",
-          "url": "https://github.com/facebookresearch/spidr"
-        },
-        {
-          "id": "8c6702c9-dd36-4fc6-8016-1ad218182d10",
-          "title": "SpidR: Learning Fast and Stable Linguistic Units for Spoken Language Models Without Supervision (arXiv)",
-          "url": "https://arxiv.org/abs/2512.20308"
         }
       ]
     }
