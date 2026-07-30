@@ -1,6 +1,205 @@
 {
   "posts": [
     {
+      "title": "Continuous Batching: No More Waiting for the Slowest Request",
+      "subtitle": "How iteration-level scheduling keeps every GPU slot busy",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "continuous-batching",
+        "llm-serving",
+        "inference-optimization",
+        "gpu-utilization",
+        "kv-cache",
+        "throughput"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "square.stack.3d.up.fill",
+      "summary": "Continuous batching schedules LLM inference at the token-generation step instead of the whole-request level, so a finished sequence's GPU slot is handed to a new request immediately rather than sitting idle until the slowest sequence in the batch finishes. It's what lets servers like vLLM and TGI keep GPUs busy under mixed, unpredictable request lengths, at the cost of more complex scheduling and new latency-interference tradeoffs.",
+      "slides": [
+        {
+          "id": "30882fbc-f888-4200-817d-0d4af4c728e5",
+          "kind": "cover",
+          "title": "One Slow Request Can Stall an Entire Batch",
+          "body": "Batch 8 requests together to keep a GPU busy, and by default the batch can't return anything until every sequence in it is done — even if 7 of them finished generating 50 tokens ago and are just waiting on the 8th to reach 2,000.",
+          "bullets": [],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "0d8ff6e8-1bc7-4169-901f-670cd1c7b745",
+          "kind": "problem",
+          "title": "Static Batching Schedules at the Wrong Granularity",
+          "body": "Classic request-level (static) batching locks a set of sequences together for the batch's entire lifetime. The scheduler decides once, at admission time, which requests share a GPU pass — and can't change that decision until all of them finish.",
+          "bullets": [
+            "Output lengths vary wildly per request, so the batch's total latency is set by whichever sequence takes longest to hit its stop token",
+            "A finished sequence's compute slot and KV cache sit idle instead of being reassigned — wasted GPU cycles that could serve a new arrival",
+            "New requests queue behind the whole batch even if there's spare capacity mid-batch, so tail latency grows with traffic variance, not just load",
+            "Padding short sequences up to the batch's max length wastes both compute and memory on tokens that don't exist"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "43a68455-7f36-474e-b65c-8f86b7d94f47",
+          "kind": "solution",
+          "title": "Schedule Every Iteration, Not Every Request",
+          "body": "Continuous batching (also called iteration-level or in-flight batching) reruns the scheduling decision after every single decode step — not once per request. The moment any sequence in the running batch emits a stop token, its slot is freed and the scheduler can immediately admit a queued request into that same forward pass.",
+          "bullets": [
+            "The unit of scheduling shrinks from 'a whole generation' to 'one token step for the whole batch'",
+            "Each request keeps its own independent KV cache, so mixing sequences at different stages in the same batched matmul is safe — they just occupy different rows",
+            "Newly admitted requests first go through a prefill step for their prompt, then join the shared decode loop alongside sequences already mid-generation",
+            "GPU occupancy tracks actual work in flight instead of the batch's slowest member, which is the main source of the throughput gain"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "ff9ccde5-2b65-4575-9a5d-5d2323ab3b1a",
+          "kind": "architecture",
+          "title": "Two Phases Competing for the Same GPU",
+          "body": "Continuous batching has to interleave two very different kinds of work every iteration: prefill (processing a new prompt, compute-bound, scales with prompt length) and decode (generating one token per active sequence, memory-bandwidth-bound). Naively injecting a large prefill into a decode-heavy batch stalls every in-flight sequence for that step.",
+          "bullets": [
+            "Systems like vLLM and TGI pair continuous batching with paged KV cache management so admitting a new sequence doesn't require a contiguous memory allocation",
+            "Chunked prefill splits a long prompt's prefill across several iterations, interleaved with ongoing decode steps, so one big prompt doesn't freeze everyone else's next token",
+            "The scheduler typically caps batch size by KV cache memory, not just request count — admission stops once the cache pool is full, regardless of queue depth",
+            "Request order in the batch is fluid: it's re-decided every iteration based on who's finished, who's arrived, and what memory is free"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "b7cef8cc-1a1a-45ec-b945-d6d009c2160a",
+          "kind": "comparison",
+          "title": "Static vs. Continuous Batching",
+          "body": "The shapes of the tradeoff, independent of any specific benchmark numbers:",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Static (request-level) batching",
+              "Continuous (iteration-level) batching"
+            ],
+            "rows": [
+              [
+                "Scheduling unit",
+                "Whole request lifetime",
+                "Single decode step"
+              ],
+              [
+                "GPU idle time",
+                "High — waits on slowest sequence",
+                "Low — slots refill as they free"
+              ],
+              [
+                "New request wait",
+                "Until the whole batch completes",
+                "Until the next iteration"
+              ],
+              [
+                "Memory management",
+                "Simpler, often padded/contiguous",
+                "Needs paged/non-contiguous KV cache"
+              ],
+              [
+                "Scheduler overhead",
+                "Runs once per batch",
+                "Runs every token step"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "be451ac0-b98f-482e-849c-3716c4a12474",
+          "kind": "example",
+          "title": "Worked Example: Eight Requests, Wildly Different Lengths",
+          "body": "A batch admits 8 chat requests. Six are short replies (~30 tokens). One is a long code generation (~1,500 tokens). One is a short factual answer (~15 tokens) that arrives 200ms after the batch starts.",
+          "bullets": [
+            "Static batching: the batch can't return anything until the 1,500-token sequence finishes — the six short replies sit fully generated but unreturned, and the late arrival queues behind the entire batch",
+            "Continuous batching: each short reply is returned the moment it hits its stop token, freeing its slot within one iteration; the late arrival is admitted into the very next decode step instead of waiting in a queue",
+            "The 1,500-token sequence still takes just as long in both cases — continuous batching doesn't speed up any single sequence, it stops that sequence from blocking everyone else's"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "f8cecd46-46b5-4f0c-8c8e-c50a0fd0c249",
+          "kind": "concept",
+          "title": "Where It Bites: Interference and Fairness",
+          "body": "Continuous batching trades a simple scheduling model for a harder one, and that complexity shows up as new failure modes rather than eliminating old ones.",
+          "bullets": [
+            "A newly admitted long prompt's prefill chunk still consumes a step's compute budget, which can add a visible latency blip to sequences already mid-decode in that batch",
+            "Without a fairness policy, a flood of short requests can keep re-filling slots and effectively starve a long-running sequence of throughput share",
+            "The per-iteration scheduler itself has CPU/host overhead — at very low request volume, that overhead can outweigh the benefit static batching would have given for free",
+            "It only helps when request lengths and arrival times actually vary; a workload with uniform, synchronized-length requests gains little because static batching wasn't leaving much idle time to reclaim"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "36790d71-63b1-463c-ae01-fa71f01a3d7c",
+          "kind": "takeaways",
+          "title": "Reschedule Every Step, Not Every Request",
+          "body": null,
+          "bullets": [
+            "Static batching wastes GPU capacity because it can't reassign a finished sequence's slot until the entire batch is done",
+            "Continuous batching re-decides the batch's membership after every decode step, admitting new requests the instant a slot frees",
+            "It depends on paged, non-contiguous KV cache management to admit/evict sequences cheaply, and on chunked prefill to keep new prompts from stalling in-flight decodes",
+            "It doesn't make any single request faster — it removes the idle time other requests used to cause, which is why it mainly pays off under mixed, bursty, variable-length traffic"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "fe701a84-e122-45a3-8282-2438c5dedab3",
+            "prompt": "What's the core difference between static (request-level) batching and continuous batching?",
+            "options": [
+              "Continuous batching uses a bigger batch size",
+              "Continuous batching re-schedules which requests share the GPU after every decode step, not once per whole request",
+              "Static batching runs on CPU while continuous batching runs on GPU",
+              "Continuous batching skips the prefill phase entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "The distinguishing idea is scheduling granularity: static batching locks a group of requests together until all finish, while continuous batching re-evaluates batch membership at every single token step, letting finished sequences exit and new ones enter immediately."
+          },
+          {
+            "id": "d433529e-c8bd-41fb-a85f-6fa6a7a4342b",
+            "prompt": "Why does continuous batching typically require a paged (non-contiguous) KV cache instead of a simple contiguous buffer per batch slot?",
+            "options": [
+              "Paging makes each individual token's attention computation faster",
+              "Requests enter and leave the batch constantly, so memory needs to be allocated and freed in small chunks rather than reserved as one fixed contiguous block per request",
+              "It's required by the model architecture itself, unrelated to batching",
+              "Contiguous memory can't be used with GPUs at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Since sequences join and leave the running batch every iteration, reserving one large contiguous KV buffer per slot up front (sized for a worst-case length) would waste memory and make admitting/evicting requests expensive. Paged KV cache lets memory be allocated in fixed-size blocks as needed, which is what makes cheap per-step admission practical."
+          },
+          {
+            "id": "f48321be-d2f9-4024-a983-d060abe1b431",
+            "prompt": "A new long prompt gets admitted into a batch that's mid-decode on several other sequences. What's the known downside?",
+            "options": [
+              "The new prompt's prefill step can add a latency blip to the sequences already decoding in that same iteration",
+              "The other sequences immediately lose their KV cache and must restart",
+              "The GPU automatically rejects the new request until the batch is empty",
+              "There is no downside — this is exactly the intended fast path with zero cost"
+            ],
+            "correctIndex": 0,
+            "explanation": "Prefill is compute-bound and decode is memory-bandwidth-bound, so mixing them in one iteration means the prefill chunk competes for that step's compute budget, which can visibly delay the in-flight decode sequences. This is why systems use chunked prefill — splitting a long prompt's prefill across several iterations — to soften the interference rather than eliminate it."
+          }
+        ]
+      },
+      "references": [],
+      "id": "91f30176-7db6-41f2-ac9d-712a35396838",
+      "publishedDate": "2026-07-30T18:39:31Z",
+      "heroImageURL": null,
+      "body": null
+    },
+    {
       "title": "Prompt Caching: Paying Once for Context You Reuse a Thousand Times",
       "subtitle": "Why the same system prompt shouldn't cost the same tokens every single call",
       "category": "LLMs",
@@ -11190,202 +11389,6 @@
         }
       ],
       "id": "6e63203c-111b-4584-b22b-3a270e1a147d",
-      "body": null,
-      "publishedDate": "2026-07-22T06:42:45Z"
-    },
-    {
-      "title": "MCP Resources: Giving Models Context Without a Tool Call",
-      "subtitle": "Tools let an agent take actions. Resources let a server hand over data the model can read — addressed by URI, opt-in from the client side, and updatable via subscriptions.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "model-context-protocol",
-        "resources",
-        "context-engineering",
-        "protocol-design"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.text.magnifyingglass",
-      "summary": "MCP's Resources primitive lets a server expose URI-addressed data — files, schemas, records — that a client can read and attach to a conversation, separate from Tools (callable actions) and Prompts (templates). Resource templates parameterize dynamic data, and optional subscriptions let a client stay in sync when a resource changes.",
-      "slides": [
-        {
-          "id": "3abe022b-6eeb-4f72-a335-4c3bfd5ff121",
-          "kind": "cover",
-          "title": "Not Every Piece of Context Should Be a Tool Call",
-          "body": "MCP defines three primitives: Tools (functions the model can invoke), Prompts (server-managed templates), and Resources — URI-addressed data a client can read and decide whether to attach.",
-          "bullets": [
-            "A resource is identified by a URI, e.g. file:///project/README.md or postgres://db/schema/users",
-            "Reading a resource is a client-driven decision — the model doesn't call it like a tool; the host application chooses what to attach",
-            "Resources can be static (a fixed file) or dynamic (a live query result), and can carry a MIME type"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "9abcc137-5be6-4bd4-b83a-873ca3a04018",
-          "kind": "problem",
-          "title": "Without Resources, Context Gets Stuffed Into Tool Results or Prompts",
-          "body": "Before a dedicated data primitive, the only ways to get information in front of a model were baking it into the system prompt or wrapping every read as a fake 'tool call,' both of which blur the line between taking an action and just looking something up.",
-          "bullets": [
-            "Treating a read-only lookup as a tool call adds an unnecessary round trip and forces the model to decide when to fetch data it might just need by default",
-            "Static system-prompt stuffing doesn't scale — you can't cram an entire codebase or database schema into every request",
-            "Users and host applications had no standard way to browse and selectively attach 'what's available' before a request was made"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9a8f065a-9522-4b01-89ba-a78f978e0757",
-          "kind": "solution",
-          "title": "Resources: List, Read, and Optionally Template",
-          "body": "A server declares the resources capability and implements resources/list (what's available) and resources/read (fetch one by URI). Resource templates let a server expose parameterized families of resources using URI templates instead of enumerating every instance.",
-          "bullets": [
-            "resources/list returns available resources (and/or resource templates) with their URI, name, and MIME type",
-            "A template like file:///{path} or repo://{owner}/{repo}/{path} lets a client construct a valid URI on demand rather than requiring the server to list every file up front",
-            "resources/read takes a concrete URI and returns the resource's contents (text or binary, base64-encoded)"
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "c5e037da-72e1-4170-a316-1f99840cf4a7",
-          "kind": "architecture",
-          "title": "Subscriptions Keep the Client in Sync",
-          "body": "Resources support two independent optional capabilities: listChanged (the set of available resources can change, and the server notifies clients) and subscribe (a client asks to be notified when one specific resource's contents change).",
-          "bullets": [
-            "A client calls resources/subscribe with a URI; when that resource's content changes, the server sends a notifications/resources/updated notification",
-            "The client then re-reads the resource rather than the server pushing the new content directly — subscriptions notify, they don't stream",
-            "Servers can support neither, either, or both of listChanged/subscribe — a static file server may need neither"
-          ],
-          "symbol": "bell.badge.fill",
-          "table": null
-        },
-        {
-          "id": "aa4b8f78-2310-4a74-87d5-ffd020b5f277",
-          "kind": "example",
-          "title": "Worked Example: A Repo-Browsing MCP Server",
-          "body": "A Git MCP server exposes a resource template repo://{path} instead of hard-coding every file. A code-review host application lists resources, sees the template, and lets a user pick specific files to attach to the conversation as context — no tool call involved.",
-          "bullets": [
-            "User expands a file tree in the host UI, which resolves repo://src/auth/login.py to a concrete URI and calls resources/read",
-            "If the user then edits that file locally and the server watches the filesystem, it can fire notifications/resources/updated for that URI if the client subscribed",
-            "The model never 'decided' to read the file — the human, via the host application, controlled exactly what got attached"
-          ],
-          "symbol": "folder.fill.badge.gearshape",
-          "table": null
-        },
-        {
-          "id": "69f68887-d7c5-41c7-a296-884f65a66852",
-          "kind": "comparison",
-          "title": "Tools vs Resources vs Prompts",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "",
-              "Tools",
-              "Resources",
-              "Prompts"
-            ],
-            "rows": [
-              [
-                "Who invokes it",
-                "The model, via a tool call",
-                "The client/host, on the user's behalf",
-                "The user, selecting a template"
-              ],
-              [
-                "Has side effects?",
-                "Often yes (can act on the world)",
-                "No — read-only data access",
-                "No — just fills a template"
-              ],
-              [
-                "Typical use",
-                "Send an email, run a query, call an API",
-                "Attach a file, schema, or record as context",
-                "Reusable prompt with server-side parameters"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "7bec5be7-7974-489e-952f-fcac8f8f690f",
-          "kind": "concept",
-          "title": "When Resources Are the Wrong Primitive",
-          "body": "Resources are deliberately inert — no side effects, no model-triggered invocation — which is exactly where they stop being useful.",
-          "bullets": [
-            "If the model needs to decide at run time whether to fetch something based on reasoning mid-task, that's a Tool, not a Resource — resources are attached ahead of or alongside a request, not called by the model on demand",
-            "If the action changes state (writes a file, sends a request), it must be a Tool — Resources have no write path",
-            "For very large or frequently changing datasets, exposing a search/query Tool is often more efficient than listing thousands of individual resource URIs"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "c90b08ee-0db6-44ce-abbe-e6bb3fac0b74",
-          "kind": "takeaways",
-          "title": "Resources Separate 'What the Model Can See' From 'What It Can Do'",
-          "body": null,
-          "bullets": [
-            "Tools are actions the model chooses to invoke; Resources are data a host application chooses to attach — keeping that boundary explicit avoids conflating lookups with side effects",
-            "URI templates let a server expose a whole class of data (files, records) without enumerating every instance up front",
-            "subscribe/listChanged keep long-lived context fresh without forcing the client to poll resources/read on a timer"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "ee308061-91c8-4000-8ef0-96e016a1a363",
-            "prompt": "What is the key difference in how Tools versus Resources get invoked in MCP?",
-            "options": [
-              "Tools and Resources are invoked identically — there's no functional difference",
-              "The model calls Tools directly during reasoning; Resources are read and attached by the client/host application, not invoked by the model as an action",
-              "Resources can only be used by administrators, while Tools are available to any user",
-              "Tools are read-only while Resources can modify state"
-            ],
-            "correctIndex": 1,
-            "explanation": "Tools are actions the model decides to call mid-task. Resources are data the host application (often on the user's behalf) chooses to read and attach as context — the model doesn't invoke a resource read the way it invokes a tool call."
-          },
-          {
-            "id": "d470fc67-5211-4c9a-886d-7e52dde997c7",
-            "prompt": "What problem do resource templates (e.g. file:///{path}) solve?",
-            "options": [
-              "They encrypt resource contents in transit",
-              "They let a server expose a parameterized family of resources without having to enumerate every individual URI in resources/list",
-              "They allow resources to have side effects like Tools",
-              "They replace the need for a MIME type on each resource"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without templates, a server would need to list every possible file or record as a separate resource. A URI template lets the client construct a valid, specific URI on demand — e.g. resolving a chosen file path — rather than the server pre-listing everything."
-          },
-          {
-            "id": "a097f275-c7b0-4b92-8a1c-8d6f1804ec6c",
-            "prompt": "A client calls resources/subscribe on a URI. What happens when that resource's content changes?",
-            "options": [
-              "The server immediately streams the new content to the client over the same connection",
-              "Nothing — subscriptions only affect resources/list, not resources/read",
-              "The server sends a notifications/resources/updated notification, and the client is expected to re-read the resource to get the new content",
-              "The resource's URI changes to reflect the new version"
-            ],
-            "correctIndex": 2,
-            "explanation": "MCP subscriptions are notify-then-pull: the server notifies the client that a subscribed resource changed, but the client must call resources/read again to fetch the updated contents — the server doesn't push the content itself."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3be16e34-ca61-4935-8f83-a7fae7fe0422",
-          "title": "Resources — Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources"
-        }
-      ],
-      "id": "1ecfc3d1-fefa-4397-8862-5d74fe4f7dac",
       "body": null,
       "publishedDate": "2026-07-22T06:42:45Z"
     }
