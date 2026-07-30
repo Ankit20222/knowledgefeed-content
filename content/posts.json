@@ -1,6 +1,180 @@
 {
   "posts": [
     {
+      "title": "Prompt Caching: Paying Once for Context You Reuse a Thousand Times",
+      "subtitle": "Why the same system prompt shouldn't cost the same tokens every single call",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "prompt-caching",
+        "kv-cache",
+        "inference-optimization",
+        "llm-apis",
+        "cost-optimization",
+        "latency"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.on.doc.fill",
+      "summary": "Prompt caching reuses the already-computed attention state (KV cache) for a shared prefix across requests, so a long system prompt, tool schema, or document only gets fully processed once instead of on every call. It cuts latency and cost dramatically on cache hits, but only works when the prefix is byte-identical up to the cache point and requests land inside a short TTL window.",
+      "slides": [
+        {
+          "id": "8f75a17e-9154-4949-96ad-687c6f7c8cb8",
+          "kind": "cover",
+          "title": "The Same 4,000 Tokens, Recomputed Every Single Call",
+          "body": "An agent with a long system prompt, a tool schema, and a style guide re-sends and re-processes that entire prefix on every request — even when nothing in it changed since the last call.",
+          "bullets": [],
+          "symbol": "doc.on.doc.fill",
+          "table": null
+        },
+        {
+          "id": "d6497f3d-6f88-4c51-bde5-31632f0fd273",
+          "kind": "problem",
+          "title": "Prefill Cost Scales With Every Token You Send, Not Just the New Ones",
+          "body": "Before a model generates its first output token, it must run a forward pass over the entire input — the 'prefill' phase. A chatbot with a 3,000-token system prompt plus a 500-token user turn pays for all 3,500 tokens of compute, every message, even though 3,000 of them are identical to the last call.",
+          "bullets": [
+            "Long system prompts, tool/function schemas, and few-shot examples are the worst offenders — static, large, and repeated verbatim on every call",
+            "Multi-turn agents resend the whole growing transcript each turn, so prefill cost grows linearly with conversation length",
+            "This shows up as both wasted spend and added latency before the model even starts responding"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "5cef0530-0a6d-4c75-aeb4-5b7ecd220fcb",
+          "kind": "concept",
+          "title": "The Fix: Cache the KV State of a Shared Prefix, Not Just the Text",
+          "body": "During prefill, the model computes key/value tensors for every input token — the same KV cache used to speed up generation. Prompt caching persists that KV state server-side, keyed to the exact prefix, so a later request sharing that prefix can skip recomputing it and jump straight to the new tokens.",
+          "bullets": [
+            "You mark a 'cache breakpoint' after the stable part of the prompt (system instructions, tool defs, a large retrieved document)",
+            "A cache hit requires the prefix to match byte-for-byte up to that point — one changed word invalidates everything after it",
+            "Only the tokens after the breakpoint (the new user turn) go through full prefill; the cached prefix is loaded, not recomputed",
+            "Caches are short-lived (typically minutes, not hours) and evicted under memory pressure, so this is a latency/cost optimization, not durable storage"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "d76dd763-f9ff-4df8-8e64-fe992bd2dc3d",
+          "kind": "example",
+          "title": "Worked Example: A Coding Agent With a 6K-Token System Prompt",
+          "body": "An agent's system prompt (repo conventions, tool schemas, coding guidelines) is 6,000 tokens. The user's actual question is 200 tokens. Across a 20-turn debugging session, that 6,000-token prefix would normally be reprocessed 20 times.",
+          "bullets": [
+            "Without caching: 20 calls × 6,000 shared tokens = 120,000 tokens of redundant prefill, all billed at full input price",
+            "With caching: the prefix is written to cache once on turn 1; turns 2-20 pay a small cache-read cost for those 6,000 tokens instead of full price, plus full price only for the new 200-token turn",
+            "The savings compound fastest in agent loops and RAG pipelines where a large static block (tools, retrieved docs) precedes a small dynamic block (the actual question)"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "52514771-eabe-4186-b34d-58349b9ae5f2",
+          "kind": "comparison",
+          "title": "Cache Write vs. Cache Read vs. No Cache",
+          "body": "Providers differ on exact multipliers, but the shape is consistent across major LLM APIs: writing to the cache costs a small premium over a normal token, while reading from it costs a small fraction of a normal token.",
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "Scenario",
+              "Relative cost per prefix token",
+              "When it happens"
+            ],
+            "rows": [
+              [
+                "No caching",
+                "1x (full input price)",
+                "Every call, prefix reprocessed from scratch"
+              ],
+              [
+                "Cache write",
+                "Slight premium over 1x",
+                "First call, or first call after the cache expired"
+              ],
+              [
+                "Cache hit (read)",
+                "Small fraction of 1x",
+                "Any call within the TTL that repeats the same prefix"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "1be17d1f-a17d-446e-88d7-5b249227cca9",
+          "kind": "problem",
+          "title": "Where It Breaks: Invalidation and Idle Gaps",
+          "body": "Prompt caching is fragile in ways that surprise teams who bolt it on without restructuring their prompts.",
+          "bullets": [
+            "Any edit before the breakpoint — a timestamp, a reordered tool, an interpolated variable — invalidates the cache for everything after it",
+            "Putting volatile content (current date, user ID, session token) early in the prompt silently kills your hit rate; it belongs after the cache breakpoint, not before it",
+            "The cache has a short TTL, so a bursty workload with gaps longer than that window pays full price on every 'first' request again",
+            "Caching doesn't help when every request's prefix is genuinely unique (e.g., a different large document per call) — there's nothing to reuse"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "44fb118e-168f-4c22-86f3-f3f7913b2645",
+          "kind": "takeaways",
+          "title": "Structure Prompts Stable-First, Volatile-Last",
+          "body": null,
+          "bullets": [
+            "Prompt caching reuses a prefix's computed KV state instead of recomputing it, cutting both latency and cost on repeated calls",
+            "It requires an exact prefix match up to the cache breakpoint — order matters: put static content (system prompt, tools, docs) first, dynamic content (user turn, timestamps) last",
+            "It shines in agent loops, multi-turn chat, and RAG with large retrieved context — anywhere a big static block precedes a small dynamic one",
+            "It does nothing for genuinely unique, single-use prompts, and a cold cache (first call, or after the TTL lapses) pays a small write premium, not a discount"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "63e78a35-1cd3-4ac0-8130-3e8560908ae1",
+            "prompt": "What does prompt caching actually persist between requests?",
+            "options": [
+              "The raw text of the prompt, compressed",
+              "The model's computed KV (key/value) state for a shared prefix",
+              "A summary of the conversation generated by the model",
+              "The final output tokens from the previous call"
+            ],
+            "correctIndex": 1,
+            "explanation": "Caching stores the KV tensors computed during prefill for a given prefix, so a later request with the same prefix can reuse that state instead of recomputing it — the same underlying KV cache used during generation, just persisted across calls."
+          },
+          {
+            "id": "71a16c4c-e366-4ed6-af61-d0756cd2902d",
+            "prompt": "You add the current timestamp to the very start of your system prompt, before your tool definitions. What happens to your cache hit rate?",
+            "options": [
+              "No effect — only the last 100 tokens matter for caching",
+              "It improves, since timestamps help the cache key be more specific",
+              "It collapses toward zero, since the changing timestamp invalidates everything that follows it",
+              "It only affects cost, not whether the cache hits"
+            ],
+            "correctIndex": 2,
+            "explanation": "A cache hit requires the prefix to match exactly up to the breakpoint. A timestamp that changes every call breaks the match immediately, so everything after it — including your large, otherwise-stable tool definitions — is invalidated too. Volatile content belongs after the cache breakpoint, not before it."
+          },
+          {
+            "id": "0675d5b6-e64d-4ba9-8089-4ed2608527d3",
+            "prompt": "For which workload does prompt caching provide the LEAST benefit?",
+            "options": [
+              "A coding agent reusing the same 6,000-token system prompt across 20 turns",
+              "A RAG pipeline that stuffs a large, unchanging retrieved document into every call in a session",
+              "A batch job where every request has a completely different, one-off large document as its prefix",
+              "A customer support bot with a fixed style guide and tool schema"
+            ],
+            "correctIndex": 2,
+            "explanation": "Caching only pays off when a prefix is reused across multiple calls. If every request's large content is unique, there's no shared prefix to reuse — the cache write premium is paid every time with no matching read to offset it."
+          }
+        ]
+      },
+      "references": [],
+      "id": "f7fcae61-485b-49cd-96c2-d048bb9bb432",
+      "publishedDate": "2026-07-30T12:41:53Z",
+      "heroImageURL": null,
+      "body": null
+    },
+    {
       "title": "Tokenization: How BPE Turns Text Into the Units a Model Actually Sees",
       "subtitle": "An LLM never reads letters or words — it reads a vocabulary of a few hundred thousand learned chunks",
       "category": "LLMs",
@@ -11214,211 +11388,6 @@
       "id": "1ecfc3d1-fefa-4397-8862-5d74fe4f7dac",
       "body": null,
       "publishedDate": "2026-07-22T06:42:45Z"
-    },
-    {
-      "id": "701417f0-9bce-4f69-b025-a7abe591f9fe",
-      "title": "Direct Preference Optimization: Skip the Reward Model Entirely",
-      "subtitle": "RLHF needs a reward model and an RL loop to align a language model. DPO proves you can get the same result with one closed-form loss and no RL at all.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "dpo",
-        "rlhf",
-        "alignment",
-        "preference-tuning",
-        "post-training",
-        "bradley-terry"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "hand.thumbsup.fill",
-      "summary": "Direct Preference Optimization (DPO) reframes RLHF's reward-then-RL pipeline as a single classification-style loss computed directly on preference pairs. By exploiting a closed-form relationship between optimal policies and rewards under a KL constraint, it trains a language model to prefer better answers without ever training a separate reward model or running PPO rollouts.",
-      "body": null,
-      "slides": [
-        {
-          "id": "89a19b2c-b23f-406a-a4ad-11f71b982dc7",
-          "kind": "cover",
-          "title": "The Same RLHF Result, Without Reinforcement Learning",
-          "body": "RLHF aligns a language model to human preferences in two stages: train a reward model on comparison data, then run PPO to maximize that reward while staying close to the original model. DPO (Rafailov et al., Stanford, 2023) collapses both stages into one supervised-style loss trained directly on the preference pairs.",
-          "bullets": [
-            "No reward model to train, no PPO rollouts to sample, no critic/value network — just gradient descent on (prompt, chosen, rejected) triples",
-            "Mathematically equivalent objective to RLHF's reward-maximization-under-KL-constraint problem — DPO doesn't approximate RLHF, it reparameterizes it",
-            "Became a default alignment recipe for many open-weight model releases within months of publication"
-          ],
-          "symbol": "hand.thumbsup.fill",
-          "table": null
-        },
-        {
-          "id": "dc851c4f-6805-4e73-9ea7-952240bc464a",
-          "kind": "problem",
-          "title": "RLHF's Reward-Then-RL Pipeline Is Expensive and Fragile",
-          "body": "Classic RLHF needs several models in memory during training — the policy, a frozen reference copy for the KL penalty, a reward model, and PPO's critic. Each stage introduces its own instability.",
-          "bullets": [
-            "Stage 1: train a reward model on human preference pairs — it can be exploited ('reward hacking') if it doesn't generalize past its training distribution",
-            "Stage 2: run PPO, sampling new completions from the current policy every step, scoring them with the reward model, and updating with a clipped policy-gradient objective",
-            "PPO's own hyperparameters (clip range, KL coefficient, batch size, PPO epochs per rollout) are notoriously fragile to tune at LLM scale"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "6ed533d6-dcc5-4683-97b8-8853ff9cbbae",
-          "kind": "solution",
-          "title": "The Reward Model Is Already Implicit in the Policy",
-          "body": "DPO's key trick: under a KL-constrained reward-maximization objective, the optimal policy has a closed form — pi*(y|x) is proportional to pi_ref(y|x) times exp(r(x,y)/beta). That lets you solve for the reward in terms of the policy itself, and substitute it directly into the Bradley-Terry preference likelihood.",
-          "bullets": [
-            "The result is one loss: L = -log(sigmoid(beta * [(log pi(yw|x) - log pi_ref(yw|x)) - (log pi(yl|x) - log pi_ref(yl|x))])), computed on preferred (yw) vs rejected (yl) completions",
-            "beta plays the same role as the KL penalty coefficient in PPO — it controls how far the tuned policy is allowed to drift from the reference",
-            "Because it's just a per-example loss (no rollouts), training looks like ordinary supervised fine-tuning on a fixed dataset of triples"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "0bca5fd8-1e44-42cb-956c-45b38d3882d7",
-          "kind": "concept",
-          "title": "What the Loss Actually Rewards and Punishes",
-          "body": "The gradient of the DPO loss increases the log-probability of the chosen response and decreases the log-probability of the rejected one, weighted by how wrong the model's implicit reward currently is.",
-          "bullets": [
-            "Implicit reward for a response: beta * log(pi(y|x) / pi_ref(y|x)) — how much more likely the current policy makes y versus the frozen reference",
-            "If the model already strongly prefers yw over yl, the sigmoid saturates and the gradient weight shrinks — the loss stops pushing once the ranking is confidently correct",
-            "Training data is entirely offline: static (prompt, chosen, rejected) triples collected once, with no need to sample from the live policy during training"
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "d86a0655-0079-4533-8306-acbf0e37cfeb",
-          "kind": "comparison",
-          "title": "PPO vs GRPO vs DPO: What Each One Needs at Training Time",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "",
-              "PPO (classic RLHF)",
-              "GRPO",
-              "DPO"
-            ],
-            "rows": [
-              [
-                "Models in memory",
-                "Policy + reference + reward model + critic",
-                "Policy + reference + reward model",
-                "Policy + reference only"
-              ],
-              [
-                "Needs live sampling from policy",
-                "Yes (online)",
-                "Yes (online)",
-                "No (offline, fixed pairs)"
-              ],
-              [
-                "Needs a scalar reward model",
-                "Yes",
-                "Yes",
-                "No — reward is implicit in the policy"
-              ],
-              [
-                "Best fit",
-                "Any reward signal, incl. RL environments",
-                "Verifiable rewards at scale (math, code)",
-                "Fixed human/AI preference datasets"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "0535091b-26c9-4709-8aa8-8a50a4908d3a",
-          "kind": "example",
-          "title": "Worked Example: One Preference Pair",
-          "body": "Prompt: 'Explain recursion to a beginner.' Chosen (yw): a short answer with a concrete base-case example. Rejected (yl): a dense, jargon-heavy paragraph with no example.",
-          "bullets": [
-            "Compute log pi(yw|x) and log pi(yl|x) under the current policy, and the same two values under the frozen reference model — four log-probabilities total, no new generation required since yw/yl are fixed text",
-            "margin = beta * [(log pi(yw) - log pi_ref(yw)) - (log pi(yl) - log pi_ref(yl))]",
-            "If that margin is already large and positive, sigmoid saturates near 1, loss is near 0, and this pair contributes almost no gradient — the model has already 'learned' this comparison",
-            "With beta = 0.1 (a common default), the policy is kept close to the reference; raising beta trades alignment strength for more drift from the reference's original fluency"
-          ],
-          "symbol": "text.quote",
-          "table": null
-        },
-        {
-          "id": "b7282d8c-0d0d-42fb-b020-a0a39b5533ce",
-          "kind": "concept",
-          "title": "Where DPO Breaks Down",
-          "body": "DPO trades RL's complexity for a new set of failure modes rooted in its offline, closed-form nature.",
-          "bullets": [
-            "Fully offline: it can only rank completions that already exist in the dataset — it never explores new completions the way PPO's online sampling does, so it can't discover better responses outside the preference data's distribution",
-            "Likelihood displacement: pushing down a rejected response's probability can inadvertently push down probability mass on similar, even correct, completions if the training pairs aren't diverse",
-            "Sensitive to reference-policy quality: since the implicit reward is defined relative to pi_ref, starting from a poorly fine-tuned reference model biases every subsequent preference judgment",
-            "Not a fix for reward hacking on its own: an under-specified or biased preference dataset teaches the model to exploit whatever pattern separates chosen from rejected in that data, the same risk a bad reward model carries"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "ca457f9f-ce8e-4084-b466-79c22aa7f797",
-          "kind": "takeaways",
-          "title": "Same Objective, Different Optimization Path",
-          "body": null,
-          "bullets": [
-            "DPO is not a heuristic approximation of RLHF — it's a reparameterization that reaches the same KL-constrained optimum via supervised-style gradient descent",
-            "Removing the reward model and RL loop removes an enormous amount of training infrastructure — but also removes online exploration, which matters when preference data doesn't cover the response space you care about",
-            "Use DPO when you have a solid preference dataset and want a stable, RL-free path to alignment; prefer online RL (PPO/GRPO) when rewards are verifiable and the policy needs to explore beyond a fixed dataset"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "af8df4c1-27f7-4f1c-8dad-17b3eed735ff",
-            "prompt": "What closed-form relationship does DPO exploit to eliminate the separate reward model?",
-            "options": [
-              "It assumes all rewards are zero and trains only on log-likelihood",
-              "Under a KL-constrained reward-maximization objective, the optimal policy is proportional to pi_ref(y|x) * exp(r(x,y)/beta) — so the reward can be solved for in terms of the policy and substituted into the preference likelihood",
-              "It distills the reward model directly into the policy's weights via knowledge distillation",
-              "It replaces the reward model with a majority vote across sampled completions"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO's derivation starts from the same KL-constrained objective RLHF optimizes, shows the optimal policy has this closed form, algebraically isolates the reward, and plugs it into the Bradley-Terry preference model — producing a loss defined purely in terms of policy log-probabilities."
-          },
-          {
-            "id": "9dfc5161-fad4-4df5-a98c-94fb026053da",
-            "prompt": "Why is DPO training described as 'offline'?",
-            "options": [
-              "It only works without an internet connection",
-              "It trains on a fixed dataset of (prompt, chosen, rejected) triples and never needs to sample new completions from the live policy during training, unlike PPO's online rollouts",
-              "It can only be run overnight due to compute cost",
-              "It doesn't require GPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "PPO needs to generate fresh completions from the current policy at every training step to score with the reward model. DPO's loss only needs log-probabilities of already-fixed chosen/rejected text, so the whole training set can be prepared once, upfront."
-          },
-          {
-            "id": "925d0cfe-ae91-4ada-b014-3f19a49e3ea7",
-            "prompt": "What is a known failure mode of DPO that online RL methods are less prone to?",
-            "options": [
-              "It requires more GPU memory than PPO",
-              "It cannot be combined with a KL penalty",
-              "Likelihood displacement — suppressing a rejected response's probability can also suppress similar, even correct, completions, since DPO never explores new responses beyond the fixed dataset",
-              "It only works on summarization tasks"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because DPO only ever compares completions that already exist in the training data, its gradient updates can generalize in unintended ways to nearby completions never seen during training — a risk online methods mitigate by continually sampling fresh completions from the current policy."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "e6c3d722-0bb9-4e50-b1d3-5eaaf2623cd3",
-          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model",
-          "url": "https://arxiv.org/abs/2305.18290"
-        }
-      ],
-      "publishedDate": "2026-07-22T00:41:41Z"
     }
   ]
 }
