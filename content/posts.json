@@ -1,6 +1,186 @@
 {
   "posts": [
     {
+      "title": "Constrained Decoding: Making Invalid JSON Impossible, Not Just Unlikely",
+      "subtitle": "How grammars turn 'please output valid JSON' from a request into a guarantee",
+      "category": "AI Agents",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "constrained-decoding",
+        "structured-outputs",
+        "json-schema",
+        "tool-calling",
+        "grammars",
+        "llm-inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "curlybraces",
+      "summary": "Constrained decoding masks invalid tokens at every generation step using a compiled grammar (JSON Schema, regex, or GBNF), guaranteeing syntactically valid structured output by construction instead of by probability. It kills the parsing-failure class of bugs entirely, but it has no opinion on whether the content is true — so it's best paired with reasoning-first prompting and downstream validation.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The Model Can Only Say What the Grammar Allows",
+          "body": "Constrained decoding turns 'please respond in JSON' from a polite request into a mathematical guarantee — by editing the model's choices at generation time, not its intentions.",
+          "bullets": [],
+          "symbol": "curlybraces",
+          "id": "7ff101d6-5ab2-4d81-868f-05faa1a4cc38"
+        },
+        {
+          "kind": "problem",
+          "title": "Free-Text Generation Breaks Tool-Calling Pipelines",
+          "body": "An LLM samples one token at a time from its entire vocabulary. Nothing stops it from writing a stray comment, an unescaped quote, or a trailing comma — and a downstream JSON.parse() only needs one wrong character to throw.",
+          "bullets": [
+            "Prompting harder ('ONLY return valid JSON, no other text') reduces failures but never eliminates them",
+            "Retry-until-it-parses loops burn extra tokens and latency, and still fail occasionally at scale",
+            "Fine-tuning on formatted examples nudges style but is a learned habit, not an enforced rule"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "1d2b7a90-f900-42d7-86db-8f7834414faa"
+        },
+        {
+          "kind": "solution",
+          "title": "Mask Every Token That Would Break the Grammar",
+          "body": "At each decoding step, the constraint engine tracks which grammar state the output is currently in, computes the set of vocabulary tokens that keep it valid, and sets every other token's logit to -infinity before sampling.",
+          "bullets": [
+            "The grammar is compiled from a spec — JSON Schema, a regex, or a formal grammar — into an automaton (FSM or CFG)",
+            "Sampling still picks among the valid tokens by probability, so style and word choice stay flexible inside the allowed shape",
+            "llama.cpp's GBNF format defines this with production rules, e.g. root ::= object, object ::= \"{\" pair (\",\" pair)* \"}\"",
+            "The guarantee is structural: the automaton cannot emit an out-of-grammar token, so syntactic validity is 100% by construction, not by probability"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "id": "f4d81b24-0659-4a72-a4a5-d257c53464ee"
+        },
+        {
+          "kind": "example",
+          "title": "Walking a Tool Call Token by Token",
+          "body": "Say a weather-agent schema requires {\"name\": string, \"args\": {\"city\": string}}. After the model emits {\"name\", the automaton only allows a colon next — every other token in the vocabulary is masked to -infinity, no matter how probable the model thinks some other token is.",
+          "bullets": [
+            "After the colon, the only valid token class is a JSON string opener (a quote) — numbers or braces get masked out",
+            "Once inside the string, any character is legal until an unescaped quote closes it — the grammar narrows and widens as it walks the schema tree",
+            "Libraries like Outlines precompile a regex/FSM index so this mask lookup is a fast table read, not a fresh automaton walk every token"
+          ],
+          "symbol": "terminal.fill",
+          "id": "1dc6da57-766d-4c9c-911b-8ffb3d7d28b1"
+        },
+        {
+          "kind": "comparison",
+          "title": "Three Ways to Get Structured Output",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Approach",
+              "Validity guarantee",
+              "Extra cost",
+              "Fixes wrong values?"
+            ],
+            "rows": [
+              [
+                "Prompt and hope",
+                "None — fails some % of the time",
+                "None upfront",
+                "No"
+              ],
+              [
+                "Parse + retry loop",
+                "Eventual, at extra token cost",
+                "1-3x calls on failure",
+                "No"
+              ],
+              [
+                "Constrained decoding",
+                "100% syntactic, by construction",
+                "Small per-token mask cost",
+                "No"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "id": "83a0bd7a-37f9-425f-a311-6bcd4ddee6f8"
+        },
+        {
+          "kind": "concept",
+          "title": "It Guarantees Shape, Never Truth",
+          "body": "Constrained decoding only restricts syntax. A perfectly-shaped JSON tool call can still hallucinate a city that doesn't exist or invent a field value — the grammar has no opinion on whether the content is correct.",
+          "bullets": [
+            "Constraining too early can hurt reasoning: forcing structure onto a chain-of-thought before the model has 'thought' can lock in a bad answer — best practice is to reason freely, then constrain only the final answer",
+            "Grammar compilation has a one-time cost per schema (building the FSM/index) — cache and reuse it across requests with the same schema instead of recompiling per call",
+            "Deeply nested or highly recursive schemas can slow per-token mask computation on very large vocabularies",
+            "It doesn't replace validating business logic — still check that a returned city is real, that a date isn't in the past, and so on"
+          ],
+          "symbol": "hand.raised.fill",
+          "id": "c0050ce1-aa50-4376-aae6-744aeab6d0bb"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Constrain the Shape, Not the Thinking",
+          "bullets": [
+            "Constrained decoding masks invalid tokens at generation time — the model literally cannot produce a token outside the grammar",
+            "It's implemented via compiled automatons: GBNF grammars in llama.cpp, regex/FSM indexes in libraries like Outlines, JSON Schema in most vendor 'structured output' modes",
+            "It eliminates the parsing-failure class of bugs entirely, but does nothing for hallucinated content — pair it with validation",
+            "Best practice: let the model reason unconstrained, then apply the grammar only to the final structured answer"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "99f1da27-b2a8-42c2-981f-8426e01ecf68"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What exactly does constrained decoding guarantee?",
+            "options": [
+              "That the output values are factually correct",
+              "That the output always matches the grammar's syntax",
+              "That the model reasons better before answering",
+              "That the response is shorter"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding masks every token that would violate the grammar, so the output is syntactically guaranteed to parse — but the grammar has no way to check whether the content itself (a city name, a number) is true.",
+            "id": "3bb7a26c-dd5d-4ba0-a1fe-2d33043883ac"
+          },
+          {
+            "prompt": "How does the mechanism actually stop an invalid token from being generated?",
+            "options": [
+              "It fine-tunes the model weights ahead of time",
+              "It re-prompts the model to try again after a failure",
+              "It sets the logits of any grammar-violating token to -infinity before sampling",
+              "It filters the completed output text after generation"
+            ],
+            "correctIndex": 2,
+            "explanation": "The constraint is applied during decoding, at the logit level: at every step, the current automaton state determines which tokens are legal, and everything else gets masked to -infinity before the softmax and sample — invalid tokens simply can't be picked.",
+            "id": "95c25089-4549-42c1-82ea-40c2297beeb8"
+          },
+          {
+            "prompt": "What's a documented pitfall of constrained decoding?",
+            "options": [
+              "It cannot produce valid JSON at all",
+              "It's slower than fine-tuning by several orders of magnitude with no benefit",
+              "Forcing structure too early can lock in an answer before the model has reasoned it through",
+              "It only works with proprietary APIs"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because the grammar restricts every token from the very first one, applying it to a chain-of-thought stream (instead of just the final structured answer) can force a shape onto reasoning before the model has actually worked out the answer — best practice is to reason freely, then constrain only the final output.",
+            "id": "ea229278-9945-4a6f-bb77-d0de3d9631c9"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GBNF Guide — llama.cpp grammars",
+          "url": "https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md",
+          "id": "db928faf-2b48-425e-9c9d-efbabbbcb279"
+        },
+        {
+          "title": "Outlines — structured outputs for LLMs",
+          "url": "https://github.com/dottxt-ai/outlines",
+          "id": "1a694aef-e5fa-4bfc-9c13-6e682616bbb3"
+        }
+      ],
+      "id": "fb3c16ea-ff78-415b-9c5d-87d8ec0c0458",
+      "publishedDate": "2026-07-30T00:42:49Z"
+    },
+    {
       "id": "250ab16a-c7c0-4a52-a969-e7de6356d182",
       "title": "Consistent Hashing: Why Scaling a Cluster Doesn't Reshuffle Everything",
       "subtitle": "Add one server, move one server's worth of keys — not all of them",
@@ -11247,210 +11427,6 @@
       },
       "references": [],
       "publishedDate": "2026-07-21T18:41:23Z"
-    },
-    {
-      "id": "b6fc6c01-54b6-45ef-bfb9-82a89aa67bd0",
-      "title": "MCP Elicitation: The Protocol's Ask-the-User Primitive",
-      "subtitle": "A tool server can pause mid-call and request exactly the structured data it's missing — nothing more.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "elicitation",
-        "human-in-the-loop",
-        "tool-use",
-        "json-schema"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "questionmark.bubble.fill",
-      "summary": "Elicitation is the MCP primitive that lets a server pause a tool call and ask the human, through the client, for exactly the structured field it's missing — a confirmation, a missing parameter, a choice among options. It's schema-constrained to flat objects with primitive fields, resolves to one of three distinct actions (accept, decline, cancel), and servers are explicitly barred from using it to collect passwords or secrets.",
-      "body": null,
-      "publishedDate": "2026-07-21T12:42:58Z",
-      "slides": [
-        {
-          "id": "da43238e-a505-43a0-82c6-5ee91f35456c",
-          "kind": "cover",
-          "title": "The Missing Piece Between Tool Calls and Human Judgment",
-          "body": "MCP already gives servers two ways to reach back into the client: Sampling asks the client's LLM to generate text, and Roots asks about the filesystem boundaries it can touch. Elicitation, added to the spec, is the third — a way to ask the human directly.",
-          "bullets": [
-            "Servers request additional information from users through the client during a tool call, via the elicitation/create method",
-            "Unlike a chat message, the request carries a JSON Schema — the client can render a real form, not just free text",
-            "It exists because plenty of tool calls can't be fully specified up front: the right next question depends on what the tool discovers"
-          ],
-          "symbol": "questionmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "fd3961be-8a97-4ab6-b7b6-089da38da5bd",
-          "kind": "problem",
-          "title": "Tools Either Guess or Fail Closed",
-          "body": "Before elicitation, an MCP server facing a missing or ambiguous input had two bad options.",
-          "bullets": [
-            "Guess: fill in a sensible default and hope it's right — risky for anything destructive or costly, like which environment to deploy to",
-            "Fail: return an error and force the whole request to restart from the client/LLM side, losing the context of exactly where the tool call got stuck",
-            "Neither option lets the server ask one precise, structured follow-up question at the exact moment it discovers it needs one"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9bfa2ed5-8cc7-4ff3-a6f6-502591c9d178",
-          "kind": "solution",
-          "title": "elicitation/create: A Schema, Not a Free-Text Prompt",
-          "body": "The server sends an elicitation/create request with a human-readable message plus a JSON Schema describing exactly what it needs back.",
-          "bullets": [
-            "The schema is deliberately restricted to flat objects with primitive properties — strings (with minLength/maxLength or formats like email, uri, date), numbers/integers (min/max), booleans, and enums",
-            "Complex nested structures and arrays of objects are intentionally NOT supported — this keeps the client able to render a generic form without custom UI per server",
-            "The client shows that form to the user, identifies which server is asking, and lets the user edit before submitting"
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "63905f13-ad81-4d42-a98d-068f9a484ae7",
-          "kind": "concept",
-          "title": "Three Outcomes, Not Two",
-          "body": "It's tempting to model the response as yes/no. The spec defines three distinct actions instead, and a server that only handles two will mishandle real user behavior.",
-          "bullets": [
-            "accept — the user submitted the form; the response includes a content field populated per the schema",
-            "decline — the user explicitly rejected the request (clicked \"No\" / \"Deny\"); content is typically omitted",
-            "cancel — the user dismissed the dialog without choosing either way (closed it, navigated away); content is also omitted",
-            "Collapsing decline and cancel into one case loses a real signal: decline is an informed no, cancel is no answer at all"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "8330b66b-1e2d-4f45-baa3-1112558605ad",
-          "kind": "example",
-          "title": "A Deployment Tool That Asks Before It Acts",
-          "body": "Picture a deploy_service tool. The agent calls it with just a service name — the target environment wasn't specified.",
-          "bullets": [
-            "The server can't safely default to production, and erroring out just pushes the question back to the user's next message with no structure",
-            "Instead it sends elicitation/create with a schema: environment (enum: staging/production), confirm (boolean), reason (string, optional)",
-            "The client renders that as a real form; the user picks \"production\", checks confirm, and submits — the server resumes the exact same tool call with a typed, validated answer instead of parsing free text"
-          ],
-          "symbol": "shippingbox.fill",
-          "table": null
-        },
-        {
-          "id": "327f00cb-90aa-4ad0-912d-7eec89ced2f3",
-          "kind": "comparison",
-          "title": "Elicitation vs. Sampling: Two Different Callbacks",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "",
-              "Elicitation",
-              "Sampling"
-            ],
-            "rows": [
-              [
-                "Who answers",
-                "The human user, via the client's UI",
-                "The client's LLM"
-              ],
-              [
-                "Payload",
-                "A JSON Schema form (flat, primitives only)",
-                "A prompt/message for text generation"
-              ],
-              [
-                "Typical use",
-                "Missing parameter, confirmation, a choice",
-                "Let the server borrow reasoning without its own model access"
-              ],
-              [
-                "Response shape",
-                "action: accept / decline / cancel + content",
-                "A generated message"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "7bbeb962-5376-4b5b-9601-0bf5ab28e462",
-          "kind": "concept",
-          "title": "Where This Breaks Down",
-          "body": "Elicitation is deliberately narrow, and that's the point — but it has hard limits worth knowing before you reach for it.",
-          "bullets": [
-            "The spec states servers MUST NOT use elicitation to request sensitive information — no passwords, API keys, or secrets belong in an elicitation form, since clients aren't required to treat that field as protected",
-            "Not every client implements it — elicitation is an optional client capability, so a server has to check for it during capability negotiation and have a fallback (usually: return a normal error)",
-            "Overusing it turns a tool call into a chain of modal dialogs — each elicitation blocks the in-flight call, so it should be reserved for genuinely necessary, high-stakes gaps, not every optional field"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "0701aa3f-8773-486d-ba7f-4c4d54990faa",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Elicitation lets a server pause mid-tool-call and ask the human for exactly the structured field it's missing, via a flat JSON Schema form",
-            "Responses resolve to three distinct actions — accept (with data), decline (explicit no), or cancel (no answer) — and servers should handle all three differently",
-            "It's the human-facing counterpart to Sampling (which asks the client's LLM, not the user) — together they're how a server reaches back into the client instead of just returning an error",
-            "Never use it for secrets, always check the client supports it first, and use it sparingly — every elicitation is a blocking round trip"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "60f397b6-8c45-4010-aef6-8111709c01c7",
-            "prompt": "A server sends an elicitation/create request. The user closes the dialog without clicking any button. What action does the client report?",
-            "options": [
-              "accept",
-              "decline",
-              "cancel",
-              "timeout"
-            ],
-            "correctIndex": 2,
-            "explanation": "\"cancel\" means the user dismissed the request without making a choice either way — distinct from \"decline\", which means the user explicitly said no. A server that treats both the same loses the ability to tell \"no\" from \"no answer.\""
-          },
-          {
-            "id": "1675d7ed-84f2-4c7b-aa48-67b04f2f4b1e",
-            "prompt": "Why does the elicitation JSON Schema forbid nested objects and arrays of objects?",
-            "options": [
-              "Nested schemas are too slow for the client to parse",
-              "It keeps the client able to render a generic form for any server without custom per-server UI code",
-              "MCP doesn't support JSON Schema at all",
-              "Arrays can't be serialized over the MCP transport"
-            ],
-            "correctIndex": 1,
-            "explanation": "By restricting schemas to flat objects with primitive fields (strings, numbers, booleans, enums), any client can build one generic form-rendering path that works for every server's elicitation request, instead of needing bespoke UI per server."
-          },
-          {
-            "id": "c7957437-5354-4072-803c-85623975371b",
-            "prompt": "Which of these is an appropriate use of elicitation, per the spec's constraints?",
-            "options": [
-              "Asking the user to type in their database password so the server can connect",
-              "Asking the user to confirm which environment (staging vs. production) a deploy tool should target",
-              "Silently retrying the tool call with default values",
-              "Asking the client's LLM to draft a summary of the last tool result"
-            ],
-            "correctIndex": 1,
-            "explanation": "Elicitation is for structured, non-sensitive input the server genuinely needs from the human — like confirming a target environment. The spec explicitly prohibits using it to collect sensitive information like passwords, and asking the LLM (not the user) for a draft is Sampling, not Elicitation."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "950d6250-1ff1-49ff-bc98-65e4f823bf6b",
-          "title": "Elicitation — Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/draft/client/elicitation"
-        },
-        {
-          "id": "bc4509db-a0b3-4b8a-93eb-ad4a546edf77",
-          "title": "modelcontextprotocol/modelcontextprotocol — elicitation.mdx source",
-          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/elicitation.mdx"
-        }
-      ]
     }
   ]
 }
