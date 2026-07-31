@@ -1,6 +1,214 @@
 {
   "posts": [
     {
+      "title": "DPO: Skipping RLHF's Reward Model Entirely",
+      "subtitle": "Turn chosen-vs-rejected pairs into a classification loss on the policy itself — no reward model, no PPO rollouts, no critic.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "alignment",
+        "preference-optimization",
+        "fine-tuning",
+        "reinforcement-learning"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "hand.thumbsup.fill",
+      "summary": "Direct Preference Optimization (DPO) reframes RLHF's reward-model-plus-PPO pipeline as a single supervised loss over chosen/rejected response pairs. By showing the optimal RLHF policy has a closed-form relationship to the reward function, DPO trains directly on preference data — no reward model, no rollouts, no critic — at the cost of losing PPO's online exploration.",
+      "body": null,
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "One Loss Function Instead of a Whole RL Pipeline",
+          "body": "DPO, introduced by Rafailov et al. in 2023, proved that RLHF's reward model is mathematically redundant — the same alignment signal can be extracted with a single classification-style loss.",
+          "bullets": [
+            "Standard RLHF needs 3 stages: supervised fine-tuning, reward model training, then PPO reinforcement learning against that reward model",
+            "DPO collapses stages 2 and 3 into one supervised step run directly on (prompt, chosen, rejected) triples",
+            "No reward model to train, no rollouts to sample, no PPO instability — just gradient descent on log-probabilities"
+          ],
+          "symbol": "hand.thumbsup.fill",
+          "table": null,
+          "id": "a3d31858-4216-4f16-8189-3d3a0014c3f8"
+        },
+        {
+          "kind": "problem",
+          "title": "RLHF's Pipeline Is Expensive and Fragile",
+          "body": "Classic RLHF keeps four models in memory at once and tunes PPO's famously touchy hyperparameters.",
+          "bullets": [
+            "A policy, a frozen reference policy, a reward model, and (in PPO) a value network — four model copies live in GPU memory simultaneously",
+            "The reward model is trained once, then frozen and reused as a proxy — if it's exploitable, PPO will find and abuse the exploit (reward hacking)",
+            "PPO's clipping, GAE, and KL coefficients each need tuning per task; runs can silently collapse or diverge partway through training"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "7325e68f-9f50-4f62-8dd6-b37925bf9d83"
+        },
+        {
+          "kind": "solution",
+          "title": "The Optimal Policy IS a Reward Model",
+          "body": "DPO's key derivation: for the standard RLHF objective (maximize reward minus a KL penalty from the reference model), the optimal policy has a closed-form solution in terms of the reward. Invert that relationship, and any reward function can be rewritten purely in terms of policy log-probabilities.",
+          "bullets": [
+            "Substituting that inverted reward into the Bradley-Terry preference model produces a loss defined entirely on the policy and reference model — the reward model cancels out algebraically",
+            "Loss: -log σ( β·[log(π_θ(y_w|x)/π_ref(y_w|x)) − log(π_θ(y_l|x)/π_ref(y_l|x))] ), where y_w is the chosen response and y_l the rejected one",
+            "β controls how far the policy is allowed to drift from the reference model — small β allows bigger updates, large β keeps outputs conservative",
+            "The loss just pushes the chosen response's relative log-probability up and the rejected one's down — no sampling, no rollouts required"
+          ],
+          "symbol": "function",
+          "table": null,
+          "id": "c99da60f-0f7c-471f-aac6-1ef541a7f98c"
+        },
+        {
+          "kind": "architecture",
+          "title": "What You Actually Need to Train It",
+          "body": null,
+          "bullets": [
+            "A frozen reference model (usually the SFT checkpoint) — its log-probs anchor the KL term implicitly, no separate KL computation needed",
+            "A policy model, initialized from the same SFT checkpoint, that you're actively updating",
+            "A static preference dataset: (prompt, chosen response, rejected response) triples — collected once, no online generation",
+            "Per training step: two forward passes each on chosen and rejected text (policy + frozen reference), then backprop the DPO loss — that's the entire training loop"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null,
+          "id": "aec97667-cd5c-40fb-b412-525a02655f6d"
+        },
+        {
+          "kind": "comparison",
+          "title": "RLHF/PPO vs. DPO",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "RLHF + PPO",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "4 (policy, ref, reward, value)",
+                "2 (policy, frozen ref)"
+              ],
+              [
+                "Reward model",
+                "Trained separately, then frozen",
+                "Implicit — never materialized"
+              ],
+              [
+                "Data collection",
+                "Online rollouts each step",
+                "Static offline preference pairs"
+              ],
+              [
+                "Stability",
+                "Sensitive to PPO hyperparameters",
+                "Standard supervised-style training"
+              ],
+              [
+                "Exploration",
+                "Can generate and score novel responses",
+                "Limited to patterns already in the dataset"
+              ]
+            ]
+          },
+          "id": "b5c44d44-7808-403f-8901-7e687b8ee279"
+        },
+        {
+          "kind": "example",
+          "title": "One Preference Pair, Worked Through",
+          "body": "A concrete pass through a single training example.",
+          "bullets": [
+            "Prompt: 'Explain quantum entanglement to a 5-year-old.' Chosen: a short, playful analogy. Rejected: a dense paragraph full of jargon.",
+            "Forward pass computes log-probabilities under the policy and the reference for both responses; initially policy ≈ reference, so the bracketed term ≈ 0 and loss ≈ -log σ(0) = log 2",
+            "The gradient step raises the chosen response's log-probability and lowers the rejected one's relative to the frozen reference — the model learns 'more like this, less like that' without ever seeing a numeric reward",
+            "Repeat over tens of thousands of pairs and the policy shifts toward the chosen style broadly, not just on the exact prompts seen"
+          ],
+          "symbol": "text.bubble.fill",
+          "table": null,
+          "id": "57b952fa-33b6-4265-8c6d-d346ac1dc015"
+        },
+        {
+          "kind": "concept",
+          "title": "Where DPO Breaks Down",
+          "body": "The simplicity has real costs, not just savings.",
+          "bullets": [
+            "Likelihood displacement: DPO can end up lowering the probability of BOTH the chosen and rejected response, as long as the gap between them grows — sometimes pushing probability mass elsewhere in the vocabulary unpredictably",
+            "It's fully offline: unlike PPO's online rollouts, DPO only ever sees the preference pairs you collected — it can't discover and reinforce a better response you never wrote down",
+            "Overfits fast: because it's a comparatively simple classification loss, a handful of epochs at too-high a learning rate can degrade generation quality even as the loss keeps dropping",
+            "β is a real hyperparameter to tune per dataset — too low and the policy drifts and destabilizes, too high and preference updates barely move the model"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "5f5923d0-fdb0-4529-9cac-af4af0aeb12a"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "DPO reframes RLHF as a single supervised loss: it exploits a closed-form link between the optimal RLHF policy and the reward function so the reward model cancels out algebraically",
+            "Training only needs a policy model and a frozen reference model — no reward model, no PPO rollouts, no value network",
+            "It trades PPO's online exploration for offline simplicity — output quality is capped by how good your existing preference dataset is",
+            "Watch for likelihood displacement and overfitting: DPO's loss can keep falling while output quality degrades if not carefully monitored"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "77c996b4-9340-4d29-924b-7e69dd7c2c8c"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What mathematical trick lets DPO skip training a separate reward model?",
+            "options": [
+              "It uses a pretrained sentiment classifier as the reward model instead",
+              "It shows the optimal RLHF policy has a closed-form relation to the reward, so the reward model cancels out and becomes a function of policy log-probabilities",
+              "It replaces the reward model with a majority vote across multiple sampled completions",
+              "It removes the KL penalty entirely, making a reward model unnecessary"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO's derivation inverts the closed-form solution for the optimal KL-constrained RLHF policy, substitutes it into the Bradley-Terry preference model, and finds the reward model term cancels out — leaving a loss defined purely on the policy's own log-probabilities relative to a frozen reference.",
+            "id": "11ac9189-c8f7-4772-b407-81618c9a64e7"
+          },
+          {
+            "prompt": "In the DPO loss, what does the hyperparameter β control?",
+            "options": [
+              "The learning rate used for the optimizer",
+              "The number of preference pairs sampled per batch",
+              "How far the policy is allowed to drift from the reference model before the loss penalizes it",
+              "The temperature used when generating the chosen/rejected responses"
+            ],
+            "correctIndex": 2,
+            "explanation": "β scales the implicit KL penalty against the reference model. A small β permits large policy updates (higher drift risk); a large β keeps the policy conservative but slows how much the preference signal moves it.",
+            "id": "b9fee8b0-fd72-405e-8ca2-450f1aab7d17"
+          },
+          {
+            "prompt": "What is 'likelihood displacement,' a known failure mode of DPO?",
+            "options": [
+              "The reward model assigns high reward to both responses equally",
+              "DPO can lower the probability of both the chosen and rejected response, as long as the gap between them widens, sometimes pushing probability mass elsewhere in the vocabulary",
+              "The reference model's weights drift during training even though they should stay frozen",
+              "PPO's value network fails to converge on the same dataset"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the loss only cares about the log-probability gap between chosen and rejected, DPO can satisfy it by pushing down both probabilities rather than pushing up the chosen one — a documented degeneracy that requires careful learning-rate and epoch control to avoid.",
+            "id": "bd06d037-26e6-4cc0-9888-9992aa0ac931"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (arXiv:2305.18290)",
+          "url": "https://arxiv.org/abs/2305.18290",
+          "id": "c9308237-99ad-41c2-a7f9-addb0eb20395"
+        }
+      ],
+      "id": "bc3b74e0-cf9f-47d4-af3c-6951610299b1",
+      "publishedDate": "2026-07-31T00:41:46Z"
+    },
+    {
       "title": "Continuous Batching: No More Waiting for the Slowest Request",
       "subtitle": "How iteration-level scheduling keeps every GPU slot busy",
       "category": "LLMs",
@@ -11210,185 +11418,6 @@
         }
       ],
       "id": "759dd3da-628b-4795-88ff-03d52bf9abb4",
-      "body": null,
-      "publishedDate": "2026-07-22T06:42:45Z"
-    },
-    {
-      "title": "Gemini 3.6 Flash: Google Cuts Tokens Without Cutting Capability",
-      "subtitle": "A workhorse-tier refresh that spends 17% fewer output tokens per task and prices output 17% cheaper — while two companion models chase throughput and security.",
-      "category": "AI News",
-      "difficulty": "Beginner",
-      "postKind": "release",
-      "tags": [
-        "gemini",
-        "google",
-        "model-release",
-        "inference-cost",
-        "agentic-coding"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "bolt.fill",
-      "summary": "On July 21, 2026, Google shipped Gemini 3.6 Flash alongside two companions — 3.5 Flash-Lite and 3.5 Flash Cyber. The headline isn't a benchmark record; it's efficiency: 17% fewer output tokens than 3.5 Flash on the Artificial Analysis Index, lower per-token pricing, and measurably fewer wasted tool calls in agentic coding.",
-      "slides": [
-        {
-          "id": "d891a536-b600-4bb4-b98c-e67b7cd1a3b9",
-          "kind": "cover",
-          "title": "Three Models, One Theme: Do More Per Token",
-          "body": "Google announced Gemini 3.6 Flash, Gemini 3.5 Flash-Lite, and Gemini 3.5 Flash Cyber together on July 21, 2026, available immediately via the Gemini API and Google AI Studio.",
-          "bullets": [
-            "3.6 Flash: the general workhorse — better coding, knowledge work, and multimodal performance than 3.5 Flash",
-            "3.5 Flash-Lite: the fastest, most cost-effective 3.5-class model, built for high-throughput tasks like agentic search",
-            "3.5 Flash Cyber: 3.5 Flash fine-tuned specifically to find and fix security vulnerabilities in code"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "ba587408-f937-479b-9a20-af2e87b184a8",
-          "kind": "problem",
-          "title": "Agentic Workloads Are Bottlenecked by Token Spend, Not Just IQ",
-          "body": "As more products run agent loops (plan, call a tool, observe, repeat), the cost that matters most in production often isn't a benchmark score — it's how many tokens and tool calls it takes to finish a task, since every wasted loop is billed.",
-          "bullets": [
-            "A model that's marginally smarter but takes 3x the tool calls to finish a task can cost more in production than a slightly weaker, more efficient one",
-            "3.5 Flash's $9/1M output token price made heavy agentic usage add up quickly at scale",
-            "Google needed a workhorse tier that reduces reasoning steps and tool calls per task, not just raw accuracy"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "617b7b25-d5ff-46a3-9a54-1b9fd2de0fd0",
-          "kind": "solution",
-          "title": "What Actually Changed in 3.6 Flash",
-          "body": "Per Google's announcement, 3.6 Flash uses measurably fewer output tokens and fewer reasoning/tool-call steps to accomplish the same multi-step workflows as 3.5 Flash.",
-          "bullets": [
-            "17% fewer output tokens than 3.5 Flash on the Artificial Analysis Index — a cross-provider efficiency benchmark",
-            "On DeepSWE (Datacurve's coding benchmark), output token usage drops by up to 65%, with higher precision and fewer unwanted code edits",
-            "Supports text, images, audio, and video input, with a context window up to 1 million tokens"
-          ],
-          "symbol": "arrow.down.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "52c908af-05a8-49b2-9d63-232c962d3d17",
-          "kind": "comparison",
-          "title": "Pricing: Flash Gets Cheaper, Flash-Lite Gets a Refresh",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "Model",
-              "Input ($/1M tok)",
-              "Output ($/1M tok)"
-            ],
-            "rows": [
-              [
-                "Gemini 3.5 Flash (prior)",
-                "—",
-                "$9.00"
-              ],
-              [
-                "Gemini 3.6 Flash (new)",
-                "$1.50",
-                "$7.50"
-              ],
-              [
-                "Gemini 3.5 Flash-Lite (new)",
-                "$0.30",
-                "$2.50"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "68934c74-cee7-4e06-83cc-eef1cdd3ab8a",
-          "kind": "example",
-          "title": "Worked Example: An Agentic Coding Task",
-          "body": "Take a multi-step coding task — read a bug report, locate the file, edit it, run tests, and fix a follow-up failure. On DeepSWE, 3.6 Flash reaches 49% precision (fewer unwanted edits and execution loops) versus 37% for 3.5 Flash.",
-          "bullets": [
-            "Fewer 'unwanted code edits' means fewer wasted attempts that still get billed as output tokens",
-            "Reduced execution loops directly cuts the number of tool calls (test runs, file reads) a coding agent needs per task",
-            "Combined with the 17%+ token reduction and lower output pricing, a comparable coding-agent workload gets cheaper from two directions at once: fewer tokens, and a lower price per token"
-          ],
-          "symbol": "hammer.fill",
-          "table": null
-        },
-        {
-          "id": "d79c476c-3ed1-470b-9c62-d40e7f10cd6f",
-          "kind": "concept",
-          "title": "Where the Flash Tier Still Isn't the Right Choice",
-          "body": "None of these three models replace a frontier reasoning tier — Google explicitly frames 3.6 Flash as the workhorse, not the flagship.",
-          "bullets": [
-            "Gemini 3.5 Pro — the higher-reasoning tier — is still not broadly available; Google says it's coming soon, so tasks needing top-tier reasoning quality aren't 3.6 Flash's job",
-            "Gemini 4 is only in pre-training, per Google's own announcement — there's no near-term frontier jump to expect from this release cycle",
-            "Flash Cyber is scoped to code security scanning/patching — it isn't a general-purpose security or pentesting tool"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "a76e657a-0dac-49e3-9c17-16e6491b0336",
-          "kind": "takeaways",
-          "title": "The Real Story Is Cost-Per-Completed-Task, Not Cost-Per-Token",
-          "body": null,
-          "bullets": [
-            "3.6 Flash's gain isn't a new capability — it's doing the same job in fewer tokens and fewer tool-call loops, which compounds with a lower per-token price",
-            "The three-model split (Flash, Flash-Lite, Flash Cyber) signals Google optimizing for workload fit rather than one model to serve everything",
-            "For agentic/coding workloads specifically, precision-per-loop (fewer unwanted edits) matters as much as raw benchmark accuracy, since it directly drives billed token volume"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cd687c34-6f10-43a4-90fd-c116cfde2b46",
-            "prompt": "What is the headline efficiency claim Google makes for Gemini 3.6 Flash versus 3.5 Flash?",
-            "options": [
-              "It has a 10x larger context window",
-              "It uses 17% fewer output tokens on the Artificial Analysis Index, with up to 65% fewer output tokens on the DeepSWE coding benchmark",
-              "It is the first Gemini model to support video input",
-              "It replaces Gemini 3.5 Pro as Google's flagship reasoning model"
-            ],
-            "correctIndex": 1,
-            "explanation": "The release is framed around efficiency, not a new capability tier: 17% fewer output tokens on a general cross-provider index, and up to 65% fewer on the DeepSWE coding benchmark specifically — plus a lower output price per token."
-          },
-          {
-            "id": "4b3cfaf4-6085-411d-a1e3-85d87f2acafc",
-            "prompt": "In an agentic coding workload, why does 'fewer unwanted code edits' matter for cost, not just quality?",
-            "options": [
-              "Unwanted edits are free but slow",
-              "Each unwanted edit and extra execution loop consumes and bills additional output tokens and tool calls, so higher precision-per-loop directly lowers total spend",
-              "It only affects the model's training cost, not inference cost",
-              "It has no effect on billed usage"
-            ],
-            "correctIndex": 1,
-            "explanation": "In an agent loop, every wasted edit or extra test run is additional billed output and another tool call. 3.6 Flash's reported 49% vs 37% precision on DeepSWE means fewer of those wasted loops, which compounds with the lower per-token price."
-          },
-          {
-            "id": "a80a3b14-1c78-4113-8362-95ad05e12d07",
-            "prompt": "Which task would 3.6 Flash NOT be the right tool for, per Google's own framing?",
-            "options": [
-              "A high-throughput agentic search pipeline",
-              "A multi-step coding agent fixing bugs and running tests",
-              "A task requiring Google's top-tier reasoning quality, since Gemini 3.5 Pro is still not broadly available and 3.6 Flash is positioned as the workhorse tier",
-              "A document understanding task with images and long context"
-            ],
-            "correctIndex": 2,
-            "explanation": "Google explicitly frames 3.6 Flash as the efficient workhorse tier, not the top-end reasoning tier — that's Gemini 3.5 Pro, which the announcement says is still not broadly available."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "c382da55-434a-40e6-b3ce-23bb2a0c27f8",
-          "title": "Introducing Gemini 3.6 Flash, 3.5 Flash-Lite, and 3.5 Flash Cyber — Google Blog",
-          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/"
-        }
-      ],
-      "id": "6e63203c-111b-4584-b22b-3a270e1a147d",
       "body": null,
       "publishedDate": "2026-07-22T06:42:45Z"
     }
