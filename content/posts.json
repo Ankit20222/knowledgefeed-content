@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "title": "HNSW: How Vector Search Finds Neighbors Without Checking Everyone",
+      "subtitle": "The layered graph trick that makes RAG over millions of embeddings feel instant",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "hnsw",
+        "vector-search",
+        "ann",
+        "rag",
+        "embeddings",
+        "vector-database"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "Hierarchical Navigable Small World (HNSW) is the graph-based algorithm behind most production vector databases. Instead of comparing a query to every stored vector, it builds a multi-layer proximity graph and greedily routes downward through sparse-to-dense layers, turning an O(n) brute-force scan into an O(log n) walk — at the cost of memory overhead and approximate (not exact) recall.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Searching 10 Million Embeddings in Under 2 Milliseconds",
+          "body": "Every RAG pipeline, semantic search bar, and recommendation engine eventually hits the same wall: comparing a query vector against millions of stored vectors one by one is too slow. HNSW is the graph structure most vector databases (FAISS, Qdrant, Weaviate, pgvector, Milvus) use to route around that wall.",
+          "bullets": [
+            "Turns nearest-neighbor search from a full O(n) scan into an O(log n) graph walk",
+            "Powers the default index in FAISS, Qdrant, Weaviate, Milvus, and pgvector's HNSW mode",
+            "Trades a small amount of recall accuracy for a huge speedup — it's approximate, not exact"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "kind": "problem",
+          "title": "Brute-Force Search Doesn't Scale Past a Few Hundred Thousand Vectors",
+          "body": "Exact nearest-neighbor search means computing the distance from your query to every single stored vector, then sorting.",
+          "bullets": [
+            "Flat/exact search is O(n) per query — at 10M vectors and 768 dimensions, that's tens of billions of floating-point ops per single query",
+            "Latency scales linearly with corpus size: doubling your embeddings roughly doubles every query's cost",
+            "Fine for a demo with 10K chunks; unusable for a production RAG index with tens of millions"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "kind": "concept",
+          "title": "The Core Idea: A Graph With Express Lanes",
+          "body": "HNSW builds several stacked graph layers over the same set of vectors, like a skip list generalized to arbitrary dimensions.",
+          "bullets": [
+            "Layer 0 (bottom) contains every vector, densely connected to its nearest neighbors",
+            "Higher layers contain exponentially fewer vectors — each one is a 'shortcut' node present on average in log_M(n) layers",
+            "A vector's odds of appearing on a higher layer decay geometrically, so the top layer might hold just a handful of nodes",
+            "This mirrors how a skip list uses sparse upper layers to jump long distances before dropping into a dense bottom layer"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "kind": "solution",
+          "title": "Search: Greedy Descent From Sparse to Dense",
+          "body": "A query doesn't touch most of the graph — it enters at the top, sparse layer and greedily walks toward the query, dropping down a level each time it can't improve locally.",
+          "bullets": [
+            "Start at a fixed entry point on the top layer; greedily move to whichever neighbor is closest to the query vector",
+            "When no neighbor on the current layer improves the distance, drop down one layer and keep greedily searching from there",
+            "At layer 0, expand the search to `ef_search` candidates (not just 1) to build a proper top-k result — this is the main recall/speed knob at query time",
+            "Result: a handful of hops through sparse layers gets you to roughly the right neighborhood before the expensive dense search even starts"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "kind": "comparison",
+          "title": "HNSW vs. the Alternatives",
+          "body": "The three knobs that actually matter: M (max neighbors per node, typically 5-48, commonly 16), ef_construction (build-time search width, often ~200), and ef_search (query-time search width, tunable per query).",
+          "bullets": [
+            "Flat search: perfect recall, but cost grows linearly with corpus size",
+            "IVF (inverted file / clustering): fast and memory-light, but recall drops sharply if a query lands near a cluster boundary",
+            "HNSW: near-perfect recall at low latency, but pays for it in memory — every vector stores edges to its M neighbors at every layer it appears on"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Index",
+              "Query time",
+              "Recall",
+              "Memory",
+              "Update cost"
+            ],
+            "rows": [
+              [
+                "Flat (exact)",
+                "O(n)",
+                "100%",
+                "Lowest (just raw vectors)",
+                "Trivial — append only"
+              ],
+              [
+                "IVF / clustering",
+                "O(n/clusters)",
+                "Good, cluster-boundary sensitive",
+                "Low",
+                "Cheap, but may need re-clustering"
+              ],
+              [
+                "HNSW",
+                "O(log n)",
+                "~95-99%, tunable via ef_search",
+                "High — graph edges add ~1.5-2x overhead",
+                "Insert is graph-edge work; deletes are usually soft"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "example",
+          "title": "Tuning ef_search in a Real RAG Index",
+          "body": "A support-ticket RAG system indexes 3M ticket-chunk embeddings with HNSW (M=16). At query time, a slider isn't exposed to users — it's a server-side tradeoff the team makes explicitly.",
+          "bullets": [
+            "ef_search=10: sub-millisecond latency, but the correct chunk is missing from the top-5 often enough that answers cite the wrong ticket",
+            "ef_search=100: latency rises into single-digit milliseconds, recall climbs into the high 90s — the team's chosen default",
+            "ef_search=500: recall gains flatten out while latency keeps climbing — diminishing returns past a point specific to the dataset",
+            "The fix that mattered more than any parameter: raising `ef_construction` at index-build time so the graph itself was higher quality, not just searched harder"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "kind": "concept",
+          "title": "When HNSW Is the Wrong Choice",
+          "body": "It's the default for a reason, but it isn't free, and it isn't always the best fit.",
+          "bullets": [
+            "Memory-constrained deployments: the graph's edge lists can roughly double memory footprint versus raw vectors — IVF+PQ (product quantization) compresses much further at some recall cost",
+            "Write-heavy workloads with frequent deletes: HNSW graphs are built for insertion, not deletion — most implementations soft-delete and periodically rebuild rather than truly removing edges",
+            "Small corpora (tens of thousands of vectors or fewer): a flat scan is fast enough that the added complexity and memory of a graph index isn't worth it",
+            "Need for guaranteed exact results (e.g. dedup, legal/compliance matching): HNSW is approximate by design — it can miss the true nearest neighbor"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "HNSW is the layered-graph reason vector search feels instant even at massive scale.",
+          "bullets": [
+            "Multi-layer graph + greedy descent turns an O(n) brute-force scan into an O(log n) walk",
+            "Three knobs control the tradeoff: M (graph density), ef_construction (build quality), ef_search (query recall vs. speed)",
+            "It's approximate — tune ef_search against a labeled recall benchmark, don't just trust default settings",
+            "Skip it for small corpora, exact-match requirements, or extremely memory-constrained, delete-heavy workloads"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why is HNSW search faster than a flat/exact nearest-neighbor scan?",
+            "options": [
+              "It stores vectors at lower precision so distance math is cheaper",
+              "It greedily routes through sparse upper graph layers before searching a dense layer, avoiding a full O(n) comparison against every vector",
+              "It only searches vectors added in the last 24 hours",
+              "It replaces distance computation with a hash lookup"
+            ],
+            "correctIndex": 1,
+            "explanation": "HNSW's layered structure lets a query jump long distances on sparse upper layers, narrowing to the right neighborhood before doing detailed comparisons at the dense bottom layer — turning O(n) into roughly O(log n)."
+          },
+          {
+            "prompt": "A team raises `ef_search` from 10 to 100 and sees recall improve significantly with a modest latency increase. What does `ef_search` actually control?",
+            "options": [
+              "How many graph layers are built during indexing",
+              "The number of candidate neighbors explored at query time on the bottom layer — a runtime recall/speed knob",
+              "The maximum number of edges each node can have",
+              "How often the index is rebuilt from scratch"
+            ],
+            "correctIndex": 1,
+            "explanation": "`ef_search` sets how wide the candidate list is when HNSW expands its search at layer 0 during a query. Higher values check more candidates (better recall, more latency); it's tuned per-query without touching the index structure."
+          },
+          {
+            "prompt": "When should a team prefer flat (exact) search over HNSW?",
+            "options": [
+              "Whenever the corpus has more than 1 million vectors",
+              "When approximate results are acceptable and query latency matters most",
+              "When the corpus is small, deletes are frequent, or exact results are a hard requirement (e.g. deduplication)",
+              "Never — HNSW is strictly better in every scenario"
+            ],
+            "correctIndex": 2,
+            "explanation": "HNSW's graph-edge memory overhead and delete-unfriendliness aren't worth paying for a small corpus, and its approximate nature disqualifies it when a workload needs guaranteed exact nearest neighbors."
+          }
+        ]
+      },
+      "references": [],
+      "id": "f12f2e7b-fb71-44aa-80f5-beec78dbc3ed",
+      "publishedDate": "2026-08-02T12:40:18Z"
+    },
+    {
       "id": "3dfe1841-1456-4018-878b-9b0f4f137dbe",
       "title": "Explorative Modeling: Pick the Best of K, Train on That",
       "subtitle": "A third pretraining axis: explore K candidates, backprop only through the winner",
@@ -11048,188 +11240,6 @@
         }
       ],
       "id": "abc7045a-c6fc-448a-a1c6-508dc6897191",
-      "artPrompt": null,
-      "body": null,
-      "publishedDate": "2026-07-25T00:41:53Z",
-      "heroImageURL": null
-    },
-    {
-      "title": "Speculative Decoding: Guess Ahead, Verify in Parallel",
-      "subtitle": "How a cheap draft model lets a big LLM produce the same tokens for a fraction of the sequential cost.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "inference-optimization",
-        "llm-serving",
-        "decoding",
-        "latency",
-        "transformers"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "hare.fill",
-      "summary": "Speculative decoding speeds up LLM inference by having a small draft model propose several tokens ahead, then having the large target model verify all of them in a single batched forward pass. Accepted tokens are exact — mathematically identical in distribution to running the target model alone — turning slow, memory-bound sequential generation into fast, compute-bound batched verification.",
-      "slides": [
-        {
-          "id": "a88c9785-129e-4663-ab76-272af9c3a4d2",
-          "kind": "cover",
-          "title": "Why Generate One Token at a Time?",
-          "body": "Autoregressive decoding is inherently sequential — one full forward pass per output token. Speculative decoding breaks that constraint by guessing ahead and verifying in bulk.",
-          "bullets": [
-            "Roughly 2-3x latency reduction on typical workloads, with zero change to output quality",
-            "Works as a drop-in wrapper around an existing model — no retraining of the target model required"
-          ],
-          "symbol": "hare.fill",
-          "table": null
-        },
-        {
-          "id": "f2c94a11-3cd7-41c5-9b1f-3d17d9315e8e",
-          "kind": "problem",
-          "title": "Decoding Is Memory-Bandwidth Bound, Not Compute Bound",
-          "body": "Each decoding step has to stream the entire model's weights and KV cache from GPU memory just to produce one token — the GPU's compute sits mostly idle waiting on memory.",
-          "bullets": [
-            "Latency scales linearly with output length: a 500-token answer means 500 sequential round-trips through the model",
-            "Batching multiple requests improves throughput, but does nothing for the latency of a single sequence — you can't parallelize across time steps of one autoregressive stream"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "1fe495b3-588b-45f8-8965-9270fffdb29d",
-          "kind": "solution",
-          "title": "A Small Draft Model Proposes, the Big Model Verifies",
-          "body": "The insight: verifying K tokens at once is nearly as cheap as generating one token, because verification is a single batched forward pass — compute-bound, not memory-bound.",
-          "bullets": [
-            "A cheap 'draft' model (a smaller model, or the target model itself in a fast mode) generates K candidate tokens sequentially",
-            "The large 'target' model runs ONE forward pass over all K draft tokens simultaneously to check them",
-            "Tokens are accepted left-to-right via rejection sampling while target and draft distributions agree; the first mismatch is corrected by resampling from the target's distribution, and the rest are discarded",
-            "The result is mathematically exact — accepted output is provably drawn from the same distribution as running the target model alone"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "cfd6d292-0b3c-4148-960c-fe8210b197d0",
-          "kind": "example",
-          "title": "A Concrete Pass, K = 4",
-          "body": "Draft model proposes: 'the', 'cat', 'sat', 'down'. The target model verifies all four in one forward pass.",
-          "bullets": [
-            "'the', 'cat', 'sat' match what the target would have generated — accepted",
-            "'down' is rejected because the target's distribution actually preferred 'quietly'",
-            "Result: 3 free tokens plus a corrected 4th token, all for roughly the cost of ONE expensive target step — instead of 4 sequential ones"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "a1d572fe-3c9d-4cfa-b785-5f86ca5805f8",
-          "kind": "comparison",
-          "title": "Draft Strategies Trade Simplicity for Acceptance Rate",
-          "body": "The original speculative decoding paper (Leviathan et al., 2022) demonstrated a 2-3x speedup on T5-XXL with identical outputs to standard decoding.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Approach",
-              "Draft source",
-              "Typical speedup"
-            ],
-            "rows": [
-              [
-                "Speculative decoding",
-                "Small separate draft model",
-                "~2-3x"
-              ],
-              [
-                "Self-speculative / early-exit",
-                "Same model, skips its own late layers",
-                "~1.5-2x, no extra model to host"
-              ],
-              [
-                "Multi-head drafting (e.g. Medusa-style)",
-                "Extra prediction heads bolted onto the target model",
-                "~2-3x, no separate draft model to serve"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "472099e6-a527-4de0-9ebb-35b98a6e7471",
-          "kind": "problem",
-          "title": "When the Bet Doesn't Pay Off",
-          "body": null,
-          "bullets": [
-            "Speedup depends entirely on acceptance rate: if the draft diverges a lot from the target (high-entropy, creative generation), most guesses get rejected and you've spent extra compute for nothing",
-            "The draft model has to be well-tuned: too weak and acceptance is low; too large and the draft pass itself becomes the bottleneck",
-            "Adds system complexity — serving two models (or extra heads/layers) plus batched verification logic, versus plain decoding",
-            "Least useful at large batch sizes, where serving is already compute-bound rather than memory-bound — the entire benefit comes from exploiting otherwise-idle compute during memory-bound single-stream decoding"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "11e146e0-c411-494f-9c2e-48ade22a7663",
-          "kind": "takeaways",
-          "title": "The Core Trade, Distilled",
-          "body": null,
-          "bullets": [
-            "Trades a little wasted compute (occasionally-rejected guesses) for lower latency, by turning sequential generation into batched verification",
-            "It's exact, not approximate — unlike distillation or quantization, the output distribution is unchanged",
-            "Best gains: low-entropy, predictable text (code, structured output) and single-request or low-batch serving",
-            "Weakest gains: highly creative/high-entropy generation, or serving that's already compute-bound at large batch sizes"
-          ],
-          "symbol": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "26db68bc-f0aa-443e-8594-5caec10e12a1",
-            "prompt": "Why is standard autoregressive LLM decoding slow per-token even though GPUs have huge compute capacity?",
-            "options": [
-              "The GPU runs out of raw compute during decoding",
-              "Each step must stream the full model weights and KV cache from memory to produce just one token — it's memory-bandwidth bound, leaving compute idle",
-              "Tokens must be translated between languages before generation",
-              "The model recomputes gradients at every decoding step"
-            ],
-            "correctIndex": 1,
-            "explanation": "Decoding one token requires reading the entire model's weights and KV cache from GPU memory. That memory traffic — not compute — is the bottleneck, which is exactly what speculative decoding exploits."
-          },
-          {
-            "id": "04e2e34e-9ab1-48b9-9734-976974a8a6c5",
-            "prompt": "In speculative decoding, what happens when the target model disagrees with a drafted token?",
-            "options": [
-              "The entire sequence generated so far is discarded and generation restarts",
-              "The draft model is retrained on the spot",
-              "Tokens before the mismatch are kept, the mismatched token is resampled from the target's own distribution, and everything after it is dropped",
-              "The mismatch is silently ignored and the draft's token is kept anyway"
-            ],
-            "correctIndex": 2,
-            "explanation": "Rejection sampling accepts the matching prefix, corrects exactly the first divergence using the target's distribution, and discards anything drafted after that point — keeping the output distribution exact."
-          },
-          {
-            "id": "548dc996-a73e-4704-b496-7af525448e87",
-            "prompt": "When does speculative decoding provide the LEAST benefit?",
-            "options": [
-              "When generating highly predictable, structured text like code",
-              "During single-request, low-batch serving",
-              "When the draft rarely matches the target (high-entropy, creative generation) or the server is already compute-bound at large batch sizes",
-              "When using a well-tuned, appropriately-sized draft model"
-            ],
-            "correctIndex": 2,
-            "explanation": "The technique relies on idle compute during memory-bound decoding and a decent draft acceptance rate. High-entropy generation and already compute-bound large-batch serving both erode those conditions."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "e58ab2b9-5078-40f9-bb4c-b74448b1e5a2",
-          "title": "Fast Inference from Transformers via Speculative Decoding (Leviathan et al., arXiv 2211.17192)",
-          "url": "https://arxiv.org/abs/2211.17192"
-        }
-      ],
-      "id": "59ddfbc4-bf57-444a-a0f2-a943d76b4402",
       "artPrompt": null,
       "body": null,
       "publishedDate": "2026-07-25T00:41:53Z",
