@@ -1,6 +1,189 @@
 {
   "posts": [
     {
+      "title": "Grouped-Query Attention: The Middle Ground That Made 70B Models Servable",
+      "subtitle": "Why Llama 2's 70B model shares 8 key-value heads across 64 query heads instead of one or sixty-four",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "gqa",
+        "attention",
+        "kv-cache",
+        "inference-optimization",
+        "transformers",
+        "llama"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.2x2.fill",
+      "summary": "Grouped-Query Attention (GQA) splits query heads into small groups that each share one key-value head, landing between full multi-head attention (best quality) and multi-query attention (fastest, cheapest). Llama 2 70B uses it to cut KV-cache size 8x with almost no quality loss, which is why models past ~30B params ship with GQA by default today.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "One idea let 70B-parameter models fit a KV cache in memory",
+          "body": "Grouped-Query Attention (GQA) is the attention variant that made large open models actually servable at long context. It's not a training trick — it's a change to how key/value heads are shared during inference.",
+          "bullets": [],
+          "symbol": "square.grid.2x2.fill",
+          "id": "e5179092-b871-47b0-b87f-6e118c5140b9"
+        },
+        {
+          "kind": "problem",
+          "title": "Multi-head attention makes the KV cache grow with every head you add",
+          "body": "During autoregressive decoding, a transformer caches every past token's key and value vectors per layer, per head, so it doesn't recompute them each step. With standard multi-head attention (MHA), each of the N query heads keeps its own K/V head — so the cache scales linearly with head count.",
+          "bullets": [
+            "For a 70B model with 64 heads and 80 layers, a full MHA cache needs ~2.5 MB per token, per sequence",
+            "At 4,096 tokens of context, that's ~10 GB of GPU memory just for cache — before weights or activations",
+            "More heads means better quality, but every extra head is more memory bandwidth to move per decoding step"
+          ],
+          "id": "c30a06b3-c521-49fb-90d7-a3749efc3095"
+        },
+        {
+          "kind": "solution",
+          "title": "Multi-query attention fixed memory but broke quality",
+          "body": "Google's 2019 fix, Multi-Query Attention (MQA), collapsed all K/V heads down to just one shared head — every query head reads the same keys and values. It slashes the cache but forces every head to attend the same way, which measurably hurts output quality on larger models.",
+          "bullets": [
+            "MQA cache size: independent of head count — just 1 K/V pair per layer",
+            "Speed win is real: decoding is memory-bandwidth-bound, so a smaller cache means faster token generation",
+            "Quality loss shows up on harder tasks (long-form reasoning, code) where per-head specialization matters"
+          ],
+          "id": "95224d56-2091-4b31-abe1-871c58145a23"
+        },
+        {
+          "kind": "solution",
+          "title": "GQA: split heads into G groups, each group shares one K/V head",
+          "body": "Ainslie et al. (Google Research, 2023, arXiv:2305.13245) proposed Grouped-Query Attention as a tunable middle point. Instead of 1 shared head (MQA) or N independent heads (MHA), you pick G groups: G=1 recovers MQA, G=N recovers MHA, and everything in between trades cache size for quality.",
+          "bullets": [
+            "Existing MHA checkpoints can be 'uptrained' into GQA using ~5% of the original pretraining compute — no training from scratch",
+            "Llama 2 34B and 70B use GQA with G=8: 64 query heads grouped into 8, each group sharing 1 K/V head",
+            "Llama 2 7B and 13B kept plain MHA — GQA's benefit only matters once the KV cache itself becomes the bottleneck"
+          ],
+          "symbol": "circle.grid.3x3.fill",
+          "id": "5532d76e-6f29-48e7-9596-8c38a72e9fe7"
+        },
+        {
+          "kind": "comparison",
+          "title": "Same architecture, three attention variants, very different caches",
+          "table": {
+            "headers": [
+              "Variant",
+              "K/V heads (of 64)",
+              "KV cache size",
+              "Quality vs MHA"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "64",
+                "1x (baseline, ~2.5 MB/token)",
+                "Best (reference)"
+              ],
+              [
+                "GQA (Llama 2 70B, G=8)",
+                "8",
+                "0.125x (~0.31 MB/token)",
+                "Near-identical (uptrained)"
+              ],
+              [
+                "MQA",
+                "1",
+                "0.016x (~0.04 MB/token)",
+                "Measurable degradation"
+              ]
+            ]
+          },
+          "bullets": [
+            "Mistral 7B uses G=8 as well (32 query heads / 8 KV heads = groups of 4), pairing GQA with a 4,096-token sliding window for extra memory savings"
+          ],
+          "id": "7d118dcb-be37-4286-ba27-fdee63e25064"
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: the 8x cache drop, in actual gigabytes",
+          "body": "Llama 2 70B: 80 layers, hidden size 8192, 64 heads → head_dim = 128. KV cache per token = 2 (K and V) x kv_heads x head_dim x layers x 2 bytes (fp16).",
+          "bullets": [
+            "MHA (64 KV heads): 2 x 64 x 128 x 80 x 2 bytes ≈ 2.62 MB/token → ~10.2 GB at a 4,096-token context",
+            "GQA (8 KV heads): 2 x 8 x 128 x 80 x 2 bytes ≈ 0.33 MB/token → ~1.25 GB at the same 4,096 tokens",
+            "That's the difference between a cache that fits alongside the model weights on one GPU and one that doesn't"
+          ],
+          "symbol": "memorychip.fill",
+          "id": "7ef2516c-80d7-477e-934e-f026dd505b53"
+        },
+        {
+          "kind": "problem",
+          "title": "Where GQA doesn't help — and what it costs you",
+          "body": "GQA is not free and not always the right call.",
+          "bullets": [
+            "Small models rarely need it: below ~13B params, the KV cache usually isn't the memory bottleneck, so plain MHA's quality edge wins",
+            "The group count G is fixed at training/uptraining time — you can't change it per-request the way you'd change a batch size",
+            "Uptraining still costs real compute (~5% of pretraining) and a quality re-validation pass; it's not a free post-hoc toggle",
+            "GQA only reduces the KV cache — it does nothing for the O(n²) cost of computing attention scores itself (that's FlashAttention's job)"
+          ],
+          "id": "274a08fa-7a28-4cd8-94c5-59436491f74e"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "MHA = best quality, biggest cache. MQA = smallest cache, biggest quality risk. GQA = a tunable point between them",
+            "GQA groups N query heads into G groups, each sharing one K/V head; G=8 is a common sweet spot at 30B+ scale",
+            "Existing MHA checkpoints can be uptrained into GQA cheaply — you don't need to pretrain from scratch",
+            "Llama 2 34B/70B and Mistral 7B both ship GQA; smaller models (Llama 2 7B/13B) don't need it",
+            "GQA shrinks the KV cache, not attention's compute cost — pair it with FlashAttention/PagedAttention for the full picture"
+          ],
+          "id": "f69c62d3-6d45-4bc1-8014-a6a94cc956ca"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In Llama 2 70B, 64 query heads are grouped into 8 groups. How many key-value heads does the model actually store?",
+            "options": [
+              "1",
+              "8",
+              "64",
+              "512"
+            ],
+            "correctIndex": 1,
+            "explanation": "GQA gives each of the 8 groups its own shared K/V head, so there are 8 K/V heads total — the 64 query heads split evenly into those 8 groups, 8 query heads per K/V head.",
+            "id": "4b56e53e-d9ce-474b-840b-a9791e1da8eb"
+          },
+          {
+            "prompt": "What happens if you set GQA's group count G equal to the total number of attention heads N?",
+            "options": [
+              "You get Multi-Query Attention (MQA)",
+              "You recover standard Multi-Head Attention (MHA)",
+              "The model fails to run",
+              "The KV cache disappears entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "G=N means every query head gets its own dedicated K/V head — no sharing at all — which is exactly the definition of standard multi-head attention. G=1 is the other extreme, which is MQA.",
+            "id": "8359e85d-c673-48dc-a785-1a3f401698c2"
+          },
+          {
+            "prompt": "Why did Llama 2's 7B and 13B models skip GQA while the 34B and 70B models use it?",
+            "options": [
+              "GQA only works on models with an even number of layers",
+              "Smaller models don't have a KV cache",
+              "At smaller scale, the KV cache isn't the memory bottleneck, so plain MHA's quality edge is worth keeping",
+              "GQA requires more training data than smaller models were given"
+            ],
+            "correctIndex": 2,
+            "explanation": "GQA's whole benefit is shrinking the KV cache, which only becomes a serving bottleneck at larger head counts and longer contexts. Below ~13B, that cache is small enough that it's not worth trading away MHA's quality.",
+            "id": "5a9c1260-fa18-4437-8f2f-a7ec0d94d60f"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)",
+          "url": "https://arxiv.org/abs/2305.13245",
+          "id": "afbbdf73-7ce2-458a-8c77-69165480dac6"
+        }
+      ],
+      "id": "a087cabb-a4ac-47aa-8372-2d20237ddbbc",
+      "publishedDate": "2026-08-04T12:42:29Z"
+    },
+    {
       "title": "SpyRL: A Spy Game Makes Open-Ended Tasks Verifiable",
       "subtitle": "Reinforcement learning needs a right answer — this paper invents one by making agents vote out an impostor.",
       "category": "AI Innovations",
@@ -11011,195 +11194,6 @@
       "id": "8a47e9cd-50e4-47f6-b7a0-d8f9ae187752",
       "heroImageURL": null,
       "publishedDate": "2026-07-28T00:41:34Z"
-    },
-    {
-      "title": "Kimi K3: Moonshot's 2.8T-Parameter Model Goes Fully Open",
-      "subtitle": "104B active out of 2.8 trillion parameters, a 1M-token context, and every weight downloadable under Moonshot's own license.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "kimi-k3",
-        "moonshotai",
-        "open-weights",
-        "mixture-of-experts",
-        "long-context"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Moonshot AI released the full weights of Kimi K3 on July 26, 2026: a 2.8-trillion-parameter mixture-of-experts model with only 104B parameters active per token, a new Kimi Delta Attention mechanism, and a 1-million-token context window. It's positioned as an agentic coding and reasoning model, not just a chat assistant, with strong self-reported scores on terminal and software-engineering benchmarks.",
-      "body": null,
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The Biggest Open-Weight Drop of the Month",
-          "body": "Moonshot AI published Kimi K3's full weights on July 26, 2026 — a day ahead of its own July 27 target — under the Kimi K3 License, via Hugging Face and GitHub.",
-          "bullets": [
-            "2.8 trillion total parameters, but only 104 billion activate per token",
-            "Built for long-horizon agentic coding: navigating repos, running terminal tools, driving compilers",
-            "Full weights available for download and self-hosting, not locked behind an API"
-          ],
-          "symbol": "cpu.fill",
-          "table": null,
-          "id": "737271e8-822f-4936-9e9e-71eb25e22ffc"
-        },
-        {
-          "kind": "problem",
-          "title": "Frontier Scale Usually Stays Behind an API",
-          "body": "The largest, most capable models have historically been closed — proprietary weights served only through a paid API, with open releases trailing behind on agentic and coding benchmarks.",
-          "bullets": [
-            "Open-weight models have generally lagged closed frontier labs on multi-step coding and tool-use tasks",
-            "Serving a multi-trillion-parameter MoE model efficiently requires inference-engine support most stacks don't have by default",
-            "Without open weights, researchers can't inspect, fine-tune, or run the model outside the vendor's own infrastructure"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null,
-          "id": "5ecc2bc0-a92b-48ff-8fba-7e4ee9c77986"
-        },
-        {
-          "kind": "architecture",
-          "title": "A New Attention Mechanism Built for Scale",
-          "body": "Kimi K3 mixes two attention variants across 93 layers and routes through a sparse mixture of experts, keeping the active compute far below the total parameter count.",
-          "bullets": [
-            "93 layers: 69 use Kimi Delta Attention (KDA), 24 use Gated MLA, plus 1 dense layer — mixed at roughly 3:1",
-            "Attention Residuals (AttnRes) improve token efficiency by about 25% for roughly 2% extra compute, per Moonshot's own report",
-            "Stable LatentMoE routes each token through 16 of 896 experts plus 2 shared experts — only 104B of 2.8T parameters fire per token"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "id": "c22cc3b1-a39d-4d2f-9369-cfb43b332683"
-        },
-        {
-          "kind": "comparison",
-          "title": "Kimi K3 by the Numbers",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Metric",
-              "Kimi K3"
-            ],
-            "rows": [
-              [
-                "Total / active parameters",
-                "2.8T / 104B"
-              ],
-              [
-                "Context window",
-                "1,048,576 tokens (1M)"
-              ],
-              [
-                "Experts",
-                "896 total — 16 routed + 2 shared per token"
-              ],
-              [
-                "Scaling efficiency vs. Kimi K2",
-                "~2.5x, per Moonshot"
-              ],
-              [
-                "Weight format",
-                "MXFP4 weights / MXFP8 activations (quantization-aware trained)"
-              ]
-            ]
-          },
-          "id": "ac0c2791-46f4-4046-b520-341dcb940993"
-        },
-        {
-          "kind": "example",
-          "title": "What a 1M-Token Context Actually Buys You",
-          "body": "Moonshot's own benchmark numbers target long-horizon software engineering rather than short Q&A.",
-          "bullets": [
-            "An agent can hold an entire mid-size monorepo in context and navigate it without a separate retrieval step",
-            "Reported scores: Terminal-Bench 2.1 88.3, FrontierSWE 81.2, ProgramBench 77.8 (raw pass rate), DeepSWE 67.5, SWE Marathon 42.0",
-            "The model is described as orchestrating terminal tools directly — compiler runs, test suites, CAD and chip-design workflows — not just producing code snippets"
-          ],
-          "symbol": "terminal.fill",
-          "table": null,
-          "id": "280258b4-5f5d-418d-8263-64d87c801b34"
-        },
-        {
-          "kind": "concept",
-          "title": "The Catch: Size Is Also the Cost",
-          "body": "Open weights don't mean easy to run — Kimi K3 is a serious infrastructure commitment.",
-          "bullets": [
-            "Full weights are roughly 1.4TB even at MXFP4 precision — this needs a real multi-GPU cluster just to load",
-            "For most developers the practical on-ramp is still the hosted API on platform.kimi.ai, not self-hosting",
-            "KDA is a new attention variant — inference engines like vLLM and SGLang need dedicated kernel support before it runs at full efficiency"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "a37e5d2e-b3ea-4d1f-9f94-7db5737a2b41"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Kimi K3 is a 2.8T-parameter MoE model with only 104B active parameters per token, released as full open weights on July 26, 2026",
-            "Its Kimi Delta Attention + Attention Residuals combination targets long-context efficiency; Stable LatentMoE keeps active compute low",
-            "Self-reported benchmarks emphasize agentic coding and terminal tool use over general chat",
-            "Running it yourself means multi-GPU infrastructure for a ~1.4TB weight set — most users will hit it through a hosted API instead"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "b1ecdc0e-d137-4569-9fde-75ab6653f00b"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is unusual about how Kimi K3 uses its 2.8 trillion parameters?",
-            "options": [
-              "Every parameter activates on every token, like a dense model",
-              "Only 104 billion parameters activate per token via mixture-of-experts routing",
-              "The parameters are split evenly across 8 identical copies of the model",
-              "Parameters are only used during training, not inference"
-            ],
-            "correctIndex": 1,
-            "explanation": "Kimi K3 is a sparse MoE model: each token routes through 16 of 896 experts plus 2 shared experts, so only 104B of the 2.8T total parameters actually compute for that token.",
-            "id": "40df1872-8e64-46e8-9a1d-c001f7210097"
-          },
-          {
-            "prompt": "According to Moonshot's own report, what does Attention Residuals (AttnRes) do?",
-            "options": [
-              "It removes attention entirely in favor of convolution",
-              "It improves token efficiency by about 25% for roughly 2% extra compute",
-              "It doubles the context window at no extra cost",
-              "It replaces the mixture-of-experts routing mechanism"
-            ],
-            "correctIndex": 1,
-            "explanation": "AttnRes improves cross-layer information flow, which Moonshot reports as roughly a 25% gain in token efficiency for about 2% additional compute — a small tax for a meaningful efficiency gain.",
-            "id": "18d8c2fa-ee78-4386-950f-389222182a78"
-          },
-          {
-            "prompt": "What is the biggest practical barrier to running Kimi K3 yourself, rather than through a hosted API?",
-            "options": [
-              "The model refuses to run outside Moonshot's own servers",
-              "The license forbids self-hosting entirely",
-              "The full weight set is roughly 1.4TB, requiring serious multi-GPU infrastructure just to load",
-              "It only works with a proprietary chip Moonshot hasn't released"
-            ],
-            "correctIndex": 2,
-            "explanation": "Even at MXFP4 precision, a 2.8T-parameter model's weights land around 1.4TB — loading that, let alone serving it at low latency, requires a real multi-GPU cluster, which is why most developers will access it via platform.kimi.ai instead.",
-            "id": "9ec83078-38b4-4552-9fd2-999c26ceff05"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Kimi K3 — Moonshot AI (Hugging Face model card)",
-          "url": "https://huggingface.co/moonshotai/Kimi-K3",
-          "id": "6c32acf3-faf5-4af3-a0ba-babe65bb5fa0"
-        },
-        {
-          "title": "MoonshotAI/Kimi-K3 (official GitHub repository)",
-          "url": "https://github.com/MoonshotAI/Kimi-K3",
-          "id": "3af00917-4c15-4c10-9e15-28f976bd5945"
-        }
-      ],
-      "id": "81091e8e-166d-4e49-9046-21f2b8674a07",
-      "publishedDate": "2026-07-27T18:42:51Z"
     }
   ]
 }
