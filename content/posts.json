@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "title": "LoRA: Fine-Tune a 175B Model by Training 0.02% of It",
+      "subtitle": "Freeze the pretrained weights, learn a low-rank update instead — and merge it back with zero added latency",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "peft",
+        "adapters",
+        "quantization",
+        "efficient-training"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "puzzlepiece.extension.fill",
+      "summary": "LoRA freezes a pretrained model's weights entirely and learns a tiny low-rank update (two small matrices, B and A) injected into the attention projections. Because the update collapses to the same shape as the original weight matrix, it can be merged in after training for zero inference overhead — which is why almost every fine-tuning stack (and every multi-tenant model host) defaults to it today.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "One low-rank trick cut fine-tuning cost by orders of magnitude",
+          "body": "Low-Rank Adaptation (LoRA), introduced by Hu et al. at Microsoft in 2021, doesn't touch a single one of a pretrained model's original weights. It learns a small correction instead — and that one design choice is why task-specific fine-tuning went from 'needs a GPU cluster' to 'fits on a single consumer card.'",
+          "bullets": [],
+          "symbol": "puzzlepiece.extension.fill",
+          "id": "b8c8d193-6073-4fa7-9aa8-a3e1f2b0d5b3"
+        },
+        {
+          "kind": "problem",
+          "title": "Full fine-tuning means a full-size checkpoint for every task",
+          "body": "Fine-tuning updates every parameter in the model, so the gradients and optimizer state you need during training are as large as the model itself — and the checkpoint you save afterward is a complete second copy.",
+          "bullets": [
+            "A 175B-parameter model in fp16 is already ~350GB; Adam's optimizer state (momentum + variance) roughly triples the memory needed to train it",
+            "Ship 10 fine-tuned variants (one per customer or task) and you're storing and swapping 10 full-size checkpoints",
+            "Every one of those checkpoints also needs its own copy loaded to serve — expensive for anyone hosting more than a handful of variants"
+          ],
+          "id": "ec448c02-0f33-4309-bead-dbc100be6125"
+        },
+        {
+          "kind": "solution",
+          "title": "Freeze W, learn ΔW as the product of two small matrices",
+          "body": "LoRA keeps the pretrained weight matrix W completely frozen. Next to it, it adds a trainable update ΔW = B·A, where A is a small r×k matrix and B is d×r — with rank r chosen far smaller than d or k (often 4, 8, or 16).",
+          "bullets": [
+            "Only A and B are trained; W never receives a gradient update",
+            "A is initialized with small random values, B is initialized to all zeros — so at step 0, ΔW = 0 and the model starts exactly at its pretrained behavior",
+            "In practice it's applied to the attention projections (Wq and Wv are the common minimal choice; some setups extend it to Wk and Wo too)",
+            "An α/r scaling factor controls how strongly the learned update perturbs the frozen weights"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "id": "619da749-539a-46ac-860d-b85560330b60"
+        },
+        {
+          "kind": "concept",
+          "title": "Why low rank works: fine-tuning updates live in a small subspace",
+          "body": "This isn't a compression trick applied after the fact — it's a bet, borne out empirically, that the *useful* update for adapting a pretrained model to a new task has low intrinsic rank, even though the full weight matrix does not.",
+          "bullets": [
+            "Because B is zero-initialized, training starts as a no-op and gradually grows a small, structured correction",
+            "After training, B·A can be added directly into W (W' = W + B·A) — the merged matrix has the exact same shape as the original",
+            "That merge step is why LoRA adds zero inference latency, unlike adapter layers that insert extra sequential computation into the forward pass"
+          ],
+          "id": "ad49c5e9-bf2e-4168-9a64-f5befec96365"
+        },
+        {
+          "kind": "comparison",
+          "title": "LoRA vs. the alternatives it replaced",
+          "table": {
+            "headers": [
+              "Method",
+              "Trainable params",
+              "Inference latency",
+              "Per-task storage"
+            ],
+            "rows": [
+              [
+                "Full fine-tuning",
+                "100%",
+                "Unchanged",
+                "Full model copy"
+              ],
+              [
+                "Adapter layers",
+                "~1-4%",
+                "Added (extra sequential layers)",
+                "Small adapter"
+              ],
+              [
+                "Prefix tuning",
+                "~0.1-1%",
+                "Shrinks usable context length",
+                "Small prefix vectors"
+              ],
+              [
+                "LoRA",
+                "~0.01-0.5%",
+                "Unchanged (merges into W)",
+                "Small A/B matrices"
+              ]
+            ]
+          },
+          "bullets": [
+            "Hu et al. report that for GPT-3 175B, LoRA cuts trainable parameters by roughly 10,000x and peak GPU memory during training by roughly 3x versus full fine-tuning with Adam"
+          ],
+          "id": "9526fb26-3362-4b8b-b28a-78dd6c79f64b"
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: LoRA on a 7B model's attention weights",
+          "body": "Take a 7B-parameter model with hidden size 4,096 across 32 layers, applying LoRA with rank r=8 to just Wq and Wv in every layer.",
+          "bullets": [
+            "Each frozen Wq or Wv is 4,096 × 4,096 = ~16.8M parameters — full fine-tuning of just those two matrices across 32 layers would train ~1.07B parameters",
+            "LoRA's A and B per matrix: (r × 4,096) + (4,096 × r) = 2 × 8 × 4,096 = 65,536 trainable parameters",
+            "Across both matrices and all 32 layers: 65,536 × 2 × 32 ≈ 4.2M trainable parameters — about 250x fewer than fine-tuning Wq/Wv alone, and a small fraction of a percent of the full 7B model",
+            "That's a checkpoint measured in tens of megabytes instead of gigabytes, which is what makes swapping dozens of task-specific adapters at serve time practical"
+          ],
+          "symbol": "chart.bar.doc.horizontal",
+          "id": "d7beea93-47c1-430e-adfc-c1de657fdbff"
+        },
+        {
+          "kind": "concept",
+          "title": "Where LoRA breaks down, and its natural extension",
+          "body": "Rank r is a real capacity limit, not a free lunch, and the base model still has to fit in memory during training.",
+          "bullets": [
+            "Set r too low and the model can underfit tasks that require a large behavioral shift from the pretrained distribution (e.g. a totally new domain or language)",
+            "LoRA shrinks the *trainable* footprint, but the frozen base weights still have to be loaded in full precision (or close to it) for the forward/backward pass",
+            "QLoRA (Dettmers et al., 2023) fixes that second limit by quantizing the frozen base model to 4-bit while keeping LoRA's adapters in higher precision — enabling fine-tuning of 65B-class models on a single 48GB GPU",
+            "Serving many merged variants still means picking one merge per request; multi-tenant servers instead keep adapters unmerged and swap B·A per request to serve hundreds of task variants from one loaded base model"
+          ],
+          "id": "336245f9-124a-4b7a-8992-502d856ad6ac"
+        },
+        {
+          "kind": "takeaways",
+          "title": "The core idea in three moves",
+          "bullets": [
+            "Freeze the pretrained weights entirely — never update them",
+            "Learn a low-rank update B·A instead, sized by a rank r that's a tiny fraction of the original matrix dimensions",
+            "Merge B·A back into W after training for zero added inference cost, or keep it unmerged to swap task adapters on the fly"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "1f92f2b8-2695-4133-94ec-8e94d1f646f9"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "During LoRA fine-tuning, what happens to the original pretrained weight matrix W?",
+            "options": [
+              "It is frozen and never updated",
+              "It is quantized to 4-bit before training starts",
+              "It is replaced entirely by B·A",
+              "It is fine-tuned alongside A and B"
+            ],
+            "correctIndex": 0,
+            "explanation": "LoRA's entire memory and compute savings come from never touching W. Only the small matrices A and B receive gradients — W stays exactly as it was pretrained.",
+            "id": "9f82085a-a3c1-4a67-8f54-2a0cf0db27e9"
+          },
+          {
+            "prompt": "Why does merging LoRA's update into W add zero latency at inference time?",
+            "options": [
+              "Because B·A is computed on a separate GPU",
+              "Because B·A has the same shape as W, so W' = W + B·A is a single matrix indistinguishable from a normal weight",
+              "Because rank r is always equal to 1",
+              "Because the base model is quantized after merging"
+            ],
+            "correctIndex": 1,
+            "explanation": "B (d×r) times A (r×k) produces a d×k matrix — exactly W's shape. Adding it once after training gives a normal, single weight matrix, so serving looks identical to serving the unmodified base model.",
+            "id": "7ca26bac-8a43-4e30-a68b-a874f7ff4948"
+          },
+          {
+            "prompt": "What's the main risk of choosing LoRA's rank r too small for a given task?",
+            "options": [
+              "Training runs slower than full fine-tuning",
+              "The optimizer state size doubles",
+              "The model can underfit tasks that need a large behavioral shift from the pretrained distribution",
+              "Inference latency increases proportionally to 1/r"
+            ],
+            "correctIndex": 2,
+            "explanation": "Rank r caps how much the update can express. A very small r is fine for narrow style/format adaptation but can be too limited for tasks that require the model to shift substantially from what it learned during pretraining.",
+            "id": "12746ad9-d599-4461-b41e-4c7db68b5e03"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)",
+          "url": "https://arxiv.org/abs/2106.09685",
+          "id": "127423c8-05c5-4a65-bac5-029e21cf5493"
+        }
+      ],
+      "id": "b3b50b4a-834a-401b-9ef0-6b37de326868",
+      "publishedDate": "2026-08-04T18:39:37Z"
+    },
+    {
       "title": "Grouped-Query Attention: The Middle Ground That Made 70B Models Servable",
       "subtitle": "Why Llama 2's 70B model shares 8 key-value heads across 64 query heads instead of one or sixty-four",
       "category": "LLMs",
@@ -11001,199 +11191,6 @@
           "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/sampling.mdx"
         }
       ]
-    },
-    {
-      "title": "RLHF: Teaching a Model What 'Good' Actually Means",
-      "subtitle": "Pretraining predicts the next token. RLHF teaches the model which next token humans actually want.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rlhf",
-        "alignment",
-        "reward-model",
-        "ppo",
-        "human-feedback"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "hand.thumbsup.fill",
-      "summary": "RLHF aligns a pretrained model with human preferences through a three-stage pipeline: supervised fine-tuning, a reward model trained on human comparisons, and PPO fine-tuning against that reward with a KL penalty. It made ChatGPT-style assistants possible, but it's expensive, unstable, and prone to reward hacking — which is why DPO exists as a simpler alternative.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A Base Model Doesn't Know What 'Helpful' Means",
-          "body": "Pretraining only teaches a model to predict the statistically likely next token from internet text. It has no notion of helpful, honest, or harmless — those are human judgments, not statistical ones.",
-          "bullets": [
-            "GPT-3-style base models will ramble, refuse nothing, or confidently invent facts",
-            "RLHF (Reinforcement Learning from Human Feedback) bolts a human preference signal onto that base model",
-            "It's the pipeline behind InstructGPT and the original ChatGPT"
-          ],
-          "symbol": "hand.thumbsup.fill",
-          "id": "680de487-d51c-468f-a6e8-8f3019ade72c",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Demonstrations Alone Cap Quality at the Demonstrator",
-          "body": "You could just fine-tune on human-written example answers (SFT). But that only ever gets the model as good as the humans writing the examples — it can't learn 'this answer is better than that one' the way a scored comparison can.",
-          "bullets": [
-            "SFT teaches imitation, not preference — no signal for 'good vs. better'",
-            "Writing gold-standard answers for every possible prompt doesn't scale",
-            "Ranking two existing answers is much cheaper for a human than writing a new one"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "3e823108-87bc-490d-a78f-5aa16dd1e65e",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Three Stages: SFT, Reward Model, Then PPO",
-          "body": "InstructGPT's recipe, now the standard: (1) supervised fine-tune on human demonstrations, (2) train a separate reward model on human-ranked comparisons, (3) use RL (PPO) to fine-tune the policy to maximize that reward model's score.",
-          "bullets": [
-            "Stage 1 — SFT: fine-tune the base model on curated prompt/response pairs",
-            "Stage 2 — Reward Model: humans rank 4-9 outputs per prompt; RM learns to score them via a Bradley-Terry pairwise loss",
-            "Stage 3 — PPO: the policy generates, the RM scores, PPO updates weights to raise the score",
-            "A KL penalty holds the policy close to the SFT model so it can't drift arbitrarily far chasing reward"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "id": "9bbe034f-a6b1-4273-81a3-d6230a74396f",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: 'Explain Entanglement to a 5-Year-Old'",
-          "body": "The SFT model gives a technically dense answer full of jargon. Labelers see 4 candidate answers and rank a short, warm, concrete analogy highest — even though it's less 'complete.'",
-          "bullets": [
-            "Reward model learns: simpler + warmer + still-correct scores higher for this prompt style",
-            "PPO nudges the policy's weights toward producing that style more often",
-            "Net effect: the same base knowledge, delivered the way humans said they preferred it"
-          ],
-          "symbol": "figure.and.child.holdinghands",
-          "id": "e61e4585-760d-475d-a7c1-cc7802f4660e",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "RLHF vs. DPO vs. Plain SFT",
-          "table": {
-            "headers": [
-              "Approach",
-              "Extra models needed",
-              "Stability",
-              "What it optimizes"
-            ],
-            "rows": [
-              [
-                "SFT only",
-                "None",
-                "Very stable",
-                "Imitates demonstrations, no preference signal"
-              ],
-              [
-                "RLHF (PPO)",
-                "Reward model + reference model + policy (3 in memory)",
-                "Finicky — PPO + reward hacking risk",
-                "Maximizes learned reward, KL-capped"
-              ],
-              [
-                "DPO",
-                "Reference model only (2 in memory)",
-                "Stable, no RL loop",
-                "Directly maximizes preference likelihood, closed-form loss"
-              ]
-            ]
-          },
-          "bullets": [
-            "DPO exists specifically because full RLHF's 3-model RL loop is expensive and unstable",
-            "RLHF still shows up where you need to optimize against an evolving or composite reward, not just static preference pairs"
-          ],
-          "symbol": "chart.bar.fill",
-          "id": "5e69f855-3359-4150-85a4-36e176dceb5f",
-          "body": null
-        },
-        {
-          "kind": "problem",
-          "title": "Reward Hacking Is the Central Failure Mode",
-          "body": "PPO will happily exploit any blind spot in the reward model — because the reward model is a proxy, not ground truth. Goodhart's Law: once a measure becomes a target, it stops being a good measure.",
-          "bullets": [
-            "Sycophancy: raters mildly preferred agreeable answers, so RMs reward agreement — models learn to flatter and avoid disagreeing with false premises",
-            "Length gaming: RMs often correlate longer answers with 'more thorough,' so policies bloat responses to farm reward",
-            "Over-optimization: push PPO too hard against a fixed RM and true human-judged quality can start to fall even as RM score keeps rising"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "35e20d7b-cd37-4200-9a6c-f09e3a464b8d",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "When to Reach for Full RLHF",
-          "bullets": [
-            "Use RLHF when you need to optimize against a reward that isn't just a fixed offline preference dataset (e.g., composite or evolving objectives)",
-            "Prefer DPO when you have static preference pairs and want to skip the reward model + RL loop entirely — same alignment goal, far less infrastructure",
-            "Always budget for reward-model overoptimization: hold out human eval, don't just trust the RM's own score climbing",
-            "The KL penalty coefficient is the main lever against both reward hacking and mode collapse — too loose and it hacks the reward, too tight and it barely moves from the SFT model"
-          ],
-          "symbol": "checklist",
-          "id": "c1fbfb17-de09-455b-a65d-6d6cf4066c52",
-          "body": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does RLHF use a separate reward model instead of having humans score every RL rollout directly?",
-            "options": [
-              "Reward models are more accurate than humans",
-              "Live human labeling for every RL step would be far too slow/expensive; the reward model is a learned, fast stand-in trained once on human comparisons",
-              "Reward models are required by the PPO algorithm's math",
-              "Humans cannot rank text outputs reliably"
-            ],
-            "correctIndex": 1,
-            "explanation": "PPO needs thousands of scored rollouts to train. Humans label a comparison dataset once; the reward model generalizes that signal so training doesn't need a human in the loop at every step.",
-            "id": "25b224d3-a2d5-4319-8159-cbf2d51fe9a6"
-          },
-          {
-            "prompt": "What is the purpose of the KL penalty in the PPO stage of RLHF?",
-            "options": [
-              "It speeds up training convergence",
-              "It keeps the policy close to the original SFT model so it can't drift arbitrarily far while chasing reward, limiting reward hacking",
-              "It replaces the need for a reward model",
-              "It compresses the model's weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without the KL constraint, PPO can find degenerate outputs that score high on the reward model but read as nonsense or unsafe to humans — the KL term anchors the policy to sane, SFT-like behavior.",
-            "id": "6f407004-c2a5-4b97-bf12-d6d42e43dba3"
-          },
-          {
-            "prompt": "A team has a fixed dataset of human preference pairs and wants alignment with minimal infrastructure. What's the strongest reason to pick DPO over full RLHF here?",
-            "options": [
-              "DPO produces strictly higher quality models in all cases",
-              "DPO skips training a separate reward model and running an RL loop, directly optimizing the policy on the preference pairs with a stable, closed-form loss",
-              "DPO doesn't require any human preference data",
-              "DPO is the only method that supports KL regularization"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO reformulates the RLHF objective so the optimal reward model is implicit in the policy itself, letting you train directly on preference pairs with a supervised-style loss — no reward model, no PPO instability.",
-            "id": "97add4c2-1f8f-4e3c-b1db-554cabd7bc5e"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Training language models to follow instructions with human feedback (InstructGPT)",
-          "url": "https://arxiv.org/abs/2203.02155",
-          "id": "53eabda9-2ac4-459e-a7cf-1e0988860489"
-        },
-        {
-          "title": "Training a Helpful and Harmless Assistant with Reinforcement Learning from Human Feedback",
-          "url": "https://arxiv.org/abs/2204.05862",
-          "id": "57f16287-ba5b-4791-8c5e-e905499d3d4a"
-        }
-      ],
-      "id": "8a47e9cd-50e4-47f6-b7a0-d8f9ae187752",
-      "heroImageURL": null,
-      "publishedDate": "2026-07-28T00:41:34Z"
     }
   ]
 }
