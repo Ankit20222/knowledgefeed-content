@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "title": "MCP Sampling: A Server Borrows the Client's Model",
+      "subtitle": "The primitive that lets a tool server 'think' without ever holding its own API key.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "sampling",
+        "llm",
+        "protocol",
+        "agents",
+        "human-in-the-loop"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Sampling is the MCP primitive that runs in the opposite direction from Tools: instead of a client asking a server to do something, a server asks the client to run an LLM completion on its behalf. The client — not the server — picks the actual model and can insert a human-approval step before anything runs. That means servers never need their own API key, and users keep control over which model sees their data and what it's allowed to generate.",
+      "body": null,
+      "slides": [
+        {
+          "id": "c04f77e7-8f27-48ec-839b-8ce1955e18d4",
+          "kind": "cover",
+          "title": "Most MCP Primitives Flow One Way — Sampling Flows Back",
+          "body": "Tools, Resources, and Prompts all exist for the client's LLM to reach into a server. Sampling is the mirror image: a server that needs an LLM to do some thinking asks the client to run one for it.",
+          "bullets": [
+            "Declared as a client capability during MCP's initialize handshake — a server has to check for it before relying on it",
+            "The request travels server → client, the opposite direction of a normal tool call",
+            "It exists so servers can 'think' without shipping their own model, API key, or billing relationship"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "4fc78d6c-aaa3-4b89-a58e-8fa1f74c114e",
+          "kind": "problem",
+          "title": "A Tool Server Sometimes Needs an LLM It Doesn't Have",
+          "body": "Plenty of useful server-side logic isn't deterministic code — it's judgment: summarizing, classifying, drafting. Without sampling, a server has three bad options.",
+          "bullets": [
+            "Ship its own API key and pay for every call itself — an ops burden and a cost the server author didn't sign up for",
+            "Force the user to configure a second, separate model just for this one server — friction that kills adoption",
+            "Punt the judgment call back to the client's main LLM as a giant tool result and hope it handles it well — wasteful and imprecise"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "cd072876-da37-440f-bfbe-4c1b11c8a9f3",
+          "kind": "solution",
+          "title": "sampling/createMessage: Ask the Client to Run the Completion",
+          "body": "A server that needs a generation sends a sampling/createMessage request over the same JSON-RPC connection, and the client decides how to fulfill it.",
+          "bullets": [
+            "Request carries messages (the conversation so far), an optional systemPrompt, maxTokens, and modelPreferences — hints plus 0-1 priorities for cost, speed, and intelligence, not a hard model name",
+            "The CLIENT resolves modelPreferences to an actual model — a server can ask for 'fast and cheap' or 'most capable' but never dictates the exact model",
+            "includeContext lets the server request none, thisServer's context, or allServers' context be attached — the client still governs what's actually shared"
+          ],
+          "symbol": "text.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "3b9bef88-c423-4eb9-a3ef-25ac4a4a9dc5",
+          "kind": "architecture",
+          "title": "The Round Trip Has a Human Checkpoint Built In",
+          "body": "Because a server is effectively spending the user's model budget and attention, the spec expects the client to keep a human in the loop.",
+          "bullets": [
+            "1. Server sends sampling/createMessage with the draft messages and preferences",
+            "2. Client MAY show the user the outgoing request for review/edit before it ever reaches a model",
+            "3. Client calls whichever LLM it resolved the preferences to (its own configured model, not the server's choice)",
+            "4. Client MAY show the user the completion before returning it, then sends the result back to the server"
+          ],
+          "symbol": "checkmark.shield.fill",
+          "table": null
+        },
+        {
+          "id": "7c6ca076-977e-475c-a057-772632e31abe",
+          "kind": "example",
+          "title": "A Meeting-Notes Server With No Model of Its Own",
+          "body": "An MCP server exposes a summarize_transcript tool that condenses a 40-minute call into five action items.",
+          "bullets": [
+            "Instead of embedding an OpenAI key, the tool handler issues one sampling/createMessage call with the transcript and a systemPrompt asking for action items",
+            "The client resolves that to whatever model the user already pays for — their Claude subscription, say — so the server never touches billing or credentials",
+            "The user's client can surface the outgoing prompt first, so a transcript with sensitive names doesn't silently leave the device without a glance"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "36ce411e-2ec9-494f-b39e-403d243d5183",
+          "kind": "comparison",
+          "title": "Sampling vs. a Server Holding Its Own API Key",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "Server-owned API key",
+              "MCP Sampling"
+            ],
+            "rows": [
+              [
+                "Who pays for tokens",
+                "The server operator",
+                "Whoever the client's model subscription belongs to"
+              ],
+              [
+                "Model choice",
+                "Fixed by the server author",
+                "Resolved by the client from preferences/hints"
+              ],
+              [
+                "User visibility",
+                "None by default",
+                "Client can show the prompt and result before either fires"
+              ],
+              [
+                "Credential exposure",
+                "Server must store and protect a key",
+                "Server never holds a model credential at all"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e906d6e5-1115-4ad5-a9fa-69c4f02ba0b8",
+          "kind": "concept",
+          "title": "Sampling Is Optional and Adds a Real Round Trip",
+          "body": "It's easy to design a server that assumes sampling is always there. The protocol doesn't promise that.",
+          "bullets": [
+            "Support is an optional client capability — many hosts don't implement it, so a server depending on it needs a fallback (e.g. degrade the feature, or ask the user directly)",
+            "Every sampling call is a full round trip through the client, plus an optional human-approval pause — noticeably slower than a server calling a model directly",
+            "Results aren't deterministic across clients: the same server prompt can hit a different model depending on whose client is connected, so outputs will vary",
+            "Because the server crafts the messages, a compromised or careless server can still attempt prompt injection against the client's model — sampling moves who pays, not who's responsible for reviewing the prompt"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "fe3d7084-be90-495e-825d-8079ae7403f9",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Sampling flows server → client: a server asks the client to run an LLM completion instead of calling a model itself",
+            "The client — not the server — resolves modelPreferences to an actual model, and can review both the outgoing prompt and the completion",
+            "Servers gain zero-key, zero-billing access to 'thinking' — at the cost of an optional capability, real latency, and no determinism guarantee",
+            "It doesn't remove the need for prompt-injection care — the server still authors what the client's model will see"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "69ec73cc-9107-4158-b70a-4774e85facf7",
+            "prompt": "Which direction does an MCP sampling request travel?",
+            "options": [
+              "Client to server, like a normal tool call",
+              "Server to client — the server asks the client to run a completion",
+              "Server to server, bypassing the client entirely",
+              "It's a broadcast to every connected MCP server at once"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sampling is the mirror image of a tool call: the server sends sampling/createMessage to the client, asking the client to run an LLM completion on its behalf."
+          },
+          {
+            "id": "2c71a11b-4fff-4c36-84f4-c276d4854bfb",
+            "prompt": "A server sets modelPreferences with a high intelligencePriority. What actually decides which model runs?",
+            "options": [
+              "The server, which names an exact model in the request",
+              "The preference value directly maps to a fixed model ID chosen by the MCP spec",
+              "The client, which resolves the hints and priorities to whichever model it has configured",
+              "Whichever model responds fastest to a race between multiple providers"
+            ],
+            "correctIndex": 2,
+            "explanation": "modelPreferences are hints and 0-1 priorities (cost, speed, intelligence), not a model name. The client is the one that resolves them to an actual model it has access to."
+          },
+          {
+            "id": "110094e1-276d-411b-ba32-d9e2cdac4f72",
+            "prompt": "Why can't a server assume every MCP client supports sampling?",
+            "options": [
+              "Sampling was deprecated in favor of Tools",
+              "It's an optional client capability that must be checked for and isn't implemented by every host",
+              "Sampling only works with open-weight models",
+              "Servers must pay a licensing fee to use sampling"
+            ],
+            "correctIndex": 1,
+            "explanation": "Like Roots, sampling is declared as an optional capability during the initialize handshake. A server that depends on it needs a sensible fallback for clients that don't support it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "b0dadb3e-5089-4223-a73b-a117f185475a",
+          "title": "Sampling — Model Context Protocol Specification",
+          "url": "https://modelcontextprotocol.io/specification/draft/client/sampling"
+        }
+      ],
+      "id": "2e004d77-8bbf-4f61-8aa6-6b5636500d08",
+      "publishedDate": "2026-08-05T18:40:16Z"
+    },
+    {
       "id": "7f3e5014-5db4-451d-b24e-70bdd6f19a8f",
       "title": "InferenceBench: Grid Search Beats the AI Agent",
       "subtitle": "Frontier agents shipped vLLM in 94% of runs — then stopped optimizing",
@@ -10883,191 +11084,6 @@
           "title": "DataPrep-Bench: Benchmarking LLMs as Training Data Preparators (arXiv:2607.20465)",
           "url": "https://arxiv.org/abs/2607.20465",
           "id": "8e1d9815-b29d-4b3d-936d-a1fe3f868fa9"
-        }
-      ]
-    },
-    {
-      "title": "DeepSeek V4 Goes GA — and Brings AI's First Surge Pricing",
-      "subtitle": "Legacy API endpoints died on July 24. What replaced them prices tokens like electricity: cheaper off-peak, double the cost in the middle of the day.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "deepseek",
-        "llm-pricing",
-        "open-weight-models",
-        "moe",
-        "api-migration"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "clock.arrow.2.circlepath",
-      "summary": "DeepSeek V4 exited preview on July 24, 2026, retiring the legacy deepseek-chat and deepseek-reasoner aliases for good. The two GA models, V4-Pro and V4-Flash, ship a 1M-token context window and open weights — but the real news is peak-valley pricing, the first time a major AI API has charged more for tokens used during business hours than off-peak.",
-      "id": "edbd794a-5bad-475c-8470-46f5f68df3ff",
-      "publishedDate": "2026-07-29T06:44:11Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The Day DeepSeek Started Pricing Tokens Like Electricity",
-          "body": null,
-          "bullets": [
-            "DeepSeek V4 moved from preview to general availability on July 24, 2026 — the same day its legacy API aliases stopped working",
-            "Two models: V4-Pro (1.6T total params, 49B active) and V4-Flash (284B total, 13B active), both MoE, both open-weight",
-            "The headline change isn't the model — it's peak-valley pricing, AI's first time-of-day surge pricing"
-          ],
-          "symbol": "clock.arrow.2.circlepath",
-          "table": null,
-          "id": "0fc3f4c9-0e4c-43f9-aa38-78ecae452a75"
-        },
-        {
-          "kind": "problem",
-          "title": "Preview Aliases Were a Ticking Clock",
-          "body": "DeepSeek had quietly been forwarding its old model names to V4 under the hood for months — that safety net ended on a fixed deadline.",
-          "bullets": [
-            "The legacy aliases deepseek-chat and deepseek-reasoner were fully retired at July 24, 2026, 15:59 UTC — calls after that return HTTP errors, not a fallback",
-            "Any integration still pointed at the old names had to migrate to explicit V4 model IDs before the cutoff or break in production",
-            "The base URL (api.deepseek.com) and OpenAI-compatible request shape didn't change, which limited the migration to a model-ID swap for most callers"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "06e1b992-c6cb-484a-aa9f-68d06e008861"
-        },
-        {
-          "kind": "solution",
-          "title": "Two Models, One Job Split",
-          "body": "V4-Flash and V4-Pro replace the old chat/reasoner split with an explicit cost-vs-capability choice.",
-          "bullets": [
-            "deepseek-v4-flash (284B total, 13B active): the default for high-volume chat, extraction, and classification workloads where latency and cost matter more than raw capability",
-            "deepseek-v4-pro (1.6T total, 49B active): for complex reasoning, heavy instruction-following, and long-context work up to the full 1M-token window",
-            "Both are Mixture-of-Experts models — only a small fraction of total parameters activate per token, which is how a 1.6T-parameter model stays serveable at all",
-            "The API speaks both the OpenAI ChatCompletions format and the Anthropic Messages format, so most existing client code needs no rewrite"
-          ],
-          "symbol": "square.split.2x1.fill",
-          "table": null,
-          "id": "27e5c348-0949-42b9-84a0-e32ff23769ca"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: What a Long Job Costs at 10am vs. 10pm",
-          "body": "Peak hours are 9:00–12:00 and 14:00–18:00 Beijing time; every token inside them costs double the standard rate, and the other 17 hours keep the normal price.",
-          "bullets": [
-            "Off-peak, deepseek-v4-pro: $0.435 / M input tokens, $0.87 / M output tokens (cache-hit input as low as $0.003625/M)",
-            "Peak hours, same model: roughly double — the same request costs about 2x if it lands inside the 9-12 or 14-18 Beijing-time windows",
-            "deepseek-v4-flash is cheaper throughout: $0.14 / $0.28 per M input/output off-peak, still doubling during peak windows",
-            "A batch job with no latency requirement can simply be scheduled for the valley hours and pay standard rate — the pricing model turns time-of-day into a real cost lever, not just a UX detail"
-          ],
-          "symbol": "dollarsign.circle.fill",
-          "table": null,
-          "id": "db9a5154-3c94-4659-9374-ecb7b1d36abe"
-        },
-        {
-          "kind": "comparison",
-          "title": "V4-Flash vs. V4-Pro at a Glance",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Model",
-              "Total / active params",
-              "Context window",
-              "Off-peak price (input/output per M tokens)"
-            ],
-            "rows": [
-              [
-                "deepseek-v4-flash",
-                "284B / 13B",
-                "1M tokens",
-                "$0.14 / $0.28"
-              ],
-              [
-                "deepseek-v4-pro",
-                "1.6T / 49B",
-                "1M tokens",
-                "$0.435 / $0.87"
-              ]
-            ]
-          },
-          "id": "de1b2396-c015-4fcc-8a4d-6888c1ac8640"
-        },
-        {
-          "kind": "problem",
-          "title": "Why Surge Pricing, and Where It Bites",
-          "body": "DeepSeek has framed peak-valley pricing as a capacity problem, not just a revenue one.",
-          "bullets": [
-            "When everyone hits the API in the same few daytime hours, DeepSeek runs short of GPU capacity to serve all of it at once — charging more at peak nudges some traffic into quieter hours",
-            "Real-time, latency-sensitive production traffic (chat UIs, live agents) can't simply be rescheduled to the valley, so it eats the peak rate whether or not the workload is elastic",
-            "Users get 24-hour advance notice before pricing changes take effect, but the peak/valley schedule itself is fixed to Beijing business hours — inconvenient for teams built around a different timezone's peak load",
-            "This is a genuine first for a major AI API — it changes how a cost-sensitive team should architect batch vs. real-time workloads, not just which model they pick"
-          ],
-          "symbol": "bolt.trianglebadge.exclamationmark.fill",
-          "table": null,
-          "id": "4b501792-b9d1-4b27-adc0-3c41cf63b48f"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "DeepSeek V4's GA launch on July 24 was a hard cutover — legacy aliases stopped working entirely, not a gradual deprecation",
-            "V4-Flash and V4-Pro are both MoE and open-weight, with a 1M-token context window; the split is cost/latency vs. raw reasoning capability",
-            "Peak-valley pricing (double cost in Beijing business hours, standard rate the other 17 hours) is the first surge-pricing scheme from a major AI API",
-            "Teams with schedulable, non-real-time workloads have a new, concrete lever: shift batch jobs to off-peak hours to roughly halve their token cost"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "body": null,
-          "table": null,
-          "id": "c7f26501-c963-4a3e-bf1a-a6e631d40f5f"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What happened to DeepSeek's legacy deepseek-chat and deepseek-reasoner API aliases on July 24, 2026?",
-            "options": [
-              "They were fully retired at 15:59 UTC — calls to those names now return HTTP errors instead of being forwarded to V4",
-              "They were renamed but kept working exactly as before",
-              "They were merged into a single new alias called deepseek-v4",
-              "They became free to use as a promotional offer"
-            ],
-            "correctIndex": 0,
-            "explanation": "DeepSeek had been silently forwarding the legacy aliases to V4-Flash for months; that backward compatibility ended on a fixed deadline, so unmigrated integrations broke rather than degrading gracefully.",
-            "id": "7652a3f7-ad6d-4f4e-9b77-b6f0a654570a"
-          },
-          {
-            "prompt": "What is 'peak-valley' pricing on the DeepSeek V4 API?",
-            "options": [
-              "Token prices roughly double during Beijing business hours (9-12 and 14-18) and return to standard rate the rest of the day",
-              "Prices decrease the more tokens a customer uses in a month",
-              "A one-time discount for new API signups during the first week",
-              "A pricing tier based on which programming language the client SDK is written in"
-            ],
-            "correctIndex": 0,
-            "explanation": "It's time-of-day surge pricing: the same request costs about twice as much inside the defined peak windows as it does during the other 17 hours, intended to shift elastic demand away from capacity-constrained peak hours.",
-            "id": "8df46264-6b02-4256-bef4-843d726e9a3e"
-          },
-          {
-            "prompt": "What's the practical difference between deepseek-v4-flash and deepseek-v4-pro?",
-            "options": [
-              "V4-Flash trades capability for lower cost and latency on high-volume tasks; V4-Pro targets complex reasoning and heavy long-context work with far more active parameters",
-              "V4-Flash only supports image inputs while V4-Pro is text-only",
-              "V4-Pro has a smaller context window than V4-Flash",
-              "They are identical models with different names for billing purposes"
-            ],
-            "correctIndex": 0,
-            "explanation": "V4-Flash (284B total / 13B active) is priced and tuned for high-volume, latency-sensitive work, while V4-Pro (1.6T total / 49B active) targets harder reasoning tasks — both share the 1M-token context window.",
-            "id": "9aa0bd25-4042-41a1-a294-9ab49e0fb750"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "DeepSeek V4 GA: Surge Pricing & Migration (official DeepSeek blog)",
-          "url": "https://deepseek.ai/blog/deepseek-v4-ga-surge-pricing-migration",
-          "id": "bda9c3c3-b4db-46d0-a017-3dc16f02f640"
-        },
-        {
-          "title": "DeepSeek API Change Log",
-          "url": "https://api-docs.deepseek.com/updates/",
-          "id": "486050a4-6e68-4395-8e10-d29906b0c035"
         }
       ]
     }
