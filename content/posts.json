@@ -1,6 +1,366 @@
 {
   "posts": [
     {
+      "title": "Circuit Breaker: Stopping One Slow Dependency From Taking Down Everything",
+      "subtitle": "When a downstream service gets slow instead of down, retries and thread pools quietly turn that into an outage for every service upstream — a circuit breaker cuts the connection before that happens.",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "circuit breaker",
+        "resilience",
+        "distributed systems",
+        "microservices",
+        "fault tolerance"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.slash.fill",
+      "summary": "A circuit breaker wraps a call to a dependency and tracks its recent failure rate. Once failures cross a threshold it 'opens' — failing fast locally instead of waiting on a dependency that's already struggling — then periodically lets a trial request through to check if the dependency recovered. The mechanism exists because slow failures, not hard-down ones, are what actually cascade: a hanging call ties up a thread or connection, and enough of those exhaust the caller's own capacity.",
+      "body": null,
+      "slides": [
+        {
+          "id": "c2d4bc57-ec16-4892-97ae-8ef1b48dace6",
+          "kind": "cover",
+          "title": "Circuit Breaker: Stopping One Slow Dependency From Taking Down Everything",
+          "body": "A dependency that returns errors instantly is easy to handle. A dependency that just gets slow is what actually causes outages — because every caller keeps waiting.",
+          "bullets": [],
+          "symbol": "bolt.slash.fill",
+          "table": null
+        },
+        {
+          "id": "96be0081-a4a6-4626-b7e4-69fd13505c92",
+          "kind": "problem",
+          "title": "Cascading Failure Starts With a Slowdown, Not a Crash",
+          "body": "The dangerous failure mode in a service graph isn't a dependency returning 500s — it's one that stops responding at all.",
+          "bullets": [
+            "Every in-flight call to the slow dependency holds a thread, a connection-pool slot, or a queue entry until it times out",
+            "If timeouts are long (or missing) and traffic keeps arriving, the caller's own thread pool or connection pool fills up entirely",
+            "Once that pool is exhausted, the caller can't serve requests for *any* dependency, including healthy ones — the failure has now spread one hop upstream",
+            "Repeat that at each layer and a single slow database or downstream API can stall an entire request graph"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "e3923a29-363b-43bd-8c24-3eeff2c60c9b",
+          "kind": "solution",
+          "title": "Three States: Closed, Open, Half-Open",
+          "body": "A circuit breaker sits in front of a risky call and tracks outcomes, moving between three states.",
+          "bullets": [
+            "Closed (normal): calls pass through; the breaker counts failures in a rolling window",
+            "Open (tripped): once failures cross a threshold, the breaker stops calling the dependency entirely and fails fast — callers get an immediate error or fallback instead of waiting on a timeout",
+            "Half-Open (probing): after a cooldown period, the breaker lets a small number of trial requests through; if they succeed it closes again, if they fail it reopens and waits longer"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "0640fa2f-5804-473a-a443-e7fb909b8ec9",
+          "kind": "example",
+          "title": "A Payment Service Under Load, With Real Numbers",
+          "body": "Netflix's Hystrix library popularized concrete, tunable defaults for exactly this pattern.",
+          "bullets": [
+            "Rolling window: track the last 10 seconds of calls, requiring at least 20 requests in that window before the breaker can trip (too few samples shouldn't trigger a decision)",
+            "Error threshold: if 50% or more of those calls fail or time out, the breaker opens",
+            "Sleep window: once open, wait 5 seconds before allowing a single half-open probe request through",
+            "Effect: instead of every request queuing behind a struggling payment API for its full 30-second timeout, requests fail in milliseconds and the caller can show a fallback ('payment queued, we'll confirm shortly') instead of hanging"
+          ],
+          "symbol": "creditcard.trianglebadge.exclamationmark",
+          "table": null
+        },
+        {
+          "id": "89444962-7685-41ed-99ea-a32578e40948",
+          "kind": "comparison",
+          "title": "Circuit Breaker vs Retry vs Timeout vs Bulkhead",
+          "body": "These patterns are complementary, not competing — most production systems use all four together.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Pattern",
+              "What it does",
+              "What it doesn't do"
+            ],
+            "rows": [
+              [
+                "Timeout",
+                "Bounds how long one call can hang",
+                "Doesn't stop you from repeatedly hitting a dependency that's already failing"
+              ],
+              [
+                "Retry",
+                "Re-attempts a failed call, sometimes with backoff",
+                "Can amplify load on an already-struggling dependency if used without a breaker"
+              ],
+              [
+                "Circuit breaker",
+                "Stops calling a dependency once it's clearly unhealthy, failing fast instead",
+                "Doesn't fix the dependency — only limits the blast radius while it recovers"
+              ],
+              [
+                "Bulkhead",
+                "Isolates resources (thread pools, connections) per dependency",
+                "Doesn't detect failure — just contains it once the breaker or timeout reveals it"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8d93afe1-3f83-4df0-8dab-71cd9d0107e2",
+          "kind": "problem",
+          "title": "Where Circuit Breakers Go Wrong",
+          "body": "The pattern is simple; tuning it for a real system is the hard part.",
+          "bullets": [
+            "Thresholds set too sensitive cause 'flapping' — the breaker opens and closes repeatedly on normal traffic noise instead of real degradation",
+            "One breaker shared across multiple unrelated calls means an unrelated dependency's failure trips the breaker for calls that were fine",
+            "A breaker with no fallback just turns a slow error into a fast one — real resilience needs a meaningful fallback (cached data, a queued retry, a degraded response), not just failing faster",
+            "Skipping it for internal calls because 'it's just our own service' — internal dependencies cascade exactly the same way external ones do"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "f08810f1-ad58-4ce7-984a-5dbbb9b2626d",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "The failure that cascades is usually a slow dependency holding resources open, not a dependency that fails instantly",
+            "A circuit breaker has three states — closed, open, half-open — and moves between them based on a rolling failure-rate window, not a single failed call",
+            "Use one breaker per dependency, not one global breaker, so unrelated failures don't cross-contaminate",
+            "A breaker without a real fallback only makes failures faster, not less disruptive — pair it with a fallback, and with retries/timeouts/bulkheads, not instead of them"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "14b7c69e-c2a4-4284-bfa3-1916c5346834",
+            "prompt": "Why is a slow, hanging dependency more dangerous to a system than one that fails instantly?",
+            "options": [
+              "Slow calls use more CPU than fast failures",
+              "Slow calls hold threads, connections, or queue slots open until they time out, which can exhaust the caller's own capacity and spread the failure upstream",
+              "Slow calls are always caused by network issues",
+              "Instant failures always crash the calling service"
+            ],
+            "correctIndex": 1,
+            "explanation": "An instant failure frees up the caller's resources right away. A hanging call ties up a thread or connection slot for its full timeout, and if enough calls pile up, the caller's own resource pool is exhausted — turning one slow dependency into an outage for every caller upstream."
+          },
+          {
+            "id": "1246dc1e-d62c-4c79-9afa-b07961b42294",
+            "prompt": "In the classic three-state circuit breaker model, what happens in the Half-Open state?",
+            "options": [
+              "All traffic is blocked permanently",
+              "All traffic flows normally with no monitoring",
+              "A limited number of trial requests are allowed through to check if the dependency has recovered, deciding whether to close or reopen the breaker",
+              "The breaker doubles its failure threshold"
+            ],
+            "correctIndex": 2,
+            "explanation": "Half-Open is a probing state: after the cooldown (sleep window) following an Open state, the breaker lets a small number of test requests through. Success moves it back to Closed; continued failure sends it back to Open with a fresh cooldown."
+          },
+          {
+            "id": "d41170a0-80c5-4e5c-97f8-31528d78d7de",
+            "prompt": "Why doesn't adding retries alone protect a system from cascading failure?",
+            "options": [
+              "Retries are only useful for read requests",
+              "Retries without a circuit breaker can pile more load onto a dependency that's already struggling, making the overload worse",
+              "Retries always succeed on the second attempt",
+              "Retries are deprecated in modern distributed systems"
+            ],
+            "correctIndex": 1,
+            "explanation": "A retry re-sends a failed request, which is fine if the failure was transient — but if the dependency is genuinely overloaded, blind retries from every caller multiply the load on it. A circuit breaker stops the retries once it's clear the dependency isn't recovering."
+          }
+        ]
+      },
+      "references": [],
+      "id": "8678d4c8-7cee-488b-962a-4222a9982a29",
+      "publishedDate": "2026-08-06T18:41:44Z"
+    },
+    {
+      "title": "MCP Authorization: Trust Without a Shared Secret",
+      "subtitle": "A remote MCP server can't inherit your OS login the way a local one does — OAuth 2.1 fills that gap, and getting it wrong opens a confused-deputy hole.",
+      "category": "MCP",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "oauth",
+        "authorization",
+        "security",
+        "protocols"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "key.fill",
+      "summary": "A local MCP server over stdio inherits the trust of whoever launched the process — there's no network hop to secure. A remote MCP server over HTTP has no such luxury, so the spec layers OAuth 2.1 on top: dynamic client registration, PKCE, and — critically — Resource Indicators (RFC 8707) that bind a token to one specific server so a compromised or malicious server can't replay it elsewhere. Skipping that last piece is what turns a normal OAuth flow into a confused-deputy vulnerability.",
+      "body": null,
+      "slides": [
+        {
+          "id": "8547d191-3829-437b-9e2a-f84db4b0c78b",
+          "kind": "cover",
+          "title": "MCP Authorization: Trust Without a Shared Secret",
+          "body": "A local tool server trusts you because it's running as you. A remote one over the network has no such guarantee — it has to be told, cryptographically, who's allowed to call it.",
+          "bullets": [],
+          "symbol": "key.fill",
+          "table": null
+        },
+        {
+          "id": "174ac17b-7e51-4a0d-9358-aea07f07f1dd",
+          "kind": "problem",
+          "title": "stdio Had It Easy — HTTP Doesn't",
+          "body": "Most early MCP servers ran as a local subprocess talking over stdio. That transport gets authorization for free.",
+          "bullets": [
+            "A stdio server is spawned by the client on the user's own machine — the OS process boundary and the user's login are the entire trust model, no tokens needed",
+            "A remote HTTP/SSE server is reachable by anyone who can route to its URL — without an explicit check, any client could call tools bound to another user's calendar, repo, or database",
+            "MCP's authorization spec exists specifically to close that gap for the remote/HTTP case, not for local stdio servers"
+          ],
+          "symbol": "network",
+          "table": null
+        },
+        {
+          "id": "d35a16d7-6936-4e0d-bd8c-9787b9144ef6",
+          "kind": "solution",
+          "title": "The Flow: OAuth 2.1, With the Server as the Resource",
+          "body": "A remote MCP server is treated as an OAuth 2.1 protected resource, and the client that wants to call it is an OAuth client — the same roles as a normal 'login with X' flow, aimed at a tool endpoint instead of a UI.",
+          "bullets": [
+            "The client fetches the server's metadata to discover which authorization server issues tokens for it",
+            "It dynamically registers itself with that authorization server (RFC 7591) instead of needing a pre-shared client ID",
+            "It runs an authorization-code flow with PKCE — no client secret required, safe for public/native clients like a desktop agent",
+            "The resulting access token is scoped to the MCP server's own resource identifier, not left open-ended"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "daa9a215-9a54-46c5-b49a-c883a34bd7ff",
+          "kind": "concept",
+          "title": "The Confused Deputy: Why the Token's Audience Matters",
+          "body": "The subtle failure mode isn't a missing token — it's a token that works somewhere it shouldn't.",
+          "bullets": [
+            "Token passthrough: an MCP server accepts a token that was actually issued for a different API, then forwards it upstream — the upstream API trusts it because the token is genuinely valid, just not meant for this caller",
+            "Resource Indicators (RFC 8707) fix this by having the client request a token whose 'audience' is bound to the specific MCP server's URL, and having the server reject any token not addressed to it",
+            "Without that binding, a malicious or compromised MCP server becomes a 'confused deputy' — it has a legitimate credential and no way to tell it was handed one meant for someone else"
+          ],
+          "symbol": "exclamationmark.shield",
+          "table": null
+        },
+        {
+          "id": "3a0e26aa-599b-4b66-a5f6-5c1e57e19a0b",
+          "kind": "comparison",
+          "title": "Local vs Remote: Different Transports, Different Trust Models",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Transport",
+              "Trust boundary",
+              "Auth needed"
+            ],
+            "rows": [
+              [
+                "stdio (local subprocess)",
+                "OS process + user session",
+                "None — the client spawned the server itself"
+              ],
+              [
+                "HTTP/SSE (remote)",
+                "Network — any client that can reach the URL",
+                "OAuth 2.1 + PKCE + audience-bound tokens"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "ebf8cdaf-a821-41a0-8bf8-ed553d1e8a2c",
+          "kind": "example",
+          "title": "Connecting an Agent to a Remote Calendar Server",
+          "body": "A concrete walk-through for a desktop AI agent adding a remote MCP calendar server.",
+          "bullets": [
+            "1. Agent adds the server URL; the server returns 401 with a pointer to its authorization server's metadata",
+            "2. Agent dynamically registers as a client, then opens a browser for the user to log in and approve access",
+            "3. Agent completes the PKCE code exchange and receives an access token whose audience is that one calendar server's resource URL",
+            "4. Every tool call carries that token; the server verifies both signature and audience before running create_event or list_events",
+            "5. If the agent later adds a second, unrelated MCP server, it must repeat the flow — the calendar token is refused there by design"
+          ],
+          "symbol": "calendar.badge.checkmark",
+          "table": null
+        },
+        {
+          "id": "c1dac315-ef74-44a9-b633-c50f91c493f9",
+          "kind": "problem",
+          "title": "Where Implementations Go Wrong",
+          "body": "The spec is precise about this because the failure mode is easy to build by accident.",
+          "bullets": [
+            "Skipping audience validation: a server that checks 'is this token signed by an authorization server I trust?' but not 'was this token issued for me?' is exploitable via token passthrough",
+            "Reusing one long-lived token across every MCP server an agent talks to, instead of a distinct, narrowly-scoped token per server",
+            "Treating stdio's implicit trust as a reason to skip auth on a server that's later exposed over HTTP for remote access — the transport change silently removes the safety net",
+            "Storing tokens without expiry or revocation, so a leaked token stays valid indefinitely"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "8ee37daa-42d9-4549-9f53-dd64203fdda1",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "stdio MCP servers get authorization for free from the OS process boundary; HTTP/SSE servers need it explicitly because they're network-reachable",
+            "MCP's authorization model is standard OAuth 2.1 + PKCE + dynamic client registration — nothing MCP-specific, which is the point: reuse a well-audited protocol",
+            "Resource Indicators (RFC 8707) binding a token's audience to one specific server is what prevents the confused-deputy / token-passthrough failure",
+            "When reviewing an MCP server implementation, the first question to ask is: does it check *who the token was issued for*, not just whether it's validly signed"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "991053bb-91e8-474e-b99c-51b6610ef773",
+            "prompt": "Why don't local stdio MCP servers need an OAuth flow?",
+            "options": [
+              "Because stdio is encrypted by default",
+              "Because the client spawns the server as a local subprocess, so the OS process boundary and user session are the trust model — there's no network hop to secure",
+              "Because stdio servers can't access sensitive data",
+              "Because OAuth only works over HTTPS"
+            ],
+            "correctIndex": 1,
+            "explanation": "A stdio server runs as a subprocess of the client, inheriting the launching user's OS-level trust. There's no separate network identity to authenticate — that requirement only appears once a server is reachable remotely over HTTP/SSE."
+          },
+          {
+            "id": "f57c508b-e827-4f3b-8232-42971f4df05a",
+            "prompt": "What specifically does a 'token passthrough' / confused-deputy attack exploit?",
+            "options": [
+              "A weak password on the authorization server",
+              "An expired token that the server fails to reject",
+              "A validly-signed token whose audience isn't checked, so it works on a server it wasn't issued for",
+              "A missing TLS certificate on the MCP server"
+            ],
+            "correctIndex": 2,
+            "explanation": "The token is genuinely valid and properly signed — the bug is that the receiving server never checks whether the token's audience (Resource Indicator) actually names it, so a token meant for one resource gets accepted, and potentially forwarded, by another."
+          },
+          {
+            "id": "b42268ee-74c5-4738-b9b2-6799b13ebc07",
+            "prompt": "What role does PKCE play in the MCP authorization flow?",
+            "options": [
+              "It encrypts the MCP tool call payloads",
+              "It replaces the need for dynamic client registration",
+              "It lets a public client (like a desktop agent with no way to keep a secret safe) complete an OAuth code exchange securely without a client secret",
+              "It sets the token's expiry time"
+            ],
+            "correctIndex": 2,
+            "explanation": "PKCE (Proof Key for Code Exchange) binds the authorization request to the eventual token exchange with a locally-generated verifier, so a public client — one that can't safely hold a static client secret, like a desktop or mobile agent — can still prove it's the same party that started the flow."
+          }
+        ]
+      },
+      "references": [],
+      "id": "b0407e93-fb9c-4561-90a3-59e1ee9d29b4",
+      "publishedDate": "2026-08-06T18:41:44Z"
+    },
+    {
       "title": "Quantization: Running a 70B Model on One GPU",
       "subtitle": "Cutting weights from 16-bit floats to 4-bit integers shrinks memory 4x — if you handle the outliers correctly.",
       "category": "LLMs",
@@ -10723,374 +11083,6 @@
       "publishedDate": "2026-07-30T18:39:31Z",
       "heroImageURL": null,
       "body": null
-    },
-    {
-      "title": "Prompt Caching: Paying Once for Context You Reuse a Thousand Times",
-      "subtitle": "Why the same system prompt shouldn't cost the same tokens every single call",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "prompt-caching",
-        "kv-cache",
-        "inference-optimization",
-        "llm-apis",
-        "cost-optimization",
-        "latency"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.on.doc.fill",
-      "summary": "Prompt caching reuses the already-computed attention state (KV cache) for a shared prefix across requests, so a long system prompt, tool schema, or document only gets fully processed once instead of on every call. It cuts latency and cost dramatically on cache hits, but only works when the prefix is byte-identical up to the cache point and requests land inside a short TTL window.",
-      "slides": [
-        {
-          "id": "8f75a17e-9154-4949-96ad-687c6f7c8cb8",
-          "kind": "cover",
-          "title": "The Same 4,000 Tokens, Recomputed Every Single Call",
-          "body": "An agent with a long system prompt, a tool schema, and a style guide re-sends and re-processes that entire prefix on every request — even when nothing in it changed since the last call.",
-          "bullets": [],
-          "symbol": "doc.on.doc.fill",
-          "table": null
-        },
-        {
-          "id": "d6497f3d-6f88-4c51-bde5-31632f0fd273",
-          "kind": "problem",
-          "title": "Prefill Cost Scales With Every Token You Send, Not Just the New Ones",
-          "body": "Before a model generates its first output token, it must run a forward pass over the entire input — the 'prefill' phase. A chatbot with a 3,000-token system prompt plus a 500-token user turn pays for all 3,500 tokens of compute, every message, even though 3,000 of them are identical to the last call.",
-          "bullets": [
-            "Long system prompts, tool/function schemas, and few-shot examples are the worst offenders — static, large, and repeated verbatim on every call",
-            "Multi-turn agents resend the whole growing transcript each turn, so prefill cost grows linearly with conversation length",
-            "This shows up as both wasted spend and added latency before the model even starts responding"
-          ],
-          "symbol": "hourglass",
-          "table": null
-        },
-        {
-          "id": "5cef0530-0a6d-4c75-aeb4-5b7ecd220fcb",
-          "kind": "concept",
-          "title": "The Fix: Cache the KV State of a Shared Prefix, Not Just the Text",
-          "body": "During prefill, the model computes key/value tensors for every input token — the same KV cache used to speed up generation. Prompt caching persists that KV state server-side, keyed to the exact prefix, so a later request sharing that prefix can skip recomputing it and jump straight to the new tokens.",
-          "bullets": [
-            "You mark a 'cache breakpoint' after the stable part of the prompt (system instructions, tool defs, a large retrieved document)",
-            "A cache hit requires the prefix to match byte-for-byte up to that point — one changed word invalidates everything after it",
-            "Only the tokens after the breakpoint (the new user turn) go through full prefill; the cached prefix is loaded, not recomputed",
-            "Caches are short-lived (typically minutes, not hours) and evicted under memory pressure, so this is a latency/cost optimization, not durable storage"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "d76dd763-f9ff-4df8-8e64-fe992bd2dc3d",
-          "kind": "example",
-          "title": "Worked Example: A Coding Agent With a 6K-Token System Prompt",
-          "body": "An agent's system prompt (repo conventions, tool schemas, coding guidelines) is 6,000 tokens. The user's actual question is 200 tokens. Across a 20-turn debugging session, that 6,000-token prefix would normally be reprocessed 20 times.",
-          "bullets": [
-            "Without caching: 20 calls × 6,000 shared tokens = 120,000 tokens of redundant prefill, all billed at full input price",
-            "With caching: the prefix is written to cache once on turn 1; turns 2-20 pay a small cache-read cost for those 6,000 tokens instead of full price, plus full price only for the new 200-token turn",
-            "The savings compound fastest in agent loops and RAG pipelines where a large static block (tools, retrieved docs) precedes a small dynamic block (the actual question)"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null
-        },
-        {
-          "id": "52514771-eabe-4186-b34d-58349b9ae5f2",
-          "kind": "comparison",
-          "title": "Cache Write vs. Cache Read vs. No Cache",
-          "body": "Providers differ on exact multipliers, but the shape is consistent across major LLM APIs: writing to the cache costs a small premium over a normal token, while reading from it costs a small fraction of a normal token.",
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "Scenario",
-              "Relative cost per prefix token",
-              "When it happens"
-            ],
-            "rows": [
-              [
-                "No caching",
-                "1x (full input price)",
-                "Every call, prefix reprocessed from scratch"
-              ],
-              [
-                "Cache write",
-                "Slight premium over 1x",
-                "First call, or first call after the cache expired"
-              ],
-              [
-                "Cache hit (read)",
-                "Small fraction of 1x",
-                "Any call within the TTL that repeats the same prefix"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1be17d1f-a17d-446e-88d7-5b249227cca9",
-          "kind": "problem",
-          "title": "Where It Breaks: Invalidation and Idle Gaps",
-          "body": "Prompt caching is fragile in ways that surprise teams who bolt it on without restructuring their prompts.",
-          "bullets": [
-            "Any edit before the breakpoint — a timestamp, a reordered tool, an interpolated variable — invalidates the cache for everything after it",
-            "Putting volatile content (current date, user ID, session token) early in the prompt silently kills your hit rate; it belongs after the cache breakpoint, not before it",
-            "The cache has a short TTL, so a bursty workload with gaps longer than that window pays full price on every 'first' request again",
-            "Caching doesn't help when every request's prefix is genuinely unique (e.g., a different large document per call) — there's nothing to reuse"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "44fb118e-168f-4c22-86f3-f3f7913b2645",
-          "kind": "takeaways",
-          "title": "Structure Prompts Stable-First, Volatile-Last",
-          "body": null,
-          "bullets": [
-            "Prompt caching reuses a prefix's computed KV state instead of recomputing it, cutting both latency and cost on repeated calls",
-            "It requires an exact prefix match up to the cache breakpoint — order matters: put static content (system prompt, tools, docs) first, dynamic content (user turn, timestamps) last",
-            "It shines in agent loops, multi-turn chat, and RAG with large retrieved context — anywhere a big static block precedes a small dynamic one",
-            "It does nothing for genuinely unique, single-use prompts, and a cold cache (first call, or after the TTL lapses) pays a small write premium, not a discount"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "63e78a35-1cd3-4ac0-8130-3e8560908ae1",
-            "prompt": "What does prompt caching actually persist between requests?",
-            "options": [
-              "The raw text of the prompt, compressed",
-              "The model's computed KV (key/value) state for a shared prefix",
-              "A summary of the conversation generated by the model",
-              "The final output tokens from the previous call"
-            ],
-            "correctIndex": 1,
-            "explanation": "Caching stores the KV tensors computed during prefill for a given prefix, so a later request with the same prefix can reuse that state instead of recomputing it — the same underlying KV cache used during generation, just persisted across calls."
-          },
-          {
-            "id": "71a16c4c-e366-4ed6-af61-d0756cd2902d",
-            "prompt": "You add the current timestamp to the very start of your system prompt, before your tool definitions. What happens to your cache hit rate?",
-            "options": [
-              "No effect — only the last 100 tokens matter for caching",
-              "It improves, since timestamps help the cache key be more specific",
-              "It collapses toward zero, since the changing timestamp invalidates everything that follows it",
-              "It only affects cost, not whether the cache hits"
-            ],
-            "correctIndex": 2,
-            "explanation": "A cache hit requires the prefix to match exactly up to the breakpoint. A timestamp that changes every call breaks the match immediately, so everything after it — including your large, otherwise-stable tool definitions — is invalidated too. Volatile content belongs after the cache breakpoint, not before it."
-          },
-          {
-            "id": "0675d5b6-e64d-4ba9-8089-4ed2608527d3",
-            "prompt": "For which workload does prompt caching provide the LEAST benefit?",
-            "options": [
-              "A coding agent reusing the same 6,000-token system prompt across 20 turns",
-              "A RAG pipeline that stuffs a large, unchanging retrieved document into every call in a session",
-              "A batch job where every request has a completely different, one-off large document as its prefix",
-              "A customer support bot with a fixed style guide and tool schema"
-            ],
-            "correctIndex": 2,
-            "explanation": "Caching only pays off when a prefix is reused across multiple calls. If every request's large content is unique, there's no shared prefix to reuse — the cache write premium is paid every time with no matching read to offset it."
-          }
-        ]
-      },
-      "references": [],
-      "id": "f7fcae61-485b-49cd-96c2-d048bb9bb432",
-      "publishedDate": "2026-07-30T12:41:53Z",
-      "heroImageURL": null,
-      "body": null
-    },
-    {
-      "title": "Tokenization: How BPE Turns Text Into the Units a Model Actually Sees",
-      "subtitle": "An LLM never reads letters or words — it reads a vocabulary of a few hundred thousand learned chunks",
-      "category": "LLMs",
-      "difficulty": "Beginner",
-      "postKind": "concept",
-      "tags": [
-        "tokenization",
-        "bpe",
-        "tokenizer",
-        "llm-basics",
-        "vocabulary",
-        "embeddings"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "textformat.abc",
-      "summary": "Before any text reaches an LLM's weights, a tokenizer chops it into subword pieces from a fixed vocabulary using Byte-Pair Encoding — merging the most frequent adjacent pairs over and over until the vocab hits a target size. That single design choice explains why LLMs mangle letter-counting, charge more for some languages than others, and occasionally spit out gibberish on rare 'glitch tokens.'",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The Model Never Sees a Single Letter",
-          "body": "Every LLM interaction starts with a step most users never think about: a tokenizer converts your text into a sequence of integers before a single weight gets multiplied. Those integers index into a fixed vocabulary of subword chunks — not letters, not always whole words.",
-          "bullets": [],
-          "symbol": "textformat.abc",
-          "table": null,
-          "id": "13144844-a13c-410d-9f57-9e6d3b1a0d81"
-        },
-        {
-          "kind": "problem",
-          "title": "Why Not Just Use Characters or Words?",
-          "body": "Both obvious choices break down at scale, for opposite reasons.",
-          "bullets": [
-            "Character-level tokenization keeps the vocabulary tiny (~100-200 symbols) but makes sequences extremely long — a 500-word article becomes thousands of tokens, and the model has to learn spelling before it can learn meaning.",
-            "Whole-word tokenization keeps sequences short but the vocabulary explodes: every inflection, typo, and compound needs its own slot, and any word missing from training becomes an unrepresentable 'unknown' token.",
-            "Real text also mixes languages, code, emoji, and numbers — a fixed word list can't cover all of it, but you still need a bounded vocabulary so the model's embedding table stays a finite, trainable size.",
-            "The fix subword tokenization lands on: build a vocabulary of frequently-occurring chunks — common words stay whole, rare words split into pieces, so nothing is ever truly 'unknown.'"
-          ],
-          "symbol": "questionmark.square.dashed",
-          "table": null,
-          "id": "b3e25059-6a0b-4970-8681-dc0581f224d2"
-        },
-        {
-          "kind": "solution",
-          "title": "Byte-Pair Encoding: Merge the Most Common Pair, Repeat",
-          "body": "Byte-Pair Encoding (BPE), and its close relatives WordPiece and SentencePiece's unigram model, build the vocabulary by starting small and growing it through repeated merges.",
-          "bullets": [
-            "Start with every individual byte or character as its own token — the smallest possible vocabulary.",
-            "Scan the entire training corpus and find the single most frequent adjacent pair of tokens (e.g. 't' + 'h' appearing constantly) and merge it into one new token 'th'.",
-            "Repeat: re-scan, find the new most frequent adjacent pair (now possibly 'th' + 'e' → 'the'), merge again — each round adds exactly one new vocabulary entry.",
-            "Stop once the vocabulary hits a target size (GPT-style tokenizers commonly land in the 100K-200K range) — the result is a mix of full common words, frequent subwords, and single bytes for anything rare."
-          ],
-          "symbol": "scissors",
-          "table": null,
-          "id": "ee1278aa-9a06-4d53-af52-ee5d6bf2c2ff"
-        },
-        {
-          "kind": "concept",
-          "title": "Vocabulary Size Is a Real Engineering Tradeoff",
-          "body": "Picking the target vocabulary size trades off three things that all cost money or latency.",
-          "bullets": [
-            "Bigger vocabulary → shorter token sequences for the same text, which means less compute per request and more text fitting in a fixed context window.",
-            "Bigger vocabulary → a bigger embedding table and output softmax layer, since both scale linearly with vocab size — that's parameters and memory spent before the model does any 'thinking.'",
-            "Smaller vocabulary → longer sequences, so the same context window (say 128K tokens) holds less actual text — a real cost since attention compute grows with sequence length.",
-            "This is exactly why newer tokenizers (like OpenAI's o200k_base, roughly 200K tokens, versus the older cl100k_base's ~100K) trend larger over time: more vocabulary buys shorter sequences, which is worth the bigger embedding table at scale."
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null,
-          "id": "57675c0c-9ce7-4c1f-bd9f-6d0f5eb74077"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Watching a Word Get Split",
-          "body": "Common English words are usually a single token. Everything else reveals the merge history.",
-          "bullets": [
-            "'the', 'and', 'is' — each one whole token, because they're among the most frequent strings in any English corpus, so BPE merged them all the way down early.",
-            "'tokenization' commonly splits into pieces like 'token' + 'ization' — frequent enough as sub-parts to merge, not frequent enough as a whole word to earn its own single token.",
-            "A rare or invented word, a typo, or a string in a low-resource language can fall all the way back to individual bytes — which is why the SAME sentence can cost noticeably more tokens (and more money, since APIs bill per token) in one language than another.",
-            "Numbers are especially telling: '2026' might be one token, while a long number like '48291035' often splits into multiple 3-digit chunks — which is a big part of why LLMs are unreliable at multi-digit arithmetic without help."
-          ],
-          "symbol": "number",
-          "table": null,
-          "id": "b2c564a8-1750-4919-b05d-9c8af2c6222e"
-        },
-        {
-          "kind": "comparison",
-          "title": "Character vs. Word vs. Subword",
-          "body": "Subword tokenization is the compromise every modern LLM converges on.",
-          "bullets": [
-            "None of these is free — subword tokenization just sits at the point on the curve that's cheapest to train and serve at scale."
-          ],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Approach",
-              "Vocabulary size",
-              "Sequence length",
-              "Handles unseen words?"
-            ],
-            "rows": [
-              [
-                "Character-level",
-                "~100-200",
-                "Very long",
-                "Yes, always"
-              ],
-              [
-                "Word-level",
-                "Unbounded / huge",
-                "Short",
-                "No — unknown-word problem"
-              ],
-              [
-                "Subword (BPE)",
-                "~30K-200K",
-                "Moderate",
-                "Yes — falls back to smaller pieces"
-              ]
-            ]
-          },
-          "id": "6244a763-f585-443a-84e5-f83e3dc9e010"
-        },
-        {
-          "kind": "problem",
-          "title": "Where Tokenization Bites You",
-          "body": "Because the model reasons over tokens, not characters, tokenization leaks into behavior in ways that look like model bugs but are actually tokenizer artifacts.",
-          "bullets": [
-            "Letter-counting and spelling tasks ('how many r's in strawberry') are hard for LLMs precisely because the model may never see 'strawberry' as individual letters — it sees one or two opaque tokens and has to infer spelling indirectly from training data.",
-            "'Glitch tokens' — rare tokens that appeared in the tokenizer's training data but almost never in the model's actual training text — can produce erratic output when they do show up, because the model never learned a stable representation for them.",
-            "A tokenizer trained on mostly-English data assigns more tokens per word to other languages, so the same sentence can cost 2-3x more tokens (and money, and context budget) in a lower-resource language.",
-            "Swapping or fine-tuning a tokenizer after a model is trained is essentially impossible without retraining — the vocabulary is baked into the embedding table, so tokenizer choice is a decision made once, early, and lived with forever."
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "bf2be73b-8f88-4c67-acfc-c8d3dc2de85f"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Tokenizers split text into subword units from a fixed vocabulary, built by repeatedly merging the most frequent adjacent pair (BPE) until hitting a target size.",
-            "Vocabulary size is a real tradeoff: bigger vocab means shorter sequences and less compute per request, at the cost of a bigger embedding table.",
-            "Because the model reasons over tokens, not letters, tasks like spelling, letter-counting, and multi-digit arithmetic are structurally harder than they look.",
-            "Tokenizer choice is fixed at training time and directly affects cost — the same text can be cheaper or more expensive to process depending on how well the tokenizer's training data matched the language you're using."
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "a168b4dc-975c-4465-94d4-7aa488255790"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does Byte-Pair Encoding do, at its core, to build a vocabulary?",
-            "options": [
-              "It assigns a unique token to every dictionary word in advance",
-              "It repeatedly finds the most frequent adjacent pair of tokens in the training corpus and merges it into a new single token, until the vocabulary reaches a target size",
-              "It splits every word into a fixed number of characters",
-              "It randomly samples substrings from the training data to fill the vocabulary"
-            ],
-            "correctIndex": 1,
-            "explanation": "BPE starts from individual bytes/characters and grows the vocabulary one merge at a time, always merging whichever adjacent pair is currently most frequent. That's why common words end up as single tokens while rare strings stay split into smaller pieces.",
-            "id": "abefdf01-afc8-4b66-96a1-02cb9486171e"
-          },
-          {
-            "prompt": "Why do LLMs often struggle to count the letters in a word like 'strawberry'?",
-            "options": [
-              "They have no training data about spelling",
-              "The tokenizer may represent the whole word (or large chunks of it) as one opaque token, so the model never directly sees the individual letters",
-              "Letter-counting requires more parameters than any current model has",
-              "It's a deliberate safety restriction"
-            ],
-            "correctIndex": 1,
-            "explanation": "The model computes over token embeddings, not characters. If 'strawberry' is one or two tokens, the letter-by-letter structure isn't explicitly present in the input the model reasons over — any spelling knowledge has to be learned indirectly.",
-            "id": "255eb8ee-2501-41b5-a588-d1cba9b51d16"
-          },
-          {
-            "prompt": "Why does a bigger tokenizer vocabulary (e.g. 200K vs. 100K tokens) generally make serving an LLM cheaper?",
-            "options": [
-              "It doesn't — bigger vocabularies always increase cost",
-              "It shortens the average number of tokens needed to represent the same text, reducing compute per request and freeing up context window, at the cost of a larger embedding table",
-              "It removes the need for an embedding table entirely",
-              "It makes the model file size smaller"
-            ],
-            "correctIndex": 1,
-            "explanation": "More vocabulary entries mean more text can be represented in fewer tokens, and since attention compute scales with sequence length, shorter token sequences are cheaper to process — the tradeoff is a bigger (but fixed, one-time) embedding table.",
-            "id": "ad62176c-b2b5-495b-a84a-b74c4b1c400a"
-          }
-        ]
-      },
-      "references": [],
-      "id": "e1d480b8-8345-443d-81d0-36bfb29d4f40",
-      "publishedDate": "2026-07-30T06:39:58Z"
     }
   ]
 }
