@@ -1,6 +1,203 @@
 {
   "posts": [
     {
+      "id": "f70ef50e-38e4-4590-9ceb-3515472c468e",
+      "title": "DPO: Skipping the Reward Model Entirely",
+      "subtitle": "How Direct Preference Optimization turned RLHF into a single supervised loss",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "fine-tuning",
+        "alignment",
+        "preference-learning"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hand.thumbsup.fill",
+      "summary": "Direct Preference Optimization (DPO) collapses RLHF's three-stage pipeline — supervised fine-tuning, reward model training, and PPO — into one supervised classification loss trained directly on (chosen, rejected) pairs. It's simpler and more stable than PPO-based RLHF, but it has its own failure modes worth knowing before you reach for it.",
+      "body": null,
+      "artPrompt": null,
+      "slides": [
+        {
+          "id": "8a7c8657-6c20-42a4-8c77-47cba8325b2d",
+          "kind": "cover",
+          "title": "One loss function replaces an entire RL pipeline",
+          "body": "DPO (2023) showed you can align a language model to human preferences without ever training a reward model or running PPO — just supervised learning on pairs of responses.",
+          "bullets": [],
+          "symbol": "hand.thumbsup.fill",
+          "table": null
+        },
+        {
+          "id": "5eddd6c1-c873-44bb-961c-e9d031601944",
+          "kind": "problem",
+          "title": "Classic RLHF is three fragile stages stacked together",
+          "body": null,
+          "bullets": [
+            "Stage 1: supervised fine-tune (SFT) on demonstrations",
+            "Stage 2: train a separate reward model on human preference pairs",
+            "Stage 3: run PPO to optimize the policy against that reward model — an RL loop notorious for instability, reward hacking, and finicky hyperparameters",
+            "Each stage needs its own infra, and errors in the reward model propagate straight into the RL objective"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "8e14cd5f-2b94-4b03-9918-58df0ac4fd60",
+          "kind": "solution",
+          "title": "Reparameterize the reward model out of the objective",
+          "body": "DPO's key insight: the RLHF objective (maximize reward, minus a KL penalty from a reference model) has a closed-form optimal policy. Invert that relationship and the 'reward' is just a function of the policy's own log-probabilities — so you can write a loss directly on preference pairs and skip fitting a reward model at all.",
+          "bullets": [
+            "Needs only a policy model + a frozen reference model (usually the SFT checkpoint)",
+            "Trains with plain supervised cross-entropy-style loss on (prompt, chosen, rejected) triples",
+            "No sampling, no reward model, no PPO — a single training stage after SFT"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "eedae0e6-0db2-4edc-b9d8-a042dfd0247d",
+          "kind": "concept",
+          "title": "The loss pushes apart log-prob ratios, not raw scores",
+          "body": "For each pair, DPO compares how much more (or less) likely the policy makes the chosen response vs. the rejected one, relative to the same gap under the frozen reference model.",
+          "bullets": [
+            "Loss = -log σ(β · [log-ratio(chosen) − log-ratio(rejected)])",
+            "β controls how far the policy is allowed to drift from the reference — small β stays conservative, large β can overfit preferences and degrade general ability",
+            "Because the reference model appears in the loss, it acts as an implicit regularizer — no separate KL penalty term to tune"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "2181c326-f585-489d-8e09-333ed05cbe5a",
+          "kind": "comparison",
+          "title": "DPO trades RL complexity for data sensitivity",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "PPO-based RLHF",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Training stages",
+                "SFT → reward model → PPO",
+                "SFT → DPO"
+              ],
+              [
+                "Needs a reward model",
+                "Yes, trained separately",
+                "No — implicit in the policy"
+              ],
+              [
+                "Online sampling during training",
+                "Yes (RL rollouts)",
+                "No — offline on fixed pairs"
+              ],
+              [
+                "Main failure mode",
+                "Reward hacking, PPO instability",
+                "Likelihood displacement, sensitive to label noise"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "2e88f5ae-bdb8-4305-aa02-d7072835b7ba",
+          "kind": "example",
+          "title": "Worked example: teaching a chatbot to stop rambling",
+          "body": "You have pairs like (prompt: 'What's a hash map?', chosen: a tight 3-sentence answer, rejected: a rambling 3-paragraph one). During training, DPO increases the model's relative log-probability of the concise answer and decreases it for the rambling one — always measured relative to what the frozen reference model would have assigned.",
+          "bullets": [
+            "After enough pairs, the policy shifts its whole distribution toward the 'concise' style without ever being told explicitly 'be concise'",
+            "No reward score is computed anywhere — the preference signal flows straight into gradient updates"
+          ],
+          "symbol": "text.bubble",
+          "table": null
+        },
+        {
+          "id": "55e4e254-0ee3-4655-8b3c-d56ee6dc0d94",
+          "kind": "problem",
+          "title": "Where DPO breaks down — and when to avoid it",
+          "body": null,
+          "bullets": [
+            "Likelihood displacement: DPO can lower the probability of BOTH responses in a pair — it only needs the chosen one to drop less, which can leak probability mass onto unrelated, sometimes worse completions",
+            "No online exploration: unlike PPO, DPO only ever sees the fixed pairs you gave it, so it can't discover or correct for failure modes outside that dataset",
+            "Sensitive to label noise: with no reward model smoothing disagreement across many samples, a single mislabeled pair has an outsized effect",
+            "Avoid it when you need iterative, on-policy refinement against a live reward signal, or when your preference data is noisy and unvetted"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "ee18fa49-3fee-445e-b3d6-aa706dc35199",
+          "kind": "takeaways",
+          "title": "Why DPO won post-training in the open-weight world",
+          "body": null,
+          "bullets": [
+            "One supervised loss instead of an RL loop — cheaper, more stable, easier to debug",
+            "Became the default post-training step for many open-weight model families after SFT",
+            "Its known weaknesses (likelihood displacement, offline-only) spawned follow-up variants like IPO, KTO, and ORPO that patch specific failure modes",
+            "Rule of thumb: reach for DPO when you have clean preference pairs and want simple, stable alignment; reach for online RL when you need the model to keep exploring against a live reward"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "id": "8e8a1f6e-5edf-48f6-8de1-33afbb97ad98",
+        "questions": [
+          {
+            "id": "b5e5bfe4-1cff-4ccd-b562-549c777efd74",
+            "prompt": "What does DPO eliminate compared to classic PPO-based RLHF?",
+            "options": [
+              "The separate reward model and the RL optimization loop",
+              "The need for any preference data at all",
+              "The supervised fine-tuning stage",
+              "The need for a frozen reference model"
+            ],
+            "correctIndex": 0,
+            "explanation": "DPO reparameterizes the RLHF objective so the optimal policy's implicit reward is just a function of its own log-probabilities. That lets it train directly on preference pairs with a supervised loss — no separate reward model, no PPO rollouts."
+          },
+          {
+            "id": "a1530184-a5da-4318-b1bd-3ef39ea1227a",
+            "prompt": "In the DPO loss, what does the β hyperparameter control?",
+            "options": [
+              "The learning rate schedule",
+              "How far the trained policy is allowed to drift from the reference model",
+              "The batch size used for each preference pair",
+              "The sampling temperature at inference time"
+            ],
+            "correctIndex": 1,
+            "explanation": "β scales the log-ratio gap between chosen and rejected responses, which plays the same role the KL penalty plays in PPO-based RLHF — it's an implicit regularizer pulling the policy back toward the reference model."
+          },
+          {
+            "id": "2ff1a3d4-6b1e-4a2f-9c3d-7e8f0a1b2c3d",
+            "prompt": "What is 'likelihood displacement,' a known DPO failure mode?",
+            "options": [
+              "The model refuses to generate any output",
+              "Training diverges and loss goes to infinity",
+              "The model can lower the probability of both the chosen and rejected response, as long as the chosen one drops less",
+              "The reference model's weights get overwritten during training"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because DPO's loss only cares about the relative gap between chosen and rejected log-probabilities, it can satisfy that objective by pushing down both responses' probabilities — leaking probability mass onto other, sometimes unrelated or worse completions."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (Rafailov et al., 2023)",
+          "url": "https://arxiv.org/abs/2305.18290"
+        }
+      ],
+      "publishedDate": "2026-08-07T12:48:59Z",
+      "heroImageURL": null
+    },
+    {
       "id": "5b9a9537-27c7-4231-9bc6-3750ee35f1c9",
       "title": "Orchestrator-Worker: Splitting One Task Across Many Agents",
       "subtitle": "A lead agent that delegates instead of doing everything itself trades one clean thread for raw parallel throughput — and a much bigger token bill.",
@@ -10770,193 +10967,6 @@
           "id": "798057ad-6c51-4d42-a32b-ec77826c1211",
           "title": "Contextual Retrieval in AI Systems — Anthropic",
           "url": "https://www.anthropic.com/engineering/contextual-retrieval"
-        }
-      ]
-    },
-    {
-      "id": "abe700ef-ab67-4aec-a1ab-0f2b1ccab33c",
-      "title": "Reflexion: How an Agent Learns From Its Own Failures",
-      "subtitle": "No gradient updates — just a memory of what went wrong last time.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "reflexion",
-        "ai-agents",
-        "self-reflection",
-        "agentic-workflows",
-        "reinforcement-learning",
-        "llm-agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Reflexion turns a failed attempt into a written note-to-self: an evaluator flags the mistake, a reflection step describes it in plain language, and the next attempt reads that note before trying again. No weights change — the improvement lives entirely in an episodic memory buffer.",
-      "publishedDate": "2026-07-31T12:40:43Z",
-      "slides": [
-        {
-          "id": "c5f4f1a5-a271-411d-ae51-3a0242b3a7fd",
-          "kind": "cover",
-          "title": "What if an agent could learn without fine-tuning?",
-          "body": "Reflexion (Shinn et al., NeurIPS 2023) reframes 'learning from a mistake' as writing a better prompt for next time, not updating a single weight.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "b946e318-e26f-4770-becb-8bb63b523078",
-          "kind": "problem",
-          "title": "RL fine-tuning is overkill for 'try again, but smarter'",
-          "body": "Classic RL improves an agent by adjusting model weights from a reward signal — that means gradient updates, training infrastructure, and a new checkpoint per skill.",
-          "bullets": [
-            "A single failed coding attempt doesn't need a training run — it needs the agent to remember what broke",
-            "Weight updates are slow, costly, and hard to do per-task or per-session",
-            "Most task failures are a specific, describable mistake, not a fundamental capability gap"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "2822aadc-0027-4f1a-aeaf-8055c0e3d68b",
-          "kind": "solution",
-          "title": "Three roles: Actor, Evaluator, Self-Reflection model",
-          "body": "Reflexion runs the same base LLM in three jobs across a retry loop, with natural language — not gradients — carrying the learning signal.",
-          "bullets": [
-            "Actor: attempts the task (writes the code, picks the action, answers the question)",
-            "Evaluator: scores the trajectory — a unit test pass/fail, an exact-match check, or a heuristic",
-            "Self-Reflection model: turns a failing score into a specific verbal critique ('I used the wrong list index and never checked for an empty input')",
-            "That critique is appended to an episodic memory buffer the Actor reads on its next attempt"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "62dc495b-d52b-4152-9ad4-ec8d3c254f5d",
-          "kind": "architecture",
-          "title": "The loop repeats until it passes or the memory is full",
-          "body": "Each trial is: act, evaluate, reflect, remember — then try again with the growing memory in context.",
-          "bullets": [
-            "Trial 1: Actor attempts → Evaluator fails it → Reflection writes a note → note goes into memory",
-            "Trial 2: Actor reads memory + task, tries again with that specific mistake in view",
-            "Loop stops on success or after a fixed trial budget (the paper caps trials rather than looping forever)",
-            "Memory is capped too — old reflections get dropped or summarized so the prompt doesn't blow past the context window"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "bcf2e887-8bb7-49a4-8245-7fb2415cdc29",
-          "kind": "comparison",
-          "title": "On HumanEval, one reflection loop beat the prior best",
-          "body": "The paper's headline result: Reflexion pushed pass@1 past a strong GPT-4 baseline on coding, with similar gains reported on decision-making and reasoning benchmarks.",
-          "bullets": [
-            "Gains came from letting the same model retry with memory, not from a bigger or newer model",
-            "The paper also reports strong improvements on sequential decision-making (ALFWorld) and reasoning QA (HotPotQA) tasks, without weight updates"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Setup",
-              "HumanEval pass@1"
-            ],
-            "rows": [
-              [
-                "GPT-4 baseline (no reflection)",
-                "80%"
-              ],
-              [
-                "GPT-4 + Reflexion",
-                "91%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e1ea8717-c73b-48d6-bfd3-1d4dd390b108",
-          "kind": "example",
-          "title": "Worked example: a function that fails one hidden test",
-          "body": "The Actor writes `find_max(nums)` that crashes on an empty list. The Evaluator runs the test suite and reports a failure on the empty-input case.",
-          "bullets": [
-            "Self-Reflection writes: 'My function assumed nums is non-empty and indexed nums[0] directly — I never guarded against len(nums) == 0.'",
-            "That sentence is prepended to the next attempt's prompt, right alongside the original task",
-            "Trial 2's Actor adds an explicit empty-list check and passes — the fix came from language, not from retraining"
-          ],
-          "symbol": "text.bubble",
-          "table": null
-        },
-        {
-          "id": "164d16a7-29b1-4f12-b1fd-bfac03abe9ce",
-          "kind": "concept",
-          "title": "It only works when you can actually judge success",
-          "body": "Reflexion leans entirely on the Evaluator giving a trustworthy signal — take that away and the whole loop is guessing.",
-          "bullets": [
-            "Needs a verifier: unit tests, exact-match answers, or a simulator reward — open-ended tasks with no ground truth get weak, unreliable reflections",
-            "Adds latency and cost: each retry is 2-3 extra LLM calls (evaluate, reflect, re-attempt) before you get a final answer",
-            "Doesn't fix a knowledge gap — if the model genuinely doesn't know the fact or algorithm, reflecting on failure won't teach it",
-            "Memory growth is a real constraint: long task chains need summarization or pruning, or reflections crowd out the actual task context"
-          ],
-          "symbol": "exclamationmark.bubble",
-          "table": null
-        },
-        {
-          "id": "fe7faf68-0d7e-4f08-aa4b-72859086f0f0",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Reflexion = Actor + Evaluator + Self-Reflection, looping on natural-language feedback instead of gradients",
-            "Failures become memory: a specific written critique the next attempt conditions on",
-            "It boosted HumanEval pass@1 from 80% to 91% over a GPT-4 baseline with zero fine-tuning",
-            "The catch: it needs a real success signal, adds retry latency, and can't teach the model something it doesn't know"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5c151128-6478-46d2-869e-c319a1b63864",
-            "prompt": "What actually changes between Reflexion's trial 1 and trial 2 attempts?",
-            "options": [
-              "The model's weights are fine-tuned on the failed trajectory",
-              "A new, larger model is swapped in for the retry",
-              "The next attempt's prompt includes a written reflection describing the specific mistake",
-              "The task is simplified automatically before retrying"
-            ],
-            "correctIndex": 2,
-            "explanation": "Reflexion never touches model weights. The only thing that changes is the prompt: it now includes a natural-language note about exactly what went wrong, generated by the self-reflection step."
-          },
-          {
-            "id": "f7988178-12c9-4363-883b-e2b41c05a232",
-            "prompt": "Reflexion is a poor fit for which of these tasks?",
-            "options": [
-              "Fixing a function that fails a specific unit test",
-              "Writing open-ended marketing copy with no defined 'correct' answer",
-              "A game-playing agent with a clear win/loss signal",
-              "A multi-hop QA task checked against an exact-match answer"
-            ],
-            "correctIndex": 1,
-            "explanation": "Reflexion depends on the Evaluator producing a trustworthy success/fail signal. Unit tests, game outcomes, and exact-match QA all give that; open-ended generation with no ground truth doesn't, so the reflections have nothing solid to critique."
-          },
-          {
-            "id": "4f99b425-5eb2-4462-b247-74f9b00fe92f",
-            "prompt": "In the paper's reported HumanEval result, what was the pass@1 improvement from adding Reflexion to a GPT-4 baseline?",
-            "options": [
-              "80% to 91%",
-              "50% to 65%",
-              "91% to 99%",
-              "No measurable change"
-            ],
-            "correctIndex": 0,
-            "explanation": "The GPT-4 baseline scored 80% pass@1 on HumanEval; adding the Reflexion loop raised it to 91% — a meaningful jump from retries alone, with no retraining."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "5cb9a193-abb1-4090-bf76-c6898bf67656",
-          "title": "Reflexion: Language Agents with Verbal Reinforcement Learning (Shinn et al., NeurIPS 2023)",
-          "url": "https://arxiv.org/abs/2303.11366"
         }
       ]
     }
