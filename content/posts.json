@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "title": "LLM-as-a-Judge: Using One Model to Grade Another's Answers",
+      "subtitle": "Human eval doesn't scale past a few hundred examples — a well-prompted judge model can grade thousands, if you guard against its blind spots.",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llm-as-judge",
+        "evaluation",
+        "rlaif",
+        "agent-evals",
+        "benchmarking"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "scalemass.fill",
+      "summary": "LLM-as-a-judge uses a capable model, prompted with a rubric, to score or compare another model's outputs — turning evaluation from a slow human bottleneck into something that runs on every commit. It comes in pointwise, pairwise, and reference-graded flavors, each with different consistency and cost tradeoffs, but every flavor inherits its own blind spots: position bias, verbosity bias, and self-preference bias.",
+      "body": null,
+      "id": "13c26a0e-c4d9-4285-909e-f5c25b9675c4",
+      "publishedDate": "2026-08-08T12:40:19Z",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Grading at Scale: Let a Model Be the Judge",
+          "body": "LLM-as-a-judge uses a capable model, prompted with a rubric, to score or compare another model's outputs — turning evaluation from a slow human bottleneck into something you can run on every commit.",
+          "bullets": [],
+          "symbol": "scalemass.fill",
+          "table": null,
+          "id": "421e0651-4445-495a-ac34-16855999a8fc"
+        },
+        {
+          "kind": "problem",
+          "title": "Human Evaluation Doesn't Scale With Iteration Speed",
+          "body": null,
+          "bullets": [
+            "A team shipping model or prompt changes weekly can't wait days for human annotators to score a few hundred outputs on helpfulness, tone, and accuracy",
+            "Automatic metrics like BLEU or ROUGE compare token overlap, not meaning — they reward a paraphrase of the wrong answer and penalize a correct one phrased differently",
+            "Without fast, reliable scoring, teams either ship blind or bottleneck every change behind a human review queue"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "ef2dc560-494b-4d85-9e03-fc6786020b2f"
+        },
+        {
+          "kind": "solution",
+          "title": "The Judge Prompt: Rubric In, Verdict Out",
+          "body": "A judge call is just another LLM call: system prompt with grading criteria, the candidate output (or two outputs to compare), and a required output format.",
+          "bullets": [
+            "Pointwise grading: the judge scores one response alone against a rubric (e.g. 1-10 on helpfulness, factuality, tone) — cheap, but scores can drift across different grading sessions",
+            "Pairwise grading: the judge sees two responses side by side and picks A, B, or tie — more consistent than pointwise because it's a relative, not absolute, judgment",
+            "Reference-graded: the judge also gets a known-correct answer or rubric example to compare against, which sharply reduces ambiguity for factual tasks",
+            "The judge model should usually be stronger than (or at least a different family from) the models it's grading, to reduce blind spots they might share"
+          ],
+          "symbol": "text.badge.checkmark",
+          "table": null,
+          "id": "bd0fb91d-c0b7-4e65-8b44-677256b80405"
+        },
+        {
+          "kind": "concept",
+          "title": "Why Pairwise Beats Pointwise for Consistency",
+          "body": "Asking 'is this an 8 or a 9' forces the judge to hold an internal absolute scale steady across hundreds of independent calls — that scale drifts. Asking 'which of these two is better' only requires a stable ordering, which LLMs do more reliably.",
+          "bullets": [
+            "Pairwise comparisons compose into a ranking (via win-rate or an Elo-style update), which is exactly how large-scale human-preference leaderboards work",
+            "Cost tradeoff: ranking n candidates by pairwise comparison needs many more judge calls than pointwise scoring — fine for picking a best-of-k, expensive for grading a large static eval set",
+            "Most production eval pipelines use pointwise for regression tracking over time (needs an absolute scale to compare week over week) and pairwise for picking a winner between two specific candidates"
+          ],
+          "symbol": "arrow.up.arrow.down",
+          "table": null,
+          "id": "c56dcbce-818c-40cf-ac08-a0bb611ae516"
+        },
+        {
+          "kind": "comparison",
+          "title": "Three Grading Modes, Three Use Cases",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Mode",
+              "Judge sees",
+              "Output",
+              "Best for"
+            ],
+            "rows": [
+              [
+                "Pointwise",
+                "One response + rubric",
+                "Score (e.g. 1-10)",
+                "Tracking quality over time"
+              ],
+              [
+                "Pairwise",
+                "Two responses side by side",
+                "A / B / tie",
+                "Picking a winner, A/B testing prompts"
+              ],
+              [
+                "Reference-graded",
+                "Response + known-correct answer",
+                "Score or pass/fail",
+                "Factual QA, coding tasks with ground truth"
+              ]
+            ]
+          },
+          "id": "e301049a-ba1a-4e8d-a603-148d42ca3f9a"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Grading a Support Agent's Reply",
+          "body": "A prompt engineer changes the system prompt for a support bot and needs to know if replies actually got better.",
+          "bullets": [
+            "Judge prompt: 'Given this customer message and the agent's reply, score 1-5 on: (1) directly answers the question, (2) matches company tone, (3) doesn't invent policy details. Output JSON: {scores: [...], reasoning: ...}.'",
+            "Run both the old and new prompt's replies through the same judge on 200 held-out customer messages",
+            "The new prompt averages higher on 'answers the question' than the old — a real signal, but the judge's reasoning also flags that the new prompt occasionally invents a refund policy that doesn't exist, which the aggregate score alone would have hidden",
+            "Lesson: always spot-check the judge's written reasoning, not just its numeric score — the reasoning surfaces failure modes the number smooths over"
+          ],
+          "symbol": "bubble.left.and.text.bubble.right.fill",
+          "table": null,
+          "id": "d26534ad-c9b7-4eda-98ef-d00c2aa887d3"
+        },
+        {
+          "kind": "problem",
+          "title": "Where the Judge Itself Gets Fooled",
+          "body": null,
+          "bullets": [
+            "Position bias: in pairwise grading, judges tend to favor whichever answer is shown first — mitigate by grading each pair twice with the order swapped and checking for agreement",
+            "Verbosity bias: judges systematically rate longer answers as better even when they're not more correct, so a rubric that doesn't explicitly penalize padding gets gamed by it",
+            "Self-preference bias: a judge model tends to rate outputs written in its own family's style more favorably, which inflates scores when the same model family both generates and grades",
+            "A judge is not a substitute for held-out human spot-checks on a sample — treat judge scores as a fast, noisy first pass, not ground truth"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "0dc300fb-3b4b-4a5e-a765-c86faea06c72"
+        },
+        {
+          "kind": "takeaways",
+          "title": "When to Reach for an LLM Judge",
+          "body": null,
+          "bullets": [
+            "Use it for fast iteration signal — regression tracking, prompt A/B tests, filtering large generation sets down to a human-reviewable shortlist",
+            "Always randomize/swap presentation order in pairwise setups and read a sample of the judge's reasoning, not just the score",
+            "Don't use it as the sole gate for anything high-stakes (safety, compliance, medical/legal content) — keep a human in the loop there",
+            "Prefer a judge from a different model family than the one being graded, and re-validate the judge's agreement with humans on a small labeled sample before trusting it at scale"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "291b26c0-68a6-423b-8c43-e63860df2680"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What's the main reason pairwise grading tends to be more consistent than pointwise grading?",
+            "options": [
+              "Pairwise grading is always cheaper to run",
+              "Pairwise only requires a stable relative ordering, not a fixed absolute scale held steady across many calls",
+              "Pairwise grading doesn't require a rubric",
+              "Pointwise grading can only be used with reference answers"
+            ],
+            "correctIndex": 1,
+            "explanation": "Holding an absolute score (like 'is this an 8 or a 9') steady across hundreds of separate judge calls is harder than making one relative call ('which is better'), which is why pairwise comparisons tend to be more internally consistent.",
+            "id": "8b1e0546-b933-4e7d-a5ab-bd84f9044bf6"
+          },
+          {
+            "prompt": "A team uses the same model family to both generate responses and judge them, and notices judge scores are unusually high. What bias does this most likely illustrate?",
+            "options": [
+              "Position bias",
+              "Verbosity bias",
+              "Self-preference bias",
+              "Reference bias"
+            ],
+            "correctIndex": 2,
+            "explanation": "Self-preference bias is when a judge model rates outputs written in a style similar to its own family more favorably — a known reason to prefer a judge from a different model family than the one it's grading.",
+            "id": "be2fc35c-dafd-4c51-8c57-421d540d99d4"
+          },
+          {
+            "prompt": "Why should you read a judge model's written reasoning, not just its numeric score?",
+            "options": [
+              "The numeric score is always randomly generated",
+              "Reasoning is required by the schema and has no other purpose",
+              "The reasoning can surface specific failure modes (like an invented policy detail) that an aggregate score alone would hide",
+              "Numeric scores are never comparable across different judge calls"
+            ],
+            "correctIndex": 2,
+            "explanation": "In the worked example, the new prompt scored higher on average but the judge's reasoning revealed it occasionally invented a refund policy — a real regression the aggregate number alone wouldn't have surfaced.",
+            "id": "3b069cb0-43cf-459c-af12-0232ea488577"
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "Reciprocal Rank Fusion: Merging Keyword and Vector Search Without Retraining Anything",
       "subtitle": "Two ranked lists disagree — RRF trusts whichever document shows up strong in both, using nothing but rank position.",
       "category": "RAG",
@@ -10807,183 +10997,6 @@
           "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation"
         }
       ],
-      "publishedDate": "2026-08-01T00:42:30Z"
-    },
-    {
-      "id": "2c8014c4-4113-413b-9196-54ad2fe6a6d5",
-      "title": "Plan-and-Execute Agents: Think First, Then Act",
-      "subtitle": "Separating the plan from the acting turns a fragile single loop into something you can inspect and fix mid-run.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "ai-agents",
-        "agent-architecture",
-        "planning",
-        "orchestration",
-        "react"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "list.bullet.clipboard.fill",
-      "summary": "Plan-and-Execute splits an agent into two roles — a planner that writes out the full sequence of steps up front, and an executor that works through them one at a time, only re-planning when a step fails or surprises it. It trades ReAct's tight, adaptive loop for a plan that's cheaper to run and inspectable before it ever executes.",
-      "slides": [
-        {
-          "id": "88a2f9ed-7d8b-4588-9609-7045069f897f",
-          "kind": "cover",
-          "title": "What If the Agent Planned Before It Started Acting?",
-          "body": "ReAct-style agents decide their very next action one step at a time, from whatever the current state looks like. Plan-and-Execute takes a different bet: write the whole plan first, then work through it.",
-          "bullets": [],
-          "symbol": "list.bullet.clipboard.fill",
-          "table": null
-        },
-        {
-          "id": "bcdcd969-3e5d-4ff3-9ac1-abf0b86b0fd2",
-          "kind": "problem",
-          "title": "A Single Reason-Then-Act Loop Gets Lost on Long Tasks",
-          "body": "Deciding everything one step at a time has no memory of the overall shape of the task.",
-          "bullets": [
-            "Nothing holds a persistent view of the whole task — each decision is made from just the current state and history, so a long task can drift, repeat a step already done, or lose the original goal",
-            "Every single action costs a full reasoning call just to decide 'what's next', even on stretches where the sequence was obvious from the very first step",
-            "There's no artifact to review before execution starts — you only see what the agent actually did after the fact, in its trajectory, not what it intended to do"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "eab965a4-a038-415f-b70f-359094922fcd",
-          "kind": "solution",
-          "title": "Split the Job: A Planner Writes the Steps, an Executor Runs Them",
-          "body": "The plan is a concrete artifact, not an implicit byproduct of running the task.",
-          "bullets": [
-            "A planner call produces an ordered list of discrete steps up front — e.g. 'search flights → compare prices → book cheapest' — before any tool is touched",
-            "An executor then works through the plan step by step, calling the right tool for each one, without re-deciding the overall strategy at every turn",
-            "When a step fails or returns something unexpected, a re-planning call revises only the remaining steps — the original plan is a scaffold, not a contract carved in stone",
-            "Because the plan is an explicit list, a human can review or edit it before execution starts — something an implicit, step-by-step ReAct trajectory doesn't offer"
-          ],
-          "symbol": "checklist",
-          "table": null
-        },
-        {
-          "id": "507bdcf3-1901-4bc8-a6b1-331621076607",
-          "kind": "comparison",
-          "title": "ReAct vs. Plan-and-Execute",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "",
-              "ReAct",
-              "Plan-and-Execute"
-            ],
-            "rows": [
-              [
-                "Decides the next step",
-                "Every iteration, from current state",
-                "Upfront, as a full ordered list"
-              ],
-              [
-                "Reasoning cost per step",
-                "A full reasoning trace per action",
-                "One planning call, then lighter execution steps"
-              ],
-              [
-                "Reviewable before running",
-                "No — only visible after the fact",
-                "Yes — the plan is an inspectable artifact"
-              ],
-              [
-                "Handles surprises mid-task",
-                "Naturally — reasons after every observation",
-                "Needs an explicit re-planning trigger"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "55fd7242-549a-470f-b04e-d3c0d2a4a516",
-          "kind": "example",
-          "title": "Booking a Multi-City Trip on a Budget",
-          "body": "A user asks an agent to book a 3-city trip that fits under a fixed budget.",
-          "bullets": [
-            "The planner produces: 1) get flight options between the three cities 2) get hotel options per city under a nightly cap 3) sum total cost against the budget 4) book the cheapest combination that fits",
-            "The executor runs steps 1 and 2 by calling the flight and hotel search tools, then step 3 finds the total is 12% over budget",
-            "That failure triggers a re-planning call that swaps one hotel down a tier instead of aborting the whole trip — only the remaining steps change, not the completed searches",
-            "The executor then re-runs just the booking step against the revised plan, reusing the earlier search results instead of starting over"
-          ],
-          "symbol": "airplane",
-          "table": null
-        },
-        {
-          "id": "eb6c8735-c73c-4dd7-9ad1-4febb5f0ffd9",
-          "kind": "concept",
-          "title": "When the Overhead of Planning Isn't Worth It",
-          "body": "Plan-and-Execute isn't a strict upgrade over ReAct — it trades adaptiveness for structure.",
-          "bullets": [
-            "For a short task (one or two tool calls), the extra planning call is pure overhead — ReAct's simpler loop wins on both latency and cost",
-            "A stale plan is worse than no plan — if the executor blindly follows steps without checking whether earlier assumptions still hold, it can barrel through outdated instructions",
-            "It needs a real re-planning trigger (a failure detector or step-level check) — without one, 'plan-and-execute' quietly degrades into 'plan-and-hope'",
-            "It works best when a task decomposes cleanly into named sub-goals; for exploratory tasks where the right next step depends entirely on what was just discovered, ReAct's tighter loop adapts faster"
-          ],
-          "symbol": "exclamationmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "4c2d68ad-6dd9-4c85-8225-095489804d45",
-          "kind": "takeaways",
-          "title": "Plan Up Front, Re-Plan on Surprise",
-          "body": null,
-          "bullets": [
-            "Plan-and-Execute separates deciding the strategy (planner) from carrying it out (executor), instead of re-deciding everything at every step like ReAct",
-            "The plan is a concrete, inspectable artifact — a human or a validator can review it before any tool runs",
-            "Re-planning, not blind execution, is what makes it robust — the plan is a scaffold that gets revised when reality disagrees with it",
-            "It shines on long, decomposable tasks; for short or highly exploratory ones, ReAct's tighter reason-act loop is usually the better fit"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e43dd1d4-4bc3-48fd-b157-0b3c8b92c17a",
-            "prompt": "What is the key structural difference between ReAct and Plan-and-Execute?",
-            "options": [
-              "ReAct never uses tools; Plan-and-Execute always does",
-              "ReAct decides the next action one step at a time; Plan-and-Execute writes an ordered plan upfront and then executes it",
-              "Plan-and-Execute doesn't use an LLM for execution",
-              "They are the same pattern with different names"
-            ],
-            "correctIndex": 1,
-            "explanation": "ReAct interleaves reasoning and acting step by step. Plan-and-Execute front-loads the reasoning into a full plan, then runs an executor through it, only re-reasoning when needed."
-          },
-          {
-            "id": "703860be-7685-48af-b2b7-5946e3582f9c",
-            "prompt": "What keeps a Plan-and-Execute agent from blindly running a plan that's become outdated mid-task?",
-            "options": [
-              "Nothing — the plan is fixed once written",
-              "The executor re-runs the planner from scratch after every single step",
-              "An explicit re-planning trigger that revises the remaining steps when a step fails or surprises it",
-              "The user must manually restart the agent"
-            ],
-            "correctIndex": 2,
-            "explanation": "A re-planning step is what keeps the pattern robust — without one, a stale plan just gets executed anyway, which is worse than having no plan at all."
-          },
-          {
-            "id": "5a0a95f9-dfc5-480c-840d-9063f57f0be5",
-            "prompt": "When does ReAct's approach tend to beat Plan-and-Execute?",
-            "options": [
-              "On long tasks with ten or more clearly named sub-goals",
-              "When a human needs to review the full strategy before any tool call runs",
-              "On short tasks or highly exploratory ones where the right next step depends on what was just discovered",
-              "Plan-and-Execute always wins regardless of task shape"
-            ],
-            "correctIndex": 2,
-            "explanation": "For short tasks, planning is pure overhead; for exploratory tasks, the next step genuinely depends on the latest observation, which favors ReAct's tighter reason-then-act loop over a plan fixed upfront."
-          }
-        ]
-      },
-      "references": [],
       "publishedDate": "2026-08-01T00:42:30Z"
     }
   ]
