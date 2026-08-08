@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "title": "Reciprocal Rank Fusion: Merging Keyword and Vector Search Without Retraining Anything",
+      "subtitle": "Two ranked lists disagree — RRF trusts whichever document shows up strong in both, using nothing but rank position.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "hybrid-search",
+        "reciprocal-rank-fusion",
+        "vector-search",
+        "bm25",
+        "retrieval"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.merge",
+      "summary": "Reciprocal Rank Fusion (RRF) merges results from different retrievers — like BM25 keyword search and a vector index — into one ranked list using only each document's rank position, never its raw score. That sidesteps the problem of comparing an unbounded BM25 score to a bounded cosine similarity, needs no training or tuning, and is the standard default for hybrid search in modern RAG pipelines.",
+      "body": null,
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "One Query, Two Rankers, One List",
+          "body": "Reciprocal Rank Fusion (RRF) combines a keyword search's ranking and a vector search's ranking into a single ordering — using only each document's rank position, never its raw score.",
+          "bullets": [],
+          "symbol": "arrow.triangle.merge",
+          "table": null,
+          "id": "d9e3c4fb-5135-41c6-b727-a30036ae306d"
+        },
+        {
+          "kind": "problem",
+          "title": "Keyword Search and Vector Search Fail in Opposite Ways",
+          "body": null,
+          "bullets": [
+            "BM25 keyword search nails exact terms — SKUs, error codes, proper nouns — but misses a query phrased differently than the document ('laptop won't turn on' vs. a doc that says 'device fails to power up')",
+            "Dense vector search catches that paraphrase because it matches meaning, but can bury a document containing the literal rare token the user typed, since embeddings smooth rare tokens into a general semantic neighborhood",
+            "Picking one system as your only retriever means picking one of these failure modes on every single query"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "b7b74e79-2b88-4abb-82d7-c18ab7824605"
+        },
+        {
+          "kind": "solution",
+          "title": "Fuse by Rank, Not by Score",
+          "body": "The obvious fix — average the two systems' raw scores — breaks immediately: BM25 scores are unbounded term-frequency statistics, cosine similarity is bounded in [-1,1], and neither is calibrated against the other.",
+          "bullets": [
+            "RRF sidesteps calibration entirely: for each ranked list, keep each document's rank position (1st, 2nd, 3rd…) and throw the raw score away",
+            "Formula: RRF(d) = Σ 1 / (k + rank_r(d)) — summed over every ranked list r that contains document d",
+            "k is a small constant that dampens how much a #1 spot dominates a #10 spot; the original 2009 paper and most implementations (including Elasticsearch's default) use k=60",
+            "A document that never appears in a given list simply contributes 0 from that list — no penalty term needed"
+          ],
+          "symbol": "function",
+          "table": null,
+          "id": "92b1b6e0-8973-4414-9393-88a11f6c0d79"
+        },
+        {
+          "kind": "concept",
+          "title": "Why Rank Beats Score Here",
+          "body": "Rank position is already a comparable, unit-free number across any retriever — a BM25 rank of 3 and a vector rank of 3 mean the same thing ('third-best'), even though a BM25 score of 3 and a cosine score of 3 mean nothing comparable.",
+          "bullets": [
+            "This makes RRF a drop-in fusion for any pair (or trio+) of rankers — swap BM25 for SPLADE, or add a third reranked list — with zero retuning",
+            "The 1/(k+rank) shape is deliberately convex: moving from rank 1→2 costs more than moving from rank 20→21, so agreement near the top of the lists matters most",
+            "No training, no learned weights — it's a fixed formula applied at query time, unlike learned fusion methods that need labeled query-document pairs"
+          ],
+          "symbol": "chart.line.downtrend.xyaxis",
+          "table": null,
+          "id": "74d4b23b-1c00-4462-a972-7c8a24669e40"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Fusing Two 5-Item Lists (k=60)",
+          "body": "A query returns these two ranked lists of document IDs:",
+          "bullets": [
+            "BM25 order: D3, D1, D7, D2, D5 → D1 sits at rank 2, contributing 1/62 ≈ 0.0161",
+            "Vector order: D1, D2, D9, D3, D6 → D1 sits at rank 1, contributing 1/61 ≈ 0.0164",
+            "D1's total RRF score: 0.0161 + 0.0164 ≈ 0.0325 — the highest of any document in the fused list",
+            "D3 was BM25's #1 pick (1/61 ≈ 0.0164) but only rank 4 in vector search (1/64 ≈ 0.0156), totaling ≈0.0320 — just enough to lose the top spot to D1, which was strong (though not #1) in BOTH lists"
+          ],
+          "symbol": "list.number",
+          "table": null,
+          "id": "cb2b816d-46be-46d7-855a-3f52729f30bf"
+        },
+        {
+          "kind": "comparison",
+          "title": "What Each Retriever Alone Misses",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Query type",
+              "BM25 alone",
+              "Vector alone",
+              "BM25 + RRF"
+            ],
+            "rows": [
+              [
+                "Exact SKU / error code",
+                "Finds it",
+                "Often buried",
+                "Keeps it"
+              ],
+              [
+                "Paraphrased / synonym query",
+                "Often misses",
+                "Finds it",
+                "Keeps it"
+              ],
+              [
+                "Add a third retriever later",
+                "N/A",
+                "N/A",
+                "Just sum in a third ranked list"
+              ]
+            ]
+          },
+          "id": "5997061e-a53a-43e0-a4a0-d7d493250e43"
+        },
+        {
+          "kind": "problem",
+          "title": "Where RRF Falls Short",
+          "body": null,
+          "bullets": [
+            "It only ever reorders documents that at least one retriever already surfaced — if both BM25 and vector search miss a relevant doc entirely, RRF can't recover it",
+            "The constant k is a blunt global knob; it doesn't adapt per query, even when one retriever is obviously more trustworthy for that specific query",
+            "It ignores confidence magnitude — a retriever that's barely sure about its #1 result counts exactly as much as one that's very sure, since only rank position is used",
+            "It's not a substitute for a cross-encoder reranker: RRF is a cheap way to merge candidate lists, but a reranker that reads query and document together usually beats RRF-only ordering on the final top-k"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "0d70e57f-cd16-40de-be4a-01abffb9e031"
+        },
+        {
+          "kind": "takeaways",
+          "title": "When to Reach for RRF",
+          "body": null,
+          "bullets": [
+            "Default choice for combining BM25 and vector search in a RAG pipeline — a few lines of code, no training data required, robust to differently-scaled retrievers",
+            "Use it to merge candidate lists BEFORE an expensive reranker, not as a replacement for one — RRF for cheap fusion, reranker for final precision",
+            "Tune k only if eval data shows it matters — k=60 is a reasonable default most systems never need to change",
+            "If one retriever is simply broken, RRF will still be dragged down by it — fix or drop the bad retriever rather than trying to fuse around it"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "c8b01d25-94ae-4980-91dc-3c6b5c3c9ec6"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does RRF actually use to combine rankings from different retrievers?",
+            "options": [
+              "Each retriever's raw similarity/relevance score",
+              "Only the rank position of each document within each list",
+              "A machine-learned weight trained on labeled query-document pairs",
+              "The number of query terms each document contains"
+            ],
+            "correctIndex": 1,
+            "explanation": "RRF deliberately discards raw scores because they're not comparable across retrievers (unbounded BM25 term-frequency scores vs. bounded cosine similarity). Using only rank position sidesteps that calibration problem entirely.",
+            "id": "84c85ef4-515a-46f6-a387-fc76c7f9160b"
+          },
+          {
+            "prompt": "In RRF(d) = Σ 1/(k + rank_r(d)), what does increasing the constant k do?",
+            "options": [
+              "Disqualifies documents ranked below k",
+              "Flattens the curve, reducing how much a #1 rank dominates over a lower rank",
+              "Converts vector search into keyword search",
+              "Requires re-training the retriever"
+            ],
+            "correctIndex": 1,
+            "explanation": "A larger k shrinks the relative gap between 1/(k+1) and 1/(k+10), so top ranks matter less relative to lower ones. Most systems use k=60 as a default that avoids letting the #1 slot completely dominate the fused score.",
+            "id": "6186846e-eaa9-41e0-8c8d-d17967bbb012"
+          },
+          {
+            "prompt": "In the worked example, why did D1 (rank 2 in BM25, rank 1 in vector) outrank D3 (rank 1 in BM25, rank 4 in vector)?",
+            "options": [
+              "D1 had a higher raw BM25 score",
+              "RRF always prefers whichever document is #1 in the vector list",
+              "D1's summed rank-based score across both lists was higher — being strong in both beat being #1 in only one",
+              "D3 was excluded for not appearing in enough lists"
+            ],
+            "correctIndex": 2,
+            "explanation": "RRF sums each list's contribution. D1's two solid-but-not-top ranks (2nd and 1st) summed to a higher score than D3's single #1 rank plus a mediocre 4th-place rank elsewhere — exactly the behavior that makes fusion valuable: a consistent runner-up can beat a list's top pick.",
+            "id": "e93fcea6-4b8a-42d1-8e54-f49b3fdf4d05"
+          }
+        ]
+      },
+      "references": [],
+      "id": "ee079e77-648d-494f-9350-fdc0a4c8c7a5",
+      "publishedDate": "2026-08-08T06:41:43Z"
+    },
+    {
       "title": "Knowledge Distillation: Training a Small Model to Copy a Big One",
       "subtitle": "The teacher doesn't hand over its weights — it hands over its uncertainty, and that's the part that actually teaches.",
       "category": "LLMs",
@@ -10795,189 +10985,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-01T00:42:30Z"
-    },
-    {
-      "id": "aef78a09-4bdf-4354-bf50-7676e64aaadc",
-      "title": "Can AI Agents Actually Do Open-Ended Research?",
-      "subtitle": "Princeton gave agents unpublished papers to reproduce. The original authors graded the results.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "ai-agents",
-        "agent-evaluation",
-        "ai-research",
-        "llm-agents",
-        "shadow-evaluation"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "person.crop.circle.badge.questionmark",
-      "summary": "Researchers gave frontier AI agents the central research question from two unpublished NeurIPS 2026 submissions — six days, thousands of dollars of compute, no human help — then had the papers' original authors blind-grade the agents' write-ups. The agents executed all the engineering flawlessly but produced two papers that were unambiguously rejected, exposing five recurring failure modes in research judgment rather than research execution.",
-      "publishedDate": "2026-07-31T18:42:04Z",
-      "slides": [
-        {
-          "id": "9686a5f9-1b5b-4ee6-bb6e-2e1a169276f7",
-          "kind": "cover",
-          "title": "Agents can run the experiment. Can they design the study?",
-          "body": "Peter Kirgis, Sayash Kapoor, and Andrew Schwartz (arXiv 2607.27191, July 29, 2026) tested something almost nobody had measured: not whether an agent can pass a benchmark, but whether it can do open-ended science.",
-          "bullets": [],
-          "symbol": "person.crop.circle.badge.questionmark",
-          "table": null
-        },
-        {
-          "id": "e56d3b05-3e77-4d01-b7c0-5fd16b96a83e",
-          "kind": "problem",
-          "title": "Most agent evals hide the hardest part of research",
-          "body": "Coding benchmarks like SWE-bench have a ground truth: tests pass or they don't. Real research has no such oracle.",
-          "bullets": [
-            "Choosing which hypothesis is worth testing isn't a lookup — there's no labeled answer key",
-            "Deciding what counts as 'enough evidence' to claim a result is a judgment call, not a metric",
-            "Recognizing that an approach is failing — and pivoting — is exactly what narrow, verifiable tasks never require",
-            "So a model can top every coding leaderboard and still never have been tested on this"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "0e3d0899-90f5-43cf-bf1e-ffd3848f614a",
-          "kind": "solution",
-          "title": "The method: 'shadow evaluations' against real unpublished work",
-          "body": "Instead of inventing a synthetic task, the team borrowed the research question from two genuine unpublished NeurIPS 2026 submissions before they were public.",
-          "bullets": [
-            "A frontier agent got the paper's central open-ended question, $3,000 in API/GPU credits, and six days of autonomous runtime",
-            "No human intervened — the agent had to pick its own experiments, write its own analysis, and produce its own paper",
-            "The ORIGINAL human authors of the source papers then graded the agent's write-up blind, exactly as a peer reviewer would",
-            "That's the trick: the grader already knows what a genuinely good answer to this specific question looks like"
-          ],
-          "symbol": "flask",
-          "table": null
-        },
-        {
-          "id": "3a43aa53-0139-4c45-a68a-f5c708f4254f",
-          "kind": "example",
-          "title": "What actually happened in the two case studies",
-          "body": "The agents didn't stall on plumbing — they stalled on the science.",
-          "bullets": [
-            "Both agents built working pipelines, ran real experiments, and wrote complete papers entirely unassisted",
-            "Neither produced a result that moved the underlying research question forward",
-            "Both AI-written papers were unambiguously rejected by the same authors whose unpublished work they were shadowing",
-            "The gap wasn't 'the code didn't run' — it was 'the conclusions didn't hold up'"
-          ],
-          "symbol": "xmark.seal",
-          "table": null
-        },
-        {
-          "id": "0ca5cd5e-3348-48a9-b02d-c7cf88bf2928",
-          "kind": "comparison",
-          "title": "Five failure modes, and none of them are engineering bugs",
-          "body": "The paper's core contribution is naming what goes wrong when an agent is left to its own judgment.",
-          "bullets": [],
-          "symbol": "list.bullet.clipboard",
-          "table": {
-            "headers": [
-              "Failure mode",
-              "What it looked like"
-            ],
-            "rows": [
-              [
-                "Poor publication judgment",
-                "Treated a weak or partial result as if it cleared the bar for a real finding"
-              ],
-              [
-                "Uncreative problem-solving",
-                "When the original research design had a flaw, patched around it instead of rethinking it"
-              ],
-              [
-                "Ineffective backtracking",
-                "Kept pushing a failing approach instead of abandoning it for a different angle"
-              ],
-              [
-                "Poor resource awareness",
-                "Spent its six-day, $3,000 budget without tracking whether it was still on a path to a result"
-              ],
-              [
-                "Instruction drift",
-                "Gradually wandered from the actual research question over the course of the run"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "5ad204a4-5885-4b61-9f52-5cf8c8fc4861",
-          "kind": "concept",
-          "title": "Two case studies is evidence, not a verdict",
-          "body": "The authors frame this explicitly as early evidence — worth reading carefully rather than as a permanent ceiling on agent capability.",
-          "bullets": [
-            "N=2 shadow evaluations; the sample is intentionally small because each one costs thousands of dollars and a week of setup",
-            "Results reflect the specific frontier models available in July 2026 — this is a snapshot, not a law",
-            "It doesn't test every kind of 'research' — just open-ended empirical work in AI, with a specific narrow definition of success (would the original authors accept it?)",
-            "The honest reading: agents have crossed the engineering bar for research but not the judgment bar — and those are measurably different skills"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "124221d5-865c-4569-90f4-68eb612e3cda",
-          "kind": "takeaways",
-          "title": "Where this leaves agentic research today",
-          "body": null,
-          "bullets": [
-            "Agents are trustworthy for the mechanical half of research: writing the code, running the experiment, producing the write-up",
-            "They are not yet trustworthy for the judgment half: picking the right question, knowing when evidence is sufficient, knowing when to change course",
-            "If you're deploying an agent on open-ended work, put a human in the loop specifically at those three judgment points — not just for code review",
-            "Watch this space: shadow evaluations against real unpublished work are a much harder bar than any existing benchmark, and worth tracking as models improve"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a26e8b2e-82e6-43c7-bde7-4d1caca9f93f",
-            "prompt": "What is a 'shadow evaluation' in this study's methodology?",
-            "options": [
-              "An agent competes anonymously against a human on the same task",
-              "An agent tackles the exact research question of a real unpublished paper, then that paper's original authors grade the agent's output",
-              "Two agents grade each other's work without human involvement",
-              "An agent's output is compared only against automated metrics like BLEU or accuracy"
-            ],
-            "correctIndex": 1,
-            "explanation": "The 'shadow' in shadow evaluation is the agent working in parallel to real, unpublished research — its output is judged by the people who already know what a genuinely good answer looks like, which is a much harder bar than a generic rubric."
-          },
-          {
-            "id": "e7991b9f-1b4b-4857-9a3a-6057a4580569",
-            "prompt": "What happened to the two AI-generated papers in the case studies?",
-            "options": [
-              "Both were accepted at NeurIPS 2026 with minor revisions",
-              "One was accepted, one was rejected",
-              "Both were unambiguously rejected by the original human authors",
-              "The authors couldn't distinguish them from their own drafts"
-            ],
-            "correctIndex": 2,
-            "explanation": "Despite the agents completing all the engineering work unassisted, both write-ups were unambiguously rejected — the failure was in research judgment, not execution."
-          },
-          {
-            "id": "5924ea45-7989-4bad-860e-ec0870cf54ef",
-            "prompt": "Which of these was NOT one of the five failure modes identified?",
-            "options": [
-              "Ineffective backtracking from a failing approach",
-              "Instruction drift away from the original research question",
-              "Inability to write or execute working code",
-              "Poor judgment about the bar for publishable research"
-            ],
-            "correctIndex": 2,
-            "explanation": "The agents' code and experiments ran fine — that's exactly what makes the result notable. All five real failure modes were about judgment (what to try, when to stop, what counts as enough), not about engineering competence."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "75db19ef-e4a3-4e0f-a052-329f8435c063",
-          "title": "Can AI agents conduct open-ended AI research? Early evidence from two case studies (arXiv 2607.27191)",
-          "url": "https://arxiv.org/abs/2607.27191"
-        }
-      ]
     }
   ]
 }
