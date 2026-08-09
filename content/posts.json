@@ -1,6 +1,212 @@
 {
   "posts": [
     {
+      "id": "9ba7bb09-b782-4e68-b10b-05fa01843ea0",
+      "title": "Decoding Strategies: How an LLM Actually Picks Its Words",
+      "subtitle": "Temperature, top-k, and top-p aren't three separate settings — they're one filter chain applied in sequence",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "decoding",
+        "sampling",
+        "temperature",
+        "top-p",
+        "llm-inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "dice.fill",
+      "summary": "An LLM outputs a probability distribution over its whole vocabulary for every token, not a single answer. Decoding strategies decide how that distribution turns into an actual word: temperature reshapes it, top-k/top-p/min-p cut off the unreliable tail, and only then does sampling happen. Get the combination wrong and you get either robotic repetition or confident nonsense.",
+      "slides": [
+        {
+          "id": "077a9007-dc59-4b97-92d0-35b810dc2442",
+          "kind": "cover",
+          "title": "Every Generated Word Is a Dice Roll You Can Rig",
+          "body": "An LLM doesn't 'decide' what to say next — it outputs a probability over its entire vocabulary, and a decoding strategy picks one token from that distribution. Temperature, top-k, and top-p are the knobs that shape which dice you're rolling.",
+          "bullets": [],
+          "symbol": "dice.fill"
+        },
+        {
+          "id": "d24701c8-5216-486e-85bf-00ba33d98a52",
+          "kind": "problem",
+          "title": "Greedy Decoding Is Fast but Predictably Boring",
+          "bullets": [
+            "Always picking the single highest-probability token (greedy / argmax) is deterministic and cheap, but produces repetitive, generic text — the same phrasing every time",
+            "Pure random sampling from the full distribution goes too far the other way: with 50k-100k+ tokens in the vocabulary, the long tail includes genuinely bad next tokens that occasionally get picked, producing incoherent output",
+            "Neither extreme is usable in production — you need to keep some randomness for variety without ever sampling from the garbage tail"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "85d6e3a1-2d07-4727-b160-51ecd33555d7",
+          "kind": "solution",
+          "title": "Temperature Reshapes the Distribution Before You Sample",
+          "body": "Temperature (T) divides the logits before the softmax: softmax(logits / T). T < 1 sharpens the distribution toward the top tokens; T > 1 flattens it toward uniform; T = 1 leaves it unchanged.",
+          "bullets": [
+            "T → 0: distribution collapses toward argmax — effectively greedy, deterministic, repetitive",
+            "T ≈ 0.7-0.9: common production default — enough sharpening to stay coherent, enough spread to vary across calls",
+            "T > 1.2: the distribution flattens enough that low-probability, often nonsensical tokens become live options — output visibly degrades",
+            "Temperature alone never removes bad tokens from consideration — it only reweights every token's odds, including the terrible ones"
+          ],
+          "symbol": "thermometer.medium"
+        },
+        {
+          "id": "876ab438-1dbe-41d3-9d68-3759c3ff7254",
+          "kind": "concept",
+          "title": "Top-k, Top-p, and Min-p Actually Cut Off the Tail",
+          "bullets": [
+            "Top-k: keep only the k highest-probability tokens, zero out the rest, renormalize, then sample — simple, but a fixed k is the wrong size for both very peaked and very flat distributions",
+            "Top-p (nucleus sampling): sort tokens by probability and keep adding them until cumulative probability crosses p (e.g. 0.9), then sample only from that set — the set size adapts per step instead of staying fixed",
+            "Min-p: keep tokens whose probability is at least p times the top token's probability — scales directly with how confident the model is at that step",
+            "These are filters applied AFTER temperature scaling, not instead of it — a real request stacks temperature, then a cutoff rule, then samples"
+          ],
+          "symbol": "slider.horizontal.3"
+        },
+        {
+          "id": "ad4de654-f276-4868-bc5b-b699ed71c9ab",
+          "kind": "example",
+          "title": "Worked Example: One Distribution, Four Outcomes",
+          "body": "Prompt: 'The capital of France is'. Say the model's next-token probabilities look like: Paris 0.62, a 0.15, located 0.08, definitely 0.06, and a long tail of ~50k other tokens sharing the remaining 0.09.",
+          "bullets": [
+            "Greedy (T→0): always outputs \"Paris\" — correct, but zero variation across repeated calls",
+            "T=1, top-p=0.9: nucleus = {Paris, a, located, definitely} (cumulative ≈0.91) — every sample lands on a sensible continuation",
+            "T=1, no cutoff: the full tail stays in play, so roughly 9% of calls sample from that ~50k-token tail — occasional non-sequiturs",
+            "T=1.5, no cutoff: flattening makes that unsafe tail even more likely to get picked — visibly worse coherence"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Config",
+              "What gets sampled"
+            ],
+            "rows": [
+              [
+                "Greedy (T→0)",
+                "Always \"Paris\" — fully deterministic"
+              ],
+              [
+                "T=1, top-p=0.9",
+                "Only from {Paris, a, located, definitely}"
+              ],
+              [
+                "T=1, no cutoff",
+                "~9% chance of a low-probability, odd token"
+              ],
+              [
+                "T=1.5, no cutoff",
+                "Flattened distribution makes that tail even likelier"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "cbd819c3-d34b-4370-8d11-89fed442d3ad",
+          "kind": "comparison",
+          "title": "Top-k vs Top-p vs Min-p",
+          "table": {
+            "headers": [
+              "",
+              "Top-k",
+              "Top-p (nucleus)",
+              "Min-p"
+            ],
+            "rows": [
+              [
+                "Cutoff rule",
+                "Fixed count k",
+                "Cumulative probability p",
+                "Relative to top token's probability"
+              ],
+              [
+                "Adapts to model confidence?",
+                "No — always exactly k tokens",
+                "Yes — nucleus shrinks or grows per step",
+                "Yes — scales with top-token confidence"
+              ],
+              [
+                "Typical default",
+                "k = 40-50",
+                "p = 0.9-0.95",
+                "p = 0.05-0.1"
+              ],
+              [
+                "Weak point",
+                "Too small on flat distributions, too large on peaked ones",
+                "Can still admit a long tail when probabilities are nearly flat",
+                "Newer — fewer battle-tested framework defaults"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "131d1559-5222-453e-a549-e4f39d54681c",
+          "kind": "takeaways",
+          "title": "When Defaults Bite You",
+          "bullets": [
+            "Setting temperature=0 in most APIs doesn't guarantee identical output across calls — floating-point non-determinism and batching on the server side can still cause small variation",
+            "Combining aggressive settings (high temperature AND high top-p AND no top-k) removes every safety net at once — that's when generation goes off the rails",
+            "For reliability-critical tasks (function calling, structured JSON, code), use low temperature and a tight top-p; for creative writing or brainstorming, open both up",
+            "Repetition/frequency penalty is a separate mechanism — it penalizes tokens already used in the output, not the per-step distribution shape. Don't confuse it with temperature or top-p"
+          ],
+          "symbol": "exclamationmark.bubble.fill"
+        },
+        {
+          "id": "ee24ba27-200f-4e83-a738-61c1d7439a2e",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Decoding = reshape the distribution (temperature) → cut off the tail (top-k / top-p / min-p) → sample",
+            "Lower temperature and tighter cutoffs for correctness-critical tasks; higher and looser for creative variety",
+            "Top-p adapts to the model's per-step confidence in a way a fixed top-k can't — it's the more common production default today",
+            "None of these settings change what the model 'knows' — they only change how much randomness you let it express"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "75d86cd7-ad8c-4f7f-be90-149d8a83e604",
+            "prompt": "What does temperature actually do to the model's output probabilities?",
+            "options": [
+              "It removes low-probability tokens from consideration entirely",
+              "It divides the logits before the softmax, sharpening (T<1) or flattening (T>1) the distribution",
+              "It only affects the first token generated",
+              "It retrains the model's weights for that request"
+            ],
+            "correctIndex": 1,
+            "explanation": "Temperature rescales logits before softmax — it never deletes tokens, it just reweights every token's relative odds. Cutting off unlikely tokens entirely is a separate job, done by top-k, top-p, or min-p."
+          },
+          {
+            "id": "0804717d-34c6-410b-92b5-d49353a396ee",
+            "prompt": "Why does top-p (nucleus sampling) often beat a fixed top-k in practice?",
+            "options": [
+              "It's cheaper to compute",
+              "Its candidate set size adapts to the model's confidence at each step, instead of always keeping exactly k tokens",
+              "It guarantees fully deterministic output",
+              "It doesn't require sorting the probabilities"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-k always keeps the same number of candidates no matter how peaked or flat the distribution is. Top-p keeps growing the candidate set only until cumulative probability crosses p, so it naturally shrinks when the model is confident and grows when it's uncertain."
+          },
+          {
+            "id": "0ac36b1e-d6d3-42b7-8638-061ecb07c0ba",
+            "prompt": "You're building a function-calling agent that must output valid, parseable JSON. Which decoding setup fits best?",
+            "options": [
+              "High temperature, high top-p, no top-k — maximize creativity",
+              "Low temperature and a tight top-p — minimize randomness so output stays consistent and parseable",
+              "Temperature is irrelevant to JSON validity",
+              "Always use the highest available temperature regardless of task"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reliability-critical tasks like structured extraction or function calling want low variance: low temperature plus a tight top-p keeps sampling close to the model's most confident path, reducing the chance a stray token derails the format."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-09T12:40:16Z"
+    },
+    {
       "id": "b7e68530-7911-4323-90a5-dddccd83d9ba",
       "title": "Contextual Retrieval: Fixing RAG's Context-Free Chunks",
       "subtitle": "A short LLM-written blurb per chunk can cut retrieval failures by up to two-thirds",
@@ -10851,173 +11057,6 @@
           "id": "e524e67f-fc31-4dac-bfa2-cf13ef604451",
           "title": "PhiZero: A World Model Built Around Physical Language",
           "url": "https://arxiv.org/abs/2607.28624"
-        }
-      ],
-      "publishedDate": "2026-08-01T18:43:07Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "7e922a79-fb48-4b95-b437-a1e9d910e9ac",
-      "title": "Context Rot: Why a Bigger Context Window Isn't a Bigger Budget",
-      "subtitle": "Every frontier model tested gets measurably worse as you fill up its context — long before you hit the token limit",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "long context",
-        "context engineering",
-        "llm evaluation",
-        "attention",
-        "rag"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "chart.line.downtrend.xyaxis",
-      "summary": "Context rot is the measurable drop in an LLM's output quality as input length grows — even well inside the model's stated context limit. Chroma's research testing 18 frontier models found every one degrades non-uniformly, with accuracy drops of 30-50% well before the documented ceiling, driven by lost-in-the-middle attention patterns and quadratic attention dilution. The fix isn't a bigger window; it's treating context as a curated budget.",
-      "slides": [
-        {
-          "id": "62e1e6f6-8da0-4bf1-9670-2c0f9507cf77",
-          "bullets": [
-            "Tested at every input-length increment, not just at the documented maximum",
-            "Degradation happens well before the model hits its stated context limit",
-            "This isn't one model's flaw — it showed up across every frontier model tested"
-          ],
-          "body": "It's tempting to treat a large context window like free storage: just put everything in and let the model sort it out. Chroma Research tested that assumption across 18 frontier models — including GPT-4.1, Claude Opus 4, and Gemini 2.5 — and found every single one degrades as input length grows.",
-          "symbol": "chart.line.downtrend.xyaxis",
-          "table": null,
-          "kind": "cover",
-          "title": "A 1M-token window doesn't mean 1M tokens of equal attention"
-        },
-        {
-          "id": "8aa92bd2-6287-4199-8f10-0958a579ccca",
-          "bullets": [
-            "For coding agents specifically, context rot is described as the primary failure mode, not an edge case",
-            "The drop is non-uniform: it's not a smooth, predictable decline, so it's easy to miss in casual testing",
-            "A model can pass a short-context version of a task and fail the identical task once padded with unrelated context"
-          ],
-          "body": "Developers routinely stuff entire codebases, chat histories, or document sets into context, assuming a bigger window only helps. But accuracy on the same task can drop 30-50% purely from adding more (even relevant) surrounding text — not from the answer becoming harder to find.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "The intuition 'more context = strictly better' is wrong"
-        },
-        {
-          "id": "bb6ac81f-52ef-461a-a182-76276fe775b6",
-          "bullets": [
-            "Lost-in-the-middle: models attend well to the start and end of context but poorly to the middle, producing accuracy drops of 30%+ when the relevant information sits mid-context",
-            "Attention dilution: self-attention is quadratic in sequence length — 100K tokens means roughly 10 billion pairwise token relationships competing for the same fixed 'attention budget'",
-            "Together they mean position, not just presence, determines whether the model actually uses a piece of context"
-          ],
-          "body": "Context rot isn't mysterious — it traces to two structural properties of how transformers process long sequences.",
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "kind": "concept",
-          "title": "Two mechanisms, one outcome"
-        },
-        {
-          "id": "f1428073-7830-4910-a6ed-cb96eb10f6cf",
-          "bullets": [
-            "The constraint didn't change; only its position in context did",
-            "This is why agent frameworks increasingly re-inject critical instructions near the end of long-running sessions",
-            "The same effect explains why RAG systems that dump 20 retrieved chunks in the middle of a prompt can underperform ones that surface the top 3 clearly"
-          ],
-          "body": "Imagine a 200-turn coding-agent session where message #3 states a hard constraint: 'always run the test suite before committing.' By turn 150, that instruction is now deep in the middle of a long context — and lost-in-the-middle attention means the agent is measurably more likely to skip it than if the same instruction had been restated near the end.",
-          "symbol": "text.magnifyingglass",
-          "table": null,
-          "kind": "example",
-          "title": "A buried instruction gets silently dropped"
-        },
-        {
-          "id": "3fae5768-ba13-4595-adc8-7b3ffa70bb34",
-          "bullets": [],
-          "body": "The practical fork in the road: treat the context window as unlimited storage, or treat it as a scarce, positioned resource.",
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "Strategy",
-              "What happens",
-              "When it breaks down"
-            ],
-            "rows": [
-              [
-                "Stuff everything into context",
-                "Simple to implement, no retrieval step needed",
-                "Accuracy drops 30-50% as irrelevant/mid-buried content accumulates"
-              ],
-              [
-                "Retrieve + curate before prompting",
-                "Only relevant chunks enter context, positioned deliberately",
-                "Adds retrieval-quality as a new dependency; recall matters"
-              ],
-              [
-                "Periodic compaction/summarization",
-                "Keeps long-running agent sessions short and current",
-                "Risks summarizing away a detail that turns out to matter later"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Stuffing context vs. curating it"
-        },
-        {
-          "id": "222aea4f-6c32-4a50-a520-6ccf85fc754c",
-          "bullets": [
-            "Prefer retrieval over stuffing: put only what's relevant into context, not everything that might be",
-            "Place critical instructions and facts near the start or end of context, not buried in the middle",
-            "For long-running agents, periodically compact or summarize context rather than letting it grow unbounded",
-            "Don't assume a documented context limit is a performance guarantee — test task accuracy at the input lengths you'll actually use"
-          ],
-          "body": "The fix for context rot isn't a bigger model or a bigger window — both still exhibit the same pattern. It's discipline about what goes in and where.",
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "Treat the context window as a budget, not a bucket"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "2d726605-c62f-44ca-a4f1-6b5c7f0d435f",
-            "prompt": "What did Chroma's research find when testing 18 frontier LLMs across increasing input lengths?",
-            "options": [
-              "Performance stayed flat until the exact documented context limit was reached",
-              "Every model tested showed measurable performance degradation as input length grew, well before hitting the stated limit",
-              "Only smaller, less capable models showed degradation",
-              "Longer context always improved accuracy"
-            ],
-            "correctIndex": 1,
-            "explanation": "The research found this pattern across every model tested, including top frontier models like GPT-4.1, Claude Opus 4, and Gemini 2.5 — degradation is a structural property of how these models process long context, not a gap specific to weaker models."
-          },
-          {
-            "id": "049c8bf4-3537-44d2-8bed-f8a45acfcb5a",
-            "prompt": "What is the 'lost-in-the-middle' effect?",
-            "options": [
-              "Models forget the entire conversation after a certain length",
-              "Models attend well to the start and end of context but poorly to information positioned in the middle",
-              "A bug that only affects open-source models",
-              "The model literally deletes middle tokens from memory"
-            ],
-            "correctIndex": 1,
-            "explanation": "Lost-in-the-middle describes an attention pattern where models reliably favor content near the start and end of their context window, causing accuracy drops of 30%+ when the answer or relevant instruction sits in the middle."
-          },
-          {
-            "id": "ec66501b-2e3b-498f-ba7d-6736dd9a04b6",
-            "prompt": "Which practice best mitigates context rot in a long-running agent session?",
-            "options": [
-              "Maximizing the context window size and stuffing in every possible piece of information",
-              "Retrieving and curating only relevant content, and periodically compacting or re-positioning critical instructions",
-              "Ignoring the problem since bigger models will eventually solve it",
-              "Always placing the most important information in the exact middle of the prompt"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because attention degrades with length and position, the practical mitigation is curation: retrieve only what's relevant, compact long sessions periodically, and keep critical instructions near the start or end rather than the middle."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "b8d49b1d-95e7-4b25-be76-997275cfc3a0",
-          "title": "Context Rot: How Increasing Input Tokens Impacts LLM Performance",
-          "url": "https://research.trychroma.com/context-rot"
         }
       ],
       "publishedDate": "2026-08-01T18:43:07Z",
