@@ -1,6 +1,184 @@
 {
   "posts": [
     {
+      "title": "Prompt Caching: Paying Full Price to Re-Read the Same Prefix",
+      "subtitle": "Why re-sending an identical 40K-token system prompt on every turn is the most avoidable cost in an LLM app",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "prompt-caching",
+        "kv-cache",
+        "inference-optimization",
+        "context-window",
+        "llm-cost"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "cpu.fill",
+      "summary": "Prompt caching reuses a model's stored key/value activations for a prefix that hasn't changed, so a repeated system prompt or tool schema gets skipped instead of reprocessed. It turns cost and latency from scaling with total prompt length into scaling with just the new tokens — but only if the prefix matches byte-for-byte and you reuse it inside the cache's TTL.",
+      "body": null,
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "You're Paying to Re-Read the Same Prompt Every Turn",
+          "body": "A coding agent that ships a 40,000-token system prompt with every request pays for those 40,000 tokens again on turn two, turn three, and every turn after — even though nothing in them changed.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null,
+          "id": "b1758004-3a5f-4fbf-9d7e-67bee4907a5e"
+        },
+        {
+          "kind": "problem",
+          "title": "Every Call Reprocesses the Full Prompt From Token Zero",
+          "body": "A transformer computes attention over every token in the input, every single call. Without caching, the model has no memory that it already saw this exact prefix a second ago.",
+          "bullets": [
+            "A support bot with a 30K-token policy doc + tool schema pays for those 30K tokens on every one of 10,000 daily requests",
+            "Cost and latency scale with total prompt length, not with the handful of new tokens the user actually added",
+            "Multi-turn agents resend the entire growing transcript each turn — the waste compounds as the conversation gets longer"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "3c4fb051-d35d-42a1-871c-b7cce04c4096"
+        },
+        {
+          "kind": "solution",
+          "title": "Cache the KV Activations for a Prefix, Not the Text",
+          "body": "The first call computes and stores the key/value activations for a prefix. Any later call whose prompt starts with that identical prefix skips recomputing attention for those tokens and processes only what's new.",
+          "bullets": [
+            "Providers let you mark 'cache breakpoints' — points in the prompt (end of system instructions, end of tool defs) up to which the prefix should be cached",
+            "The match is exact and positional: caching operates on the literal token sequence from position zero, not on meaning or similarity",
+            "A cache hit means the model only runs the expensive forward pass on the suffix — the new user turn"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "392fb7b2-480b-4318-a570-dc375dc25b20"
+        },
+        {
+          "kind": "comparison",
+          "title": "Cache Reads Are Cheap; Cache Writes Cost a Bit More",
+          "body": "Every major provider prices a cache write above the base input rate and a cache read well below it — the discount is the entire incentive to restructure your prompt around a stable prefix.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Provider",
+              "Trigger",
+              "Cache write",
+              "Cache read",
+              "Default TTL"
+            ],
+            "rows": [
+              [
+                "Anthropic (Claude)",
+                "explicit cache_control breakpoints",
+                "~1.25x base input price",
+                "~0.1x base input price",
+                "5 min (1h optional, costs more)"
+              ],
+              [
+                "OpenAI",
+                "automatic above ~1024 tokens",
+                "same as base input price",
+                "~0.5x base input price",
+                "minutes, up to ~1h off-peak"
+              ],
+              [
+                "Google (Gemini)",
+                "implicit or explicit context cache",
+                "storage-time billed separately",
+                "reduced per-token rate",
+                "explicit caches: minutes to hours, set by you"
+              ]
+            ]
+          },
+          "id": "b16c5f33-bf98-40d4-8299-1b2bd80f5c2d"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: A Support Agent's Per-Turn Bill",
+          "body": "Say the shared prefix (system prompt + tool schemas + policy doc) is 40,000 tokens and each user turn adds 200 new tokens.",
+          "bullets": [
+            "Uncached: every turn reprocesses all 40,200 tokens — cost and latency stay flat and high no matter how short the actual question is",
+            "Cached: turn one writes the 40,000-token prefix to cache (paying the write premium); turn two through N, while inside the TTL, reprocess only the 200 new tokens at the discounted cache-read rate on the 40,000",
+            "The saving grows with how many turns land inside one TTL window — one-off single-shot calls barely benefit, since they only ever pay the write price"
+          ],
+          "symbol": "doc.on.doc.fill",
+          "table": null,
+          "id": "09285369-b6df-435c-9d54-4bf550c5d33f"
+        },
+        {
+          "kind": "concept",
+          "title": "The Prefix Has to Match Exactly — and the Clock Is Ticking",
+          "body": "Prompt caching is a positional-match optimization, not a semantic one, and that makes it easy to accidentally defeat.",
+          "bullets": [
+            "Any edit before the cache breakpoint — a reordered few-shot example, an injected timestamp, a different tool listed first — invalidates the cache for everything after it",
+            "Put stable content (instructions, tool defs, examples) first and volatile content (the live user turn) last, or you'll never get a hit",
+            "If traffic doesn't reuse the same prefix again before the TTL expires, you only ever pay the more expensive write price and never recoup it",
+            "Caching a prefix stuffed with per-user IDs or live data wastes the discount — cache what's actually shared across calls"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "412b9d47-98c6-4d82-89ee-28a4a409ede2"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Order Your Prompt for the Cache, Then Measure It",
+          "body": "Prompt caching turns per-call cost from O(total prompt length) into roughly O(new tokens) — but only for prefixes that are stable and actually get reused.",
+          "bullets": [
+            "Structure prompts static-first, dynamic-last: system prompt → tools → few-shot examples → (cache breakpoint) → live conversation",
+            "Track cache hit rate as a first-class metric alongside latency and cost — a low hit rate usually means something upstream keeps changing the prefix",
+            "It's a free win for high-volume agents and chat apps with a large shared context; it's close to useless for single, one-off completions"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "table": null,
+          "id": "76cdbffb-26a2-462a-b222-f92f7aea81c8"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What determines whether a prompt-caching cache hit occurs on a new request?",
+            "options": [
+              "The new prompt has similar meaning to a previous one",
+              "The new prompt's prefix matches a previously cached prefix exactly, token-for-token, from the start",
+              "The request uses the same API key as before",
+              "The model's temperature setting is unchanged"
+            ],
+            "correctIndex": 1,
+            "explanation": "Caching is a positional, exact-match optimization on the token sequence — not a semantic one. Editing anything before the cache breakpoint, even a timestamp, invalidates the cache for every token after it.",
+            "id": "ddd610e2-0a11-4d3c-bf2f-7bb1a9de34e9"
+          },
+          {
+            "prompt": "Why does prompt caching mainly pay off for high-volume agents with a large shared prefix, rather than one-off single questions?",
+            "options": [
+              "Caching is technically disabled for short prompts",
+              "The first call pays a premium to write the cache, so only repeated reuse of that prefix within the TTL earns the discount back",
+              "Cache reads are billed at full price regardless of hits",
+              "One-off questions aren't allowed to use cached prefixes at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "A cache write typically costs more than a normal input token. A single call that never gets reused only ever pays that premium — the savings only materialize once later calls hit the cache within its TTL.",
+            "id": "d047cfc2-0e32-4740-b31d-f2421a7e0ca1"
+          },
+          {
+            "prompt": "You have a 40K-token system prompt and want to maximize cache hits across turns. Where should the volatile, per-turn user message go relative to the cache breakpoint?",
+            "options": [
+              "Before the stable content, so it's processed first",
+              "Interleaved throughout the stable content for balance",
+              "After the stable content and the cache breakpoint, since anything before the breakpoint must stay identical",
+              "It doesn't matter where it goes"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because the match is positional and exact, only content before the cache breakpoint needs to stay identical across calls. Put static content (system prompt, tools, examples) first, and the changing user turn last.",
+            "id": "45486410-bdb0-48e3-b2db-a145294207b0"
+          }
+        ]
+      },
+      "references": [],
+      "id": "0fef7d6c-0852-41c9-b5c1-7ad98e0fd40d",
+      "publishedDate": "2026-08-09T00:40:34Z"
+    },
+    {
       "title": "Activity Frames: Replay a Task Instead of Re-Deriving It",
       "subtitle": "A deterministic compiler turns a day of screen activity into workflows an agent can run at near-zero token cost",
       "category": "AI Innovations",
@@ -10838,178 +11016,6 @@
         }
       ],
       "heroImageURL": null
-    },
-    {
-      "id": "19496619-53fb-4b96-a013-0a01af40a970",
-      "title": "Grok Voice Think Fast 2.0: A Voice Model That Reasons While It Talks",
-      "subtitle": "xAI cuts first-audio latency to 0.70s by thinking and speaking in the same breath",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "voice ai",
-        "speech-to-speech",
-        "xai",
-        "grok",
-        "realtime api"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "waveform",
-      "publishedDate": "2026-08-01T06:42:27Z",
-      "summary": "xAI released Grok Voice Think Fast 2.0 on July 29, 2026: a speech-to-speech model that reasons in parallel with speaking instead of pausing to think, cutting time-to-first-audio from 1.25s to 0.70s. On Artificial Analysis's benchmark it jumped from 75.7% to 82.9% overall, ahead of GPT-Realtime-2.1 and Gemini 3.1 Flash.",
-      "slides": [
-        {
-          "id": "54498ae7-6a1f-4b02-a623-7d1ff749749e",
-          "kind": "cover",
-          "title": "xAI's most capable voice model yet",
-          "body": "Announced July 29, 2026: a speech-to-speech model built for voice agents that hears clearly in noise, reasons through workflows, and sounds natural — without the usual 'thinking pause.'",
-          "bullets": [
-            "Time-to-first-audio: 1.25s → 0.70s (~44% faster)",
-            "Artificial Analysis speech-to-speech score: 75.7% → 82.9%",
-            "grok-voice-latest alias switches from v1 to v2 on Aug 5, 2026"
-          ],
-          "symbol": "waveform",
-          "table": null
-        },
-        {
-          "id": "c58b702e-9d05-4600-a38f-3878fb46fbc6",
-          "kind": "problem",
-          "title": "Cascaded voice pipelines pay a latency tax twice",
-          "body": "Most voice assistants chain three separate models: speech-to-text, an LLM, then text-to-speech. Each handoff adds delay, and the LLM step forces an awkward silent pause while it 'thinks' before it can start speaking.",
-          "bullets": [
-            "STT → LLM → TTS means 3 round-trips before any audio plays",
-            "Reasoning happens before speech starts, not during it — dead air",
-            "Tool calls (checking a calendar, looking up an order) add another full round-trip"
-          ],
-          "symbol": "exclamationmark.arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "c07cfb4e-a521-4b08-977c-3d70312101af",
-          "kind": "solution",
-          "title": "It reasons in parallel with speaking, not before it",
-          "body": "Think Fast 2.0 listens, reasons, and speaks in overlapping streams rather than a strict sequence, so the model can start talking while it's still working out the rest of the answer.",
-          "bullets": [
-            "No 'thinking pause' before the first word — reasoning overlaps with speech generation",
-            "Trained to use ~60% fewer reasoning tokens than its predecessor for the same task",
-            "Tool calls (e.g. checking availability) usually fire before the agent finishes its first sentence"
-          ],
-          "symbol": "waveform.path.ecg",
-          "table": null
-        },
-        {
-          "id": "5da04679-6ff8-4c11-9877-c70f3b0fec6b",
-          "kind": "comparison",
-          "title": "The numbers, side by side",
-          "body": "xAI benchmarked Think Fast 2.0 against its own predecessor and rival realtime models using Artificial Analysis's speech-to-speech suite.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Model",
-              "Overall score",
-              "Agentic score",
-              "TTFA"
-            ],
-            "rows": [
-              [
-                "Grok Voice Think Fast 2.0",
-                "82.9%",
-                "56.5%",
-                "0.70s"
-              ],
-              [
-                "Grok Voice Think Fast 1.0",
-                "75.7%",
-                "52.1%",
-                "1.25s"
-              ],
-              [
-                "GPT-Realtime-2.1",
-                "—",
-                "45.7%",
-                "—"
-              ],
-              [
-                "Gemini 3.1 Flash",
-                "—",
-                "37.7%",
-                "—"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "86d8d4fe-3a0c-4fa9-aea6-8d22a1c10ae1",
-          "kind": "example",
-          "title": "A noisy phone call, not a quiet studio",
-          "body": "Picture a delivery-tracking voice agent taking a call from someone driving with the radio on. The bar that matters isn't a clean-room demo — it's whether the model still gets the order number right.",
-          "bullets": [
-            "Across 24 languages, transcription is 1.5-2.0x more accurate than Deepgram Nova 3 and ElevenLabs Scribe v2",
-            "The accuracy gap widens to roughly 10x in noisy conditions specifically",
-            "1.4x more accurate transcription than its own Think Fast 1.0 predecessor"
-          ],
-          "symbol": "waveform.badge.mic",
-          "table": null
-        },
-        {
-          "id": "8e371d9f-3007-45d1-9f71-e7077149e46d",
-          "kind": "takeaways",
-          "title": "When it's worth the switch — and when it isn't",
-          "body": "Think Fast 2.0 is priced at $0.08 per minute of audio and ships via xAI's WebSocket Realtime API, its Agent Builder, and Vercel's AI Gateway.",
-          "bullets": [
-            "Best fit: live voice agents where tool-call latency and noisy audio are the actual bottleneck",
-            "Overkill for: batch transcription of pre-recorded audio, where a dedicated STT model is cheaper",
-            "Migration is opt-in until Aug 5, 2026 — after that, grok-voice-latest silently means v2",
-            "Supports 25+ languages, but published gains are strongest on the high-resource languages it was benchmarked against"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the main architectural change in Grok Voice Think Fast 2.0 versus a typical cascaded voice assistant?",
-            "options": [
-              "It uses a bigger text-to-speech model",
-              "It reasons and speaks in overlapping streams instead of thinking, then speaking",
-              "It skips speech recognition entirely",
-              "It only works with pre-recorded audio"
-            ],
-            "correctIndex": 1,
-            "explanation": "Cascaded pipelines finish reasoning before any audio plays, creating a silent pause. Think Fast 2.0 overlaps reasoning with speech generation, which is why its time-to-first-audio dropped from 1.25s to 0.70s without sacrificing quality."
-          },
-          {
-            "prompt": "On Artificial Analysis's speech-to-speech benchmark, how did Think Fast 2.0's agentic score compare to GPT-Realtime-2.1's?",
-            "options": [
-              "Lower: 45.7% vs 56.5%",
-              "Higher: 56.5% vs 45.7%",
-              "Identical at 52.1%",
-              "Not measured for either model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Think Fast 2.0 scored 56.5% on the agentic component versus 45.7% for GPT-Realtime-2.1 and 37.7% for Gemini 3.1 Flash, per xAI's published comparison."
-          },
-          {
-            "prompt": "Why do tool calls fire faster in production with Think Fast 2.0, according to xAI?",
-            "options": [
-              "It skips tool-calling validation",
-              "It was trained to use about 60% fewer reasoning tokens, so the model reaches a decision sooner",
-              "It calls all available tools in parallel every time",
-              "It caches every previous tool call response"
-            ],
-            "correctIndex": 1,
-            "explanation": "Fewer reasoning tokens per decision means the model reaches its tool-call decision earlier in generation — xAI reports this typically happens before the agent finishes speaking its first sentence."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing Grok Voice Think Fast 2.0 — xAI",
-          "url": "https://x.ai/news/grok-voice-think-fast-2"
-        }
-      ]
     }
   ]
 }
