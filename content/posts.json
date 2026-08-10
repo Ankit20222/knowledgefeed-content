@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "title": "Tokenization: The Boundary Between Text and the Model",
+      "subtitle": "One merge-the-most-frequent-pair algorithm decides how text becomes tokens — and that quietly sets your cost, your context budget, and why the model can't count letters.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "tokenization",
+        "bpe",
+        "llm-internals",
+        "vocabulary",
+        "subword"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "textformat.abc",
+      "summary": "Byte-pair encoding builds a subword vocabulary bottom-up: start from raw bytes, repeatedly merge the most frequent adjacent pair, and stop once you hit a target vocab size — that's how every modern LLM turns text into the token IDs it actually processes. The vocab-size choice is a real tradeoff between sequence length and embedding-table size, and it explains three practical realities: why token costs vary by language, why models struggle to count letters inside words, and why swapping a tokenizer means retraining the embedding table from scratch.",
+      "body": null,
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Tokenization: The Boundary Between Text and the Model",
+          "body": "Before a single weight multiplies anything, raw text has to become a sequence of integers. The algorithm that does that — byte-pair encoding — quietly shapes cost, context budget, and even which languages a model is good at.",
+          "bullets": [],
+          "symbol": "textformat.abc",
+          "table": null,
+          "id": "06fbe785-02d2-4d52-97da-550896591a89"
+        },
+        {
+          "kind": "problem",
+          "title": "Why Not Just Use Characters or Words?",
+          "body": "Both extremes fail for practical LLMs.",
+          "bullets": [
+            "Character-level vocab is tiny (~256 bytes) but turns every sentence into a very long sequence — and attention cost grows with sequence length, so long character sequences are expensive to process",
+            "Word-level vocab keeps sequences short but is unbounded: new words, typos, and rare compounds constantly appear, forcing an <unk> token for anything unseen during training",
+            "Neither extreme handles the boundary between languages, code identifiers, or made-up words gracefully — subword tokenization is the compromise that ships in every modern LLM"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null,
+          "id": "0ee605f0-ca42-4a11-ba07-3872faa8fb31"
+        },
+        {
+          "kind": "solution",
+          "title": "Byte-Pair Encoding: Merge the Most Frequent Pair, Repeat",
+          "body": "BPE started as a 1994 compression algorithm; Sennrich et al. adapted it for NLP subword vocabularies in 2015, and GPT-2 made byte-level BPE the modern default.",
+          "bullets": [
+            "Start with a base vocabulary of individual bytes/characters — every possible input is representable from the start, so there's no <unk> token",
+            "Scan the training corpus, count how often every adjacent pair of symbols co-occurs, and merge the single most frequent pair into one new symbol",
+            "Repeat: each merge adds one entry to the vocabulary and shortens the corpus, stopping once the vocab hits its target size — a hyperparameter chosen before training, e.g. 50k or 100k",
+            "Encoding new text re-applies the learned merges in the order they were discovered — common words collapse to one token, rare or unseen words fall back to smaller, more numerous pieces"
+          ],
+          "symbol": "puzzlepiece.fill",
+          "table": null,
+          "id": "a4f0019e-0002-4491-b87d-f3fb35f53eb6"
+        },
+        {
+          "kind": "example",
+          "title": "A Toy Merge, Step by Step",
+          "body": "Run BPE on a tiny corpus of {low, lower, lowest, newer, wider} (each split into characters plus an end-of-word marker), and the first few merges look like this:",
+          "bullets": [
+            "Pair 'e'+'r' is the most frequent adjacent pair (it appears in lower, newer, wider) → merge into a new symbol 'er'",
+            "Next most frequent: 'er'+ end-of-word → merge into 'er</w>', so 'newer' and 'wider' now end in one token instead of two",
+            "Next: 'l'+'o' → 'lo', then 'lo'+'w' → 'low' — 'low', 'lower', and 'lowest' now all start from the shared token 'low' instead of four separate letters",
+            "After a handful of merges, frequent words compress to 1-2 tokens while rare strings stay as longer chains of smaller pieces — exactly the tradeoff a real tokenizer makes at scale"
+          ],
+          "symbol": "list.number",
+          "table": null,
+          "id": "984961eb-45ea-411d-91ef-db364e410ba5"
+        },
+        {
+          "kind": "comparison",
+          "title": "Vocab Size Is a Real Design Choice, Not a Detail",
+          "body": "Bigger vocab means fewer tokens per sentence (shorter sequences, more text fits in a fixed context window) but a bigger embedding and output-projection matrix, and more rarely-seen tokens that get little gradient signal during training.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Tokenizer",
+              "Vocab size",
+              "Used by"
+            ],
+            "rows": [
+              [
+                "GPT-2 BPE",
+                "50,257",
+                "GPT-2"
+              ],
+              [
+                "cl100k_base",
+                "100,256",
+                "GPT-3.5-turbo, GPT-4, text-embedding-ada-002"
+              ],
+              [
+                "Llama 2 (SentencePiece BPE)",
+                "32,000",
+                "Llama 2 family"
+              ],
+              [
+                "Llama 3 (tiktoken-based)",
+                "128,256",
+                "Llama 3 family"
+              ]
+            ]
+          },
+          "id": "7ae63d82-4209-4bf6-a4b3-0f99ac75834f"
+        },
+        {
+          "kind": "example",
+          "title": "The Same Sentence Isn't the Same Number of Tokens",
+          "body": "Tokenizers are trained on corpora dominated by English web text, so the compression they learn is lopsided.",
+          "bullets": [
+            "OpenAI's own rule of thumb for English: roughly 4 characters, or about 0.75 words, per token — so 75 English words costs around 100 tokens",
+            "The same sentence translated into a script the tokenizer saw far less of during training (Hindi, Burmese, Amharic, etc.) can take several times as many tokens to encode the identical meaning",
+            "Since API pricing and context-window limits are both counted in tokens, that inflation directly means higher cost and less usable context for speakers of underrepresented languages — a measurable effect, not a hypothetical one",
+            "The fix isn't free either: a wider, more multilingual vocabulary costs more embedding parameters and dilutes how often any single token is seen during training"
+          ],
+          "symbol": "globe",
+          "table": null,
+          "id": "44f02012-9e50-4860-bcf2-5fca66925911"
+        },
+        {
+          "kind": "problem",
+          "title": "Where Tokenization Bites You",
+          "body": "Most 'why did the model get this obviously simple thing wrong' moments trace back to tokenization, not reasoning.",
+          "bullets": [
+            "Letter-counting and spelling tasks ('how many r's in strawberry') are hard because the model never sees individual letters — it sees whatever subword pieces the tokenizer happened to split the word into",
+            "Multi-digit arithmetic used to be unreliable partly because digits didn't tokenize consistently — numbers like '380' and '381' could split at different boundaries, breaking the positional pattern the model needed to learn",
+            "Rare vocabulary entries that exist in the trained vocab but almost never appear in the training data can produce erratic output when prompted directly — a known failure mode sometimes called a 'glitch token'",
+            "Fine-tuning a base model onto a domain its tokenizer rarely saw (a new programming language, heavy code-switching, dense math notation) inflates token counts and degrades quality — swapping tokenizers means retraining the embedding table from scratch"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "bfe27d1e-4335-4ded-b1b0-e96c6fd3f36b"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "BPE builds a vocabulary bottom-up: start from bytes/characters, repeatedly merge the most frequent adjacent pair, stop at a target vocab size",
+            "Byte-level BPE (GPT-2 onward) guarantees every input is representable — there's no out-of-vocabulary token, just longer chains of smaller pieces",
+            "Vocab size is a real tradeoff: a bigger vocab means shorter sequences and more usable context per token budget, at the cost of a larger embedding table and more undertrained rare tokens",
+            "Pricing, context limits, and even letter-counting ability are all downstream of how text gets chopped into tokens — tokenization isn't plumbing you can ignore, it's a first-order design choice"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null,
+          "id": "52546f3d-918c-44af-993a-80dfe3f56c33"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What problem does byte-level BPE solve that plain word-level tokenization can't?",
+            "options": [
+              "It makes the vocabulary smaller than character-level tokenization",
+              "It guarantees every possible input string is representable, eliminating the need for an <unk> token",
+              "It removes the need for an embedding table entirely",
+              "It ensures every word maps to exactly one token regardless of language"
+            ],
+            "correctIndex": 1,
+            "explanation": "Word-level vocabularies are unbounded — new words, typos, and rare compounds constantly appear, forcing an <unk> token for anything unseen. Because byte-level BPE's base vocabulary is every possible byte, any input string can always be represented, worst case as a long chain of single-byte tokens.",
+            "id": "5aa5d77a-7bb6-4b10-bef2-18d3d1966001"
+          },
+          {
+            "prompt": "In the toy BPE walkthrough, why does 'e'+'r' get merged before 'l'+'o'?",
+            "options": [
+              "'er' appears alphabetically first",
+              "BPE always merges vowel-consonant pairs first",
+              "'e'+'r' is the most frequent adjacent pair in the training corpus at that step",
+              "'er' is a complete English word, so it's prioritized"
+            ],
+            "correctIndex": 2,
+            "explanation": "BPE has no notion of grammar or alphabetization — at every step it counts adjacent-pair frequency across the whole training corpus and merges whichever pair occurs most often. 'e'+'r' shows up in 'lower', 'newer', and 'wider', making it the top count in that toy corpus.",
+            "id": "854ad171-fcb0-4d38-847b-2bb278f4b5d4"
+          },
+          {
+            "prompt": "Why can the same sentence cost noticeably more tokens in one language than another, using the same tokenizer?",
+            "options": [
+              "Some languages have more letters in their alphabet",
+              "The tokenizer was trained on a corpus dominated by one language/script, so it learned fewer efficient merges for underrepresented scripts",
+              "Non-English text is always converted to English before tokenization",
+              "Tokenizers assign a fixed token budget per language"
+            ],
+            "correctIndex": 1,
+            "explanation": "BPE's merges are learned from training-corpus frequency. A tokenizer trained mostly on English web text spends most of its merge budget on English subwords, so a script it saw far less of falls back to longer chains of smaller pieces for the same meaning — directly increasing token count, cost, and effective context usage for that language.",
+            "id": "ab97e1f8-a074-4806-a0a6-55da0ba3778a"
+          }
+        ]
+      },
+      "references": [],
+      "id": "f63723f5-e1a7-42b4-aeb6-90b361306783",
+      "publishedDate": "2026-08-10T18:41:21Z"
+    },
+    {
       "title": "Write-Ahead Logging: Surviving a Crash Mid-Write",
       "subtitle": "One rule — write the log record before the data page — is what lets a database recover a torn write instead of losing it.",
       "category": "Databases",
@@ -10987,194 +11179,6 @@
       "references": [],
       "id": "f12f2e7b-fb71-44aa-80f5-beec78dbc3ed",
       "publishedDate": "2026-08-02T12:40:18Z"
-    },
-    {
-      "id": "3dfe1841-1456-4018-878b-9b0f4f137dbe",
-      "title": "Explorative Modeling: Pick the Best of K, Train on That",
-      "subtitle": "A third pretraining axis: explore K candidates, backprop only through the winner",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "generative-models",
-        "pretraining",
-        "diffusion",
-        "flow-matching",
-        "imagenet",
-        "arxiv"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "Explorative Modeling (XM) adds a third axis to pretraining — alongside parameters and data — by exploring K candidate matches between a model's generations and the target, then training only on the closest match instead of averaging over all of them. On ImageNet, it lifts FLOP efficiency 4.1x, sample efficiency 6.2x, and reaches a near-SOTA 1.43 FID without guidance, while also enabling genuinely end-to-end generation.",
-      "publishedDate": "2026-08-02T06:45:49Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Explorative Modeling: Training on the Best of K Guesses",
-          "body": "A new paper from UIUC and collaborators argues generative models have been missing a third pretraining axis — exploration — alongside parameters and data.",
-          "bullets": [
-            "arXiv:2607.27372, posted July 29, 2026 — Alexi Gladstone, Yilun Du, Heng Ji",
-            "#2 trending paper on Hugging Face Daily Papers with 101 upvotes",
-            "Code and models open-sourced at github.com/alexiglad/XM"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Generative Models Still Aren't Trained End-to-End",
-          "body": "When a context has many valid continuations — the next video frame, the next pixel patch — a model that's forced to predict a single output learns to average across them, producing blur instead of a committed answer.",
-          "bullets": [
-            "Known pretraining levers so far: more parameters, more data",
-            "Today's fix for multimodal targets is to factor the generation procedure itself — diffusion steps, autoregressive tokens — which sidesteps blur but blocks true end-to-end training",
-            "That factoring is exactly what keeps generative models from being trained the way classifiers are: one forward pass, one loss, done"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Explore K Candidates, Backprop Through Only the Best",
-          "body": "Explorative Modeling factors the training loop instead of the generation procedure: at each step, generate or search over K candidates, score each against the target, and update the model using only the minimum-loss match.",
-          "bullets": [
-            "Forward XM: sample K generations from the model, keep the one closest to the real target, backprop through that one",
-            "Reverse XM: hold the generation fixed and search over K candidate data targets instead",
-            "Committing to the single best match — not averaging all K — is what stops predictions from blurring across modes"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "Same Recipe, Three Different Domains",
-          "body": "The paper doesn't just test XM on one model family — it plugs the same explore-then-commit training loop into diffusion, video, and language setups.",
-          "bullets": [
-            "Image diffusion / flow-matching models with a DiT backbone, evaluated on ImageNet",
-            "Video world models trained and evaluated on Something-Something v2 and Kinetics-400",
-            "A language-model variant, showing the idea isn't tied to pixels or continuous outputs"
-          ],
-          "symbol": "cube.transparent.fill",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "4-6x More Efficient, Near-SOTA FID",
-          "body": "All numbers are relative to standard (non-exploratory) training of the same architecture on the same data.",
-          "bullets": [
-            "FLOP efficiency: 4.1x higher for the same quality",
-            "Sample efficiency: 6.2x fewer training samples needed",
-            "Reaches 1.43 FID on ImageNet without classifier-free guidance — near state-of-the-art for that setting"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Gain from Explorative Modeling"
-            ],
-            "rows": [
-              [
-                "FLOP efficiency",
-                "4.1x"
-              ],
-              [
-                "Sample efficiency",
-                "6.2x"
-              ],
-              [
-                "Parameter efficiency",
-                "+47%"
-              ],
-              [
-                "ImageNet FID (no guidance)",
-                "1.43 (near-SOTA)"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "example",
-          "title": "A Dropped Ball That Could Bounce Either Way",
-          "body": "Picture a video model predicting the next few frames after a ball leaves someone's hand — physics allows it to bounce left or right, and both are valid.",
-          "bullets": [
-            "Standard training pushes the model toward the average of 'bounces left' and 'bounces right' — a blurry, physically-impossible smear",
-            "With Forward XM (K=8, say), the model samples 8 candidate rollouts, compares each to what actually happened, and only backprops through the closest one",
-            "Over many training steps, the model learns to commit to one coherent, physically consistent outcome per prediction instead of hedging"
-          ],
-          "symbol": "figure.walk.motion",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "The Catch: K Candidates Cost K Forward Passes",
-          "body": "Exploration isn't free — it trades extra training-time compute for a better-shaped loss.",
-          "bullets": [
-            "Forward XM needs K generations per training step, multiplying training compute even though inference stays standard-cost",
-            "Reverse XM needs an efficient way to search over K candidate data targets, which adds real engineering complexity beyond a simple dataloader",
-            "The benefit is largest when targets are genuinely multimodal (video, images); for tasks with one correct answer, exploration is wasted compute"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Explorative Modeling proposes exploration as a third, orthogonal lever for pretraining generative models — one that acts on the training loop rather than the model or the data.",
-          "bullets": [
-            "Training on the single best of K candidates — not their average — is what prevents blurry, multimodal-target outputs",
-            "The same explore-then-commit loop transfers across image diffusion, video world models, and language",
-            "Early results (1.43 FID, 4-6x efficiency gains) suggest the extra training-time compute is worth it, but K-way exploration adds real implementation cost"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What core problem is Explorative Modeling trying to solve?",
-            "options": [
-              "Reducing inference latency for chatbots",
-              "Handling targets with many valid outputs without factoring the generation procedure",
-              "Shrinking tokenizer vocabulary size",
-              "Reducing the amount of training data needed for classification"
-            ],
-            "correctIndex": 1,
-            "explanation": "When a context has multiple valid continuations, standard training pushes the model toward the average of them, producing blur. XM fixes this by training on the single best-matching candidate instead of the average — without needing to factor generation into separate steps."
-          },
-          {
-            "prompt": "What's the difference between Forward XM and Reverse XM?",
-            "options": [
-              "Forward XM explores K generations from the model; Reverse XM explores K candidate data targets instead",
-              "Forward XM is for text models, Reverse XM is for image models",
-              "Forward XM uses more parameters than Reverse XM",
-              "There is no difference — they're the same technique"
-            ],
-            "correctIndex": 0,
-            "explanation": "Forward XM samples K generations and keeps the one closest to the true target. Reverse XM instead fixes the generation and searches over K candidate targets from the data — a mirror-image way of finding the best match to train on."
-          },
-          {
-            "prompt": "According to the paper, what happens if you train on the average of K candidates instead of the single best match?",
-            "options": [
-              "Training converges faster",
-              "The model produces blurry predictions that blend across multiple valid modes",
-              "The model becomes more sample-efficient",
-              "There is no measurable difference"
-            ],
-            "correctIndex": 1,
-            "explanation": "Averaging synthesizes a blended output when there are multiple valid answers — exactly the blur problem XM is built to avoid. Committing to the closest single match forces the model to pick a mode rather than hedge across all of them."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Explorative Modeling: Unlocking a Third Pretraining Axis and End-to-End Generation (arXiv:2607.27372)",
-          "url": "https://arxiv.org/abs/2607.27372"
-        },
-        {
-          "title": "XM — official PyTorch code release",
-          "url": "https://github.com/alexiglad/XM"
-        }
-      ]
     }
   ]
 }
