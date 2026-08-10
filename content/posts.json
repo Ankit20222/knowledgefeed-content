@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "id": "911f8c7d-3623-40ee-a9fa-b0c020c4c06b",
+      "publishedDate": "2026-08-10T06:50:23Z",
+      "title": "Mixture of Experts: Only Some Weights Fire Per Token",
+      "subtitle": "How trillion-parameter models keep inference cheap by routing each token to a handful of specialists.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture of experts",
+        "moe",
+        "llm architecture",
+        "inference",
+        "transformers"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "Dense transformers spend every parameter on every token, so bigger models cost proportionally more to run. Mixture of Experts splits the feed-forward layer into many smaller experts and routes each token to only a handful of them, decoupling total capacity from per-token compute — the trick behind models like Mixtral and DeepSeek-V3 that pack hundreds of billions of parameters while activating a fraction per forward pass.",
+      "body": null,
+      "table": null,
+      "explanation": null,
+      "slides": [
+        {
+          "id": "46a899a6-af1e-4b35-8990-a72fd70a968f",
+          "kind": "cover",
+          "title": "The Trick Behind Models That Don't Cost as Much as They Weigh",
+          "body": "Mixture of Experts (MoE) is the architecture inside Mixtral, DeepSeek-V3, and most of today's largest open models: swap the single dense feed-forward layer for many smaller expert networks, and route each token to only a few of them.",
+          "bullets": [],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "6eb28789-a9ae-4592-b95a-79ffa1531078",
+          "kind": "problem",
+          "title": "Dense Transformers Charge Full Price for Every Token",
+          "body": null,
+          "bullets": [
+            "Every token passes through every parameter in a dense feed-forward layer, so FLOPs-per-token scale directly with total parameter count.",
+            "Going from a 7B to a 70B dense model doesn't just add capacity — it multiplies inference cost roughly 10x for every single token, even trivial ones like punctuation.",
+            "Scaling laws reward bigger models, but dense scaling means training and serving cost grow in lockstep with quality — there's no way to add capacity without paying for it on every forward pass."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "eca7d61d-44b1-404c-bcc3-208078216bf6",
+          "kind": "solution",
+          "title": "Split the Feed-Forward Layer, Then Route Instead of Compute",
+          "body": null,
+          "bullets": [
+            "Replace the single dense feed-forward block in a transformer layer with N smaller feed-forward networks ('experts') plus a lightweight router — a small learned linear layer.",
+            "For each token, the router scores all N experts and picks the top-k (commonly k=2): only those experts run their FFN on that token, and the rest sit idle for it.",
+            "The token's output is a weighted sum of the chosen experts' outputs, weighted by the router's own scores — the router trains end to end with the rest of the model, no separate objective needed."
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "a2cc8357-b50e-4ecb-8767-e958dbf6615c",
+          "kind": "architecture",
+          "title": "An Unconstrained Router Collapses Onto a Few Favorites",
+          "body": null,
+          "bullets": [
+            "Left unconstrained, the router tends to concentrate traffic on whichever experts get an early lead in training, starving the rest of gradient signal — the opposite of the specialization the design is after.",
+            "The standard fix is an auxiliary load-balancing loss added to the training objective, penalizing uneven routing and pushing usage back toward uniform across experts.",
+            "Production systems also cap each expert's 'capacity' — the max tokens it will accept per batch. Tokens that overflow a full expert get dropped or rerouted, which makes capacity factor a real serving-time tuning knob, not just a training detail."
+          ],
+          "symbol": "scalemass.fill",
+          "table": null
+        },
+        {
+          "id": "86eb1b61-0d82-4ab1-9000-98dc221240f6",
+          "kind": "comparison",
+          "title": "Dense vs. Mixture of Experts",
+          "body": null,
+          "bullets": [
+            "The headline win is compute, not memory — an MoE model still needs enough VRAM to hold every expert, even though most sit idle on any given token."
+          ],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "",
+              "Dense Transformer",
+              "Mixture of Experts"
+            ],
+            "rows": [
+              [
+                "Compute per token",
+                "Scales with total parameters",
+                "Scales with active parameters only (top-k experts)"
+              ],
+              [
+                "Example",
+                "A dense 70B model: ~70B params active on every token",
+                "Mixtral 8x7B: 47B total params, ~13B active per token (2 of 8 experts)"
+              ],
+              [
+                "GPU memory footprint",
+                "= total parameters",
+                "= total parameters — every expert must stay resident"
+              ],
+              [
+                "Serving complexity",
+                "Single model shard",
+                "Expert parallelism, all-to-all token routing across devices"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b31c02a3-4bff-41f2-8528-4482da3bc24f",
+          "kind": "example",
+          "title": "DeepSeek-V3: 671B Total Parameters, ~37B Active",
+          "body": null,
+          "bullets": [
+            "DeepSeek-V3 uses a fine-grained MoE design: 256 routed experts plus a shared expert per layer, with each token activating 8 of the 256 routed experts — about 3% of the routed pool.",
+            "Total parameter count is 671B, but only around 37B are active for any single token's forward pass — roughly the compute cost of a dense 37B model, with far more total specialized capacity to draw on.",
+            "That gap is the entire point: quality tracks total parameters (more specialized capacity to route into), while latency and FLOPs track active parameters (what actually runs) — MoE decouples two numbers a dense model forces to be equal."
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "09ee84e9-75aa-4141-ac09-86ae007dded2",
+          "kind": "concept",
+          "title": "Where MoE Stops Paying Off",
+          "body": null,
+          "bullets": [
+            "Memory doesn't shrink — serving a large MoE still requires GPU memory (or multi-GPU sharding) for the full parameter count, so small-scale or single-GPU deployments often see no benefit over a smaller dense model with similar active compute.",
+            "All-to-all communication between devices — sending each token to whichever GPU holds its chosen expert — becomes the bottleneck at scale; large MoE systems are usually communication-bound, not FLOPs-bound, once sharded across a cluster.",
+            "Fine-tuning is trickier: a small fine-tuning dataset can retrain the router into a degenerate few-expert pattern, quietly discarding most of the model's specialized capacity.",
+            "At small batch sizes, the router adds a step with no payoff — there aren't enough concurrent tokens to keep multiple experts busy in parallel, so a dense model of similar active size can be simpler and just as fast."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "30596440-2cde-45f4-94c7-f748e0940ad6",
+          "kind": "takeaways",
+          "title": "When to Reach for This",
+          "body": null,
+          "bullets": [
+            "MoE trades total-parameter growth for active-parameter cost — more capacity without a proportional compute bill, as long as you can afford to keep every expert resident in memory.",
+            "The router and load-balancing loss aren't optional extras — an unconstrained router collapses onto a few experts and quietly throws away most of the model's capacity.",
+            "Reach for MoE when serving at scale with enough batch size and multi-GPU/multi-node infrastructure to amortize communication cost; skip it for single-GPU, latency-critical, or low-traffic deployments where a dense model is simpler and just as fast."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c159dce4-a989-4166-83bd-2d3458298824",
+            "prompt": "In a Mixture-of-Experts layer with top-2 routing over 8 experts, how many experts actually run their feed-forward network for a given token?",
+            "options": [
+              "All 8",
+              "2",
+              "1",
+              "It depends on the token's length"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-k routing with k=2 means the router selects the 2 highest-scoring experts for that token, and only those two run their FFN — the other 6 sit idle for it, which is exactly where MoE's compute savings come from."
+          },
+          {
+            "id": "5ab3967e-4459-4e3b-8c17-aa3a1715ad45",
+            "prompt": "Why does an MoE model still need GPU memory for its full parameter count, even though it activates only a fraction per token?",
+            "options": [
+              "Because the router itself is enormous",
+              "Because every expert must stay resident in memory since any token could route to any of them",
+              "Because MoE models don't actually save any compute",
+              "Because gradients require double the memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "Which experts a given token needs isn't known until the router scores it at inference time, so every expert has to already be loaded and ready — MoE saves compute per token, not memory footprint."
+          },
+          {
+            "id": "eaae4741-f1bc-48f7-a229-dba695ad4fbd",
+            "prompt": "What does the auxiliary load-balancing loss in MoE training prevent?",
+            "options": [
+              "The model from training at all",
+              "The router from collapsing onto a small subset of favorite experts",
+              "Tokens from being processed in parallel",
+              "The need for a router altogether"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without a balancing signal, the router tends to concentrate traffic on whichever experts get an early lead, starving the rest of gradient updates — the auxiliary loss pushes usage back toward uniform so the model actually uses its full expert capacity."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "Orchard: Training Agents Inside Their Real Deployment Tools",
       "subtitle": "No more train-in-a-toy-box, deploy-in-the-real-world gap.",
       "category": "AI Innovations",
@@ -10971,178 +11163,6 @@
         {
           "title": "Z.ai's open-weights GLM-5.2 beats GPT-5.5 on multiple long-horizon coding benchmarks for 1/6th the cost — VentureBeat",
           "url": "https://venturebeat.com/technology/z-ais-open-weights-glm-5-2-beats-gpt-5-5-on-multiple-long-horizon-coding-benchmarks-for-1-6th-the-cost"
-        }
-      ]
-    },
-    {
-      "id": "74302ee6-1818-4c65-9040-ce95b2d1a3ae",
-      "title": "Attention Sinks: Why the First Tokens Never Leave the Cache",
-      "subtitle": "StreamingLLM keeps a handful of tokens pinned so infinite generation doesn't blow up",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "kv-cache",
-        "long-context",
-        "attention",
-        "llm-serving",
-        "streaming",
-        "inference"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "pin.fill",
-      "summary": "StreamingLLM found that the first few tokens of any sequence absorb a disproportionate share of attention regardless of their content, acting as a 'sink' for softmax probability mass. Pinning those tokens in the KV cache while sliding a window over the rest keeps memory bounded and perplexity flat, letting models like Llama-2 and Falcon stream past 4 million tokens without retraining.",
-      "publishedDate": "2026-08-02T06:45:49Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Attention Sinks: The Tokens Every Long Chat Secretly Depends On",
-          "body": "Discovered while trying to make LLMs generate indefinitely without their memory usage growing forever — the fix turned out to be almost absurdly small.",
-          "bullets": [
-            "The trick: never evict the first ~4 tokens from the KV cache",
-            "Lets Llama-2, MPT, Falcon, and Pythia stream stably past 4 million tokens",
-            "No retraining or architecture change required — it's a caching policy"
-          ],
-          "symbol": "pin.fill",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Naive Sliding-Window Attention Falls Apart",
-          "body": "A full KV cache grows with every generated token — unbounded memory for a conversation or agent loop that never ends. The obvious fix, a fixed-size sliding window, breaks in a surprising way.",
-          "bullets": [
-            "Full cache: memory grows O(n) with sequence length — infeasible for truly long-running generation",
-            "Sliding window: keep only the most recent L tokens' key/value pairs, drop the rest",
-            "Result: perplexity explodes the moment the very first token slides out of the window — even though that token wasn't semantically important"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "The Fix: Pin a Few 'Sink' Tokens, Slide the Rest",
-          "body": "Softmax attention scores must sum to 1 even when no key is a good semantic match for the query — so models learn to dump that leftover probability mass onto early tokens, regardless of what those tokens actually say.",
-          "bullets": [
-            "Researchers found the first ~4 tokens absorb a disproportionate share of attention across most heads and layers, purely as a side effect of softmax normalization",
-            "StreamingLLM's SinkAttention keeps those first tokens in the cache permanently",
-            "Everything else uses a normal sliding window of recent tokens — cache size stays fixed regardless of how long generation runs"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "A Chat That Runs for Millions of Tokens",
-          "body": "Picture an agent loop or chatbot session that just keeps going — no restart, no summarization step.",
-          "bullets": [
-            "Cache holds a small fixed set of sink tokens plus the most recent window of tokens (window size is a serving-time configuration choice)",
-            "Total cache size never grows past that fixed budget, no matter how long the session runs",
-            "Perplexity stays flat through the transition, instead of spiking the moment the original prompt tokens get pushed out"
-          ],
-          "symbol": "infinity",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Three Approaches to Long-Running Generation",
-          "body": "How each caching strategy handles memory and stability once a sequence outgrows the initial context.",
-          "bullets": [
-            "Dense (full cache): numerically stable, but memory grows without bound",
-            "Sliding window alone: bounded memory, but breaks the instant the first token is evicted",
-            "StreamingLLM (sink + window): bounded memory and stays stable indefinitely"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Approach",
-              "Memory growth",
-              "Stability while streaming"
-            ],
-            "rows": [
-              [
-                "Dense (full KV cache)",
-                "Unbounded, O(n)",
-                "Stable, but eventually runs out of memory"
-              ],
-              [
-                "Sliding window only",
-                "Bounded",
-                "Perplexity explodes once first token is evicted"
-              ],
-              [
-                "StreamingLLM (sink + window)",
-                "Bounded",
-                "Stays stable past millions of tokens"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "concept",
-          "title": "Where Attention Sinks Don't Help",
-          "body": "This is a stability fix, not a memory upgrade — it's easy to mistake the two.",
-          "bullets": [
-            "It doesn't recover evicted information — the model genuinely can't recall specific facts pushed out of the sliding window",
-            "It's not a substitute for real long-context architectures when you actually need to reference far-back content precisely",
-            "Best suited to open-ended serving scenarios (chatbots, agent loops) where staying stable matters more than perfectly remembering the start of a very old conversation"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "A handful of tokens act as attention sinks purely because softmax attention needs somewhere to put unused probability mass — and that turns out to be exploitable.",
-          "bullets": [
-            "Never evicting the first few tokens, while sliding a window over the rest, keeps KV cache memory bounded indefinitely",
-            "It's a cheap, retraining-free fix for a subtle failure mode in streaming generation",
-            "It buys stability, not memory — evicted content is genuinely gone, not just deprioritized"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does perplexity explode when using a naive sliding window with no sink tokens?",
-            "options": [
-              "The model runs out of GPU memory",
-              "Evicting the very first tokens removes something the attention mechanism structurally relies on, even though those tokens aren't semantically special",
-              "The tokenizer produces invalid tokens once the window slides",
-              "The model's context window size was set too small"
-            ],
-            "correctIndex": 1,
-            "explanation": "Softmax attention needs somewhere to put probability mass when no key is a strong match. Models learn to dump that leftover mass onto the first few tokens as a side effect — so removing them breaks the attention computation, regardless of what those tokens actually contain."
-          },
-          {
-            "prompt": "What does StreamingLLM do differently from plain sliding-window attention?",
-            "options": [
-              "It simply increases the window size",
-              "It permanently keeps a few initial 'sink' tokens in the KV cache alongside a sliding window of recent tokens",
-              "It retrains the model from scratch with a new objective",
-              "It removes attention computation for older tokens entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "SinkAttention pins the first ~4 tokens in the cache permanently and applies a normal sliding window to everything after them — a small caching policy change, not an architecture or training change."
-          },
-          {
-            "prompt": "What's a real limitation of the attention-sink approach?",
-            "options": [
-              "It can't run on GPU hardware",
-              "It doesn't let the model actually recall specific facts that were evicted from the sliding window — it only keeps generation numerically stable",
-              "It only works on models named Llama",
-              "It requires more memory than keeping a full, unbounded KV cache"
-            ],
-            "correctIndex": 1,
-            "explanation": "Attention sinks fix a stability problem, not a memory problem. Content that falls out of the sliding window is genuinely gone from the model's cache — the technique just prevents the model from breaking down numerically when that happens."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Efficient Streaming Language Models with Attention Sinks (StreamingLLM), ICLR 2024",
-          "url": "https://arxiv.org/abs/2309.17453"
         }
       ]
     }
