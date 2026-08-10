@@ -1,6 +1,197 @@
 {
   "posts": [
     {
+      "title": "Write-Ahead Logging: Surviving a Crash Mid-Write",
+      "subtitle": "One rule — write the log record before the data page — is what lets a database recover a torn write instead of losing it.",
+      "category": "Databases",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "write-ahead-log",
+        "wal",
+        "aries",
+        "crash-recovery",
+        "durability"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.fill",
+      "summary": "Write-ahead logging enforces one invariant: a log record describing a change must be durable on disk before the data page it describes is allowed to be. That single rule turns crash recovery from guesswork into a deterministic replay, and it's why Postgres, MySQL's InnoDB, SQLite, and most production databases are all built around a WAL rather than writing data pages in place and hoping.",
+      "body": null,
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Write-Ahead Logging: Surviving a Crash Mid-Write",
+          "body": "Update a data page in place, crash halfway through the write, and you're left with a torn page — half old bytes, half new, and no way to tell which. WAL exists to make that scenario recoverable.",
+          "bullets": [],
+          "symbol": "doc.text.fill",
+          "table": null,
+          "id": "62a8ac5b-245e-4387-8281-6dc3b0b437ac"
+        },
+        {
+          "kind": "problem",
+          "title": "In-Place Writes Have No Way Back",
+          "body": "Disk pages are usually several kilobytes; a power loss or crash can interrupt a write partway through, and a naive in-place update leaves no record of what the page looked like before.",
+          "bullets": [
+            "A torn page mixes bytes from the old and new versions — the page is neither the pre-transaction nor post-transaction state, just corrupt",
+            "Fsyncing every data page write for safety is slow: data pages are scattered across the disk, so durable writes mean random I/O",
+            "Without a separate record of intent, recovery after a crash has nothing to replay or roll back — the on-disk state is just whatever the crash left behind"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null,
+          "id": "013c9bac-66b3-4703-9833-e0e6a982e6bf"
+        },
+        {
+          "kind": "solution",
+          "title": "The WAL Invariant",
+          "body": "Write-ahead logging enforces one rule, and everything else follows from it.",
+          "bullets": [
+            "Rule: the log record describing a change must be flushed to durable storage before the data page it describes is allowed to be flushed",
+            "The log is append-only — writes are always sequential, so a single fsync can durably commit many log records at once instead of one random write per page",
+            "Because the log is the durable source of truth, the actual data pages can be updated in memory and flushed to disk lazily, whenever it's convenient (a 'steal, no-force' buffer policy) — the log guarantees nothing is lost if a crash happens before that lazy flush"
+          ],
+          "symbol": "arrow.up.arrow.down.circle",
+          "table": null,
+          "id": "b7142b01-488f-4d53-a644-3084fe9e01ad"
+        },
+        {
+          "kind": "concept",
+          "title": "LSNs Tie Every Page Back to the Log",
+          "body": "ARIES (Mohan et al., 1992), the recovery algorithm most production databases descend from, ties pages to the log with a single number.",
+          "bullets": [
+            "Every log record gets a monotonically increasing Log Sequence Number (LSN) marking its position in the log",
+            "Every data page stores the LSN of the last log record that modified it (its pageLSN)",
+            "On recovery, comparing a page's pageLSN to the log tells you exactly which log records still need to be replayed onto that page — no guessing",
+            "Checkpoints periodically record the oldest LSN that might still need replaying, so recovery doesn't have to scan the entire log history back to the beginning of time"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "3cb934ef-15b0-4bf0-ac11-5fe44c637ba0"
+        },
+        {
+          "kind": "comparison",
+          "title": "Recovery: In-Place Writes vs. WAL",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "Naive in-place writes",
+              "Write-ahead logging"
+            ],
+            "rows": [
+              [
+                "Crash mid-write",
+                "Torn page — undefined, unrecoverable state",
+                "Log record is either fully durable or not written at all; page state is always reconstructable"
+              ],
+              [
+                "Write pattern for durability",
+                "Random I/O — fsync scattered across data pages",
+                "Sequential append to the log — one fsync can durably cover many changes"
+              ],
+              [
+                "Recovery process",
+                "None — no record of prior state to replay",
+                "Deterministic: redo committed changes from the log, undo uncommitted ones"
+              ],
+              [
+                "Data page flush timing",
+                "Must be synchronous to be safe",
+                "Can be lazy/asynchronous — the log already guarantees durability"
+              ]
+            ]
+          },
+          "id": "f041ce8a-7379-4394-bf03-b14ce7e3ac23"
+        },
+        {
+          "kind": "example",
+          "title": "A Transaction, Two Crash Points",
+          "body": "Same transaction — transfer $50 — crashing at two different moments shows what the log rule actually buys you.",
+          "bullets": [
+            "Transaction writes a log record ('debit account A $50, credit account B $50') and calls fsync on the log, then updates the in-memory data pages",
+            "Crash AFTER the log fsync but BEFORE the data pages are flushed: on restart, recovery reads the durable log record and redoes the update — no data lost",
+            "Crash BEFORE the log fsync completes: the log record never became durable, so on restart there's nothing to redo — the transaction simply never happened, and account balances stay consistent",
+            "The one crash point WAL rules out entirely: log record durable, but the transaction only half-applied with no way to know what's missing — that's exactly the invariant it enforces"
+          ],
+          "symbol": "arrow.left.arrow.right",
+          "table": null,
+          "id": "8c18cfd9-e9f2-4cd4-80bd-a06a3da77d18"
+        },
+        {
+          "kind": "problem",
+          "title": "What WAL Doesn't Solve",
+          "body": "WAL protects physical consistency across a crash — it isn't a general-purpose safety net.",
+          "bullets": [
+            "An unbounded WAL fills the disk — it must be checkpointed and archived/recycled once its records are no longer needed for recovery or replication",
+            "Checkpointing itself briefly increases write latency, since dirty pages up to the checkpoint LSN must be flushed",
+            "WAL doesn't protect against logical errors — an UPDATE with the wrong WHERE clause gets faithfully logged and replayed too",
+            "If the log storage itself is corrupted or the fsync guarantee is broken (e.g. a disk write cache lying about durability), the entire recovery guarantee collapses — WAL is only as durable as the fsync beneath it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "060aecd4-cdc3-4260-96ae-3e1f0a0cae4d"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "The core invariant is simple: log the change durably before the data page it describes is allowed to be durable",
+            "Sequential log writes turn expensive random-I/O durability into cheap append-only durability, letting data pages flush lazily",
+            "LSNs on both log records and data pages are what make recovery deterministic instead of a guessing game — ARIES's analysis/redo/undo phases are built entirely on comparing them",
+            "WAL guarantees physical crash consistency, not correctness — it will faithfully replay a logically wrong write just as reliably as a correct one"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null,
+          "id": "857df847-07bd-4682-9751-742069f5b543"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the core invariant that write-ahead logging enforces?",
+            "options": [
+              "Data pages must be written before their corresponding log record",
+              "The log record describing a change must be durable on disk before the data page it describes is allowed to be durable",
+              "Every write must be synchronous and fsynced individually, whether logged or not",
+              "Log records and data pages must always be written to the same physical disk sector"
+            ],
+            "correctIndex": 1,
+            "explanation": "The name says it: write-AHEAD logging means the log entry hits durable storage first. That ordering is what makes a crash recoverable — the log always has an accurate record of what should have happened, even if the data page update never made it to disk.",
+            "id": "cadf1f7e-0e66-4526-9a33-48adb7bda68e"
+          },
+          {
+            "prompt": "Why does WAL improve write throughput compared to fsyncing every data page update in place?",
+            "options": [
+              "It eliminates the need for durability entirely, since data pages are treated as disposable",
+              "It skips writing to disk and keeps everything in memory permanently",
+              "The log is append-only and sequential, so many changes can be made durable with a single sequential fsync, while data pages flush lazily and asynchronously afterward",
+              "It compresses data pages before writing them, reducing I/O volume"
+            ],
+            "correctIndex": 2,
+            "explanation": "Data pages are scattered across disk, so fsyncing each one is random I/O. The log is append-only, so a single sequential fsync can durably commit a batch of log records at once — and because the log already guarantees durability, the actual data pages can be flushed later, in memory-efficient batches, without any durability risk.",
+            "id": "cc4ed881-0dfa-4663-ba73-e3c85cbf90a2"
+          },
+          {
+            "prompt": "In ARIES-style recovery, what is a pageLSN used for?",
+            "options": [
+              "It encrypts the page contents for security",
+              "It records the LSN of the last log record that modified that page, letting recovery know exactly which log records still need to be replayed onto it",
+              "It tracks which user session most recently read the page",
+              "It sets an expiration time after which the page is automatically deleted"
+            ],
+            "correctIndex": 1,
+            "explanation": "Comparing a page's stored pageLSN against the log tells recovery precisely which updates are already reflected on that page and which still need to be redone — eliminating any guesswork about what state the page was left in when the crash happened.",
+            "id": "b0642881-74fe-4c99-9c68-5f4a885ff366"
+          }
+        ]
+      },
+      "references": [],
+      "id": "004fe5eb-7af0-4f76-9e73-314da4ebf1f7",
+      "publishedDate": "2026-08-10T12:54:26Z"
+    },
+    {
       "id": "911f8c7d-3623-40ee-a9fa-b0c020c4c06b",
       "publishedDate": "2026-08-10T06:50:23Z",
       "title": "Mixture of Experts: Only Some Weights Fire Per Token",
@@ -10982,187 +11173,6 @@
         {
           "title": "XM — official PyTorch code release",
           "url": "https://github.com/alexiglad/XM"
-        }
-      ]
-    },
-    {
-      "id": "4a7364bd-f26f-4b12-8904-582eae29c99d",
-      "title": "GLM-5.2: Open-Weight Coding at a Sixth of GPT-5.5's Cost",
-      "subtitle": "1M-token context and sparse attention, released under Apache-2.0",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "glm-5.2",
-        "open-weight",
-        "mixture-of-experts",
-        "sparse-attention",
-        "coding",
-        "zhipu-ai"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Zhipu AI (Z.ai) open-sourced GLM-5.2 under Apache-2.0: a 744B-parameter Mixture-of-Experts model (40B active) with a stable 1M-token context enabled by a new sparse-attention scheme called IndexShare. On SWE-Bench Pro it scores 62.1 versus GPT-5.5's 58.6, at roughly a sixth of GPT-5.5's per-token API price.",
-      "publishedDate": "2026-08-02T06:45:49Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "GLM-5.2: Zhipu AI's Open-Weight Coding Flagship",
-          "body": "Released by Z.ai (Zhipu AI) under Apache-2.0, GLM-5.2 pairs a 1M-token context with coding benchmark scores that beat a closed frontier model.",
-          "bullets": [
-            "744B total parameters, 40B active per token (Mixture-of-Experts)",
-            "1M-token context window via a new sparse-attention scheme",
-            "Outscores GPT-5.5 on SWE-Bench Pro at roughly a sixth of the per-token cost"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Long-Horizon Coding Agents Blow Up Cost and Context",
-          "body": "Agentic coding sessions can run for thousands of turns, with every turn re-sending the full transcript — that's brutal for both context limits and API bills.",
-          "bullets": [
-            "Closed frontier pricing is steep: GPT-5.5 runs about $5 per million input tokens and $30 per million output tokens",
-            "Most open-weight models plateau around 128K-256K context — too short to hold a full repo plus a long agent trace",
-            "Dense attention makes a 1M-token context extremely expensive to serve, which is why so few models offer one"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "IndexShare: One Indexer Shared Across Every 4 Layers",
-          "body": "GLM-5.2 builds on DeepSeek Sparse Attention (DSA), adding IndexShare — reusing a single sparse-attention indexer across every four attention layers instead of computing one per layer.",
-          "bullets": [
-            "Cuts per-token FLOPs by 2.9x at a 1M-token context length compared to indexing every layer independently",
-            "MoE routing activates only 40B of the 744B total parameters per token, keeping serving cost down despite the model's size",
-            "Ships in BF16 and FP8 precision for different deployment budgets"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Beats GPT-5.5 on Coding, at a Fraction of the Price",
-          "body": "GLM-5.2's list pricing and SWE-Bench Pro score, compared against GPT-5.5's.",
-          "bullets": [
-            "SWE-Bench Pro: GLM-5.2 scores 62.1 vs. GPT-5.5's 58.6",
-            "Input pricing: roughly $1.40/M tokens vs. GPT-5.5's $5/M",
-            "Output pricing: roughly $4.40/M tokens vs. GPT-5.5's $30/M — about a sixth of the combined cost"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "GLM-5.2",
-              "GPT-5.5"
-            ],
-            "rows": [
-              [
-                "SWE-Bench Pro",
-                "62.1",
-                "58.6"
-              ],
-              [
-                "Context window",
-                "1,000,000 tokens",
-                "—"
-              ],
-              [
-                "Input price / 1M tokens",
-                "~$1.40",
-                "~$5.00"
-              ],
-              [
-                "Output price / 1M tokens",
-                "~$4.40",
-                "~$30.00"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "example",
-          "title": "What a 1M-Token Window Actually Buys an Agent",
-          "body": "A mid-sized codebase can easily run 200K+ tokens of source. Add a long agentic session's tool-call history on top, and shorter-context models are forced to summarize or re-fetch files repeatedly.",
-          "bullets": [
-            "With 1M tokens, an agent can hold an entire mid-sized repo plus 500+ turns of tool history without truncation",
-            "A 128K-256K model working the same task has to drop old context, risking it forgetting earlier decisions or file contents",
-            "IndexShare is what makes serving that much context economically viable instead of just theoretically possible"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "Open Weights Don't Mean Free — or Simple",
-          "body": "Beating a closed model on a benchmark and being cheap to run in practice aren't the same thing.",
-          "bullets": [
-            "Self-hosting a 744B-parameter model (even with 40B active) needs serious multi-GPU infrastructure most teams don't have",
-            "Third-party hosted pricing varies a lot in practice — the same model has been listed anywhere from about $0.95 to $3.00 per million input tokens depending on provider",
-            "Sparse attention's savings are biggest at very long context; on short prompts the efficiency edge over dense models shrinks"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "GLM-5.2 is a concrete data point that open-weight models have closed much of the cost and capability gap with closed frontier models on agentic coding.",
-          "bullets": [
-            "IndexShare-based sparse attention is the specific trick making a stable 1M-token context affordable to serve",
-            "It outscored GPT-5.5 on SWE-Bench Pro while costing roughly a sixth as much per token at list price",
-            "Apache-2.0 licensing means it's usable commercially — but running it well still requires either serious infra or a hosted provider"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What architectural trick lets GLM-5.2 serve a 1M-token context efficiently?",
-            "options": [
-              "A larger tokenizer vocabulary",
-              "IndexShare — reusing one sparse-attention indexer across every 4 layers instead of every layer",
-              "Removing the Mixture-of-Experts router",
-              "Training on more GPUs than competitors"
-            ],
-            "correctIndex": 1,
-            "explanation": "IndexShare builds on DeepSeek Sparse Attention by sharing a single indexer across every four attention layers, cutting per-token FLOPs by 2.9x at 1M-token context length instead of paying for a full indexer at every layer."
-          },
-          {
-            "prompt": "How did GLM-5.2 compare to GPT-5.5 on SWE-Bench Pro?",
-            "options": [
-              "It scored lower, 52 vs. 58.6",
-              "It tied exactly",
-              "It scored higher, 62.1 vs. 58.6",
-              "It wasn't benchmarked against GPT-5.5"
-            ],
-            "correctIndex": 2,
-            "explanation": "GLM-5.2 outscored GPT-5.5 on this specific coding benchmark (62.1 vs 58.6) while listing at roughly a sixth of the per-token price — though a single benchmark win doesn't guarantee it's better on every real-world coding task."
-          },
-          {
-            "prompt": "What's a real tradeoff of choosing an open-weight model like GLM-5.2 over a hosted closed model?",
-            "options": [
-              "It cannot call external tools",
-              "Self-hosting the full model needs serious multi-GPU infrastructure, and third-party hosted pricing varies widely by provider",
-              "It has no usable license for commercial work",
-              "It cannot handle code at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "744B total parameters (even with only 40B active) is not something most teams can self-host cheaply, and observed third-party pricing for the same model has ranged roughly 2-3x depending on the provider."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "GLM-5 — official model repository (Zhipu AI / Z.ai)",
-          "url": "https://github.com/zai-org/GLM-5"
-        },
-        {
-          "title": "Z.ai's open-weights GLM-5.2 beats GPT-5.5 on multiple long-horizon coding benchmarks for 1/6th the cost — VentureBeat",
-          "url": "https://venturebeat.com/technology/z-ais-open-weights-glm-5-2-beats-gpt-5-5-on-multiple-long-horizon-coding-benchmarks-for-1-6th-the-cost"
         }
       ]
     }
