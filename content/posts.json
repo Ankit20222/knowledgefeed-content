@@ -1,6 +1,412 @@
 {
   "posts": [
     {
+      "id": "b96678e5-f8cc-47e1-bb24-3f767a13c710",
+      "title": "Requests and Limits: Why Kubernetes Kills Some Pods",
+      "subtitle": "Requests decide where a pod is scheduled. Limits decide what happens when it goes over.",
+      "category": "Kubernetes",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "kubernetes",
+        "resource-management",
+        "oomkill",
+        "scheduling",
+        "cgroups"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "gauge.with.dots.needle.67percent",
+      "summary": "Kubernetes uses two separate numbers per container — requests and limits — for CPU and memory, and they're enforced completely differently. Requests are what the scheduler bin-packs nodes against; limits are a hard ceiling enforced by the kernel's cgroups. Go over a memory limit and the kernel OOM-kills the container instantly; go over a CPU limit and the container is merely throttled, never killed. Understanding that asymmetry explains most 'why did my pod just restart' incidents.",
+      "body": null,
+      "slides": [
+        {
+          "id": "fe176ac1-7ae3-4bc4-8816-6b24481b278a",
+          "kind": "cover",
+          "title": "Two numbers per container, enforced two completely different ways",
+          "body": "Every Kubernetes container can declare a CPU/memory request and a CPU/memory limit. They look symmetric in the YAML, but the scheduler and the kernel treat them very differently — and that difference is why some pods get OOMKilled while others just quietly slow down.",
+          "bullets": [],
+          "symbol": "gauge.with.dots.needle.67percent",
+          "table": null
+        },
+        {
+          "id": "a15c58c3-9a9e-43f0-be0e-2bd02cb66830",
+          "kind": "problem",
+          "title": "Requests answer 'where', limits answer 'what if it goes over'",
+          "body": null,
+          "bullets": [
+            "requests.cpu / requests.memory: what the scheduler reserves on a node when deciding to place the pod — the scheduler only ever bin-packs against requests, never limits",
+            "limits.cpu / limits.memory: the hard ceiling the container is allowed to use once it's running, enforced by the node's kernel via cgroups",
+            "If you set no requests at all, the scheduler treats the pod as needing (effectively) nothing — it can land on an already-busy node and starve",
+            "If you set limits far above requests, a node can end up overcommitted: the sum of running pods' actual usage can exceed what the node physically has, even though every pod is within its own limit"
+          ],
+          "symbol": "arrow.left.arrow.right.circle.fill",
+          "table": null
+        },
+        {
+          "id": "3a423865-cd9b-4339-a51d-1012a3ac032f",
+          "kind": "solution",
+          "title": "Memory is killed, CPU is throttled",
+          "body": "The two resource types hit fundamentally different cgroup mechanisms when a container exceeds its limit.",
+          "bullets": [
+            "Memory is incompressible: a process can't be 'slowed down' to use less RAM, so exceeding memory.max in the container's cgroup makes the kernel OOM-kill the process immediately (exit code 137, reason OOMKilled)",
+            "CPU is compressible: exceeding the CPU limit doesn't kill anything — the kernel's CFS bandwidth controller just throttles the container, denying it CPU time for the rest of each scheduling period until usage drops back under quota",
+            "That's why a memory leak crashes a pod in a visible restart loop, while a CPU-hungry pod just gets slower and slower with no crash at all — worth checking `kubectl top pod` and throttling metrics before assuming a slow pod is a code bug",
+            "A killed container is restarted according to the pod's restartPolicy, which is why OOMKilled pods commonly show up as CrashLoopBackOff after repeated kills"
+          ],
+          "symbol": "bolt.slash.fill",
+          "table": null
+        },
+        {
+          "id": "3e6e1a36-aaab-4c73-8bf0-f09dc080d4fd",
+          "kind": "concept",
+          "title": "Requests vs limits set a pod's QoS class",
+          "body": "Kubernetes derives a Quality-of-Service class from how requests and limits compare, and that class decides eviction order under node pressure.",
+          "bullets": [
+            "Guaranteed: every container sets requests == limits for both CPU and memory — the pod gets the strongest eviction protection",
+            "Burstable: at least one container sets a request, and at least one request/limit pair differs — normal middle-ground behavior for most workloads",
+            "BestEffort: no requests or limits set on any container at all — first in line to be evicted the moment a node runs low on resources",
+            "Under memory pressure, the kubelet evicts BestEffort pods first, then Burstable pods using more memory than they requested, and only reaches Guaranteed pods as a last resort"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "cfa74a6a-0dae-4f0b-9f8a-961f5d4c300f",
+          "kind": "example",
+          "title": "Worked example: a pod set with request=256Mi, limit=512Mi",
+          "body": "A container declares requests.memory: 256Mi and limits.memory: 512Mi.",
+          "bullets": [
+            "Scheduling: the scheduler only counts the 256Mi request against the node's allocatable memory when deciding whether the pod fits",
+            "Normal operation: the container can grow past 256Mi (that number is not enforced as a ceiling) and run anywhere up to 512Mi without issue",
+            "A traffic spike pushes usage to 600Mi: the cgroup memory.max is 512Mi, so the kernel OOM-kills the container the instant it crosses that line — not gradually, immediately",
+            "If the equivalent CPU had been requests: 250m, limits: 500m instead, the same overshoot would just throttle the container's CPU time — no kill, no restart, just added latency"
+          ],
+          "symbol": "chevron.left.slash.chevron.right",
+          "table": null
+        },
+        {
+          "id": "5408e0c6-bee1-41f3-9fef-e14eff65e7f8",
+          "kind": "comparison",
+          "title": "Same shape, opposite consequences",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Memory over limit",
+              "CPU over limit"
+            ],
+            "rows": [
+              [
+                "Resource type",
+                "Incompressible",
+                "Compressible"
+              ],
+              [
+                "Enforcement",
+                "cgroup memory.max",
+                "cgroup CFS quota/period"
+              ],
+              [
+                "Consequence",
+                "OOM-killed (exit 137) immediately",
+                "Throttled — denied CPU time for the rest of the period"
+              ],
+              [
+                "Visible symptom",
+                "CrashLoopBackOff, restart count climbing",
+                "Elevated latency, no restarts"
+              ],
+              [
+                "Recoverable without a restart?",
+                "No",
+                "Yes — resumes once usage drops"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "21515796-1a4e-4470-8b2b-e0ed43af217e",
+          "kind": "problem",
+          "title": "Common pitfalls",
+          "body": null,
+          "bullets": [
+            "Omitting requests entirely lets the scheduler pack a node far past its real capacity, since it thinks the pod needs nothing — every pod in a namespace should have requests, enforced with a LimitRange if needed",
+            "Setting memory limit == real steady-state usage with no headroom guarantees an OOM-kill on the first minor spike (a GC pause, a burst of concurrent requests) — leave real margin",
+            "Setting CPU limits too tight silently degrades latency-sensitive services through throttling that doesn't show up as an error anywhere except CPU-throttling metrics",
+            "Copy-pasting requests/limits across services with very different workload shapes (bursty vs steady) bakes in either wasted reserved capacity or surprise evictions"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "6b31db3d-0cb5-4135-8067-8bc4872dd683",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Requests drive scheduling (bin-packing against a node's allocatable capacity); limits drive runtime enforcement via cgroups",
+            "Memory limits kill on overshoot because memory is incompressible; CPU limits only throttle because CPU time is compressible",
+            "requests vs limits also sets the pod's QoS class (Guaranteed/Burstable/BestEffort), which decides eviction order under node pressure",
+            "Always set requests close to real steady-state usage and leave real headroom on memory limits — that single habit prevents most OOMKill incidents"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6dc8f2ca-6488-4be7-b096-6317b5470d10",
+            "prompt": "What does the Kubernetes scheduler use to decide which node a pod fits on?",
+            "options": [
+              "The pod's limits",
+              "The pod's requests",
+              "The node's current CPU temperature",
+              "The pod's QoS class only, ignoring requests and limits"
+            ],
+            "correctIndex": 1,
+            "explanation": "The scheduler bin-packs against requests, not limits. A pod with no requests set is treated as needing effectively nothing, which is how nodes end up overcommitted."
+          },
+          {
+            "id": "6b95d561-1d4e-4691-8973-8983112d3667",
+            "prompt": "A container exceeds its memory limit. What happens?",
+            "options": [
+              "The kernel throttles it, denying memory allocations until usage drops",
+              "Nothing — memory limits are only advisory",
+              "The kernel OOM-kills the container immediately because memory can't be throttled",
+              "Kubernetes automatically raises the limit"
+            ],
+            "correctIndex": 2,
+            "explanation": "Memory is incompressible — a process can't be slowed down to use less of it — so cgroups enforce the memory limit by killing the container the instant it crosses memory.max."
+          },
+          {
+            "id": "9b42786c-707a-4422-81f2-ae48c31bbee5",
+            "prompt": "Under node memory pressure, which pods does the kubelet evict first?",
+            "options": [
+              "Guaranteed pods (requests == limits)",
+              "BestEffort pods (no requests or limits set)",
+              "Whichever pod has been running the longest",
+              "Pods are evicted in random order regardless of QoS class"
+            ],
+            "correctIndex": 1,
+            "explanation": "BestEffort pods have no resource guarantees at all, so they're evicted first. Burstable pods using more than they requested go next, and Guaranteed pods are protected until last."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-11T12:48:24Z",
+      "heroImageURL": null,
+      "artPrompt": null
+    },
+    {
+      "id": "299f522d-c79c-464c-858b-3e3ad189c6f0",
+      "title": "Tree of Thoughts: Letting an LLM Backtrack",
+      "subtitle": "Chain-of-thought commits to one path. Tree of Thoughts explores several and prunes the bad ones.",
+      "category": "AI Agents",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "tree-of-thoughts",
+        "reasoning",
+        "search",
+        "prompting",
+        "backtracking"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "Tree of Thoughts (Yao et al., 2023) turns LLM reasoning from a single linear chain into an explicit search tree: the model generates several candidate next steps, a self-evaluation step scores each one, and a search algorithm (BFS or DFS) decides which branches to keep exploring and which to abandon. It costs many more model calls than plain chain-of-thought, but on tasks that need planning and backtracking, that extra compute buys a large jump in success rate.",
+      "body": null,
+      "slides": [
+        {
+          "id": "e88ee738-e822-4066-8684-125dea43e18c",
+          "kind": "cover",
+          "title": "One wrong step early in a chain dooms the whole answer",
+          "body": "Chain-of-thought prompting makes an LLM show its reasoning, but it still only ever commits to one path. Tree of Thoughts (ToT) instead treats reasoning as a search problem: generate multiple next steps, evaluate them, and backtrack when a branch looks bad.",
+          "bullets": [],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "9b47b2a6-42e1-439e-9395-a01c8b7e705f",
+          "kind": "problem",
+          "title": "Chain-of-thought can't undo a bad move",
+          "body": null,
+          "bullets": [
+            "Standard CoT samples one linear sequence of reasoning steps token by token, left to right, with no mechanism to revisit an earlier step",
+            "On tasks that need planning or search (puzzles, multi-step math, creative writing with constraints), a single greedy path frequently locks in a mistake it can't recover from",
+            "Self-consistency (sampling many full CoT chains and majority-voting the final answer) helps but still evaluates each chain only at the very end — it can't prune a bad path early to save compute",
+            "The model has no way to look ahead, compare partial solutions against each other, or explicitly decide 'this direction isn't working, try another'"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "07569068-61b9-4422-b460-d7c26830e3f6",
+          "kind": "solution",
+          "title": "Four pieces turn reasoning into a search problem",
+          "body": "ToT frames problem solving as maintaining a tree of 'thoughts' — coherent, self-contained intermediate steps — and defines four things the problem author must specify.",
+          "bullets": [
+            "Thought decomposition: break the solution into steps small enough to evaluate independently, but large enough to carry real information (e.g. one equation, one paragraph, one partial plan)",
+            "Thought generator: propose the next thoughts from a given state, either by sampling several independent completions or by asking for a batch of distinct proposals in one prompt",
+            "State evaluator: have the LLM itself judge each partial state — either assign a scalar value ('sure/likely/impossible') or vote between candidates — to estimate how promising it is",
+            "Search algorithm: use the evaluator's scores to decide which thoughts survive; ToT typically uses breadth-first search (keep the top-b states per level) or depth-first search (commit to one path, backtrack on failure or a low score)"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "277e079a-ecae-43f4-805c-eba4a737ca85",
+          "kind": "concept",
+          "title": "BFS-ToT: expand, score, keep the top b, repeat",
+          "body": "The most common setup is breadth-first: at every level of the tree, generate several candidate next-thoughts per surviving state, score all of them, and keep only the top b before expanding the next level.",
+          "bullets": [
+            "b (the 'beam width') controls the quality/cost tradeoff directly — b=1 degrades toward greedy CoT, larger b explores more branches at proportionally higher token cost",
+            "Pruning happens level by level, so a branch that scores as 'impossible' gets dropped before the model wastes calls extending it further",
+            "Because generation and evaluation are separate LLM calls, the same base model plays both roles — no separate reward model or fine-tuning is required",
+            "DFS-ToT is a cheaper variant: follow the most promising thought until a score drops below a threshold or a max depth is hit, then backtrack to the parent and try the next candidate"
+          ],
+          "symbol": "arrow.up.and.down.and.arrow.left.and.right",
+          "table": null
+        },
+        {
+          "id": "58b6cb33-431a-4ff6-a41b-0021e3529ae0",
+          "kind": "example",
+          "title": "Worked example: Game of 24",
+          "body": "Task: combine four numbers (e.g. 4, 9, 10, 13) with +, -, x, / to reach exactly 24, using each number once.",
+          "bullets": [
+            "Thought decomposition: each 'thought' is one arithmetic step that combines two of the remaining numbers into a new number",
+            "Thought generator: from {4, 9, 10, 13}, propose several first moves — e.g. 13-9=4, 10-4=6, 4x9=36 — each leaving a shorter list to keep solving",
+            "State evaluator: the LLM checks each resulting set for whether 24 still looks reachable ('sure' / 'maybe' / 'impossible'), pruning states like the one left with only very large or very small remaining numbers",
+            "Search keeps the top b=5 states per step and expands each; the surviving branch that reaches [24] with an unused-number count of zero is the answer: 13-9=4, 4x6=24 combined with 10-4=6 gives (13-9)x(10-4)=24"
+          ],
+          "symbol": "number.square.fill",
+          "table": null
+        },
+        {
+          "id": "522ee9aa-997f-42cf-9f04-2d95db870de3",
+          "kind": "comparison",
+          "title": "More search, more cost, more reliability",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Greedy CoT",
+              "Self-consistency CoT",
+              "Tree of Thoughts"
+            ],
+            "rows": [
+              [
+                "Reasoning structure",
+                "Single linear chain",
+                "Many independent chains, vote at the end",
+                "Explicit tree, evaluated and pruned per step"
+              ],
+              [
+                "Can abandon a bad step mid-way?",
+                "No",
+                "No — only discovered at the final vote",
+                "Yes — low-scoring states are pruned immediately"
+              ],
+              [
+                "LLM calls per problem",
+                "1",
+                "N (one per sampled chain)",
+                "Roughly N x depth (generation + evaluation at every level)"
+              ],
+              [
+                "Needs a search algorithm?",
+                "No",
+                "No",
+                "Yes — BFS or DFS over states"
+              ],
+              [
+                "Best fit",
+                "Simple, single-path tasks",
+                "Tasks where multiple independent tries help",
+                "Planning, puzzles, tasks with a checkable intermediate state"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "571383fd-982a-4036-a83e-2b2963a3a349",
+          "kind": "problem",
+          "title": "When Tree of Thoughts is the wrong tool",
+          "body": null,
+          "bullets": [
+            "Token cost scales with beam width and depth — for straightforward tasks that a single CoT pass already solves reliably, ToT just burns extra calls for no gain",
+            "It depends on the model being a decent judge of its own partial progress; if the state evaluator can't reliably tell 'promising' from 'dead end', the search prunes good branches or wastes budget on bad ones",
+            "The thought decomposition has to be designed per task — there's no universal 'right' granularity, and a bad decomposition (steps too coarse or too fine) weakens the whole search",
+            "Latency is much higher than single-pass CoT, since branches are typically evaluated in sequence or in small batches rather than one shot"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "6382117c-d1c0-4c18-a654-ed1a955832e3",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "ToT = thought decomposition + generator + evaluator + search — it turns reasoning into an explicit, prunable search tree instead of one committed chain",
+            "The model plays two roles itself: proposing next steps and judging how promising each one is — no separate trained reward model needed",
+            "It buys reliability on tasks with a checkable intermediate state and real planning demands, at a real multiple in token cost and latency over plain CoT",
+            "Reach for it when a task needs backtracking or lookahead; skip it when a single reasoning pass already gets the answer right most of the time"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "12f58c76-c2dd-4a38-b333-c441e9ef4596",
+            "prompt": "What can Tree of Thoughts do that a single chain-of-thought pass cannot?",
+            "options": [
+              "Run without any LLM calls",
+              "Abandon a low-scoring partial solution mid-way and try a different branch",
+              "Guarantee a correct answer on every task",
+              "Skip the need for a thought decomposition"
+            ],
+            "correctIndex": 1,
+            "explanation": "Plain CoT commits to one linear path token by token. ToT scores partial states as it goes and can prune or backtrack away from a branch that looks unpromising, instead of only finding out at the very end."
+          },
+          {
+            "id": "2133f450-4aa8-41a6-9d3f-61ccd4481d8b",
+            "prompt": "In BFS-style Tree of Thoughts, what does the beam width b control?",
+            "options": [
+              "The number of tokens in each thought",
+              "How many top-scoring states are kept and expanded at each level of the tree",
+              "The temperature used for sampling",
+              "Whether the search uses depth-first or breadth-first traversal"
+            ],
+            "correctIndex": 1,
+            "explanation": "At each level, every surviving state proposes several next thoughts; the evaluator scores them and only the top b are kept for the next round. Small b approaches greedy CoT, larger b explores more but costs more."
+          },
+          {
+            "id": "d7fdcb04-964a-47c6-92ca-ebe132a2b899",
+            "prompt": "Which of these is a real limitation of Tree of Thoughts?",
+            "options": [
+              "It cannot be implemented with the same base model that does the reasoning",
+              "It requires a separately trained reward model",
+              "Its cost scales with beam width and depth, and it depends on the model being a reliable judge of its own partial progress",
+              "It only works on natural-language tasks, never on math or puzzles"
+            ],
+            "correctIndex": 2,
+            "explanation": "ToT reuses the same LLM for both generating and evaluating thoughts, so no separate reward model is needed. Its real costs are the multiplied token/latency budget and its reliance on the model's self-evaluation being trustworthy."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-11T12:48:24Z",
+      "heroImageURL": null,
+      "artPrompt": null
+    },
+    {
       "title": "SimWAM: Train With Video, Deploy Without It",
       "subtitle": "A driving planner that borrows video generation's instincts, then throws the video model away",
       "category": "AI Innovations",
@@ -10881,366 +11287,6 @@
           "id": "570b375b-cf6e-4491-bbe6-14abb68886e1",
           "title": "Memory Decoder at Scale: A Pretrained, Parametric Long-Term Memory (arXiv:2607.27919)",
           "url": "https://arxiv.org/abs/2607.27919"
-        }
-      ]
-    },
-    {
-      "id": "61467071-4614-4411-ab43-c7b7f917acd8",
-      "title": "Robostral Navigate: Steering Robots With One Camera",
-      "subtitle": "Mistral's first embodied-AI model turns a single RGB feed and a sentence into a walking route.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "mistral",
-        "robotics",
-        "embodied ai",
-        "navigation",
-        "simulation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "location.north.line.fill",
-      "summary": "Mistral AI released Robostral Navigate, an 8B-parameter model that lets a robot navigate using only a single RGB camera and a plain-language instruction — no depth sensors, LiDAR, or pre-built maps. Trained entirely in simulation on ~400,000 trajectories across ~6,000 scenes, it scores 76.6% on the R2R-CE validation-unseen benchmark, beating the best single-camera baseline by 9.7 points and multi-sensor (depth/LiDAR) systems by 4.5 points.",
-      "body": null,
-      "publishedDate": "2026-08-03T06:36:58Z",
-      "slides": [
-        {
-          "id": "67c11090-639e-4109-8314-a5e7456f25e8",
-          "kind": "cover",
-          "title": "Mistral's First Robotics Model",
-          "body": "Mistral AI, better known for text and code models, shipped its first embodied-AI release: a model that steers a physical robot from a single camera feed and a natural-language instruction.",
-          "bullets": [
-            "Robostral Navigate: 8B-parameter navigation model, announced via Mistral's official blog",
-            "Built by a newly formed robotics effort inside Mistral, following earlier industrial partnerships (e.g. Airbus, BMW) announced in 2026"
-          ],
-          "symbol": "location.north.line.fill",
-          "table": null
-        },
-        {
-          "id": "23f4ae96-2fc8-4374-a088-8ee773c4c256",
-          "kind": "problem",
-          "title": "Robot Navigation Usually Needs Expensive Hardware",
-          "body": "Classic navigation stacks lean on depth sensors, LiDAR, multiple cameras, or pre-built maps of the environment to know where obstacles are and where the robot can go.",
-          "bullets": [
-            "That hardware adds cost and weight, and often locks a navigation stack to one specific robot chassis",
-            "Pre-built maps break the moment a room's layout changes — a real problem in warehouses and factories where robots need to operate",
-            "Goal: match or beat sensor-rich systems using nothing but a single cheap camera"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "b3c9fdda-4237-4e95-af39-3c00fb5e3f8c",
-          "kind": "solution",
-          "title": "One Camera, One Sentence, a Navigation Plan",
-          "body": "Robostral Navigate takes a single RGB camera stream plus a plain-language instruction — e.g. 'leave the lobby, walk through the corridor, enter the supply room, and stop to face the second shelf' — and outputs navigation commands.",
-          "bullets": [
-            "8B parameters, trained entirely in simulation: roughly 400,000 trajectories collected across about 6,000 virtual scenes",
-            "Hardware-agnostic by design — the same model reportedly generalizes across wheeled, legged, and flying robots",
-            "No fine-tuning per robot chassis or per building is required to deploy it"
-          ],
-          "symbol": "camera.fill",
-          "table": null
-        },
-        {
-          "id": "74f55d5d-292f-4121-97fc-8ecfc39a9758",
-          "kind": "comparison",
-          "title": "R2R-CE Validation Unseen: Single Camera, Full-Sensor Score",
-          "body": "R2R-CE is a standard benchmark for following natural-language navigation instructions in environments not seen during training.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "System",
-              "R2R-CE (validation unseen)"
-            ],
-            "rows": [
-              [
-                "Best prior single-camera approach",
-                "66.9%"
-              ],
-              [
-                "Best multi-sensor system (depth/LiDAR)",
-                "72.1%"
-              ],
-              [
-                "Robostral Navigate (single RGB camera)",
-                "76.6%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "09f5edaa-252e-4d45-a92c-ae16070b96bb",
-          "kind": "example",
-          "title": "A Warehouse Robot That Never Saw Your Warehouse",
-          "body": "A logistics company deploys Robostral Navigate on an existing wheeled robot that only has a front-facing camera — no LiDAR retrofit needed.",
-          "bullets": [
-            "An operator types: 'Go to aisle 12, turn left at the end, and stop at the pallet marked B4.'",
-            "Because training was simulation-only and hardware-agnostic, the same model can also run on a delivery drone in the same facility without retraining",
-            "This is the pitch behind Mistral's push into physical AI for warehouses, factories, and delivery, building on its 2026 industrial partnerships"
-          ],
-          "symbol": "shippingbox.fill",
-          "table": null
-        },
-        {
-          "id": "1b433a30-ce97-4eed-852e-4586734f1dfb",
-          "kind": "concept",
-          "title": "Sim-Trained, Real-World Untested Edge Cases",
-          "body": "Training entirely in simulation is what made the data collection cheap and scalable — but it's also the model's biggest open question.",
-          "bullets": [
-            "A single RGB camera has no direct depth signal, so performance in cluttered, fast-changing, or poorly-lit real environments outside the ~6,000 simulated scenes is the real test",
-            "The benchmark result is on R2R-CE 'validation unseen' — a held-out simulation split, not an independent real-world deployment benchmark",
-            "It's a navigation model only — it doesn't manipulate objects, so it solves 'get there,' not the full robotics stack"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "1e741d9c-a9d5-4cfc-994e-0ec3290b5dfe",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Robostral Navigate is Mistral's first embodied-AI release: an 8B model that navigates from one RGB camera plus a text instruction",
-            "It beats prior single-camera work by 9.7 points and multi-sensor (depth/LiDAR) systems by 4.5 points on R2R-CE validation-unseen (76.6%)",
-            "Trained entirely in simulation (~400K trajectories, ~6,000 scenes), and designed to generalize across wheeled, legged, and flying robots",
-            "Sim-to-real transfer and the lack of depth sensing remain the open risk for messy, real-world deployments"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e3299ff9-438c-44eb-ad82-a4a05c100eda",
-            "prompt": "What sensor setup does Robostral Navigate require to operate?",
-            "options": [
-              "LiDAR plus multiple cameras",
-              "A single RGB camera",
-              "Depth sensors only",
-              "A pre-built 3D map of the environment"
-            ],
-            "correctIndex": 1,
-            "explanation": "Robostral Navigate's headline feature is that it works from a single RGB camera feed and a language instruction — no depth sensors, LiDAR, or multiple cameras needed."
-          },
-          {
-            "id": "50bbd22e-45f1-4e09-bd61-ebfc9de4c2fd",
-            "prompt": "How was Robostral Navigate trained?",
-            "options": [
-              "On real-world robot teleoperation data collected over years",
-              "Entirely in simulation, across roughly 6,000 virtual scenes",
-              "By fine-tuning an existing LiDAR-based navigation model",
-              "Using reinforcement learning directly on physical robots"
-            ],
-            "correctIndex": 1,
-            "explanation": "The model was built entirely in-house using simulated environments — about 400,000 trajectories collected across roughly 6,000 virtual scenes — with no real-world training data."
-          },
-          {
-            "id": "9bf402ee-7778-4bd7-aff2-7fbefeb09a26",
-            "prompt": "On the R2R-CE validation-unseen benchmark, how did Robostral Navigate compare to multi-sensor systems using depth or LiDAR?",
-            "options": [
-              "It scored 4.5 points lower",
-              "It performed identically",
-              "It scored 4.5 points higher, despite using only a single camera",
-              "It wasn't evaluated against multi-sensor systems"
-            ],
-            "correctIndex": 2,
-            "explanation": "Robostral Navigate scored 76.6% on R2R-CE validation-unseen, beating the best multi-sensor system (which uses depth or LiDAR) by 4.5 points — despite relying on a single RGB camera."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "faa51219-d054-40e4-9bee-44ce2b5746e7",
-          "title": "Robostral Navigate: single-camera AI navigation — Mistral AI",
-          "url": "https://mistral.ai/news/robostral-navigate/"
-        }
-      ]
-    },
-    {
-      "id": "092fd134-689f-4afc-b6d3-d192ffb67d9c",
-      "title": "MCP Roots: Telling a Server Where It's Allowed to Look",
-      "subtitle": "The primitive that scopes a server's filesystem access before it ever runs a tool.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "roots",
-        "filesystem",
-        "protocol",
-        "security",
-        "agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "folder.fill",
-      "summary": "Roots is the MCP primitive a client uses to tell a server which filesystem (or other URI) boundaries are actually relevant to the current session — e.g. the folders open in an editor. Servers can request the list at session start and get notified when it changes, so tools like file search or code analysis can scope themselves instead of guessing. Roots are advisory, not an enforcement mechanism — the host application still has to do the actual access control.",
-      "body": null,
-      "publishedDate": "2026-08-03T06:29:58Z",
-      "slides": [
-        {
-          "id": "b7d809c7-464e-4011-90e1-bda6e78bcdcf",
-          "kind": "cover",
-          "title": "Before a Server Touches Files, It Needs to Know Where to Look",
-          "body": "Most MCP conversations focus on Tools, Resources, and Prompts — the primitives a client's LLM reaches for. Roots works differently: it's how a client proactively tells a server what's in scope, before the server does anything.",
-          "bullets": [
-            "Roots are client-exposed: the client advertises a roots capability and can list them and notify the server when they change",
-            "A root is typically a file:// URI representing a directory boundary — but the spec allows other URI schemes too",
-            "It's the missing context that turns 'search for a function' into 'search for a function inside THIS project'"
-          ],
-          "symbol": "folder.fill",
-          "table": null
-        },
-        {
-          "id": "318f885d-b25a-4a4a-9298-bd341397e7e9",
-          "kind": "problem",
-          "title": "Without Roots, a Server Is Guessing at Scope",
-          "body": "An MCP server exposing a file-search or code-analysis tool has no inherent idea which directory the user actually cares about.",
-          "bullets": [
-            "Ask the user every time which folder to search, and you've turned a one-step tool call into a repetitive prompt",
-            "Default to scanning the whole filesystem, and you risk touching files the user never intended the server to see — slow, and a real privacy/security smell",
-            "Hardcode a path, and the server breaks the moment it's used on a different machine or a different project"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "510a70ed-1a0d-41e6-b75a-acefcfcbc447",
-          "kind": "solution",
-          "title": "roots/list: The Client Volunteers the Boundaries",
-          "body": "A server that wants to know the relevant scope sends a roots/list request; the client responds with its current set of roots, each with a URI and a human-readable name.",
-          "bullets": [
-            "Typical shape: [{ uri: 'file:///Users/dev/my-project', name: 'my-project' }] — often mirroring exactly the folders a code editor has open as a workspace",
-            "If the client's roots change mid-session (user opens another folder), it sends a roots/list_changed notification so the server can re-fetch instead of working off stale scope",
-            "Declared as a client capability during MCP's initialize handshake — a server has to check for it and fall back gracefully if the client doesn't support roots"
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "02590bda-74f9-449b-9341-9a4248c281be",
-          "kind": "example",
-          "title": "A Code-Search Server That Actually Knows the Project",
-          "body": "Picture an MCP server exposing a search_codebase tool, connected to an editor that has one workspace folder open: /Users/dev/checkout-service.",
-          "bullets": [
-            "At session start, the server calls roots/list and gets back exactly that one folder as its root",
-            "Every subsequent search_codebase call is scoped to that path by default — no re-asking, no scanning unrelated projects sitting elsewhere on disk",
-            "If the developer opens a second folder in a multi-root workspace, the roots/list_changed notification tells the server to broaden its scope automatically"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "e4eb08ce-d638-4a71-9191-af52a226ef08",
-          "kind": "comparison",
-          "title": "Roots vs. the Other Client-Side Primitives",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "",
-              "Roots",
-              "Sampling",
-              "Elicitation"
-            ],
-            "rows": [
-              [
-                "Who initiates",
-                "Server asks, client lists",
-                "Server asks, client runs a completion",
-                "Server asks, client gathers user input"
-              ],
-              [
-                "What it provides",
-                "Filesystem/URI scope boundaries",
-                "An LLM-generated message",
-                "Structured user-supplied data"
-              ],
-              [
-                "When it's used",
-                "Once per session, plus on change",
-                "Whenever a server needs to 'think'",
-                "Whenever a server needs a missing input"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "7b20c856-080c-4543-b161-b4844d7bc90e",
-          "kind": "concept",
-          "title": "Roots Are Advisory, Not Enforcement",
-          "body": "It's tempting to treat a root as a security boundary. The spec doesn't make that guarantee.",
-          "bullets": [
-            "A root is the client's declared statement of relevant scope — a well-behaved server respects it, but nothing in the protocol technically stops a server from requesting a path outside it",
-            "Actual access control is the host application's job (OS file permissions, sandboxing, or an explicit approval step) — roots communicate intent, they don't sandbox anything by themselves",
-            "Support is optional: many MCP clients don't implement roots at all, so a server that depends on them needs a sensible fallback (e.g. asking the user directly)"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "4bbfe752-7ebb-41f8-8afc-bc5d7566e098",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Roots let a client tell a server which filesystem/URI boundaries matter right now — usually the folders open in the user's workspace",
-            "Servers fetch them via roots/list at session start and stay in sync via a roots/list_changed notification",
-            "It's an optional client capability — always check for support and have a fallback path",
-            "Treat roots as a scoping hint, not a security boundary — real enforcement still belongs to the host application"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e5b9403c-1024-4f1c-a35e-dec767922878",
-            "prompt": "Which side of an MCP connection exposes the Roots capability?",
-            "options": [
-              "The server, to tell the client which files it will touch",
-              "The client, to tell the server which filesystem/URI boundaries are relevant",
-              "Neither — roots are configured only in a static config file",
-              "The underlying LLM, via a system prompt instruction"
-            ],
-            "correctIndex": 1,
-            "explanation": "Roots is a client-exposed capability. The client advertises it and lists its roots (e.g. open workspace folders) so a server knows what's in scope, without needing to guess or ask the user directly each time."
-          },
-          {
-            "id": "6578e5d9-d12b-47f3-a5e6-9b4db31ccbf0",
-            "prompt": "A user opens a second folder in their editor mid-session. What is the MCP-correct way for the connected server to learn about it?",
-            "options": [
-              "It polls roots/list every few seconds",
-              "It has no way to find out until the session restarts",
-              "The client sends a roots/list_changed notification, prompting the server to re-fetch the current roots",
-              "The server automatically scans the whole disk to detect new folders"
-            ],
-            "correctIndex": 2,
-            "explanation": "Clients send a roots/list_changed notification whenever the set of roots changes, so servers can re-fetch the current list instead of polling or working off stale scope."
-          },
-          {
-            "id": "27c67570-fa90-484b-b075-0eae36800529",
-            "prompt": "Why shouldn't a server treat a root as a hard security boundary?",
-            "options": [
-              "Because roots are encrypted and unreadable to the server",
-              "Because the protocol doesn't technically prevent a server from requesting paths outside the declared roots — real access control is the host application's job",
-              "Because roots are only suggestions from the server itself, not the client",
-              "Because roots expire after 60 seconds by spec"
-            ],
-            "correctIndex": 1,
-            "explanation": "Roots communicate the client's intended scope, but the MCP spec doesn't enforce it at the protocol level. Actual access control (file permissions, sandboxing, approval prompts) has to be implemented by the host application."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "8f77a7c2-0c67-435e-9006-c8182f5c5737",
-          "title": "Roots — Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/draft/client/roots"
         }
       ]
     }
