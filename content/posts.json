@@ -1,6 +1,377 @@
 {
   "posts": [
     {
+      "title": "SimWAM: Train With Video, Deploy Without It",
+      "subtitle": "A driving planner that borrows video generation's instincts, then throws the video model away",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "autonomous-driving",
+        "world-models",
+        "flow-matching",
+        "reinforcement-learning",
+        "navsim"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "car.fill",
+      "summary": "SimWAM co-trains a video-generation expert and a lightweight action expert with shared flow matching, then discards the video branch at deployment — keeping only a fast, self-contained trajectory planner. It hits 91.5 PDMS on NAVSIM's navtest split, beating both a VLM-based planner and prior world-action models that still generate video at inference, while running with lower latency.",
+      "slides": [
+        {
+          "id": "de96eafb-c98b-4dfa-8476-b7aba669accd",
+          "kind": "cover",
+          "title": "One camera, no future-frame gambling",
+          "body": "SimWAM is a world-action model for autonomous driving that borrows motion knowledge from video generation during training, then throws the video branch away at deployment, leaving a fast, self-contained planner.",
+          "bullets": [],
+          "symbol": "car.fill",
+          "table": null
+        },
+        {
+          "id": "8718f539-bea2-4d78-9b96-fd0e794c1169",
+          "kind": "problem",
+          "title": "World-action models pay a latency tax to \"imagine\" the future",
+          "body": "Prior world-action models like DriveWAM and DriveLaW generate candidate future video frames at inference time to reason about what might happen next, then pick a trajectory — that generation step is slow.",
+          "bullets": [
+            "Generating even short video rollouts at inference adds real latency, a hard problem for a planner that must act roughly every 100ms",
+            "Yet dropping the video signal entirely throws away motion priors learned from large-scale driving video",
+            "The field was stuck choosing between \"slow but well-informed\" and \"fast but shallow\""
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "0d63525a-bca7-46a1-9c27-417e59b43487",
+          "kind": "solution",
+          "title": "Co-train two experts, deploy only one",
+          "body": "SimWAM jointly trains a pretrained video expert and a lightweight action expert with shared flow matching, connected only through attention — then discards the video branch after training.",
+          "bullets": [
+            "An \"isolated attention mask\" keeps action-token predictions independent of future video frames — the only structural change needed to let the branches separate cleanly",
+            "The two experts share no parameters, so the video backbone can be swapped or the action expert scaled independently without touching the training objective",
+            "A reinforcement learning pass (FlowGRPO) further optimizes trajectory predictions against driving rewards, beyond plain imitation of the training data"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "9ef73f58-5b76-4dd1-aaea-ad624956004a",
+          "kind": "comparison",
+          "title": "Higher accuracy than the models it trades speed against",
+          "body": "On NAVSIM's navtest benchmark, SimWAM edges out both a VLM-based planner and prior WAM-based planners on PDMS, while running with the lowest latency of the world-model-based group — since it never generates video at inference.",
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Model",
+              "Type",
+              "PDMS on navtest"
+            ],
+            "rows": [
+              [
+                "SimWAM",
+                "World-action model (video branch discarded at inference)",
+                "91.5"
+              ],
+              [
+                "SGDrive",
+                "Vision-language model (VLM-based)",
+                "91.1"
+              ],
+              [
+                "DriveWAM",
+                "World-action model (keeps video generation at inference)",
+                "90.1"
+              ],
+              [
+                "DriveLaW",
+                "World-action model (keeps video generation at inference)",
+                "89.1"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7d278acd-6ce4-4a71-9eb7-d45a3c30976a",
+          "kind": "example",
+          "title": "Worked case: single front camera, zero future frames",
+          "body": "At inference, SimWAM takes one 384x672 front-camera frame, runs it through the surviving action expert only, and outputs a trajectory directly — no rollout, no sampled future video.",
+          "bullets": [
+            "The trained model transfers zero-shot to nuScenes, a different driving dataset than NAVSIM, without retraining — a sign the motion priors learned during co-training generalize past one benchmark",
+            "The video expert that shaped those priors during training never runs at deployment time, so inference-time cost stays close to a plain action-only planner",
+            "That's the practical payoff of the isolated attention mask: the GPU budget that would go to generating video instead goes to trajectory accuracy"
+          ],
+          "symbol": "camera.fill",
+          "table": null
+        },
+        {
+          "id": "3fc2ca95-3eed-4a69-817b-e432825ea10c",
+          "kind": "problem",
+          "title": "Where this trades away, and what it assumes",
+          "body": "SimWAM's inference-time speed comes from a specific training-time choice, not a free lunch.",
+          "bullets": [
+            "The video expert still has to be trained (a pretrained one, Wan2.2, is used as the starting point) — the co-training cost is real even though inference doesn't pay it",
+            "Reported results use a single front-camera setup at 384x672 — multi-camera or higher-resolution deployments aren't part of the released benchmarks",
+            "Zero-shot transfer to nuScenes is promising but is one dataset, not proof the priors generalize to arbitrary driving conditions or geographies",
+            "If inference-time speed isn't the constraint (e.g., offline simulation), a model that keeps the video rollout may still give more interpretable failure cases"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "5fbff2bc-4ff9-4a9f-a323-bde69a128941",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Video generation is used as a training-time teacher, not a deployment-time requirement — the branch that shaped the model's motion priors can be discarded once it has done its job",
+            "An isolated attention mask is the whole mechanism enabling the split: it just has to stop action tokens from depending on future frames",
+            "91.5 PDMS on NAVSIM navtest beats a VLM-based planner (91.1) and prior WAM-based planners that keep video generation at inference (90.1, 89.1) — with lower latency",
+            "Zero-shot transfer to nuScenes suggests the approach isn't overfit to one benchmark, but multi-camera and higher-resolution setups remain unproven"
+          ],
+          "symbol": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does SimWAM do differently from prior world-action models like DriveWAM at inference time?",
+            "options": [
+              "It generates higher-resolution video frames for better accuracy",
+              "It discards the video-generation branch entirely and predicts trajectories with only the lightweight action expert",
+              "It requires multiple cameras instead of one",
+              "It retrains a new video model for every scene"
+            ],
+            "correctIndex": 1,
+            "explanation": "SimWAM trains a video expert and action expert jointly, but the isolated attention mask means the action expert never depended on the video branch's outputs — so at inference it can run alone, skipping the costly video generation step prior WAMs rely on.",
+            "id": "6224378f-6e9f-4242-990a-268bc74049af"
+          },
+          {
+            "prompt": "What mechanism allows the video and action experts to be separated after training?",
+            "options": [
+              "A shared parameter matrix that averages both experts",
+              "An isolated attention mask that keeps action-token predictions independent of future video frames",
+              "A separate loss function for each expert",
+              "Manual pruning of the video expert's weights"
+            ],
+            "correctIndex": 1,
+            "explanation": "The isolated attention mask is the single structural change: it prevents action predictions from attending to future frames, so the two experts only interact through attention during training and can be cleanly split afterward.",
+            "id": "00c4261e-628a-451f-9261-e58045326b7d"
+          },
+          {
+            "prompt": "On the NAVSIM navtest benchmark, how does SimWAM's 91.5 PDMS compare to prior approaches?",
+            "options": [
+              "It's lower than all prior methods but much faster",
+              "It surpasses both a VLM-based planner (91.1) and WAM-based planners that generate video at inference (90.1, 89.1)",
+              "It only matches prior methods, with no accuracy gain",
+              "It wasn't evaluated on NAVSIM"
+            ],
+            "correctIndex": 1,
+            "explanation": "SimWAM posts the highest PDMS among the compared methods (91.5) while also having the lowest inference latency among world-model-based planners, since it doesn't pay the cost of generating video at deployment time.",
+            "id": "c2fbdc04-02fd-406a-abbf-243e003a6d1d"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "SimWAM: A Simple World Action Model for End-to-End Autonomous Driving (arXiv:2608.07468)",
+          "url": "https://arxiv.org/abs/2608.07468",
+          "id": "a0427e63-5bef-4da6-8b56-5cfa805dc2af"
+        }
+      ],
+      "id": "d8e16f18-a2b6-41c4-ac0b-5bb8be2281d8",
+      "publishedDate": "2026-08-11T06:42:56Z",
+      "heroImageURL": null,
+      "body": null
+    },
+    {
+      "title": "Speculative Decoding: Guessing Tokens to Skip Ahead",
+      "subtitle": "A small draft model proposes tokens; the big model verifies them all in one pass",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "speculative-decoding",
+        "inference-optimization",
+        "llm-serving",
+        "draft-model",
+        "latency"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding speeds up LLM inference by having a small draft model propose several tokens ahead, then verifying all of them in a single forward pass of the large target model. A rejection-sampling rule guarantees the output is statistically identical to plain decoding — so the speedup (commonly 2-3x) comes at no quality cost, as long as the draft model's guesses are accurate enough to be worth checking.",
+      "slides": [
+        {
+          "id": "2a6a0eb9-807f-4709-bad6-5a18a1a5c081",
+          "kind": "cover",
+          "title": "Why decode one token at a time when a cheap model can guess several?",
+          "body": "Autoregressive LLM decoding generates one token per forward pass, and each pass reads the model's full weights from memory. Speculative decoding lets a small, fast model draft ahead so the big model can verify multiple tokens per pass instead of generating them one by one.",
+          "bullets": [],
+          "symbol": "hare.fill",
+          "table": null
+        },
+        {
+          "id": "cf1b39c0-25e8-4bae-bb51-ab3d971f6b1f",
+          "kind": "problem",
+          "title": "Decoding is memory-bandwidth bound, not compute bound",
+          "body": "Generating each token requires streaming the full set of model weights from memory, even though a single token only needs a tiny amount of arithmetic. At batch size 1, the GPU spends most of its time waiting on memory bandwidth, not doing math.",
+          "bullets": [
+            "A 70B model in fp16 needs roughly 140GB of weights read from memory for every single token generated",
+            "The actual compute for one token (a handful of matrix multiplies) is tiny next to the memory traffic required to read those weights",
+            "Larger batches amortize this cost across more tokens, but a single interactive user pays the full memory-bandwidth cost per token"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "97b9b0e5-1273-4c16-b9d4-9096706ac2ff",
+          "kind": "solution",
+          "title": "Draft small, verify big, accept what matches",
+          "body": "Speculative decoding runs a small draft model to propose K tokens ahead cheaply, then does one forward pass of the large target model to score all K draft tokens plus the next one at once — accepting drafted tokens that match what the big model would have generated anyway.",
+          "bullets": [
+            "The draft model (often 10-100x smaller) proposes tokens autoregressively, which is cheap because it's small",
+            "The target model scores the entire drafted sequence in a single forward pass — the same memory-bandwidth cost as generating one token, but now covering K+1 candidate positions",
+            "A rejection-sampling rule accepts each drafted token with probability min(1, p_target/p_draft), guaranteeing the final output distribution is mathematically identical to plain decoding from the target model alone"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "table": null
+        },
+        {
+          "id": "48b480e8-c333-40f7-9481-bccfcc4e321e",
+          "kind": "concept",
+          "title": "Why acceptance rate decides everything",
+          "body": "The speedup from speculative decoding depends entirely on how often the draft model's guesses match what the target model would have said.",
+          "bullets": [
+            "If the draft and target models agree often (predictable text), acceptance rate can reach 70-90%, giving close to K-times fewer expensive target passes",
+            "If they disagree often (creative or technical text where the draft model predicts poorly), acceptance drops and speedup shrinks toward 1x",
+            "The moment a draft token is rejected, decoding falls back to sampling that one position from the target model directly, then speculation restarts from there",
+            "Picking K (how many tokens to draft ahead) is a trade-off: too small wastes the opportunity, too large means paying for draft tokens that get rejected anyway"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "91c622a6-b4bb-4830-9dc7-a8eaf13c0fb7",
+          "kind": "comparison",
+          "title": "Same output distribution, fewer expensive passes",
+          "body": "The property that makes this safe for production: verified speculative decoding produces exactly the same output distribution as running the target model alone — it's a speedup, not an approximation.",
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Setup",
+              "Target-model forward passes for N tokens",
+              "Output distribution"
+            ],
+            "rows": [
+              [
+                "Plain autoregressive decoding",
+                "N (one per token)",
+                "Exact target model distribution"
+              ],
+              [
+                "Speculative decoding, K=4, ~70% acceptance",
+                "~N/3 (plus cheap draft passes)",
+                "Exact target model distribution — unchanged"
+              ],
+              [
+                "Greedy small-model-only decoding",
+                "N (one per token, on small model)",
+                "Small model's distribution — genuinely different output"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "f55328c2-b144-4026-baa2-f61b32b9c275",
+          "kind": "example",
+          "title": "Worked example: drafting 4 tokens for \"The capital of France is\"",
+          "body": "Suppose the draft model proposes [\"Paris\", \",\", \" a\", \" city\"] after \"The capital of France is\". The target model scores all 4 positions plus one more in a single pass.",
+          "bullets": [
+            "\"Paris\" matches what the target model would have picked (high probability) → accepted",
+            "\",\" matches → accepted",
+            "\" a\" — the target model actually preferred \" known\" here → rejected; decoding samples \" known\" from the target model's distribution at this position",
+            "Everything drafted after the rejection point (\" city\") is discarded, and the next round of drafting restarts from \" known\"",
+            "Net result: 2 tokens accepted for free, 1 corrected, for roughly the cost of one target-model forward pass instead of three"
+          ],
+          "symbol": "text.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "68433ceb-bfba-4572-8513-7c34344ac7bd",
+          "kind": "problem",
+          "title": "When speculative decoding doesn't help",
+          "body": "It's a wall-clock latency optimization, not a free win in every setting.",
+          "bullets": [
+            "At large batch sizes, decoding is already compute-bound rather than memory-bound, so there's less idle bandwidth for the draft model to exploit — gains shrink",
+            "You need a draft model that's both cheap and well-aligned with the target model's outputs; a poorly matched draft model (different tokenizer, very different training data) tails off toward 1x speedup",
+            "Serving two models (draft + target) adds memory footprint and engineering complexity versus serving one",
+            "On highly unpredictable text, low acceptance rates can occasionally make it slightly slower than plain decoding because of draft-model overhead"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "20de66c7-7658-41e9-a086-c6c4d780d964",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "LLM decoding is memory-bandwidth bound at small batch sizes — the bottleneck is reading weights, not doing math — which is exactly the idle capacity this trick exploits",
+            "A small draft model proposes tokens; one target-model forward pass verifies all of them via rejection sampling",
+            "The output distribution is mathematically identical to plain decoding — this is a latency optimization with no quality cost, not an approximation",
+            "Real-world speedups (commonly 2-3x) depend entirely on acceptance rate, which depends on how well the draft model matches the target model's behavior"
+          ],
+          "symbol": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why is single-token LLM decoding usually memory-bandwidth bound rather than compute bound?",
+            "options": [
+              "GPUs cannot do floating point math fast enough",
+              "Generating one token requires streaming the full set of model weights from memory, while the actual arithmetic for one token is comparatively tiny",
+              "The tokenizer is the slowest part of the pipeline",
+              "Network latency dominates every forward pass"
+            ],
+            "correctIndex": 1,
+            "explanation": "At batch size 1, each decoding step has to read the entire model's weights from GPU memory to compute a single token, so the GPU spends most of its time waiting on memory bandwidth rather than doing math — this is exactly the idle capacity speculative decoding exploits.",
+            "id": "36909abd-7223-42f5-8777-de2d4289b388"
+          },
+          {
+            "prompt": "What guarantees that speculative decoding doesn't change the quality of the generated text?",
+            "options": [
+              "The draft model is trained to be identical to the target model",
+              "A rejection-sampling acceptance rule ensures the final output distribution exactly matches sampling from the target model alone",
+              "Only the first drafted token is ever used",
+              "The target model re-generates the entire sequence from scratch afterward"
+            ],
+            "correctIndex": 1,
+            "explanation": "Each drafted token is accepted with probability min(1, p_target/p_draft) and rejected tokens are resampled from a corrected distribution — this rejection-sampling scheme is mathematically proven to reproduce the target model's exact output distribution.",
+            "id": "8822fda7-9eaf-46ab-a712-a2c2ab307edc"
+          },
+          {
+            "prompt": "What most directly determines the speedup you get from speculative decoding?",
+            "options": [
+              "The size of the target model alone",
+              "The acceptance rate — how often the draft model's guesses match what the target model would have produced",
+              "The number of GPUs used",
+              "The length of the prompt"
+            ],
+            "correctIndex": 1,
+            "explanation": "High acceptance rate means most drafted tokens get confirmed in a single cheap verification pass, multiplying effective throughput; low acceptance rate means frequent fallback to single-token generation, and speedup collapses toward 1x.",
+            "id": "68992c31-237f-4d03-a6cf-4a1db185f17a"
+          }
+        ]
+      },
+      "references": [],
+      "id": "9d40d3ca-cbf5-439b-86d3-cb00750cfa7b",
+      "publishedDate": "2026-08-11T06:42:56Z",
+      "heroImageURL": null,
+      "body": null
+    },
+    {
       "title": "Why RL Survives Multi-Task Training and SFT Doesn't",
       "subtitle": "A gradient-level explanation for why fine-tuning fights itself and RL doesn't",
       "category": "AI Innovations",
@@ -10870,363 +11241,6 @@
           "id": "8f77a7c2-0c67-435e-9006-c8182f5c5737",
           "title": "Roots — Model Context Protocol Specification",
           "url": "https://modelcontextprotocol.io/specification/draft/client/roots"
-        }
-      ]
-    },
-    {
-      "id": "3d099230-9fbd-41e4-b6e8-3d74550c9021",
-      "title": "Agent Memory: Giving an AI Agent a Past",
-      "subtitle": "Context windows reset every session — persistent memory is the separate system that lets an agent actually learn.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "ai agents",
-        "agent memory",
-        "context engineering",
-        "long-term memory",
-        "rag"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "clock.arrow.circlepath",
-      "summary": "A context window is not memory — it vanishes the moment a session ends. Production agents instead run a separate memory system with three distinct stores (episodic, semantic, procedural) and a consolidation step that writes short-term interactions into long-term memory. Done well, it lets an agent improve over weeks of use; done carelessly, it lets stale or poisoned facts quietly corrupt every future session.",
-      "publishedDate": "2026-08-03T00:40:16Z",
-      "slides": [
-        {
-          "id": "24bf2ee9-6b0e-4f8c-882f-60322d81e3d4",
-          "kind": "cover",
-          "title": "Why Does a Long-Running Agent Keep Forgetting?",
-          "body": "Every new conversation, a naive agent starts from zero: it re-asks questions it was already answered, repeats mistakes it already made, and ignores preferences it was already told. The fix isn't a bigger context window — it's a separate memory system.",
-          "bullets": [],
-          "symbol": "clock.arrow.circlepath",
-          "table": null
-        },
-        {
-          "id": "458a90fd-3949-4d37-9752-eecf4a4bce18",
-          "kind": "problem",
-          "title": "A Context Window Is Not Memory",
-          "body": null,
-          "bullets": [
-            "Context windows are session-scoped — close the chat and every fact the agent learned about you is gone.",
-            "Just appending the full transcript to every future prompt doesn't scale: it re-pays the token cost of the whole history on every single call and buries the one relevant fact in thousands of irrelevant ones.",
-            "Without persistence, an agent can't improve — it repeats the same failed tool call in week 4 that it made in week 1."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "426f58d8-deb1-4729-a842-39aa6705069d",
-          "kind": "solution",
-          "title": "Three Memory Types, One Write Path",
-          "body": null,
-          "bullets": [
-            "Episodic memory: a record of specific past events — 'on July 12 the user's deploy failed on step 3.' Stored as timestamped, retrievable entries, usually in a vector or hybrid index.",
-            "Semantic memory: durable facts distilled out of episodes — 'this user prefers email over Slack for incident alerts.' No timestamp attached, just a standing fact.",
-            "Procedural memory: learned routines — an updated checklist, a revised system prompt, or a new heuristic the agent adds to its own tool-use strategy after something worked or failed.",
-            "All three are written through consolidation: a background step (often a cheaper LLM call) that reads recent episodes and decides what, if anything, is worth promoting to semantic or procedural memory."
-          ],
-          "symbol": "square.on.square.badge.person.crop",
-          "table": null
-        },
-        {
-          "id": "60443f78-01d8-49f2-99bf-a6f46314dd0f",
-          "kind": "architecture",
-          "title": "Read, Write, Consolidate",
-          "body": null,
-          "bullets": [
-            "Write: every turn appends a raw episodic record — what was asked, what tool ran, what the outcome was — to a durable store, not the live context window.",
-            "Retrieve: at the start of a new session, the agent pulls a small, relevant slice (recent episodes + matching semantic facts) via similarity search or a fixed profile lookup, not the entire history.",
-            "Consolidate: on a schedule or after N episodes, a summarization pass compresses raw episodes into semantic facts and prunes or decays entries nobody has retrieved in a long time — this is what keeps the store from growing without bound."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "5ffd743c-70a8-4285-90b4-3340a36fec3e",
-          "kind": "example",
-          "title": "A Support Agent Across Three Tickets",
-          "body": "Ticket 1: the agent solves a billing issue and logs the episode. Overnight consolidation extracts a semantic fact: 'this customer is on the annual plan.' Ticket 2, two weeks later: the agent retrieves that fact instead of re-asking, and when its first fix attempt fails, it logs why. Ticket 3: consolidation notices the same fix failed twice and writes a procedural update — 'for annual-plan billing issues, check proration first' — into the agent's own troubleshooting checklist, so every future agent instance benefits, not just this user's thread.",
-          "bullets": [],
-          "symbol": "person.crop.circle.badge.checkmark",
-          "table": null
-        },
-        {
-          "id": "7558027b-779f-4fb3-a3d3-e970d661dea3",
-          "kind": "comparison",
-          "title": "Which Store Handles What",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Memory type",
-              "Stores",
-              "Typical failure mode"
-            ],
-            "rows": [
-              [
-                "Episodic",
-                "Specific past events, timestamped",
-                "Grows unbounded if never pruned"
-              ],
-              [
-                "Semantic",
-                "Distilled standing facts, no timestamp",
-                "Goes stale when the underlying fact changes"
-              ],
-              [
-                "Procedural",
-                "Updated routines/checklists/prompts",
-                "Bad update silently degrades every future run"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "793ef37c-0836-49b5-99f0-bc2061a67f02",
-          "kind": "problem",
-          "title": "Where Memory Systems Break",
-          "body": null,
-          "bullets": [
-            "Memory poisoning: if user input is consolidated into semantic memory without checks, an attacker can plant a false 'fact' in one session that quietly biases every later session — treat consolidation as a trust boundary, not a free pass.",
-            "Contradiction, not just staleness: 'prefers email' and 'prefers Slack' can both be in the store if consolidation never reconciles conflicting facts — retrieval then returns whichever wins the similarity search that day.",
-            "Skip persistent memory for stateless, single-shot tasks (a one-off classification call) or compliance-sensitive flows where retaining user data at all is the actual risk — memory adds latency and attack surface you don't need if there's no second session to improve."
-          ],
-          "symbol": "exclamationmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "d5eed680-1253-48fb-9046-c1fabc13ec34",
-          "kind": "takeaways",
-          "title": "The Core Idea",
-          "body": null,
-          "bullets": [
-            "Context window = working memory for one session. A separate store = long-term memory across sessions — they solve different problems.",
-            "Split writes into episodic (events), semantic (facts), and procedural (routines) so retrieval can pull just the right layer instead of a wall of raw transcript.",
-            "Consolidation is the step that actually makes memory useful — without it you just have an ever-growing, unpruned log.",
-            "Treat every write path into long-term memory as untrusted input: unreconciled or unverified consolidation is how stale or poisoned facts become permanent."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4cd08d3e-6dd0-455c-88f3-ac6d9bb75915",
-            "prompt": "An agent updates its own troubleshooting checklist after noticing the same fix has failed twice. Which memory type is this?",
-            "options": [
-              "Episodic memory",
-              "Semantic memory",
-              "Procedural memory",
-              "Context window"
-            ],
-            "correctIndex": 2,
-            "explanation": "Procedural memory stores learned routines and strategies — updated checklists, heuristics, or prompts — not a single fact or a logged event. Episodic memory would be the raw log of the two failed attempts; semantic memory would be a distilled fact like 'this fix doesn't work for annual plans.'"
-          },
-          {
-            "id": "99a22828-7850-4ab6-b8b3-4027131d9458",
-            "prompt": "Why can't an agent just append its full conversation history to every future prompt instead of building a separate memory store?",
-            "options": [
-              "Context windows are read-only and can't hold conversation text",
-              "It re-pays the full token cost every call and buries relevant facts in irrelevant ones",
-              "LLMs cannot process more than one conversation turn at a time",
-              "It would violate the model's training data policy"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every additional token in the prompt costs money and latency, and stuffing in the entire history makes it harder for the model to find the one fact that actually matters right now — retrieval of a relevant slice scales far better than brute-force inclusion."
-          },
-          {
-            "id": "ebd5cbb4-06fd-409e-893c-4b4d1a6ef9c7",
-            "prompt": "What is 'memory poisoning' in the context of an agent's long-term memory system?",
-            "options": [
-              "The vector database running out of disk space",
-              "An attacker getting a false fact consolidated into memory so it biases later sessions",
-              "The agent forgetting a fact it was told earlier",
-              "Two different agents sharing the same memory store"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because consolidation writes session content into durable memory, unvalidated input during one session can plant a false 'fact' that then quietly shapes every future session — which is why consolidation should be treated as a trust boundary, not a free pass."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "d91bce5a-46af-4afc-8cb3-8004b0bb99e6",
-      "title": "ARIS: Catching AI Research Errors With a Rival Model",
-      "subtitle": "An open-source harness lets one model run a research project while a model from a different family adversarially reviews it.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "autonomous research",
-        "multi-agent systems",
-        "claude",
-        "mcp"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "person.2.wave.2.fill",
-      "summary": "ARIS (Auto-Research-in-Sleep) is an open-source harness for autonomous ML research that pairs an executor model driving the work forward with a reviewer from a different model family critiquing it. The cross-family pairing targets correlated errors — mistakes one model is systematically blind to that a same-model self-check would rubber-stamp — backed by a three-stage evidence-auditing layer.",
-      "publishedDate": "2026-08-02T18:42:52Z",
-      "slides": [
-        {
-          "id": "ff39a271-6758-4313-af43-c544ed06aff0",
-          "kind": "cover",
-          "title": "Can an AI Agent Do Real Research Unsupervised?",
-          "body": "ARIS is an open-source harness that lets one model run a research project end-to-end — idea, experiments, write-up — while a model from a different family reviews it, catching errors a same-model self-check tends to miss.",
-          "bullets": [],
-          "symbol": "person.2.wave.2.fill",
-          "table": null
-        },
-        {
-          "id": "07706906-9456-4fbf-911c-169f7cfbb560",
-          "kind": "problem",
-          "title": "The Same-Model Blind Spot",
-          "body": null,
-          "bullets": [
-            "Self-critique loops tend to rubber-stamp their own reasoning — the same weights that made a mistake also grade it.",
-            "Long-horizon autonomous research (idea → experiment → paper) compounds small errors across many steps.",
-            "Prior 'self-refine' agents show diminishing returns because critique and generation share the same failure modes."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "96c0c8a3-7d1c-4ffd-8207-fba2335f484f",
-          "kind": "solution",
-          "title": "Two Models, Adversarial by Design",
-          "body": null,
-          "bullets": [
-            "An executor model drives the work forward: idea discovery, running experiments, writing up results.",
-            "A reviewer from a different model family critiques intermediate artifacts and can force revisions before work proceeds.",
-            "Cross-family pairing (e.g. Claude as executor, GPT reached via an MCP server as reviewer) targets correlated errors — mistakes one model family is systematically blind to that another catches."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "f3cd57f0-9385-4eda-9054-f0773d643148",
-          "kind": "architecture",
-          "title": "Three Layers Under the Hood",
-          "body": null,
-          "bullets": [
-            "Execution layer: 65+ reusable Markdown-defined skills, MCP-based model integrations, and a persistent research wiki so later runs can reuse earlier findings.",
-            "Orchestration layer: coordinates the research workflow — idea, experiment, write-up, review, revise — with adjustable effort settings and configurable reviewer routing.",
-            "Assurance layer: a three-stage audit (integrity verification, result-to-claim mapping, claim auditing against a raw-evidence ledger), plus a scientific-editing pass and visual inspection of the rendered PDF."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "874931e0-fa4b-49d0-a93b-f7379f67b9da",
-          "kind": "example",
-          "title": "A Concrete Failure It Catches",
-          "body": "The executor (say, Claude Code) proposes a finding backed by a metric it logged. A cross-family reviewer, reached over MCP, checks the claim-to-evidence mapping — not just whether the writing sounds convincing — and flags that the logged number doesn't actually match what the experiment produced. The claim gets rejected and the step re-runs before it ever reaches the paper draft.",
-          "bullets": [],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "f26fc12d-8e15-4bdb-bfb7-70b54bff9388",
-          "kind": "comparison",
-          "title": "Same-Model vs. Cross-Model Review",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Review setup",
-              "What it catches",
-              "What it tends to miss"
-            ],
-            "rows": [
-              [
-                "Self-review (same model)",
-                "Surface-level slip-ups",
-                "Errors baked into that model's own blind spots"
-              ],
-              [
-                "Cross-model review (ARIS)",
-                "Blind spots idiosyncratic to one model family",
-                "Still needs accurate evidence logging to audit against"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "21fde293-3a4b-4396-b518-0580873b6f4b",
-          "kind": "concept",
-          "title": "Where This Still Breaks",
-          "body": null,
-          "bullets": [
-            "The assurance layer checks claims against logged evidence — it can't rescue a run where the evidence itself was logged wrong.",
-            "Running two full model contexts per research step (executor + reviewer) adds real latency and API cost.",
-            "It's tuned for empirical ML research with checkable metrics and logs; the fit fades for open-ended theoretical work with nothing concrete to audit against."
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "51f72aed-40be-4595-9016-9fdb338bcaaa",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Adversarial review only helps if the reviewer's failure modes don't overlap with the executor's — that's why cross-family pairing is the default, not same-model self-critique.",
-            "Assurance isn't one check — ARIS splits it into integrity, mapping, and claim auditing, each catching a different way a paper can drift from its evidence.",
-            "This is a harness pattern (skills + MCP + a wiki), not a new model — it's a blueprint for wiring existing frontier models into a more trustworthy research loop."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "0480e939-1ce1-44a4-b143-63cb78cdc439",
-            "prompt": "Why does ARIS default to a reviewer model from a different family than the executor?",
-            "options": [
-              "Different-family models are always more accurate individually",
-              "Same-model self-critique tends to miss errors the model is systematically blind to, since the same weights made and graded the mistake",
-              "It's required by the MCP protocol",
-              "Cross-family models are cheaper to run"
-            ],
-            "correctIndex": 1,
-            "explanation": "The core insight is that a model's self-critique shares its own blind spots. A reviewer from a different model family is more likely to catch correlated errors the executor can't see in itself."
-          },
-          {
-            "id": "d8b9f8b5-d980-4a30-b265-1329b20ede2a",
-            "prompt": "What does ARIS's assurance layer actually check?",
-            "options": [
-              "Whether the writing style matches a target journal",
-              "Whether the code compiles without errors",
-              "Whether manuscript claims are actually supported by the logged experimental evidence",
-              "Whether the executor model responded within a time limit"
-            ],
-            "correctIndex": 2,
-            "explanation": "The assurance layer runs integrity verification, result-to-claim mapping, and claim auditing — cross-checking what the paper says against the raw evidence ledger, not just whether the prose reads well."
-          },
-          {
-            "id": "18fd87c1-b7d6-4d8f-8f48-7731bb46b879",
-            "prompt": "What's a real limitation of ARIS's cross-model review approach?",
-            "options": [
-              "It can't be used with Claude models",
-              "It guarantees zero errors in published output",
-              "Two full model contexts running per research step adds meaningful latency and cost, and it can't catch evidence that was logged wrong in the first place",
-              "It only works on mathematics papers"
-            ],
-            "correctIndex": 2,
-            "explanation": "Cross-model review is not free: it roughly doubles the model calls per research step, and its claim-auditing can only check claims against the evidence that was actually logged — it can't detect an experiment whose results were recorded incorrectly at the source."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "5ab432de-cd0a-4d16-963e-bf2a9461a405",
-          "title": "ARIS: Autonomous Research via Adversarial Multi-Agent Collaboration (arXiv 2605.03042)",
-          "url": "https://arxiv.org/abs/2605.03042"
         }
       ]
     }
