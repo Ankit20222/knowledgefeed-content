@@ -1,6 +1,192 @@
 {
   "posts": [
     {
+      "id": "fa5a2f42-a03c-44ac-8100-911eeea42deb",
+      "title": "Attention Sinks: Why the First Few Tokens Never Get Evicted",
+      "subtitle": "Evict the start of the sequence from a streaming KV cache and perplexity explodes — here's why",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "streaming-llm",
+        "long-context",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "pin.fill",
+      "summary": "A handful of early tokens in any sequence absorb a wildly disproportionate share of attention across heads and layers, almost independent of what they actually say. Evict them from a streaming KV cache, as a naive sliding window does, and every later token's attention destabilizes — but keep just four of them pinned in place alongside a normal rolling window, and an already-trained model can stream generation indefinitely with constant memory and stable quality.",
+      "slides": [
+        {
+          "id": "886a9023-60f7-4a63-ae44-0f0bfb5af72f",
+          "kind": "cover",
+          "title": "Evict the Oldest Tokens and Perplexity Explodes",
+          "body": "Bound a streaming LLM's memory with the obvious fix — a sliding window that drops the oldest tokens as new ones arrive — and generation quality doesn't just drift, it collapses. The cause isn't lost content. It's a handful of early tokens the model has learned to lean on for something else entirely.",
+          "bullets": [],
+          "symbol": "pin.fill",
+          "table": null
+        },
+        {
+          "id": "4b919c82-c658-4145-bff3-54c96dac4096",
+          "kind": "problem",
+          "title": "A Sliding Window Alone Breaks Down the Moment It Starts Evicting",
+          "body": null,
+          "bullets": [
+            "To keep a KV cache bounded during long or open-ended generation, the obvious fix is a sliding window: keep only the most recent K tokens, dropping the oldest one each time a new one arrives.",
+            "Empirically, the moment eviction starts — the window no longer contains token 0 — perplexity spikes sharply, even though the window still holds a perfectly coherent, locally-relevant stretch of recent text.",
+            "The cause isn't that the model 'forgets' distant content. Researchers found the first few tokens of any sequence receive a disproportionately large share of attention across nearly every head and layer, almost regardless of their semantic content.",
+            "Remove those tokens and every later token's softmax loses a landing zone it has learned to dump excess attention mass into — attention distributions elsewhere become unstable, and output quality craters."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "05b6cfcd-bbc1-4642-918e-8850a7dff276",
+          "kind": "solution",
+          "title": "Pin a Few Early Tokens, Let the Rest Slide",
+          "body": null,
+          "bullets": [
+            "This is the 'attention sink' phenomenon (StreamingLLM, 2023): a small number of early tokens act as a dumping ground for attention mass, largely independent of their actual content.",
+            "The fix is to never evict them. Keep a tiny fixed set of 'sink' tokens — the original study found just 4 was already enough — permanently resident in the KV cache, alongside a normal sliding window of recent tokens.",
+            "The cache becomes two regions: a fixed short prefix of sink tokens, plus a rolling window of the most recent tokens. Total cache size stays bounded no matter how long generation runs.",
+            "Crucially, this works on models that were never trained with sinks in mind — they already learned to rely on early-token sinks during ordinary pretraining, so the fix requires no retraining or fine-tuning."
+          ],
+          "symbol": "lock.fill",
+          "table": null
+        },
+        {
+          "id": "ce1dee66-b63d-47b7-82d4-4b835bbf241c",
+          "kind": "architecture",
+          "title": "Two Regions, One Cache, Bounded Memory Forever",
+          "body": null,
+          "bullets": [
+            "Layout: [sink tokens, fixed] + [window tokens, rolling]. When a new token arrives and the window is full, only the oldest window token is evicted — the sink region is never touched.",
+            "Position ids are reassigned relative to the current contents of the cache, not the token's true position in the original sequence — so rotary/relative position encodings stay valid no matter how many tokens have streamed past.",
+            "The sink tokens don't need to be special or content-rich — even the first few ordinary tokens of the prompt work, because the effect is structural (a side effect of how softmax normalizes attention), not semantic.",
+            "Because cache size is now (sink count + window size) instead of (total tokens seen), memory and per-step compute stay flat indefinitely — the same cost at token 1,000 as at token 1,000,000."
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "9343ad49-36d6-447a-810a-e2a2fbacac14",
+          "kind": "example",
+          "title": "Worked Example: A Support Bot That Never Restarts",
+          "body": "A chat assistant runs for days across thousands of turns, streaming tokens continuously rather than restarting its context each session.",
+          "bullets": [
+            "Plain sliding window (window = 2048, no sinks): once total tokens pass ~2048 and the first tokens get evicted, perplexity spikes almost immediately — replies visibly degrade into repetition, broken formatting, and incoherent references.",
+            "Attention sinks (4 pinned tokens + window = 2048): cache size stays essentially the same (~2052 tokens), but perplexity stays flat and stable through the entire run, reported in the original study as stable even after streaming millions of tokens.",
+            "What it does not do: the bot can't recall the literal content of turn 1 by turn 10,000 — the sink tokens stabilize attention, they don't store conversation history. Real long-term recall still needs a separate memory or retrieval layer on top."
+          ],
+          "symbol": "message.fill",
+          "table": null
+        },
+        {
+          "id": "61d2c792-940f-46c2-996b-d76dd70c6bf9",
+          "kind": "comparison",
+          "title": "Dense Attention vs. Plain Window vs. Attention Sinks",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Setup",
+              "Cache size",
+              "Behavior once the window limit is passed"
+            ],
+            "rows": [
+              [
+                "Dense attention (no eviction)",
+                "Grows with every token, unbounded",
+                "Stable quality, but memory eventually blows up"
+              ],
+              [
+                "Sliding window, no sinks",
+                "Bounded (window size)",
+                "Perplexity spikes sharply the moment eviction begins"
+              ],
+              [
+                "Sliding window + attention sinks",
+                "Bounded (window size + ~4)",
+                "Perplexity stays stable, reported comparable to dense attention over very long streams"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b61dd30f-734f-4dc3-8c3f-368ac011b88b",
+          "kind": "concept",
+          "title": "What Attention Sinks Don't Fix",
+          "body": null,
+          "bullets": [
+            "They stabilize attention math, not memory: content evicted from the sliding window is genuinely gone from the cache — the model cannot recall specific facts from outside its window just because sinks are present.",
+            "They're not a substitute for real long-context capability. Tasks that need actual long-document recall still want extended-context training or retrieval-augmented approaches, not just a streaming trick.",
+            "More sinks isn't obviously better: the original study found ~4 already sufficient, while zero sinks (a plain window) collapses quality — over-allocating sink tokens mostly just spends cache budget for no extra benefit.",
+            "Remapped positions mean the model's internal notion of 'how far back' a token is no longer matches its true position in the original conversation — fine for streaming coherence, but worth knowing if downstream logic is position-sensitive."
+          ],
+          "symbol": "questionmark.circle.fill",
+          "table": null
+        },
+        {
+          "id": "ad40157f-4faa-458a-9af5-75646476199e",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "The 'attention sink' phenomenon: a handful of early tokens absorb disproportionate attention mass across heads and layers, mostly independent of their content — an emergent side effect of softmax attention, not something those tokens semantically 'deserve.'",
+            "Naively evicting them (a plain sliding window) destabilizes attention everywhere else and craters quality; pinning just a few of them (commonly 4) alongside a normal rolling window fixes it with zero retraining.",
+            "This is what lets an already-trained LLM stream open-ended generation with constant, bounded memory instead of a KV cache that grows forever.",
+            "It buys stability and bounded memory, not extended recall — pair it with real long-context training or retrieval when the task actually needs the model to remember far-back content."
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ac2d471d-5e6f-402b-ad04-178be8c54d92",
+            "prompt": "What is the 'attention sink' phenomenon?",
+            "options": [
+              "The first few tokens in a sequence absorb a disproportionate share of attention across most heads and layers, largely independent of their content",
+              "The KV cache physically overflows once it exceeds GPU memory",
+              "Attention scores between adjacent tokens are always the highest in the sequence",
+              "A kernel-level bug that causes some tokens to be silently dropped"
+            ],
+            "correctIndex": 0,
+            "explanation": "It's an emergent property of how softmax attention distributes probability mass, not something tied to what those early tokens actually mean — models consistently over-attend to the first few positions regardless of content."
+          },
+          {
+            "id": "455b82a0-516f-4ee2-b3a2-0a32fc769fa6",
+            "prompt": "Why does a plain sliding window (no sink tokens) cause perplexity to spike once eviction begins?",
+            "options": [
+              "The window becomes too large to fit in GPU memory",
+              "Evicting the early tokens removes a landing zone that later tokens' attention distributions have learned to rely on, destabilizing attention throughout the sequence",
+              "The model runs out of valid position ids once the window slides",
+              "The remaining tokens in the window stop being semantically related to each other"
+            ],
+            "correctIndex": 1,
+            "explanation": "The instability isn't about losing meaningful content — it's structural. Once the sink tokens are gone, every other token's attention distribution, which was implicitly counting on that landing zone, becomes unstable."
+          },
+          {
+            "id": "095a35ae-7f2a-449d-bc94-ac2544c013dd",
+            "prompt": "What does adding attention sinks NOT give you?",
+            "options": [
+              "Bounded, constant memory during long streaming generation",
+              "Stability that avoids retraining an already-trained model",
+              "Genuine recall of specific content that was evicted from the sliding window",
+              "Perplexity comparable to dense (unbounded) attention over long streams"
+            ],
+            "correctIndex": 2,
+            "explanation": "Sinks stabilize the attention math — they don't store or retrieve content that fell out of the window. Actual long-range recall is a separate problem, solved by long-context training or retrieval, not by attention sinks."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-12T12:47:28Z"
+    },
+    {
       "id": "78668c41-8773-4d9d-91dd-555af48a640c",
       "title": "Continuous Batching: Stop Waiting for the Slowest Request",
       "subtitle": "Why LLM servers reschedule the batch every single token, not every request",
@@ -11150,201 +11336,6 @@
       ],
       "id": "5168f094-dfa6-4fb6-85d8-4b570e38f7cc",
       "publishedDate": "2026-08-04T00:44:29Z"
-    },
-    {
-      "title": "Qwen-UI-Agent: A Foundation Model for Every Screen",
-      "subtitle": "One model drives your phone, your laptop, and a terminal — without switching architectures.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "gui-agents",
-        "alibaba",
-        "qwen",
-        "agentic-rl",
-        "computer-use",
-        "benchmarks"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cursorarrow.click.2",
-      "summary": "Alibaba's Qwen-UI-Agent Technical Report (July 2026) trains one GUI agent to operate phones, desktops, browsers, and a command line through a unified action space, using a self-generating data flywheel and large-scale online RL. It sets new mobile-use benchmarks and holds its own against frontier models on computer and browser use.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Agent Learns to Use Every Screen",
-          "body": "Most GUI agents specialize: one model for mobile taps, another for desktop clicks, another for browser DOM actions. Qwen-UI-Agent trains a single foundation model across all of them — plus a command line — using one unified way of describing an action.",
-          "bullets": [],
-          "symbol": "cursorarrow.click.2",
-          "table": null,
-          "id": "7af7cd8d-b213-4a03-97dd-7f5d26aef205"
-        },
-        {
-          "kind": "problem",
-          "title": "Why One Model Per Surface Doesn't Scale",
-          "body": null,
-          "bullets": [
-            "Mobile, desktop, and browser agents are usually trained separately, so skills learned on one surface don't transfer to another",
-            "Most public GUI-agent training data caps out well under 20-turn trajectories — far short of real multi-app tasks that chain dozens of steps",
-            "Benchmarks built on a handful of curated apps don't capture real device diversity, so agents overfit to benchmark UIs",
-            "Treating GUI actions (taps, clicks) and CLI actions (shell commands) as separate action spaces forces an agent to pick a mode instead of freely mixing both"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "035a43ab-490f-400a-8639-3a911c41f2ad"
-        },
-        {
-          "kind": "solution",
-          "title": "A Unified Action Space Plus a Self-Generating Curriculum",
-          "body": null,
-          "bullets": [
-            "One action space interleaves GUI operations (taps, swipes, clicks) with CLI execution, and can emit several batched actions in a single model turn",
-            "An AutoResearch-style data flywheel: agents construct their own tasks and environments, diagnose their own failures, and plan the next round of training data",
-            "Online RL trains directly on trajectories exceeding 100 turns — long enough to capture real multi-app workflows, not toy demos",
-            "Over 10,000 concurrent sandboxed environments run in parallel to keep rollout collection fast enough to feed that scale of RL"
-          ],
-          "symbol": "square.stack.3d.up",
-          "table": null,
-          "id": "82271e04-7795-48e6-b8c7-e098f85431d0"
-        },
-        {
-          "kind": "comparison",
-          "title": "State of the Art on Mobile, Competitive Everywhere Else",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Qwen-UI-Agent",
-              "Notable comparison"
-            ],
-            "rows": [
-              [
-                "MobileWorld",
-                "82.1%",
-                "+14.6 pts over Claude Opus 4.8"
-              ],
-              [
-                "MobileWorld-Real",
-                "92.2%",
-                "real-device suite, not simulated"
-              ],
-              [
-                "AndroidDaily",
-                "97.5%",
-                "everyday Android task suite"
-              ],
-              [
-                "OSWorld-Verified",
-                "79.5%",
-                "2nd overall, ahead of GPT-5.5 & Gemini 3.1 Pro"
-              ],
-              [
-                "WebArena",
-                "73.6%",
-                "browser-use benchmark"
-              ],
-              [
-                "ScreenSpot-Pro",
-                "81.5%",
-                "GUI grounding / element localization"
-              ]
-            ]
-          },
-          "id": "f74923a2-a9e3-4bfd-814a-6fef6407f4e5"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A Task That Spans Three Surfaces",
-          "body": "Ask it to 'book the cheapest flight under $400 and add it to my budget spreadsheet.' A siloed agent needs a human to bridge steps between apps. Qwen-UI-Agent's unified action space lets one model check a price on a travel app (mobile), open a comparison site (browser), and run a shell command to append a row to a local CSV — chaining GUI and CLI actions inside the same trajectory.",
-          "bullets": [],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "82fa8329-b8c6-46ef-aaf9-0db0de55c045"
-        },
-        {
-          "kind": "problem",
-          "title": "Where It Still Falls Short",
-          "body": null,
-          "bullets": [
-            "OSWorld-v2, a harder computer-use benchmark, gets only 40.0% partial-progress credit — full multi-step desktop autonomy is still unsolved",
-            "The training recipe leans on 10,000+ concurrent environments and 100+ turn RL rollouts — infrastructure far beyond what most teams can replicate",
-            "State of the art on mobile doesn't mean state of the art everywhere: on OSWorld-Verified it ranks 2nd, not 1st",
-            "A model trained to batch multiple actions per turn also needs stronger safeguards — one bad turn now executes several actions instead of one"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "bba94af9-3b4f-4d55-8ac7-156584066aab"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Qwen-UI-Agent trains a single foundation model across mobile, desktop, browser, and CLI action spaces instead of one model per surface",
-            "Its data flywheel lets agents generate and diagnose their own training tasks, feeding 100+ turn online RL across 10,000+ parallel environments",
-            "It sets new state of the art on mobile-use benchmarks (82.1% MobileWorld, 97.5% AndroidDaily) and lands competitively — but not first — on desktop and browser use",
-            "Harder desktop benchmarks (OSWorld-v2, 40% partial credit) show general computer-use autonomy is still an open problem"
-          ],
-          "symbol": "flag.checkered",
-          "table": null,
-          "id": "bf9d43c6-b1b4-4c72-a058-444da1be82a8"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does Qwen-UI-Agent do differently from most prior GUI agents?",
-            "options": [
-              "It only works on Android phones",
-              "It trains one foundation model across mobile, desktop, browser, and CLI action spaces instead of a separate model per surface",
-              "It avoids reinforcement learning entirely",
-              "It only handles single-step tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "Most GUI agents specialize per surface; Qwen-UI-Agent's unified action space lets one model act across all of them, including mixing GUI taps with shell commands.",
-            "id": "6c394d4f-d55a-42c6-a964-4e72862a85fd"
-          },
-          {
-            "prompt": "How does the 'AutoResearch-style data flywheel' generate training data?",
-            "options": [
-              "Human annotators label every trajectory by hand",
-              "Agents construct their own tasks and environments, diagnose failures, and plan the next round of data",
-              "Data comes only from scraped human screen recordings",
-              "It reuses the same fixed benchmark tasks repeatedly"
-            ],
-            "correctIndex": 1,
-            "explanation": "The flywheel is agent-driven: the system proposes tasks, runs them, finds where it failed, and uses that to plan what to train on next — reducing reliance on manual labeling.",
-            "id": "fa0e7258-da17-4db0-af93-2e20ad20b3cb"
-          },
-          {
-            "prompt": "Which benchmark result shows general computer-use autonomy is still far from solved?",
-            "options": [
-              "MobileWorld, where it scores 82.1%",
-              "AndroidDaily, where it scores 97.5%",
-              "OSWorld-v2, where it earns only 40.0% partial-progress credit",
-              "ScreenSpot-Pro, where it scores 81.5%"
-            ],
-            "correctIndex": 2,
-            "explanation": "OSWorld-v2 is a harder, more open-ended desktop benchmark. A 40% partial-progress score — far below its mobile numbers — shows full desktop autonomy remains unsolved even for a state-of-the-art agent.",
-            "id": "2dbbca19-cd78-4855-a46a-b2eceb38b65d"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Qwen-UI-Agent Technical Report: Toward Next-Generation Real-World Centric Foundation GUI Agents (arXiv:2607.28227)",
-          "url": "https://arxiv.org/abs/2607.28227",
-          "id": "d04de073-9ec5-4caa-8d96-8e7c6e5bf765"
-        },
-        {
-          "title": "Paper page — Hugging Face",
-          "url": "https://huggingface.co/papers/2607.28227",
-          "id": "c5eed654-0133-43b2-a82d-2f0559654538"
-        }
-      ],
-      "id": "bde14e2e-c933-4f2d-a698-784e4d44bbb6",
-      "publishedDate": "2026-08-03T18:45:06Z"
     }
   ]
 }
