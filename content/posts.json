@@ -1,6 +1,202 @@
 {
   "posts": [
     {
+      "id": "78668c41-8773-4d9d-91dd-555af48a640c",
+      "title": "Continuous Batching: Stop Waiting for the Slowest Request",
+      "subtitle": "Why LLM servers reschedule the batch every single token, not every request",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "inference",
+        "batching",
+        "throughput",
+        "vllm"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Batching multiple requests together is how LLM servers keep GPUs busy, but batching at the request level forces short answers to wait for the longest one in the batch to finish. Continuous batching reschedules the running batch after every decoded token instead of every full request, evicting finished sequences and admitting new ones mid-flight so GPU slots almost never sit idle.",
+      "slides": [
+        {
+          "id": "842d8648-b66e-4ae0-a636-ae679a778d58",
+          "kind": "cover",
+          "title": "A Finished Reply Still Held Its GPU Slot Hostage",
+          "body": "Naive batching treats a batch of requests as one atomic unit: if one reply needs 500 tokens and the rest need 20, everyone waits for the 500-token reply — the GPU keeps computing on slots that are done in every way that matters, just not officially closed.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "2d33f0f1-acac-4136-90ef-b10888b582dd",
+          "kind": "problem",
+          "title": "Request-Level Batching Waits for the Slowest Sequence",
+          "body": null,
+          "bullets": [
+            "Classic batching groups N requests into one fixed batch and runs the model forward, one decoding step at a time, until every sequence in that batch hits its stop token or max length",
+            "A sequence that finishes early can't leave — its slot either sits idle or gets padded, but a new waiting request can't take that slot until the whole batch drains",
+            "The result is a convoy effect: one long-running request (a big summarization, a long chain-of-thought answer) drags down throughput for every short request unlucky enough to share its batch",
+            "Queued requests outside the batch keep waiting even though the GPU has computationally free slots right now — the batch boundary is what's blocking them, not the hardware"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "c6719cdb-9b3d-4914-8095-6a23d7858da4",
+          "kind": "solution",
+          "title": "Reschedule at the Token Level, Not the Batch Level",
+          "body": null,
+          "bullets": [
+            "Continuous batching (also called iteration-level scheduling or in-flight batching) runs the scheduler after every single decoding step — every generated token — instead of after the whole batch finishes",
+            "The moment a sequence emits its stop token or hits max length, it's evicted immediately, freeing its slot for the very next iteration",
+            "A waiting request in the queue gets inserted into that freed slot right away — it doesn't wait for anyone else in the batch to finish, only for the next forward pass",
+            "Batch composition is fluid: the set of sequences being computed together can be completely different from one iteration to the next"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "ff127f93-acea-446f-9304-15d224e241e8",
+          "kind": "architecture",
+          "title": "It Needs a Memory Manager That Can Keep Up",
+          "body": null,
+          "bullets": [
+            "Sequences entering and leaving the batch every iteration means the KV cache can't live in one fixed-size contiguous tensor sized for a static batch — allocations and frees happen constantly, at unpredictable moments",
+            "This is why continuous batching is almost always paired with a per-sequence, block-based KV cache allocator (the same idea behind paged attention) rather than one big preallocated buffer",
+            "New requests bring a prompt that must be 'prefilled' — processed all at once, which is compute-heavy — while ongoing sequences are in 'decode', generating one token at a time, which is memory-bandwidth-heavy",
+            "Mixing a large prefill into the same iteration as many decode steps spikes that iteration's latency for every decode sequence sharing it, which is why production schedulers often chunk large prefills across several iterations instead of running them in one shot"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "6c416b8d-55f7-4cda-b865-a446325e88d2",
+          "kind": "example",
+          "title": "Worked Example: Four Requests, Wildly Different Lengths",
+          "body": "Say four requests join a batch needing 20, 20, 200, and 20 output tokens respectively.",
+          "bullets": [
+            "Static batching: the server runs all 200 steps for all four slots. Three slots finish real work at step 20 and then just occupy GPU memory — doing nothing useful — for the remaining 180 steps. Any request that arrived at step 21 waits until step 200",
+            "Continuous batching: at step 20, the three short sequences are evicted the instant they finish. If three new requests are waiting, they take those slots at step 21 — they don't wait 180 extra steps for an unrelated request to finish",
+            "The long 200-token request is unaffected either way — continuous batching doesn't speed up any single sequence, it stops other sequences from being blocked by it"
+          ],
+          "symbol": "list.bullet.rectangle",
+          "table": null
+        },
+        {
+          "id": "89d3c6a0-474d-43eb-a518-0e45f74403d5",
+          "kind": "comparison",
+          "title": "Static Batching vs. Continuous Batching",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "",
+              "Static / Request-Level Batching",
+              "Continuous Batching"
+            ],
+            "rows": [
+              [
+                "Rescheduling granularity",
+                "Once per full batch (waits for the slowest sequence)",
+                "Once per decoding iteration (per generated token)"
+              ],
+              [
+                "GPU utilization on mixed lengths",
+                "Drops as short sequences finish but can't leave",
+                "Stays high — freed slots refill on the next step"
+              ],
+              [
+                "New request wait time",
+                "Until the current batch fully drains",
+                "Until the next iteration, regardless of batch state"
+              ],
+              [
+                "KV cache memory layout",
+                "One fixed-size buffer sized for the batch",
+                "Per-sequence, block-based allocator (paged KV cache)"
+              ],
+              [
+                "Used by",
+                "Simple early inference servers",
+                "vLLM, TensorRT-LLM ('in-flight batching'), TGI, Orca"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "c657f8d1-5707-4aa3-9d65-64f55aa94ad1",
+          "kind": "concept",
+          "title": "Where It Gets Hard — and Where It Doesn't Help",
+          "body": null,
+          "bullets": [
+            "It adds real scheduler complexity: per-iteration admission decisions, prefill/decode interleaving, and eviction all have to happen every single step without becoming the bottleneck themselves",
+            "Admitting too many concurrent sequences too eagerly can exhaust KV cache memory — the scheduler has to reserve headroom or evict/preempt lower-priority sequences under pressure",
+            "It doesn't shrink the work for any individual request — a 500-token reply still takes roughly 500 steps to generate; continuous batching only prevents that request from stalling everyone else",
+            "For a server that only ever handles one request at a time, or where all requests are near-identical length (e.g. fixed-length classification-style outputs), the benefit shrinks — there's little convoy effect to fix"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "e57f24d9-3ef5-4a0b-83c0-cc1cae78a643",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Naive batching is atomic at the request level — one long sequence in a batch drags every other slot down with it until the whole batch finishes",
+            "Continuous batching reschedules at the granularity of a single decoding step, evicting finished sequences and admitting queued ones on the very next iteration",
+            "It typically requires a per-sequence, block-based KV cache manager, since batch membership changes unpredictably every step rather than at fixed boundaries",
+            "It's a throughput and utilization fix, not a latency fix for any one request — mixing prefill and decode work still needs care, usually via chunked prefill"
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "aefcb829-7330-4bf2-9331-e91281d6d4f6",
+            "prompt": "Under naive request-level batching, what specifically causes GPU slots to sit idle?",
+            "options": [
+              "The model weights don't fit in GPU memory",
+              "A slot freed by an early-finishing sequence can't be reused until every sequence in that same batch also finishes",
+              "The scheduler prioritizes requests by billing tier",
+              "Attention computation scales quadratically with sequence length"
+            ],
+            "correctIndex": 1,
+            "explanation": "Request-level batching treats the whole batch as one atomic unit. A short sequence that finishes early has nowhere to go — its slot stays occupied (idle or padded) until the batch's longest sequence also finishes, since new requests can only join at a batch boundary."
+          },
+          {
+            "id": "fbd09de7-7d7b-434d-b52c-833289a42ab1",
+            "prompt": "At what granularity does continuous batching re-evaluate which sequences are running?",
+            "options": [
+              "Once per request, at admission time only",
+              "Once per full batch, after every sequence completes",
+              "Every single decoding iteration — one generated token per active sequence",
+              "On a fixed timer, independent of generation progress"
+            ],
+            "correctIndex": 2,
+            "explanation": "Continuous batching (iteration-level scheduling) checks batch membership after every forward pass. A sequence that just finished is evicted immediately, and a queued request can take its slot on the very next step."
+          },
+          {
+            "id": "3525c52c-589b-4d59-8fdb-5652450dbace",
+            "prompt": "Why is admitting a new request's full prompt (prefill) into a busy decode-heavy iteration risky?",
+            "options": [
+              "Prefill requires different model weights than decode",
+              "Prefill processes the whole prompt at once and is compute-heavy, which can spike that iteration's latency for every decode-phase sequence sharing the step",
+              "Prefill can only run on CPU, not GPU",
+              "Decode-phase sequences must be fully paused and restarted afterward"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prefill and decode have very different compute profiles — prefill is compute-bound (processing many prompt tokens at once), decode is memory-bandwidth-bound (one token at a time). Mixing a large prefill into a decode-heavy step slows down every sequence in that step, which is why servers often chunk large prefills across several iterations instead."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-12T06:43:34Z"
+    },
+    {
       "id": "7b879d20-c4e6-490b-a758-e41f20d9e194",
       "title": "SWE-Bench ProMax: Refactoring Breaks Coding Agents",
       "subtitle": "170 real multilingual refactors, and the best agent still fails 6 in 10",
@@ -11148,186 +11344,6 @@
         }
       ],
       "id": "bde14e2e-c933-4f2d-a698-784e4d44bbb6",
-      "publishedDate": "2026-08-03T18:45:06Z"
-    },
-    {
-      "title": "Leanstral 1.5: A Free Model That Proves Code Correct",
-      "subtitle": "Mistral's Apache-2.0 model writes machine-checked Lean 4 proofs — and finds real bugs no test caught.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "mistral",
-        "leanstral",
-        "formal-verification",
-        "lean4",
-        "theorem-proving",
-        "open-weights"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "checkmark.seal.fill",
-      "summary": "Mistral AI released Leanstral 1.5, an Apache-2.0 mixture-of-experts model (119B total / 6B active) built for Lean 4 proof engineering. It solves 587 of 672 PutnamBench problems, saturates miniF2F, and — in Mistral's own testing — found five previously unknown bugs across 57 open-source repositories.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Machine-Checked Proofs, Not Just Passing Tests",
-          "body": "Tests show your code works on the cases you thought to check. A formal proof shows it works for every case that fits your specification. Leanstral 1.5 is Mistral's open model for writing those proofs in Lean 4 — and it's free.",
-          "bullets": [],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "bbc84e9e-adb2-4be2-92ac-a5b90ac3a991"
-        },
-        {
-          "kind": "problem",
-          "title": "Formal Verification Was Never Practical",
-          "body": null,
-          "bullets": [
-            "Writing a Lean 4 proof by hand requires specialized training most engineering teams don't have",
-            "Proof assistants are notoriously slow to work with — a single non-trivial proof can take an expert days",
-            "Because of that cost, almost no production codebase is formally verified; teams rely on tests and fuzzing, which only sample the input space instead of covering it",
-            "Prior proof-engineering models were closed, narrowly scoped, or too weak to handle research-level problems"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "9c42039c-4ea3-42d5-a26b-89aef05aa50d"
-        },
-        {
-          "kind": "solution",
-          "title": "A Model Trained Specifically to Write and Check Proofs",
-          "body": null,
-          "bullets": [
-            "Leanstral 1.5 is a 119B-parameter mixture-of-experts model with about 6B active parameters per token and a 256k-token context window",
-            "Trained in three stages: mid-training on proof-heavy data, supervised fine-tuning, then reinforcement learning (CISPO) directly on proof success/failure",
-            "Works agentically: it drafts a Lean 4 proof, runs it against the Lean checker, reads the error, and revises — rather than generating a single proof attempt blind",
-            "Released under Apache 2.0 on Hugging Face with a free API, so any team can run or fine-tune it"
-          ],
-          "symbol": "gearshape.2",
-          "table": null,
-          "id": "bddc456c-97ee-4267-9099-4378e3973c28"
-        },
-        {
-          "kind": "comparison",
-          "title": "Benchmark Results",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Result"
-            ],
-            "rows": [
-              [
-                "PutnamBench",
-                "587 / 672 problems solved"
-              ],
-              [
-                "miniF2F",
-                "Saturated (near-ceiling)"
-              ],
-              [
-                "FATE-H",
-                "87% (state of the art)"
-              ],
-              [
-                "FATE-X (hardest tier)",
-                "34% (state of the art, but still low)"
-              ]
-            ]
-          },
-          "id": "2cf8ab7f-701a-4de3-975a-5d6686cf8239"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Catching Bugs Tests Missed",
-          "body": "Mistral ran Leanstral 1.5 against 57 real open-source repositories, asking it to formally verify functions against their own specifications. It surfaced 5 previously unknown bugs — logic errors that had shipped past the repos' existing test suites, because a proof checks every input the specification allows, not just the inputs a test author thought to write.",
-          "bullets": [],
-          "symbol": "ladybug",
-          "table": null,
-          "id": "afdc8c9d-d138-4372-9f55-149ed38caa86"
-        },
-        {
-          "kind": "problem",
-          "title": "What Formal Verification Doesn't Give You",
-          "body": null,
-          "bullets": [
-            "A proof only shows code matches its formal specification — if the specification itself is wrong or incomplete, the proof won't catch that",
-            "Translating existing code and requirements into Lean 4 is real upfront work; this isn't a drop-in replacement for testing",
-            "FATE-X performance (34%) shows the hardest proof problems are still mostly unsolved, even for a state-of-the-art model",
-            "Best suited to code where correctness is high-stakes and specifiable (crypto primitives, core data structures) — not a good fit for UI code or anything with fuzzy requirements"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "4ef125cf-488b-4e87-a4a5-8c8f12565f85"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Leanstral 1.5 is a free, Apache-2.0, 119B-parameter (6B active) model purpose-built for Lean 4 proof engineering",
-            "It solves 587/672 PutnamBench problems and saturates miniF2F — strong results on competition-style formal math",
-            "In real-world use it found 5 previously unknown bugs across 57 open-source repos — proof, not just tests, catching what testing missed",
-            "It doesn't replace testing — it proves code matches a specification you still have to write correctly"
-          ],
-          "symbol": "flag.checkered",
-          "table": null,
-          "id": "6ce4ceb2-606c-4ff1-9c88-8234c1132df7"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the key difference between a passing test suite and a Lean 4 proof of correctness?",
-            "options": [
-              "A proof runs faster than any test",
-              "A test only checks the specific cases it was written for; a proof covers every input allowed by the specification",
-              "Tests and proofs check exactly the same thing",
-              "A proof requires no specification at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "Tests sample the input space; a machine-checked proof covers it, which is why Leanstral 1.5 could find bugs that had already passed existing test suites.",
-            "id": "f664a40e-5dde-4560-915c-2e0bb6cb1e5d"
-          },
-          {
-            "prompt": "How many previously unknown bugs did Leanstral 1.5 find when Mistral tested it against 57 open-source repositories?",
-            "options": [
-              "0",
-              "5",
-              "57",
-              "672"
-            ],
-            "correctIndex": 1,
-            "explanation": "Mistral reported 5 previously unknown bugs surfaced across the 57 repositories tested — a concrete real-world result beyond the competition-math benchmarks.",
-            "id": "fe2d52fd-481c-41ce-b4d0-2dda2480888d"
-          },
-          {
-            "prompt": "What is a real limitation of Leanstral 1.5's approach, even though it hits state-of-the-art benchmark scores?",
-            "options": [
-              "It cannot run on Hugging Face",
-              "A proof is only as good as the specification it's checked against — a wrong or incomplete spec won't be caught",
-              "It is closed-source and can't be inspected",
-              "It only works on Windows"
-            ],
-            "correctIndex": 1,
-            "explanation": "Formal verification proves code matches its stated specification. If that specification is wrong or missing edge cases, the proof gives false confidence — it's not a substitute for getting the spec right.",
-            "id": "be5ad003-3f65-4724-b1f2-09390a3dda33"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Leanstral 1.5: Proof Abundance for All — Mistral AI",
-          "url": "https://mistral.ai/news/leanstral-1-5/",
-          "id": "00d300e7-0b30-4dc7-84c6-b5a769324df9"
-        },
-        {
-          "title": "mistralai/Leanstral-1.5-119B-A6B — Hugging Face",
-          "url": "https://huggingface.co/mistralai/Leanstral-1.5-119B-A6B",
-          "id": "13b8a8eb-b9ec-466d-a7a4-c2e75e816f49"
-        }
-      ],
-      "id": "ad10c1ce-e958-459f-ae75-6552874a1e1f",
       "publishedDate": "2026-08-03T18:45:06Z"
     }
   ]
