@@ -1,6 +1,203 @@
 {
   "posts": [
     {
+      "title": "RoPE: Encoding Position by Rotating Query and Key Vectors",
+      "subtitle": "No position embedding table, no addition — just a rotation whose angle depends on where a token sits",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "position-embeddings",
+        "transformers",
+        "attention",
+        "long-context"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Self-attention has no built-in notion of word order — shuffle the input tokens and the math doesn't change. Rotary Position Embedding (RoPE) fixes this not by adding a position vector to each token, but by rotating each query and key by an angle proportional to its position. The rotation's algebra makes the attention score between any two tokens depend only on their distance apart, giving relative-position awareness for free — at the cost of a hyperparameter that has to be retuned every time context length grows.",
+      "slides": [
+        {
+          "id": "2b8ae508-10a5-4167-a378-f904fe23106a",
+          "kind": "cover",
+          "title": "Attention Doesn't Know What Order Words Came In",
+          "body": "Self-attention computes a weighted sum over all tokens using nothing but dot products between vectors — swap two tokens' positions in the input and, without help, the output is identical. Every practical transformer needs a way to inject 'where in the sequence am I' into that math. RoPE does it by rotating vectors instead of adding to them.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "cf5f9d6c-f57f-477d-9d13-6ce9af3a8312",
+          "kind": "problem",
+          "title": "Self-Attention Is Permutation-Invariant by Construction",
+          "body": null,
+          "bullets": [
+            "Attention scores are dot products of query and key vectors: q·k. Nothing in that formula references token index — reorder the input sequence and, absent a position signal, attention weights reorder identically. Order is invisible to the mechanism itself.",
+            "The original 'Attention Is All You Need' transformer fixed this with sinusoidal position vectors added to each token's embedding — deterministic, no extra learned parameters, but the position signal gets mixed into the content signal from layer one.",
+            "GPT-2/BERT-style models instead learned a position embedding table (one vector per absolute position, up to some max length). This works well inside the trained range but has no principled way to handle a position it never saw during training.",
+            "Both approaches encode absolute position. What attention actually needs for most tasks is relative position — how far apart two tokens are — and neither sinusoidal addition nor a learned table makes that relationship explicit in the dot product."
+          ],
+          "symbol": "shuffle",
+          "table": null
+        },
+        {
+          "id": "ab40152b-86ca-4e24-bacf-b4465b801972",
+          "kind": "solution",
+          "title": "Rotate Each Query/Key Pair by an Angle Proportional to Position",
+          "body": null,
+          "bullets": [
+            "RoPE (Su et al., 2021, 'RoFormer') splits each d-dimensional query/key vector into d/2 two-dimensional pairs, and rotates every pair by an angle m·θᵢ, where m is the token's position and θᵢ = base^(−2i/d) is a frequency that varies per pair.",
+            "Low-index pairs (small i) get large θᵢ and rotate quickly with position — they encode fine-grained, local position differences. High-index pairs get small θᵢ and rotate slowly — they encode coarse, long-range position differences. This mirrors the multi-frequency idea from sinusoidal encodings, but applied as a rotation, not an addition.",
+            "base is a single hyperparameter (commonly 10000 by default) that sets how fast the rotation frequencies decay across dimension pairs. It is the one knob that has to be revisited whenever a model is adapted to a longer context.",
+            "Critically, no position embedding table is learned or stored — the rotation angle is a deterministic function of position, computed on the fly and applied directly to Q and K before the attention dot product."
+          ],
+          "symbol": "arrow.clockwise",
+          "table": null
+        },
+        {
+          "id": "27e97fb4-f266-45ef-84b2-668def215c06",
+          "kind": "concept",
+          "title": "Why Relative Position Falls Out of an Absolute Rotation",
+          "body": null,
+          "bullets": [
+            "Rotations compose: rotating a vector by angle A and then taking its dot product with a vector rotated by angle B depends only on the angle difference (A − B), not on A and B individually — a basic property of 2D rotation matrices (R(m)ᵀR(n) = R(n−m)).",
+            "Apply that to RoPE: query at position m is rotated by mθ, key at position n is rotated by nθ. Their dot product reduces to a function of (m − n)θ alone — the absolute positions m and n cancel out, and only the relative distance survives.",
+            "So every query/key pair 'automatically' knows how far apart they are, purely as a side effect of rotation algebra — no relative-position lookup table, no extra term added to the attention score, no change to the attention formula itself.",
+            "This is the core trick: position is injected as absolute (rotate by m, rotate by n) but consumed as relative (only m − n matters), which is exactly the property useful for language, where 'three tokens back' matters far more than 'token number 47.'"
+          ],
+          "symbol": "ruler",
+          "table": null
+        },
+        {
+          "id": "4f9b9896-a6e0-48e5-9bf8-f7e067135476",
+          "kind": "example",
+          "title": "Worked Example: Same Gap, Same Score",
+          "body": "Take a single 2D rotation pair with frequency θ. Consider two token pairs that are 100 positions apart but sit in very different parts of a long sequence.",
+          "bullets": [
+            "Pair A: query at position 5, key at position 105. After rotation, their dot product is proportional to cos(100θ) — a function of the 100-position gap only.",
+            "Pair B: query at position 1005, key at position 1105 — also 100 apart, but a thousand tokens further into the sequence. Same algebra gives the exact same cos(100θ) factor.",
+            "Absolute position (5 vs. 1005) never appears in the final score — only the gap does. This is why a RoPE-based model can, in principle, recognize 'the subject three tokens back' the same way whether that pattern occurs at token 10 or token 10,000.",
+            "The catch: this identity assumes positions stay inside the range the rotation frequencies were tuned for. Push m − n far beyond what the model saw in training and the cos(·) terms start behaving in ways the model never learned to interpret — which is exactly the long-context extrapolation problem."
+          ],
+          "symbol": "arrow.left.and.right",
+          "table": null
+        },
+        {
+          "id": "bf830328-bf7e-4d6f-986d-abf3a4f60e88",
+          "kind": "comparison",
+          "title": "Position Encoding Schemes, Side by Side",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Scheme",
+              "Relative position in the dot product?",
+              "Extra learned params",
+              "Typical use"
+            ],
+            "rows": [
+              [
+                "Learned absolute (GPT-2/BERT style)",
+                "No — absolute only",
+                "Yes, a full position embedding table",
+                "Encoder/decoder models with a fixed max length"
+              ],
+              [
+                "Sinusoidal (original 2017 Transformer)",
+                "No — absolute, deterministic",
+                "None",
+                "Original encoder-decoder transformer"
+              ],
+              [
+                "RoPE (rotary)",
+                "Yes — falls out of rotation algebra",
+                "None (deterministic formula)",
+                "Most modern decoder-only LLMs"
+              ],
+              [
+                "ALiBi (linear bias)",
+                "Yes — added directly as a distance penalty",
+                "None",
+                "Models designed explicitly for extrapolation"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "a4807321-d70f-4bd3-a7ad-9ef4fb45ef63",
+          "kind": "concept",
+          "title": "The Tradeoffs Nobody Puts on the Slide",
+          "body": null,
+          "bullets": [
+            "Extrapolation isn't automatic: run a RoPE model on sequences much longer than it was trained on and quality degrades — the relative-position identity holds algebraically, but the model never learned to interpret rotation angles that large. Fixes like Position Interpolation, NTK-aware scaling, and YaRN rescale or reinterpret the rotation frequencies post-hoc to extend usable context.",
+            "The base hyperparameter is a real design choice, not a fixed constant: a smaller base rotates faster, giving finer local resolution but wrapping around (and losing distinguishability) sooner; a larger base slows rotation, favoring longer-range coherence at some cost to short-range precision. Models targeting much longer context typically raise it.",
+            "RoPE is inherently 1D — it encodes 'how far along the sequence.' Adapting it to 2D data like image patches (vision transformers) isn't automatic; it needs an explicit 2D/axial variant that rotates row and column position separately.",
+            "When NOT to reach for it: short, fixed-length classification models with no extrapolation requirement gain little from RoPE's relative-position machinery — a plain learned or sinusoidal embedding is simpler to reason about and just as effective inside a fixed range."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "39f6dfcd-a75a-41f0-b6b2-122a332b81c2",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "RoPE injects position by rotating query/key vectors by an angle proportional to token position, using per-dimension-pair frequencies that range from fast (local) to slow (long-range).",
+            "Because 2D rotations compose, the attention dot product between any two rotated vectors depends only on their relative distance — relative-position awareness emerges from an absolute-position operation, with no lookup table and no extra term in the attention formula.",
+            "It's become the default in most modern decoder-only LLMs precisely because of that relative-position property and its zero-parameter footprint — but it doesn't extrapolate to unseen lengths for free, and the base hyperparameter has to be deliberately chosen or rescaled for the context length a model actually needs to serve.",
+            "Treat RoPE as 'relative position, computed cheaply' rather than 'unlimited context for free' — long-context claims still rest on how the frequencies were tuned or rescaled, not on the rotation trick alone."
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "901fe2ea-b92a-4291-94bc-78f0659ce43f",
+            "prompt": "What problem does RoPE solve that raw self-attention has on its own?",
+            "options": [
+              "Self-attention is permutation-invariant — without a position signal, reordering the input tokens doesn't change the attention output",
+              "Self-attention cannot compute dot products for vectors longer than 512 dimensions",
+              "Self-attention requires a separate softmax for every attention head",
+              "Self-attention cannot run on sequences shorter than the rotation base value"
+            ],
+            "correctIndex": 0,
+            "explanation": "Attention scores are just dot products between query and key vectors, which carry no information about token order. Some position signal has to be injected from outside the core attention formula — RoPE does it via rotation."
+          },
+          {
+            "id": "4bac96b0-f3bb-4814-8f92-4ca62ebe7899",
+            "prompt": "Why does the attention score between a RoPE-rotated query and key depend only on their relative distance, not their absolute positions?",
+            "options": [
+              "Because RoPE clips all position values to a fixed maximum before rotating",
+              "Because 2D rotation matrices compose so that the dot product of two rotated vectors depends only on the difference between their rotation angles",
+              "Because RoPE averages the query and key positions before computing attention",
+              "Because the base hyperparameter is set to zero for all dimension pairs"
+            ],
+            "correctIndex": 1,
+            "explanation": "Rotating a query by angle m·θ and a key by angle n·θ makes their dot product a function of (m−n)·θ — the absolute positions cancel algebraically, leaving only the relative gap, which is a basic property of rotation composition."
+          },
+          {
+            "id": "8e103ccb-a207-4398-82a8-6b8fcc53f5f2",
+            "prompt": "What does RoPE's relative-position property NOT automatically give you?",
+            "options": [
+              "Robust performance on sequence lengths far beyond what the model was trained on, with no further adjustment",
+              "A way to encode position without a learned embedding table",
+              "An attention score that depends on the gap between two tokens rather than their absolute indices",
+              "Zero additional learned parameters compared to a learned position embedding table"
+            ],
+            "correctIndex": 0,
+            "explanation": "The relative-position identity holds algebraically at any distance, but the model was only ever trained to interpret rotation angles up to its training context length — going far beyond it degrades quality unless techniques like Position Interpolation, NTK-aware scaling, or YaRN rescale the frequencies first."
+          }
+        ]
+      },
+      "references": [],
+      "id": "4d4cf723-b882-4c00-b3c9-0bb9b11022cd",
+      "publishedDate": "2026-08-13T18:42:04Z"
+    },
+    {
       "id": "686737c2-943d-4a44-884c-5c745309b635",
       "title": "RLHF: Turning Human Preferences Into a Reward Signal",
       "subtitle": "You can't write a demonstration for 'sounds less arrogant' — but you can rank two answers against each other.",
@@ -11138,208 +11335,6 @@
         }
       ],
       "id": "3760a1bc-2d1a-4202-b3db-570703052333",
-      "publishedDate": "2026-08-04T06:46:41Z"
-    },
-    {
-      "title": "Hermes Agent v0.20.0: Nous Ships A2A and Live Voice",
-      "subtitle": "3,650 commits later, the open-source agent framework learns to talk to other agents and lets you interrupt it mid-sentence.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "ai-agents",
-        "open-source",
-        "a2a-protocol",
-        "voice-ai",
-        "nous-research"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "antenna.radiowaves.left.and.right",
-      "summary": "Nous Research shipped Hermes Agent v0.20.0 on August 3, 2026 — a 3,650-commit, 1,400-PR release for the 225k-star open-source agent framework. Highlights: an Agent-to-Agent (A2A) v1.0 protocol plugin for cross-vendor agent interoperability, streaming voice with true barge-in, grounded-citation research, and cold start cut from ~14s to ~1.8s.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "An Open-Source Agent Just Learned to Talk to Other Agents",
-          "body": "Hermes Agent, Nous Research's self-hosted AI agent framework (225k+ GitHub stars), shipped v0.20.0 on August 3, 2026 — its biggest release yet, closing one of the repo's oldest feature requests.",
-          "bullets": [],
-          "symbol": "antenna.radiowaves.left.and.right",
-          "table": null,
-          "id": "b9e60417-b51e-49d7-bcb9-a031cceec239"
-        },
-        {
-          "kind": "problem",
-          "title": "What Was Missing Before v0.20.0",
-          "body": null,
-          "bullets": [
-            "Hermes Agent runs as a self-improving agent across CLI, desktop, and chat platforms (Telegram, Discord, Slack, WhatsApp, Signal), with persistent memory and autonomous skill creation",
-            "Issue #514 — a request for Hermes to discover and interoperate with agents from other frameworks — had sat open as one of the oldest feature requests in the repo",
-            "Voice interaction existed, but without true 'barge-in': you couldn't interrupt the agent mid-response the way you can with a person",
-            "Cold start took roughly 14 seconds, real friction for a tool meant to feel instant on the command line"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "12bba311-c9fd-4632-9848-2e0aa0ee59bf"
-        },
-        {
-          "kind": "solution",
-          "title": "What v0.20.0 Actually Ships",
-          "body": null,
-          "bullets": [
-            "An A2A Protocol v1.0 plugin: Hermes can now discover, talk to, and be driven by other A2A-compatible agents — directly closing issue #514",
-            "Streaming, conversational text-to-speech with barge-in across CLI, desktop, and gateway, plus on-device wake words that never send audio off the machine",
-            "A grounded-citations research skill: every claim is backed by a source, with quotes matched against actual page text instead of being hallucinated",
-            "Desktop gets sandboxed live-preview artifacts, a plugin SDK (with a Kanban board as the first plugin), global quick-entry, and SSH remote-backend support"
-          ],
-          "symbol": "shippingbox.fill",
-          "table": null,
-          "id": "9269b7c5-d313-45b6-b4ee-700c4ff0693b"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Handing a Task to a Different Vendor's Agent",
-          "body": "Say a Hermes agent needs to hand off part of a workflow to a completely different coding-agent product that also speaks A2A v1.0.",
-          "bullets": [
-            "Hermes discovers the other agent through A2A's discovery mechanism — no custom, one-off integration code per vendor",
-            "It can hand off the subtask and receive results back, or let the other agent drive part of the workflow directly",
-            "This is the same idea as two different email clients being able to reach each other because they both speak SMTP — a shared wire protocol beats a pile of point-to-point integrations",
-            "Paired with the release's new outbound webhooks, downstream systems can react the instant a handoff completes, instead of polling for status"
-          ],
-          "symbol": "arrow.left.arrow.right",
-          "table": null,
-          "id": "a521f7c9-637c-4453-806a-9755b8ac5498"
-        },
-        {
-          "kind": "comparison",
-          "title": "Before vs. After v0.20.0",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Capability",
-              "Before v0.20.0",
-              "v0.20.0"
-            ],
-            "rows": [
-              [
-                "Cold start time",
-                "~14 seconds",
-                "~1.8 seconds"
-              ],
-              [
-                "Cross-vendor agent talk",
-                "No shared protocol",
-                "A2A v1.0 plugin"
-              ],
-              [
-                "Voice interruption",
-                "No barge-in",
-                "Streaming TTS with barge-in"
-              ],
-              [
-                "Research citations",
-                "Not guaranteed grounded",
-                "Quotes matched to source text"
-              ]
-            ]
-          },
-          "id": "c2ddf6bc-252c-4dd4-ab1e-0ab16cb17c20"
-        },
-        {
-          "kind": "concept",
-          "title": "Where This Release Isn't a Fit",
-          "body": null,
-          "bullets": [
-            "Self-hosting a 225k-star, 20,000+-commit codebase is a real operational commitment — you own security patching, plugin vetting, and infrastructure for a CLI, a desktop app, and multiple chat-platform bots",
-            "A2A interoperability only helps if the other agents you want to reach also implement A2A v1.0 — it doesn't retrofit compatibility with closed, non-A2A platforms",
-            "On-device wake words keep audio local, but that also means voice quality is bounded by whatever hardware you're running on, unlike a cloud-routed voice API",
-            "Teams that want a zero-maintenance, hosted agent may be better served by a managed product than by adopting a fast-moving framework that ships major versions every few months"
-          ],
-          "symbol": "xmark.octagon",
-          "table": null,
-          "id": "d67d63ea-b9af-4a27-9746-1c729e387be9"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The Release, By the Numbers",
-          "body": null,
-          "bullets": [
-            "~3,650 commits and ~1,400 merged PRs since the previous version, touching roughly 5,200 files, from 647 contributors",
-            "That's the release cadence of a well-funded product team, not a research lab's side project — a sign of how much community investment self-hosted agent tooling is attracting",
-            "Combined with the framework's existing 225k+ GitHub stars, it's one of the largest open agent projects by contributor activity right now"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null,
-          "id": "c84be398-5c95-4b60-b219-eb53795ad315"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Hermes Agent v0.20.0 (Aug 3, 2026) adds an A2A v1.0 plugin, letting the open agent interoperate with other A2A-compatible agents for the first time",
-            "Streaming voice with real barge-in, source-grounded research citations, and a cold start cut from ~14s to ~1.8s round out the release",
-            "It's backed by real scale: roughly 3,650 commits and 1,400 PRs from 647 contributors in one cycle",
-            "The tradeoff of self-hosting real agent infrastructure is ongoing maintenance — weigh that against a managed alternative before adopting it"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "74d3d617-20ad-4ec3-80b2-5b559d7851e6"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What long-standing feature request does the A2A v1.0 plugin in Hermes Agent v0.20.0 finally close?",
-            "options": [
-              "Support for additional spoken languages",
-              "Cross-vendor agent discovery and communication (issue #514)",
-              "A dark mode for the desktop application",
-              "GPU-accelerated local inference"
-            ],
-            "correctIndex": 1,
-            "explanation": "Issue #514, described as one of the repo's oldest open feature requests, asked for a way for Hermes to talk to agents outside its own framework — the A2A v1.0 plugin does exactly that with a shared wire protocol.",
-            "id": "addccdde-6cd1-46b9-ab4b-a147ee9b73ed"
-          },
-          {
-            "prompt": "How much did cold start time improve in this release, per the release notes?",
-            "options": [
-              "It got worse, from 1.8 seconds to 14 seconds",
-              "It stayed roughly the same",
-              "It dropped from about 14 seconds to about 1.8 seconds",
-              "It has nothing to do with this release"
-            ],
-            "correctIndex": 2,
-            "explanation": "The release notes report cold start falling from roughly 14 seconds to roughly 1.8 seconds — a large responsiveness win for a tool meant to feel instant.",
-            "id": "235b1931-d9f5-45d3-85fa-d6b066422018"
-          },
-          {
-            "prompt": "What's a genuine limitation of the new A2A protocol support?",
-            "options": [
-              "It works with any AI agent regardless of what protocol that agent speaks",
-              "It only enables interoperability with other agents that also implement A2A v1.0",
-              "It removes the need to self-host Hermes at all",
-              "It disables the framework's voice features"
-            ],
-            "correctIndex": 1,
-            "explanation": "A2A interoperability depends on the other side speaking A2A v1.0 too — it's a shared protocol two compatible agents can use, not a universal adapter for arbitrary closed platforms.",
-            "id": "7c0bf14b-4123-43c1-bbab-258fd0a2dd03"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Hermes Agent v0.20.0 Release Notes (v2026.8.3)",
-          "url": "https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.3",
-          "id": "e91e92e5-4dd7-42ab-b2c4-e65c3bb373ac"
-        },
-        {
-          "title": "NousResearch/hermes-agent — official repository",
-          "url": "https://github.com/NousResearch/hermes-agent",
-          "id": "8d520045-20ef-4a17-8e88-1ae722451f91"
-        }
-      ],
-      "id": "fde3da25-f8a0-4527-8d29-14046ece0784",
       "publishedDate": "2026-08-04T06:46:41Z"
     }
   ]
