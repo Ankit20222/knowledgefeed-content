@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "id": "de36416d-28c7-41ec-ae12-a40c2ff90318",
+      "title": "Constrained Decoding: Making Invalid Output Impossible",
+      "subtitle": "Instead of hoping the model emits valid JSON, make invalid tokens unsampleable.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "constrained decoding",
+        "structured output",
+        "json mode",
+        "grammars",
+        "tool calling",
+        "inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "checkmark.shield.fill",
+      "heroImageURL": null,
+      "publishedDate": "2026-08-13T06:42:36Z",
+      "summary": "Constrained decoding masks an LLM's logits at every step so only tokens legal under a grammar (a JSON Schema, a regex, a CFG) can be sampled, making malformed output structurally impossible instead of merely unlikely. It guarantees syntax, not truth — and forcing structure too early can blunt a model's reasoning, so the sharpest use pairs free-form thinking with a constrained final step.",
+      "slides": [
+        {
+          "id": "c13aa8f1-c135-44b9-b0b9-e3b6696e27c9",
+          "kind": "cover",
+          "title": "Stop Hoping the JSON Parses",
+          "body": "Constrained decoding doesn't ask the model to follow a format — it removes every token that would break it from the sampling pool.",
+          "bullets": [],
+          "symbol": "checkmark.shield.fill",
+          "table": null
+        },
+        {
+          "id": "ed545b0e-982b-4e2b-827f-e5f5e15771ba",
+          "kind": "problem",
+          "title": "Prompting for Format Is a Request, Not a Guarantee",
+          "body": null,
+          "bullets": [
+            "Ask a model to 'respond with only valid JSON matching this schema' and it usually complies — until a trailing comma, an unescaped quote, a wrong type, or an extra field on maybe 1 in 50 calls breaks the parser.",
+            "The standard fix is retry-on-failure: parse, catch the exception, resend the same prompt with the error appended. That burns tokens, adds latency, and still has no upper bound on attempts.",
+            "For an agent chaining ten tool calls, a 2% per-call failure rate compounds into an ~18% chance at least one call in the chain needs a retry — enough to make pipelines flaky in production."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "08b2cdcc-c3fd-4c1f-ae51-1d9bfed16e70",
+          "kind": "solution",
+          "title": "Compile the Schema Into a Grammar, Mask the Logits",
+          "body": null,
+          "bullets": [
+            "A JSON Schema, regex, or context-free grammar is compiled into a state machine: at any point in the output, the automaton knows exactly which next characters are legal.",
+            "Before sampling each token, the decoder maps the automaton's currently-legal continuations onto the model's vocabulary and sets the logits of every other token to -infinity — the model literally cannot pick them.",
+            "The model still chooses freely among whatever remains legal, so it's picking the 'best' valid token at each step rather than being told a fixed string — output stays diverse within the allowed shape."
+          ],
+          "symbol": "wand.and.rays",
+          "table": null
+        },
+        {
+          "id": "17e6421f-6cef-4358-bc0e-ceefacc8ccd5",
+          "kind": "architecture",
+          "title": "The Hard Part Is Token Boundaries, Not Grammars",
+          "body": null,
+          "bullets": [
+            "LLMs sample subword tokens, not characters, so a naive implementation would need to check every one of ~100k vocabulary entries against the grammar at every step — too slow to be usable.",
+            "Production libraries (Outlines, llama.cpp's GBNF, xgrammar, and the engines behind OpenAI's and Anthropic's structured-output APIs) precompute which tokens are ever reachable from each automaton state, so masking is a fast lookup instead of a live simulation.",
+            "A token can also straddle a boundary the grammar cares about (e.g. a BPE piece like ' \"}' closes a string and the object in one token) — the automaton has to be advanced per-token, not per-character, or the mask silently drifts out of sync."
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "1dfc7106-7d10-4e14-946f-0f8dfa2ba822",
+          "kind": "example",
+          "title": "A Weather Tool Call, Constrained",
+          "body": null,
+          "bullets": [
+            "Schema: {\"city\": string, \"days\": integer 1-10}. Unconstrained, a model might emit {\"city\": \"Boston\", \"days\": \"5\"} — a string where an integer was required, which a strict tool-calling layer rejects.",
+            "With the schema compiled to a grammar, the decoder won't let the model open a quote after `\"days\": ` at all — only digit tokens are legal there, so a string-typed value can never be sampled.",
+            "The same mechanism enforces days staying within 1-10 if the grammar encodes the range, catching a structurally-valid-but-out-of-bounds value before it ever reaches the tool."
+          ],
+          "symbol": "hammer.fill",
+          "table": null
+        },
+        {
+          "id": "47fd2984-fc51-447a-8c9d-f04f91aecab6",
+          "kind": "comparison",
+          "title": "Three Ways to Get Structured Output",
+          "body": null,
+          "bullets": [
+            "Constrained decoding is the only approach where 'invalid syntax' becomes impossible rather than merely penalized or caught after the fact."
+          ],
+          "symbol": "square.grid.2x2",
+          "table": {
+            "headers": [
+              "Approach",
+              "Guarantees valid syntax?",
+              "Extra latency",
+              "Where it breaks"
+            ],
+            "rows": [
+              [
+                "Prompt + hope",
+                "No — probabilistic only",
+                "None",
+                "Silent parse failures downstream"
+              ],
+              [
+                "Generate, validate, retry",
+                "Eventually, if retries succeed",
+                "1 extra round trip per failure",
+                "Unbounded worst-case latency"
+              ],
+              [
+                "Constrained decoding",
+                "Yes — by construction",
+                "Small, fixed per-token mask cost",
+                "Semantic correctness still unchecked"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "a4639886-6a0d-47d8-8319-e000d3b2f3ed",
+          "kind": "concept",
+          "title": "Guaranteed Syntax Isn't Guaranteed Sense — and Timing Matters",
+          "body": null,
+          "bullets": [
+            "Constrained decoding proves the output is well-formed, never that it's correct: a schema-valid {\"city\": \"Atlantis\", \"days\": 5} is exactly as syntactically legal as a real one.",
+            "Forcing structure from the very first token also removes the model's room to reason — chain-of-thought text can't appear inside a field the grammar has locked down, which measurably hurts accuracy on tasks that benefit from working through the problem first.",
+            "The common fix: let the model think in free, unconstrained text first, then apply the grammar only to a final short 'extraction' step that turns the reasoning into the structured answer.",
+            "Skip it for loosely-shaped or creative output where 'valid shape' isn't the risk — the overhead of building and maintaining a grammar isn't worth it when a malformed response is rare and cheap to catch downstream anyway."
+          ],
+          "symbol": "shield.slash.fill",
+          "table": null
+        },
+        {
+          "id": "b361e657-6da6-494b-b912-e27b1a3f5356",
+          "kind": "takeaways",
+          "title": "Move the Guarantee Into the Sampler",
+          "body": null,
+          "bullets": [
+            "Constrained decoding turns 'please output valid JSON' from a request into a structural fact by masking illegal tokens out of the sampling distribution at every step.",
+            "It's a syntax guarantee, not a truth guarantee — pair it with validation logic for anything that actually needs to be correct, not just well-formed.",
+            "Reach for it on tool calls and API-facing outputs where a parser is waiting on the other end; let reasoning-heavy answers run unconstrained until the final structured step."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "146940a5-3897-4b28-9fdd-13c7db81b26a",
+            "prompt": "How does constrained decoding stop an LLM from producing malformed JSON?",
+            "options": [
+              "It fine-tunes the model on JSON examples before inference",
+              "It masks the logits of any token that would violate the compiled grammar, so illegal tokens can't be sampled",
+              "It asks a second model to reformat the output afterward",
+              "It lowers the temperature to zero"
+            ],
+            "correctIndex": 1,
+            "explanation": "The grammar (from a JSON Schema, regex, or CFG) is compiled into a state machine that tracks which tokens are legal at each step; the decoder sets every illegal token's logit to -infinity before sampling, so the model is structurally incapable of picking them."
+          },
+          {
+            "id": "7acaa3be-cc33-4dde-9ebd-746e1a814d3e",
+            "prompt": "What does constrained decoding NOT guarantee?",
+            "options": [
+              "That the output matches the schema's structure",
+              "That every required field is present",
+              "That the field values are factually or semantically correct",
+              "That types (string vs integer) match the schema"
+            ],
+            "correctIndex": 2,
+            "explanation": "It guarantees syntactic validity by construction, but a schema-valid value can still be wrong or made up — {\"city\": \"Atlantis\"} is just as well-formed as a real city. Semantic correctness needs separate validation."
+          },
+          {
+            "id": "15dc5492-b01a-4ca1-b844-60a0b605978c",
+            "prompt": "Why can forcing a grammar from the very first output token hurt accuracy on reasoning-heavy tasks?",
+            "options": [
+              "Grammars are always slower than free-form generation",
+              "It removes room for chain-of-thought text, since reasoning can't appear inside a field the grammar has already locked down",
+              "It forces the model to use a smaller vocabulary permanently",
+              "It disables sampling entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "If the schema is applied from token one, there's nowhere for the model to think out loud before answering. The common fix is to let it reason in unconstrained text first, then apply the grammar only to a short final extraction step."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "MCP Roots: A Boundary the Server Isn't Forced to Respect",
       "subtitle": "The third MCP primitive — and the one everyone assumes is a sandbox.",
       "category": "MCP",
@@ -11130,204 +11320,6 @@
       ],
       "id": "07280cbe-036e-46f2-8c20-4b6c1ee5f666",
       "publishedDate": "2026-08-04T06:46:41Z"
-    },
-    {
-      "title": "Metis: A Model That Remembers Without Retrieving",
-      "subtitle": "Native memory lives inside the weights, updated with a single forward pass — no vector database, no gradient step.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "memory",
-        "fast-weight-programming",
-        "long-context",
-        "arxiv",
-        "agents"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "memorychip.fill",
-      "summary": "MemTensor's Metis (arXiv:2607.26760, July 2026) gives a language model a native memory state inside its own computation, updated with a gradient-free forward pass instead of retrieval or fine-tuning. Built on Qwen3.5 at 4B/9B/27B scales, it beats prior memory baselines on long-horizon QA benchmarks — but the memory is fixed-size and opaque, unlike a RAG index you can inspect.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Memory That Lives Inside the Weights",
-          "body": "Most AI 'memory' today means a vector database bolted onto a model: embed the past, retrieve the closest match, stuff it into the prompt. Metis tries something structurally different — a memory state that is part of the model's own forward pass.",
-          "bullets": [],
-          "symbol": "memorychip.fill",
-          "table": null,
-          "id": "43999e19-141c-49c8-9ff1-57a109f136f9"
-        },
-        {
-          "kind": "problem",
-          "title": "Bolt-On Memory Has a Ceiling",
-          "body": null,
-          "bullets": [
-            "RAG-style agent memory retrieves external chunks by embedding similarity — the model itself never actually learns anything from a conversation",
-            "Every new memory means re-embedding and re-indexing outside the model, adding a whole separate storage system to maintain",
-            "Top-k retrieval is lossy by construction: whatever doesn't make the cut is invisible to the model, no matter how relevant",
-            "The model's weights stay frozen — memory is something it looks up, not something it has"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "e73c4cd3-3630-4701-951b-289dc5a153df"
-        },
-        {
-          "kind": "solution",
-          "title": "A Memory Block Inside the Forward Pass",
-          "body": null,
-          "bullets": [
-            "Each Metis Block pairs a Local Memory Block (holds the persistent state) with a Hyper Memory Block (learns how to store and use it)",
-            "Inspired by Fast Weight Programming: the model's own activations write into a compact memory state, no external database involved",
-            "The default update rule is a Gated Delta Network — memory attention later reads that state and fuses it with ordinary attention",
-            "Large-scale memory-specific training data teaches these store/retrieve procedures during mid-training, before the model ever sees a real memory task"
-          ],
-          "symbol": "square.stack.3d.up",
-          "table": null,
-          "id": "3a6c5d4c-bc08-4663-afed-d0cfe171ef86"
-        },
-        {
-          "kind": "architecture",
-          "title": "Gradient-Free: The Update Is Just a Forward Pass",
-          "body": null,
-          "bullets": [
-            "Writing a new memory does not touch the model's learned weights at all — no backward pass, no optimizer step, no fine-tuning run",
-            "At inference time, all weights stay frozen; only the memory state itself changes, produced by standard forward computation",
-            "That makes memory updates as cheap as a normal inference call — you can write to memory mid-conversation without stopping to retrain anything",
-            "Checkpoints ship at 4B, 9B, and 27B, all built on top of Qwen3.5 backbones"
-          ],
-          "symbol": "bolt.fill",
-          "table": null,
-          "id": "4c8f62fb-7ed3-4c39-93d8-43f842164a11"
-        },
-        {
-          "kind": "comparison",
-          "title": "Three Ways an LLM Can 'Remember'",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Approach",
-              "Where memory lives",
-              "Update cost"
-            ],
-            "rows": [
-              [
-                "RAG / vector store",
-                "External database, outside the model",
-                "Re-embed + re-index on every write"
-              ],
-              [
-                "Fine-tuning / LoRA",
-                "Model weights, changed permanently",
-                "Backward pass + optimizer step"
-              ],
-              [
-                "Metis native memory",
-                "A memory state inside the forward pass",
-                "One gradient-free forward pass"
-              ]
-            ]
-          },
-          "id": "0e4ce303-a308-417f-a709-ed1bbdb8b82d"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Answering Without the Original Text",
-          "body": "On MemDaily, a benchmark testing recall of everyday conversational facts, Metis-27B was evaluated in a 'no-context' setting — the original conversation is gone, only the memory state remains.",
-          "bullets": [
-            "Metis-27B averages 59.04 on MemDaily and 18.56 on ATM-Bench under this no-original-context condition",
-            "That score has to come entirely from what the memory state compressed earlier — there's no chunk of text to re-read",
-            "The paper reports this beats prior memory baselines like Temp-LoRA and δ-Mem, which rely on fine-tuning-style updates or external stores",
-            "This is the real test of whether the memory 'stuck' — not whether the model can still see the source"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null,
-          "id": "aa8c74d0-1052-4993-9d8c-bad94913023e"
-        },
-        {
-          "kind": "concept",
-          "title": "Where Native Memory Still Breaks",
-          "body": null,
-          "bullets": [
-            "The paper reports performance degrading rapidly once a single input stretches past a few hundred words — long documents are still a weak spot",
-            "Memory state size is fixed by architecture, unlike a vector store that can grow to millions of entries",
-            "There's no plaintext memory to inspect — you can't open the memory state and read what it 'remembers' the way you can read a retrieved RAG chunk",
-            "Acquiring this memory behavior requires mid-training on purpose-built data; you can't bolt native memory onto an arbitrary existing checkpoint"
-          ],
-          "symbol": "xmark.octagon",
-          "table": null,
-          "id": "e8138ed6-5a5d-41f4-8f41-72f5fc44ab4f"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Metis treats memory as part of the forward pass, not an external lookup — a structurally different bet from RAG-style agent memory",
-            "Updates are gradient-free: one forward pass writes to memory, no fine-tuning required",
-            "It beats prior memory baselines on no-original-context QA benchmarks (e.g., 59.04 avg on MemDaily) at 4B–27B scale",
-            "The tradeoff: a fixed-size, opaque memory state versus a growable, inspectable index — pick based on whether you need to audit what's stored"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "3d0d3e00-7a19-4a77-82ff-946e87ed037f"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What makes Metis's memory update \"gradient-free\"?",
-            "options": [
-              "It never updates memory at all",
-              "Writing to memory is a standard forward pass — no backward pass or optimizer step touches the model's weights",
-              "It uses reinforcement learning instead of gradients",
-              "Memory is updated only during pretraining"
-            ],
-            "correctIndex": 1,
-            "explanation": "The whole point is that a memory write costs the same as a normal inference call — the model's learned weights never move, only the compact memory state does.",
-            "id": "8744ad49-6128-4d5e-b1fd-ba801707bcd0"
-          },
-          {
-            "prompt": "How does Metis's approach differ from a RAG-based agent memory system?",
-            "options": [
-              "They are functionally identical",
-              "RAG retrieves external chunks by similarity search; Metis maintains a memory state that's part of the model's own forward computation",
-              "Metis requires more external storage than RAG",
-              "RAG is gradient-free and Metis is not"
-            ],
-            "correctIndex": 1,
-            "explanation": "RAG bolts a separate retrieval system onto a frozen model. Metis instead builds the memory state into the architecture itself, updated inline as the model runs.",
-            "id": "22e48253-760b-4d0b-9717-f878625f6570"
-          },
-          {
-            "prompt": "What is a real limitation of Metis reported in the paper?",
-            "options": [
-              "It cannot run on GPUs",
-              "It has no memory capacity at all",
-              "Performance degrades rapidly once input length passes a few hundred words",
-              "It only works with closed-source models"
-            ],
-            "correctIndex": 2,
-            "explanation": "Despite beating baselines on no-context recall, the paper reports the model's performance drops off quickly on longer individual inputs — native memory hasn't solved long-context robustness generally.",
-            "id": "f756ba76-34de-48b5-aefe-91716ea804e4"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Metis: Memory Foundation Model (arXiv:2607.26760)",
-          "url": "https://arxiv.org/abs/2607.26760",
-          "id": "5cfbd143-62a0-4afb-91e0-451bae76c947"
-        },
-        {
-          "title": "MemTensor/Metis — official code and checkpoints",
-          "url": "https://github.com/MemTensor/Metis",
-          "id": "4da64bb2-d93d-4de0-ab4a-9967e182f183"
-        }
-      ],
-      "id": "50372d95-bb67-4c91-a42e-b586dad55b39",
-      "publishedDate": "2026-08-04T00:44:29Z"
     }
   ]
 }
