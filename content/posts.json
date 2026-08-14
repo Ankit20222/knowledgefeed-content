@@ -1,6 +1,200 @@
 {
   "posts": [
     {
+      "id": "f1b839cc-c16e-4b68-9bce-8b3f05cd9b9a",
+      "title": "Tool Calling: How an LLM Actually Triggers a Function",
+      "subtitle": "The model never runs code — it emits structured JSON and a host process does the rest",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "tool-calling",
+        "function-calling",
+        "agents",
+        "json-schema",
+        "structured-output"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "wrench.and.screwdriver.fill",
+      "summary": "Tool calling isn't the model reaching out and running code — it's the model emitting a structured JSON object that matches a schema you declared, which a host process intercepts, executes, and feeds back as a new message. The reliability comes from constrained decoding and a strict request/response loop, not from the model being smarter about APIs.",
+      "slides": [
+        {
+          "id": "35b9edf9-71a7-4cbf-b000-dae35ac1f53f",
+          "kind": "cover",
+          "title": "The Model Never Touches a Single API",
+          "body": "Every 'agent calling a tool' is really the model predicting text that happens to look like a function call, and a separate program deciding to act on it.",
+          "bullets": [],
+          "symbol": "wrench.and.screwdriver.fill",
+          "table": null
+        },
+        {
+          "id": "a93191e9-e54d-4d46-b872-dcc967b766af",
+          "kind": "problem",
+          "title": "Free-Form Text Is a Terrible Interface for Actions",
+          "body": null,
+          "bullets": [
+            "Early 'agents' asked the model to write prose like 'I should search for the weather in Austin' and then regex-parsed it — brittle, and one phrasing drift breaks the parser.",
+            "A model has no way to actually execute anything; it only predicts the next token. Without a strict contract, arguments come back malformed, quoted inconsistently, or with invented parameter names.",
+            "Hallucinated tools are the real risk: given no explicit list, a model will confidently invoke an API that doesn't exist, because 'a function that does X' is a plausible completion."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9711befd-6adc-40c9-92b0-bb8a848099b8",
+          "kind": "solution",
+          "title": "You Declare a JSON Schema; the Model Fills It In",
+          "body": "Modern tool calling puts a machine-readable spec — name, description, and a JSON Schema for the arguments — into the request. The model is trained (and often decoding-constrained) to emit output matching that schema instead of prose whenever a tool fits.",
+          "bullets": [
+            "The runtime, not the model, executes the call: it validates the JSON against the schema, runs the real function, and appends the result as a new 'tool' message in the conversation.",
+            "Constrained/grammar decoding masks out tokens that would produce invalid JSON at each step, so malformed output becomes a token-sampling impossibility rather than a hope.",
+            "The model only ever sees text: the tool definition going in, and the tool's result coming back as another message it reads like any other context."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        },
+        {
+          "id": "d7a31f8c-6cba-4f71-9033-9150936abda5",
+          "kind": "architecture",
+          "title": "It's a Loop, Not a Single Call",
+          "body": null,
+          "bullets": [
+            "1) User message goes in with the list of available tools. 2) Model emits either a normal reply or a tool_call (name + JSON arguments). 3) Host executes it and appends a tool-result message. 4) Model resumes with that result in context — often producing another tool_call before ever answering.",
+            "Independent calls can run in parallel: if the model requests two tools with no data dependency between them, most runtimes fire both and merge the results back in before the next model turn — cutting round-trip latency roughly in half for that step.",
+            "Each round trip costs a full model inference pass, so a 4-tool-call chain isn't 'one request' — it's five: four tool turns plus the final synthesis."
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "a347442d-33ed-4ee3-a8ea-1436fb3f72e3",
+          "kind": "example",
+          "title": "Worked Example: Two Independent Lookups",
+          "body": "Prompt: 'What's the weather in Austin, and what's 50 USD in EUR?' — two unrelated facts, so a well-built agent fires both tools in parallel rather than sequentially.",
+          "bullets": [
+            "Turn 1 — model output: two tool_calls in the same message: get_weather({\"city\":\"Austin\"}) and convert_currency({\"amount\":50,\"from\":\"USD\",\"to\":\"EUR\"}).",
+            "Host executes both concurrently, gets back {\"tempF\":91,\"conditions\":\"sunny\"} and {\"result\":46.10}, and appends both as tool-result messages tagged with matching call IDs.",
+            "Turn 2 — model reads both results in context and writes the final prose answer: 'It's 91°F and sunny in Austin; 50 USD is about €46.10.' No new tool calls needed."
+          ],
+          "symbol": "curlybraces",
+          "table": null
+        },
+        {
+          "id": "fdd4156f-36dd-45b9-b618-f8cc57731bd6",
+          "kind": "comparison",
+          "title": "Prompted Parsing vs. Native Tool Calling",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "",
+              "Prompted (ReAct-style text)",
+              "Native tool calling"
+            ],
+            "rows": [
+              [
+                "Contract",
+                "Ad-hoc text pattern in the prompt",
+                "Explicit JSON Schema per tool"
+              ],
+              [
+                "Parsing",
+                "Regex/string match on model output",
+                "Structured field the API returns directly"
+              ],
+              [
+                "Invalid output",
+                "Silently mis-parsed or crashes the parser",
+                "Rejected pre-decode by grammar constraints"
+              ],
+              [
+                "Parallel calls",
+                "Rare — one action per text turn",
+                "Multiple tool_calls in a single turn"
+              ],
+              [
+                "Portability",
+                "Breaks across models/prompt styles",
+                "Standardized across most major model APIs"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "0bc96ab2-1e22-4338-90ce-c63c1121a9a4",
+          "kind": "problem",
+          "title": "Where It Still Breaks",
+          "body": null,
+          "bullets": [
+            "Tool-selection accuracy degrades as the toolbox grows — past roughly a few dozen simultaneously offered tools, models start picking the wrong one or missing the right one, even with perfect schemas. Curate the set per-task instead of exposing everything at once.",
+            "A schema only constrains shape, not truth: the model can still fill valid JSON with a hallucinated argument value (a city that doesn't exist, an ID it invented), so the executing function still has to validate semantically.",
+            "Tool calling has no built-in permission model — anything declared as a tool is something the model will eventually try to call. Destructive tools (delete, send, pay) need an explicit confirmation step outside the loop, not just a well-worded description.",
+            "Don't reach for tool calling when the answer is already in the model's context or training knowledge — every call adds a full inference round trip's worth of latency and cost for something a direct answer would've solved instantly."
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "cf51a835-f0f2-4dbd-af53-68daddaff2b3",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Tool calling = a JSON contract + constrained decoding + a host loop — the model still only predicts text, it never executes anything itself.",
+            "Independent tool calls can and should run in parallel; dependent ones force sequential round trips, each costing a full inference pass.",
+            "A valid schema guarantees well-formed arguments, not correct ones — always validate values, not just shape, before executing.",
+            "More tools isn't free: curate the offered set per task rather than exposing your entire API surface at once."
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "461be9da-ce16-4cb4-a01e-ab030c410043",
+            "prompt": "What actually makes modern tool calling more reliable than the old 'parse the model's prose' approach?",
+            "options": [
+              "The model has been given direct code-execution access",
+              "A declared JSON Schema plus decoding constraints that make invalid output impossible to sample",
+              "A bigger context window so the model remembers the API docs better",
+              "The model is fine-tuned on that specific company's API"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reliability comes from the contract (schema) and the decoding-time constraint that masks out tokens which would break it — not from the model becoming smarter about APIs or gaining any real execution ability."
+          },
+          {
+            "id": "97165800-40bb-426c-a780-3a6a97cd2555",
+            "prompt": "In the weather + currency example, why do both tool calls happen in the same turn instead of one after another?",
+            "options": [
+              "The model can only ever emit one tool call, so this is actually two separate turns",
+              "The two calls are independent of each other's output, so the host can execute them concurrently before the next model turn",
+              "Parallel calls are required by the JSON Schema spec",
+              "It's cheaper to always batch every tool call regardless of dependency"
+            ],
+            "correctIndex": 1,
+            "explanation": "Parallel execution is only safe when calls don't depend on each other's results. If converting currency needed the weather result first, they'd have to run sequentially across separate turns."
+          },
+          {
+            "id": "1852724e-b86c-4a0a-8b53-3c4036fb90e0",
+            "prompt": "A team keeps adding tools to their agent — it's now offered 60 tools on every request — and accuracy is dropping. What's the most likely cause?",
+            "options": [
+              "JSON Schema validation stops working above a fixed tool count",
+              "Tool-selection accuracy degrades as the offered set grows, even when every schema is well-formed",
+              "The model runs out of context space to store 60 JSON schemas",
+              "Parallel tool calling gets disabled automatically above 50 tools"
+            ],
+            "correctIndex": 1,
+            "explanation": "This is a selection problem, not a formatting one — schemas can be perfectly valid and the model still picks the wrong tool or misses the right one as the candidate list grows. The fix is curating a smaller, task-relevant tool set, not fixing the schemas."
+          }
+        ]
+      },
+      "references": [],
+      "heroImageURL": null,
+      "publishedDate": "2026-08-14T18:40:13Z"
+    },
+    {
       "id": "afff4f8e-fd9b-45c4-b32f-2aee34c32872",
       "title": "Grouped-Query Attention: Splitting the Difference on KV Cache",
       "subtitle": "Why Llama 2 70B and Mistral 7B don't give every attention head its own keys and values",
@@ -11166,179 +11360,6 @@
       ],
       "publishedDate": "2026-08-05T00:39:22Z",
       "id": "8e9034ea-3e94-4b84-be05-276435ac7f27"
-    },
-    {
-      "title": "Multi-Head Latent Attention: Shrinking the KV Cache",
-      "subtitle": "Instead of sharing heads like GQA, compress what every head stores in the first place",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "kv-cache",
-        "deepseek",
-        "inference-optimization",
-        "transformers",
-        "long-context"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.stack.3d.down.right.fill",
-      "summary": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2, compresses each token's key and value into one small shared latent vector instead of reducing how many heads store separate K/V (GQA's approach). DeepSeek-V2's ablations show it cuts KV cache to roughly 4-14% of an MHA-equivalent while matching or beating MHA's modeling quality, at the cost of a more complex 'decoupled RoPE' path and a trickier implementation.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The KV cache, not the weights, is the real memory bottleneck",
-          "body": "At long context, the memory a model needs to serve a request is dominated by its per-token key/value cache — not by the model's parameters. Multi-Head Latent Attention (MLA), from DeepSeek-V2, attacks that cache directly.",
-          "bullets": [],
-          "symbol": "square.stack.3d.down.right.fill",
-          "id": "a1fca140-b891-4589-8def-cecc591bc424"
-        },
-        {
-          "kind": "problem",
-          "title": "GQA reduces heads, but each head still caches full-resolution K/V",
-          "body": "Grouped-Query Attention already cuts cache size by sharing one K/V pair across a group of query heads — but every cached K and V vector is still a real, full-resolution vector.",
-          "bullets": [
-            "More concurrent long-context requests means more KV cache resident in GPU memory at once — cache size directly caps how many requests you can batch",
-            "GQA's fix is architectural sharing (fewer distinct K/V pairs); it doesn't touch how much each stored vector costs",
-            "DeepSeek-V2's own ablations found GQA actually modeled worse than full MHA — the head-sharing trade cost some quality to save memory"
-          ],
-          "id": "0b443b19-a6ce-420b-87f9-730d7f0a0729"
-        },
-        {
-          "kind": "solution",
-          "title": "Compress what gets stored, not how many copies",
-          "body": "MLA takes a different axis entirely: project each token's key and value down into one small shared latent vector via a low-rank down-projection matrix, and cache only that latent — not per-head K/V.",
-          "bullets": [
-            "At attention time, the latent is up-projected back into per-head keys and values using learned up-projection matrices",
-            "Those up-projections can be algebraically absorbed into the query and output projection matrices at inference — so the full-size K/V is never actually materialized in memory",
-            "Because the latent is shared and small, the cached footprint per token drops by roughly an order of magnitude versus MHA"
-          ],
-          "symbol": "arrow.down.right.and.arrow.up.left",
-          "id": "c63af262-8928-47df-9036-d28595fe2019"
-        },
-        {
-          "kind": "architecture",
-          "title": "The catch: compression breaks rotary position embeddings",
-          "body": "RoPE rotates queries and keys based on position — but that rotation doesn't commute cleanly with MLA's down/up-projection. DeepSeek-V2's fix is 'decoupled RoPE.'",
-          "bullets": [
-            "Queries and keys are split into two parts: a compressed 'content' part (no positional rotation, fully benefits from compression) and a small separate low-dimension 'RoPE' part that carries position info uncompressed",
-            "Only the small RoPE part bypasses compression — the bulk of the cache is still the compressed latent",
-            "This split is what makes MLA compatible with standard rotary embeddings at all, at the cost of extra implementation complexity over GQA's single, simpler path"
-          ],
-          "id": "a26220e5-9ac2-494b-a233-f152a2f3542c"
-        },
-        {
-          "kind": "comparison",
-          "title": "Smaller cache, and better quality than MHA — not just a trade",
-          "table": {
-            "headers": [
-              "Method",
-              "What it reduces",
-              "Cache vs. MHA baseline",
-              "Modeling quality vs. MHA"
-            ],
-            "rows": [
-              [
-                "MHA",
-                "—",
-                "100% (baseline)",
-                "Baseline"
-              ],
-              [
-                "GQA",
-                "Number of distinct K/V pairs",
-                "Reduced (shared groups)",
-                "Slightly worse (DeepSeek-V2 ablation)"
-              ],
-              [
-                "MLA",
-                "What each K/V vector costs to store",
-                "~4-14% of MHA (DeepSeek-V2 ablations, small vs. large MoE)",
-                "Matches or exceeds MHA"
-              ]
-            ]
-          },
-          "body": "The DeepSeek-V2 team reports MLA held up better than MHA in their ablations, even outperforming it when tuned carefully — unlike GQA, which traded some quality away for its memory savings.",
-          "id": "0770d956-cac7-4337-a9f9-67d5d0a127da"
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: serving many long-context requests at once",
-          "body": "Picture a 128K-context request queue on a fixed GPU memory budget.",
-          "bullets": [
-            "Under MHA-style caching, each long request reserves a full-resolution K/V cache per layer per head — only a handful of such requests fit before memory is exhausted",
-            "Under MLA, each request's cache is the same small shared latent per token — an order of magnitude smaller — so the same GPU memory now fits far more concurrent long-context requests",
-            "This is exactly why MLA became central to how DeepSeek-V2 and its successors could offer long context cheaply: the bottleneck it targets is the one that actually caps concurrency in production serving"
-          ],
-          "id": "cf7e9d92-ca2c-4a36-85cf-146d2ea47a23"
-        },
-        {
-          "kind": "problem",
-          "title": "When MLA isn't the obvious choice",
-          "body": "The savings are real, but they come with real costs elsewhere.",
-          "bullets": [
-            "Significantly more complex to implement than GQA — two separate query/key paths (compressed content + decoupled RoPE) instead of one",
-            "The matrix-absorption trick that avoids materializing full K/V only cleanly applies to the content score; the small decoupled-RoPE dimensions still add some cache back",
-            "It's proven inside the DeepSeek model family at scale — teams building from scratch on a tight timeline may find GQA's simplicity a better fit despite the quality trade-off",
-            "Retrofitting MLA onto an existing MHA/GQA checkpoint isn't a drop-in swap — it changes the attention computation graph, not just a config flag"
-          ],
-          "id": "58a42411-79aa-491d-b78a-dd7c468b2c96"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "GQA and MLA attack the KV cache from different axes: GQA shares vectors across heads, MLA compresses what each vector costs to store",
-            "MLA's decoupled RoPE trick is the key enabling piece — without it, compression and rotary embeddings are incompatible",
-            "In DeepSeek-V2's ablations, MLA didn't just save memory — it matched or beat MHA's modeling quality, unlike GQA's small quality trade-off",
-            "The real payoff shows up in production: smaller per-token cache means more concurrent long-context requests on the same hardware"
-          ],
-          "id": "1dd2d1b2-ebe3-4274-99c6-378e7fe261a9"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the core difference between how GQA and MLA reduce KV cache size?",
-            "options": [
-              "GQA and MLA use the exact same mechanism",
-              "GQA shares K/V pairs across groups of query heads; MLA compresses each token's K/V into one small shared latent vector",
-              "GQA compresses vectors; MLA shares them across heads",
-              "MLA removes the KV cache entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "GQA reduces how many distinct K/V pairs exist by sharing across head groups, while still storing full-resolution vectors. MLA instead shrinks what each stored vector costs by projecting it into a compressed latent.",
-            "id": "880fd0b2-8fe4-40b9-ab5f-38f4c4e587e8"
-          },
-          {
-            "prompt": "Why does MLA need a 'decoupled RoPE' path instead of applying rotary embeddings directly to the compressed latent?",
-            "options": [
-              "RoPE only works on 32-bit floats",
-              "Rotary rotation doesn't commute with the down/up-projection used to compress and reconstruct K/V, so a separate uncompressed positional path is needed",
-              "Decoupled RoPE is faster to compute, unrelated to compression",
-              "MLA doesn't actually use RoPE at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "Applying rotation before compression and reconstructing after don't produce the same result as rotating the reconstructed vector directly — so DeepSeek-V2 splits off a small uncompressed dimension just to carry position.",
-            "id": "acd25410-0d9a-458a-acfa-f96c2c89edf1"
-          },
-          {
-            "prompt": "According to DeepSeek-V2's ablations, how does MLA's modeling quality compare to standard MHA, and how does that contrast with GQA?",
-            "options": [
-              "MLA is worse than MHA, same as GQA",
-              "MLA matches or exceeds MHA quality, while GQA was slightly worse than MHA in the same ablations",
-              "Both MLA and GQA exceed MHA equally",
-              "Quality wasn't measured, only cache size"
-            ],
-            "correctIndex": 1,
-            "explanation": "This is what makes MLA notable beyond just memory savings: DeepSeek-V2 reports MLA matching or beating MHA's quality, whereas GQA traded away some quality for its cache reduction.",
-            "id": "26be2c89-69fb-4171-b73f-70c801808cb5"
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-05T00:39:22Z",
-      "id": "e5f63a60-1547-41cd-97e6-29ec7ce27a7a"
     }
   ]
 }
