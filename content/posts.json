@@ -1,6 +1,192 @@
 {
   "posts": [
     {
+      "id": "61f04b19-0a28-466d-914b-8fa4bc100b66",
+      "title": "GRPO: Reinforcement Learning Without a Critic",
+      "subtitle": "PPO needs a second neural network just to estimate a baseline — GRPO gets the same signal by making a group of answers grade each other.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "grpo",
+        "reinforcement learning",
+        "ppo",
+        "deepseek",
+        "reasoning models",
+        "post-training"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "heroImageURL": null,
+      "publishedDate": "2026-08-14T00:46:09Z",
+      "summary": "GRPO (Group Relative Policy Optimization) replaces PPO's learned critic with a simple trick: sample a group of completions for the same prompt, score each one, and use the group's own mean and standard deviation as the baseline. That advantage estimate — no separate value network required — drops straight into a PPO-style clipped objective with a KL penalty. It's the RL algorithm behind DeepSeekMath and DeepSeek-R1, and it works best exactly where PPO's critic struggled most: reasoning tasks with a clear, checkable reward.",
+      "slides": [
+        {
+          "id": "c2826d09-f131-4e88-8474-670d07b1b1af",
+          "kind": "cover",
+          "title": "Four Models to Train One Policy? PPO Says Yes.",
+          "body": "Classic RLHF's PPO stage keeps four models in memory at once. GRPO throws one of them out — and gets a better baseline in the process.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "cf199d8d-b84e-4df2-a352-8f43fbd2de50",
+          "kind": "problem",
+          "title": "The Critic Is the Expensive, Fragile Part",
+          "body": null,
+          "bullets": [
+            "PPO estimates 'how much better than expected was this action' using a learned value function (the critic) — a second network roughly the size of the policy, trained alongside it just to predict expected reward.",
+            "For LLMs the critic has to assign a value to every token position in a sequence, but the reward usually only arrives once, at the very end (e.g., 'was the final answer correct?') — that sparse signal makes the critic slow to converge and often noisy.",
+            "A bad critic doesn't just fail quietly: an inaccurate baseline produces biased advantage estimates, which push the policy in the wrong direction and destabilize training.",
+            "On top of the reward model and the frozen reference policy RLHF already needs, the critic is a fourth full-size model resident in GPU memory during training — real cost for a component whose only job is estimating a baseline."
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "9a3e2850-194d-497e-bcb0-cd0efa86ce11",
+          "kind": "solution",
+          "title": "Let a Group of Answers Grade Each Other",
+          "body": null,
+          "bullets": [
+            "For each prompt, sample a group of G completions from the current policy instead of just one — for a math problem, that means generating several independent attempts at solving it.",
+            "Score every completion in the group with the reward function (for verifiable tasks like math or code, this can just be 'did the final answer match' or 'did the tests pass' — no learned reward model required).",
+            "Compute the group's mean and standard deviation of rewards, then set each completion's advantage to (its reward − group mean) / group standard deviation — the group itself becomes the baseline, replacing the critic entirely.",
+            "That advantage plugs into the same clipped surrogate objective PPO uses, with a KL penalty against a reference policy added directly to the loss to keep updates from drifting too far in one step."
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "289d7f7b-96a9-4899-a602-7264e699e79b",
+          "kind": "example",
+          "title": "Same Problem, Four Attempts, One Signal",
+          "body": null,
+          "bullets": [
+            "Say the policy samples 4 attempts at one math problem and 2 of them land on the correct final answer: rewards = [1, 1, 0, 0].",
+            "Group mean = 0.5, group standard deviation = 0.5, so advantages work out to [+1, +1, −1, −1] — correct attempts get pushed up, incorrect ones get pushed down, in the same batch.",
+            "No critic ever ran a forward pass to produce that baseline — the group's own mean did the job.",
+            "If all 4 attempts happen to get the same reward (say all correct, or all wrong), the standard deviation is 0 and the advantage is undefined — a degenerate group that contributes no gradient signal at all."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "04497fc8-1abe-434f-9716-492480e7847f",
+          "kind": "comparison",
+          "title": "GRPO vs. Its Neighbors",
+          "body": null,
+          "bullets": [
+            "GRPO keeps RL's core loop (sample, score, update) but removes the piece PPO needed to make that loop work — at the cost of needing many samples per prompt instead of one."
+          ],
+          "symbol": "square.grid.2x2",
+          "table": {
+            "headers": [
+              "",
+              "PPO (classic RLHF)",
+              "GRPO",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "4 (policy, reference, reward, critic)",
+                "3 (policy, reference, reward/rule)",
+                "2 (policy, reference)"
+              ],
+              [
+                "Baseline source",
+                "Learned value network",
+                "Group mean/std of sampled rewards",
+                "N/A — no RL loop"
+              ],
+              [
+                "Needs multiple samples per prompt",
+                "No (one rollout)",
+                "Yes (a full sampled group)",
+                "No"
+              ],
+              [
+                "Best fit",
+                "Any reward model",
+                "Verifiable rewards — math, code, tests",
+                "Fixed offline preference pairs"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b3dd8155-248a-4673-93e3-43a195742bb9",
+          "kind": "concept",
+          "title": "Where GRPO Struggles",
+          "body": null,
+          "bullets": [
+            "It trades critic cost for sampling cost: generating a whole group of completions per prompt at every training step means far more forward passes through the policy than PPO's single rollout.",
+            "Degenerate groups are a real failure mode — if every sampled completion in a group gets the same reward, the standard deviation collapses to zero and that batch teaches the model nothing, wasting the compute spent sampling it.",
+            "It leans on rewards that are cheap and reliable to compute at scale — GRPO shines with rule-based, verifiable rewards (correct/incorrect, tests pass/fail) and is less proven when the only reward source is a noisy learned preference model.",
+            "Larger groups give a more accurate mean/std estimate but cost proportionally more compute per update — group size is a real tuning knob, not a free lunch."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "02e2d6cd-172e-4e4b-aa99-dc62dde6873c",
+          "kind": "takeaways",
+          "title": "The Group Is the Baseline",
+          "body": null,
+          "bullets": [
+            "GRPO's central move: replace PPO's learned critic with the mean and standard deviation of a sampled group's rewards, then feed that advantage into the same clipped, KL-regularized update PPO already uses.",
+            "It removes an entire model from memory but adds sampling cost — a real tradeoff, not a strict improvement, and one that pays off most cleanly when rewards are cheap to verify (math, code) rather than expensive to learn.",
+            "First introduced for DeepSeekMath and later central to DeepSeek-R1's reasoning training, GRPO is now a standard option alongside PPO and DPO whenever a team has verifiable rewards and wants RL without a critic."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ccdb8154-eded-482e-a676-9f69b224468b",
+            "prompt": "What does GRPO use as the baseline for computing advantage, in place of PPO's learned critic?",
+            "options": [
+              "A separate reward model trained on preference pairs",
+              "The mean and standard deviation of rewards across a sampled group of completions for the same prompt",
+              "A fixed constant set before training begins",
+              "The reward of the single best completion in the group"
+            ],
+            "correctIndex": 1,
+            "explanation": "GRPO samples a group of completions for each prompt, scores all of them, and normalizes each one's reward against that group's own mean and standard deviation — no learned value network needed."
+          },
+          {
+            "id": "28803dc1-f6c9-4b6d-b789-23e4c3b85fa8",
+            "prompt": "What happens when every completion in a GRPO sampling group receives the same reward?",
+            "options": [
+              "The policy update becomes larger to compensate",
+              "The group's standard deviation is zero, so the advantage is undefined and that batch contributes no useful gradient signal",
+              "GRPO automatically falls back to using a critic for that batch",
+              "The reward model is retrained on that group"
+            ],
+            "correctIndex": 1,
+            "explanation": "Advantage in GRPO is (reward − group mean) / group standard deviation. If every sampled completion scores identically, the standard deviation collapses to zero — a degenerate group that wastes the compute spent sampling it."
+          },
+          {
+            "id": "863df5c7-e286-4548-89b7-59db0dc488f6",
+            "prompt": "Compared to PPO, what does GRPO trade away in exchange for removing the critic?",
+            "options": [
+              "It requires sampling multiple completions per prompt instead of just one rollout, increasing generation cost per training step",
+              "It can no longer use a KL penalty against a reference policy",
+              "It requires human preference labels for every training example",
+              "It only works with models under 10B parameters"
+            ],
+            "correctIndex": 0,
+            "explanation": "GRPO still keeps a reference policy and KL regularization — what it gives up is single-rollout efficiency. Estimating a good baseline from a group instead of a critic means generating a whole group of completions per prompt at every step."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "RoPE: Encoding Position by Rotating Query and Key Vectors",
       "subtitle": "No position embedding table, no addition — just a rotation whose angle depends on where a token sits",
       "category": "LLMs",
@@ -11143,199 +11329,6 @@
       ],
       "id": "a087cabb-a4ac-47aa-8372-2d20237ddbbc",
       "publishedDate": "2026-08-04T12:42:29Z"
-    },
-    {
-      "title": "SpyRL: A Spy Game Makes Open-Ended Tasks Verifiable",
-      "subtitle": "Reinforcement learning needs a right answer — this paper invents one by making agents vote out an impostor.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "reinforcement-learning",
-        "rlvr",
-        "self-improvement",
-        "arxiv",
-        "llm-training"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "person.3.fill",
-      "summary": "A team from Duke, Adobe, Oregon State, Penn State, NUS, and Amazon (arXiv:2607.23802) proposes RLSVR: transforming open-ended tasks like summarization and creative writing into a social-deduction game called SpyRL, where the reward comes from a rule-based vote outcome instead of a subjective judge. It reportedly beats existing self-improvement methods on non-verifiable tasks and still helps on already-verifiable math reasoning.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "When There's No Right Answer, RL Has Nothing to Reward",
-          "body": "Reinforcement Learning with Verifiable Rewards (RLVR) made reasoning models like DeepSeek-R1 possible — but it only works when you can automatically check the answer. Summarization and creative writing have no answer key. This paper invents one.",
-          "bullets": [],
-          "symbol": "person.3.fill",
-          "table": null,
-          "id": "5e4f02cc-fb54-40e0-8ee8-b08fa41f4887"
-        },
-        {
-          "kind": "problem",
-          "title": "RLVR's Whole Trick Is Also Its Ceiling",
-          "body": null,
-          "bullets": [
-            "RLVR needs an automatic checker: a unit test for code, an answer key for math, a compiler for a proof — something that scores an output without a human in the loop",
-            "Creative writing, summarization, and open dialogue have no such checker; quality is inherently subjective",
-            "The usual workaround, a learned reward model, can be gamed as the policy shifts — the model learns to satisfy the scorer rather than to actually write better",
-            "Without a reliable reward, letting a model train on its own outputs (self-improvement) stalls out precisely on the tasks that most need it"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "f07affcb-e791-42de-9e76-4dc9a67b26b0"
-        },
-        {
-          "kind": "solution",
-          "title": "Turn the Task Into a Game With a Built-In Answer Key",
-          "body": null,
-          "bullets": [
-            "RLSVR (Reinforcement Learning with Self-Verifiable Rewards) borrows a trick from self-supervised learning: transform a task into a proxy problem that has automatic, rule-based ground truth",
-            "Its instantiation, SpyRL, is a multi-agent social-deduction game modeled on 'Who Is the Spy?'",
-            "Several agent copies all attempt the same underlying task, but one secretly-chosen 'spy' is given different or degraded information to work from",
-            "The other agents vote on who the spy is by comparing outputs — the vote outcome, not a learned scorer, is the reward, so it's verifiable by construction"
-          ],
-          "symbol": "theatermasks.fill",
-          "table": null,
-          "id": "2e60c4b4-b892-4676-9fad-b305e9aaeac6"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Summarizing an Article, With One Impostor",
-          "body": "Picture four agents given the same article to summarize, plus a fifth 'spy' agent quietly handed a corrupted or partial version of it.",
-          "bullets": [
-            "All five produce summaries; every agent then reads the full set and votes for whichever one looks like the odd one out",
-            "If the spy's missing information leaks through as a noticeably worse or inconsistent summary, the voters catch it — a correct vote is the reward signal",
-            "This creates pressure in both directions: the spy is pushed to produce quality good enough to blend in despite worse inputs, and voters are pushed to read carefully enough to notice when something's off",
-            "No human grades a single summary — the only thing ever checked is a discrete, rule-based outcome: was the spy correctly identified"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null,
-          "id": "ad4135d5-e629-4324-a4cd-dba5b64058d2"
-        },
-        {
-          "kind": "comparison",
-          "title": "Three Ways to Get a Training Reward",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Approach",
-              "Reward source",
-              "Works on open-ended tasks?"
-            ],
-            "rows": [
-              [
-                "RLVR (math, code)",
-                "Automatic checker: unit test, answer key, compiler",
-                "No — only where a checker exists"
-              ],
-              [
-                "RLHF / learned reward model",
-                "A model trained on human preference labels",
-                "Yes, but driftable and gameable as the policy shifts"
-              ],
-              [
-                "RLSVR / SpyRL",
-                "Rule-based outcome of a voting game",
-                "Yes — verifiable by construction, no learned judge"
-              ]
-            ]
-          },
-          "id": "6f93ae32-9e77-4d27-8814-f725ed85f61d"
-        },
-        {
-          "kind": "takeaways",
-          "title": "What the Paper Reports",
-          "body": null,
-          "bullets": [
-            "Across summarization and creative writing, SpyRL is reported to consistently outperform existing self-improvement baselines that rely on a learned reward model",
-            "It also yields further gains on tasks that already had a verifiable checker, like mathematical reasoning — the game-based signal adds something a plain answer-key reward didn't capture alone",
-            "The authors frame this as evidence that 'task transformation' — reshaping the problem so a rule can score it — is a more general lever than inventing new RL math",
-            "Exact benchmark scores weren't independently reconfirmed here; treat the direction (consistent gains) as the reliable claim, not any specific number"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "table": null,
-          "id": "e1c107e4-f921-40df-815d-8b7b2d40ac83"
-        },
-        {
-          "kind": "concept",
-          "title": "Where This Trick Runs Into Limits",
-          "body": null,
-          "bullets": [
-            "It only works when a task can plausibly be turned into an asymmetric-information game — not every task decomposes that way",
-            "The reward is a proxy: 'was the spy correctly identified,' not 'was the output actually good.' If voting agents are weak or biased, the signal gets noisy regardless of true quality",
-            "Running the game costs more compute per training step than a single reward-model call — you need N agent copies to produce outputs and then vote, every round",
-            "Because the reward is indirect, it's possible in principle for vote accuracy and human-judged quality to diverge, especially at the edges of what the voters can reliably detect"
-          ],
-          "symbol": "xmark.octagon",
-          "table": null,
-          "id": "fd8f2d3c-4cba-419f-b0b9-ecc756d53c47"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "RLVR's real limitation was never the algorithm — it was needing a checker at all, which excludes writing, summarization, and dialogue",
-            "SpyRL sidesteps this by making the reward the outcome of a game's rules (a vote), not a subjective or learned judge",
-            "The core idea — transform the task, don't reinvent the RL math — is what generalizes, echoing how self-supervised learning turned unlabeled data into pretext tasks with automatic labels",
-            "It reportedly helps even on already-verifiable math tasks, suggesting the 'catch the impostor' pressure is a general quality signal, not just a workaround"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "b2a76ea4-a29a-4a27-bc50-64b8c7f22666"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the core problem RLVR faces on tasks like creative writing or summarization?",
-            "options": [
-              "The tasks are too easy for current models",
-              "There's no automatic checker to verify if an output is \"correct,\" since quality is subjective",
-              "The model's context window is too short for these tasks",
-              "RL training is too slow to ever be used for text generation"
-            ],
-            "correctIndex": 1,
-            "explanation": "RLVR's strength — a verifiable checker like a unit test or an answer key — is also its limit. It simply has no way to score a task with no ground truth.",
-            "id": "20841927-b23d-4adf-bb7c-874f7756f2e1"
-          },
-          {
-            "prompt": "In SpyRL, how does the game actually generate a training reward?",
-            "options": [
-              "A human rater manually scores each generated output",
-              "A separately trained reward model predicts a quality score",
-              "Agents vote on which participant received different or degraded information, and the vote's correctness produces the reward",
-              "The reward is based purely on how long the generated text is"
-            ],
-            "correctIndex": 2,
-            "explanation": "The reward is a rule-based function of the vote outcome — who gets correctly identified as the spy — not a subjective or learned judgment, so it's verifiable by construction just like checking a math answer.",
-            "id": "5ccc68b9-de10-4a75-ac72-82923efb2869"
-          },
-          {
-            "prompt": "According to the paper, what's a genuine limitation of an approach like SpyRL?",
-            "options": [
-              "It only works on programming tasks",
-              "The reward is an indirect proxy (vote accuracy, not quality itself), and it needs multiple agent copies plus reliably capable voters each round",
-              "It cannot produce any gains on already-verifiable tasks",
-              "It completely removes the need for reinforcement learning"
-            ],
-            "correctIndex": 1,
-            "explanation": "Vote accuracy is a proxy for quality, not quality itself, and running several agent copies and dependable voters per round adds real compute and reliability requirements.",
-            "id": "67bf8986-365c-4167-8b7f-45d294b2a66d"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "From RLVR to RLSVR: Task Transformation Induces Self-Verifiable Rewards for Open-Ended LLM Self-Improvement (arXiv:2607.23802)",
-          "url": "https://arxiv.org/abs/2607.23802",
-          "id": "e76f502e-10b0-4ce9-a2d4-642850f5e5b9"
-        }
-      ],
-      "id": "3760a1bc-2d1a-4202-b3db-570703052333",
-      "publishedDate": "2026-08-04T06:46:41Z"
     }
   ]
 }
