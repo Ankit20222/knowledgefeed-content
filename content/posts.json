@@ -1,6 +1,201 @@
 {
   "posts": [
     {
+      "id": "16812185-f65f-4d38-9b00-49c6dbd34ee8",
+      "title": "Late Interaction: Retrieval That Keeps Every Token's Vote",
+      "subtitle": "Bi-encoders squash a document into one vector; cross-encoders read every token pair but can't be precomputed. ColBERT's MaxSim gets both.",
+      "category": "RAG",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "colbert",
+        "late-interaction",
+        "rag",
+        "vector-search",
+        "retrieval",
+        "reranking"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.3x3.fill",
+      "heroImageURL": null,
+      "summary": "Late interaction retrieval (introduced by ColBERT) encodes queries and documents into per-token embedding matrices instead of single vectors, then scores relevance with MaxSim: each query token finds its best-matching document token, and those maxes get summed. It recovers most of a cross-encoder's fine-grained matching quality while still letting document representations be computed and indexed offline — at the cost of storing many vectors per document instead of one.",
+      "slides": [
+        {
+          "id": "a0c90a5f-5390-4af6-a2bc-d15920d4260d",
+          "kind": "cover",
+          "title": "One Vector Per Document Is a Compression You're Paying For",
+          "body": "Every dense retriever squashes a document down to a single point in embedding space. Late interaction asks: what if you didn't have to?",
+          "bullets": [],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "c5341e7f-30de-4503-9750-14a01e070fbf",
+          "kind": "problem",
+          "title": "Bi-Encoders Are Fast Because They Forget",
+          "body": null,
+          "bullets": [
+            "A standard dense retriever (bi-encoder) runs the query and each document through an encoder separately, then pools all their tokens into ONE vector each — relevance is just a dot product between two points.",
+            "That single vector has to represent every entity, number, and rare term in the whole document at once. A query for an exact SKU, error code, or proper noun can get diluted into a generic semantic neighborhood and lose the match.",
+            "Cross-encoders fix this by concatenating query+document and running full self-attention so every query token can attend to every document token directly — much higher quality, but the score can't be computed until BOTH texts are known.",
+            "That makes cross-encoders unusable as a first-stage retriever over millions of documents: you can't precompute anything, so you'd need one full transformer forward pass per query-document pair. In practice they only rerank a small shortlist a cheaper retriever already produced."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "a0253dcc-8079-4267-8091-cb5b285dea73",
+          "kind": "solution",
+          "title": "Keep One Vector Per Token, Not Per Document",
+          "body": null,
+          "bullets": [
+            "Late interaction (ColBERT, Khattab & Zaharia) encodes the query and the document independently — same as a bi-encoder — but skips the pooling step. Each token keeps its own small vector, so a document becomes a MATRIX of embeddings, not a single point.",
+            "Because the document side is still encoded independently of the query, every document's token matrix can be computed once, offline, and stored in an index — the expensive transformer pass never has to wait for a query.",
+            "At query time you only run the (short) query through the encoder and then do a lightweight comparison against the precomputed document matrices — no second transformer pass over the document is needed.",
+            "This is the 'late' in late interaction: the two sides interact only at the final scoring step, after both have already been independently embedded — as opposed to a cross-encoder's 'early' interaction inside the transformer itself."
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "146355fd-e200-48af-987a-3b2ac8a40c11",
+          "kind": "architecture",
+          "title": "MaxSim: Every Query Token Picks Its Best Match",
+          "body": "For each query token embedding, find its single highest-similarity token anywhere in the document, then sum those maxes across all query tokens.",
+          "bullets": [
+            "score(Q, D) = Σ over query tokens q of [ max over document tokens d of (q · d) ] — each query token independently finds whichever document token it matches best, then those per-token maxima are added up.",
+            "This gives the model soft, per-term matching: a query token for an exact identifier can still find and reward an exact match buried anywhere in the document, instead of that signal being averaged away into one pooled vector.",
+            "It's still cheap relative to a cross-encoder: MaxSim is just a matrix multiply plus a max and a sum — no additional transformer layers run at query time.",
+            "Because the operation is a similarity matrix over two small sets of vectors, it composes naturally with approximate pruning: you don't have to compare a query against every token of every document to get a good score estimate."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "74147162-ab43-4a8b-a0a5-972cf8b9a925",
+          "kind": "example",
+          "title": "A Query That a Bi-Encoder Would Blur",
+          "body": null,
+          "bullets": [
+            "Query: 'rollback procedure for error E4021'. A pooled bi-encoder vector for this query mixes 'rollback', 'procedure', and the specific code E4021 into one averaged direction — a document that's strong on 'rollback procedure' but never mentions E4021 can still score high.",
+            "With late interaction, the query keeps a separate vector for the E4021 token. That vector's MaxSim term can only score high against a document token that's actually close to E4021 — a near-exact match in the index, not a generic semantic neighborhood.",
+            "Meanwhile 'rollback' and 'procedure' still get their own MaxSim terms and can match paraphrases like 'revert steps' via semantic similarity — you keep soft matching on the descriptive words and sharp matching on the identifier, in the same score.",
+            "The final score is the sum of both kinds of evidence in one pass — no separate keyword-search (BM25) system needed to catch what the dense vector missed."
+          ],
+          "symbol": "magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "c56386af-0818-48e0-88b3-7ef109af7d60",
+          "kind": "comparison",
+          "title": "Three Ways to Score Relevance",
+          "body": null,
+          "bullets": [
+            "The core tradeoff is exactly where interaction happens: never (bi-encoder), only at the end (late interaction), or throughout the whole forward pass (cross-encoder)."
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Approach",
+              "Doc side precomputed?",
+              "Match granularity",
+              "Typical role"
+            ],
+            "rows": [
+              [
+                "Bi-encoder (single vector)",
+                "Yes — one vector per doc",
+                "Whole-document, pooled",
+                "First-stage retrieval at large scale"
+              ],
+              [
+                "Late interaction (ColBERT)",
+                "Yes — one vector per token",
+                "Per-token, via MaxSim",
+                "First-stage retrieval when exact terms matter"
+              ],
+              [
+                "Cross-encoder",
+                "No — needs the query present",
+                "Full token-to-token attention",
+                "Reranking a small shortlist only"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "55ed25cc-17bb-4e78-a03c-a665223536c2",
+          "kind": "concept",
+          "title": "The Bill Comes Due in Storage",
+          "body": null,
+          "bullets": [
+            "Storing one vector per document token instead of one per document multiplies index size by roughly the average token count you keep embeddings for — often on the order of a hundred-plus vectors per document instead of one.",
+            "Later ColBERT work (ColBERTv2) attacks exactly this with residual compression — clustering token vectors around centroids and storing quantized offsets — shrinking the index substantially versus storing raw per-token vectors, without giving up the MaxSim mechanism.",
+            "Plain HNSW-style ANN indexes are built for single-vector nearest-neighbor search — they don't natively support 'many vectors per document, scored by MaxSim.' You need a retrieval engine or library built for multi-vector late interaction (e.g. the ColBERT/PLAID tooling, or vector databases with explicit multi-vector support).",
+            "Skip it when: your corpus is huge and storage-constrained, exact-term recall isn't your bottleneck, or a simpler bi-encoder-plus-cross-encoder-reranker pipeline already clears your quality bar — late interaction is worth its cost specifically when precision on rare terms and identifiers is what's failing today."
+          ],
+          "symbol": "externaldrive.fill",
+          "table": null
+        },
+        {
+          "id": "471c55b5-dbc9-480f-b0a9-f3bf6367a5a0",
+          "kind": "takeaways",
+          "title": "Where the Interaction Happens Is the Whole Design",
+          "body": null,
+          "bullets": [
+            "Bi-encoders interact never (fastest, coarsest); cross-encoders interact throughout (best quality, can't scale); late interaction interacts only at scoring time (most of the quality, most of the scalability).",
+            "MaxSim = for each query token, take its best document-token match, then sum — that's the entire scoring function, and it's cheap enough to run at query time against precomputed document matrices.",
+            "The tradeoff you're accepting is storage: many vectors per document instead of one, plus needing infrastructure that understands multi-vector scoring rather than plain nearest-neighbor search.",
+            "Reach for it when a bi-encoder is losing on exact terms — identifiers, codes, names — that a pooled vector keeps blurring away."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4d5c991d-2efd-49aa-80e8-4d7237329042",
+            "prompt": "Why can't a cross-encoder be used as the first-stage retriever over millions of documents?",
+            "options": [
+              "It only outputs a single pooled vector",
+              "Its score requires both the query and document present together, so nothing about the document can be precomputed offline",
+              "It doesn't use a transformer",
+              "It can only score documents shorter than the query"
+            ],
+            "correctIndex": 1,
+            "explanation": "A cross-encoder concatenates query and document and runs full cross-attention, so the relevance score only exists once both texts are known — you'd need a fresh forward pass per query-document pair, which doesn't scale to a large corpus. That's why cross-encoders are used to rerank a small shortlist, not to search the whole index."
+          },
+          {
+            "id": "a72f68d9-7ca9-4340-84a4-3c5836a2c00e",
+            "prompt": "In ColBERT's MaxSim scoring, how is the final relevance score computed?",
+            "options": [
+              "Average the dot product of every query token against every document token",
+              "Take the single highest similarity across the whole document as the score",
+              "For each query token, find its highest-similarity document token, then sum those maxima across all query tokens",
+              "Concatenate the query and document token vectors and feed them through another transformer"
+            ],
+            "correctIndex": 2,
+            "explanation": "MaxSim gives each query token its own vote: it finds whichever document token it matches best, and the total score is the sum of those per-query-token maxima. That lets specific query tokens (like an exact identifier) find an exact match anywhere in the document instead of that signal being blended into one pooled vector."
+          },
+          {
+            "id": "c5ea9615-7aab-4d82-b92c-2e26db2e2a82",
+            "prompt": "What's the main practical cost of late interaction retrieval compared to a standard single-vector bi-encoder?",
+            "options": [
+              "It cannot be indexed offline at all",
+              "It requires a much larger index, since documents are stored as one vector per token instead of one vector total",
+              "It cannot match semantically similar words, only exact terms",
+              "It requires the query and document to be encoded by the same model call"
+            ],
+            "correctIndex": 1,
+            "explanation": "Late interaction still precomputes and indexes the document side offline — that part isn't lost. What changes is the index size: storing a vector per token (often a hundred-plus per document) instead of a single pooled vector is a real storage and infrastructure cost, which is why techniques like ColBERTv2's residual compression exist."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-14T07:03:33Z"
+    },
+    {
       "id": "61f04b19-0a28-466d-914b-8fa4bc100b66",
       "title": "GRPO: Reinforcement Learning Without a Critic",
       "subtitle": "PPO needs a second neural network just to estimate a baseline — GRPO gets the same signal by making a group of answers grade each other.",
@@ -11146,189 +11341,6 @@
       ],
       "id": "b3b50b4a-834a-401b-9ef0-6b37de326868",
       "publishedDate": "2026-08-04T18:39:37Z"
-    },
-    {
-      "title": "Grouped-Query Attention: The Middle Ground That Made 70B Models Servable",
-      "subtitle": "Why Llama 2's 70B model shares 8 key-value heads across 64 query heads instead of one or sixty-four",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "gqa",
-        "attention",
-        "kv-cache",
-        "inference-optimization",
-        "transformers",
-        "llama"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.grid.2x2.fill",
-      "summary": "Grouped-Query Attention (GQA) splits query heads into small groups that each share one key-value head, landing between full multi-head attention (best quality) and multi-query attention (fastest, cheapest). Llama 2 70B uses it to cut KV-cache size 8x with almost no quality loss, which is why models past ~30B params ship with GQA by default today.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One idea let 70B-parameter models fit a KV cache in memory",
-          "body": "Grouped-Query Attention (GQA) is the attention variant that made large open models actually servable at long context. It's not a training trick — it's a change to how key/value heads are shared during inference.",
-          "bullets": [],
-          "symbol": "square.grid.2x2.fill",
-          "id": "e5179092-b871-47b0-b87f-6e118c5140b9"
-        },
-        {
-          "kind": "problem",
-          "title": "Multi-head attention makes the KV cache grow with every head you add",
-          "body": "During autoregressive decoding, a transformer caches every past token's key and value vectors per layer, per head, so it doesn't recompute them each step. With standard multi-head attention (MHA), each of the N query heads keeps its own K/V head — so the cache scales linearly with head count.",
-          "bullets": [
-            "For a 70B model with 64 heads and 80 layers, a full MHA cache needs ~2.5 MB per token, per sequence",
-            "At 4,096 tokens of context, that's ~10 GB of GPU memory just for cache — before weights or activations",
-            "More heads means better quality, but every extra head is more memory bandwidth to move per decoding step"
-          ],
-          "id": "c30a06b3-c521-49fb-90d7-a3749efc3095"
-        },
-        {
-          "kind": "solution",
-          "title": "Multi-query attention fixed memory but broke quality",
-          "body": "Google's 2019 fix, Multi-Query Attention (MQA), collapsed all K/V heads down to just one shared head — every query head reads the same keys and values. It slashes the cache but forces every head to attend the same way, which measurably hurts output quality on larger models.",
-          "bullets": [
-            "MQA cache size: independent of head count — just 1 K/V pair per layer",
-            "Speed win is real: decoding is memory-bandwidth-bound, so a smaller cache means faster token generation",
-            "Quality loss shows up on harder tasks (long-form reasoning, code) where per-head specialization matters"
-          ],
-          "id": "95224d56-2091-4b31-abe1-871c58145a23"
-        },
-        {
-          "kind": "solution",
-          "title": "GQA: split heads into G groups, each group shares one K/V head",
-          "body": "Ainslie et al. (Google Research, 2023, arXiv:2305.13245) proposed Grouped-Query Attention as a tunable middle point. Instead of 1 shared head (MQA) or N independent heads (MHA), you pick G groups: G=1 recovers MQA, G=N recovers MHA, and everything in between trades cache size for quality.",
-          "bullets": [
-            "Existing MHA checkpoints can be 'uptrained' into GQA using ~5% of the original pretraining compute — no training from scratch",
-            "Llama 2 34B and 70B use GQA with G=8: 64 query heads grouped into 8, each group sharing 1 K/V head",
-            "Llama 2 7B and 13B kept plain MHA — GQA's benefit only matters once the KV cache itself becomes the bottleneck"
-          ],
-          "symbol": "circle.grid.3x3.fill",
-          "id": "5532d76e-6f29-48e7-9596-8c38a72e9fe7"
-        },
-        {
-          "kind": "comparison",
-          "title": "Same architecture, three attention variants, very different caches",
-          "table": {
-            "headers": [
-              "Variant",
-              "K/V heads (of 64)",
-              "KV cache size",
-              "Quality vs MHA"
-            ],
-            "rows": [
-              [
-                "MHA",
-                "64",
-                "1x (baseline, ~2.5 MB/token)",
-                "Best (reference)"
-              ],
-              [
-                "GQA (Llama 2 70B, G=8)",
-                "8",
-                "0.125x (~0.31 MB/token)",
-                "Near-identical (uptrained)"
-              ],
-              [
-                "MQA",
-                "1",
-                "0.016x (~0.04 MB/token)",
-                "Measurable degradation"
-              ]
-            ]
-          },
-          "bullets": [
-            "Mistral 7B uses G=8 as well (32 query heads / 8 KV heads = groups of 4), pairing GQA with a 4,096-token sliding window for extra memory savings"
-          ],
-          "id": "7d118dcb-be37-4286-ba27-fdee63e25064"
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: the 8x cache drop, in actual gigabytes",
-          "body": "Llama 2 70B: 80 layers, hidden size 8192, 64 heads → head_dim = 128. KV cache per token = 2 (K and V) x kv_heads x head_dim x layers x 2 bytes (fp16).",
-          "bullets": [
-            "MHA (64 KV heads): 2 x 64 x 128 x 80 x 2 bytes ≈ 2.62 MB/token → ~10.2 GB at a 4,096-token context",
-            "GQA (8 KV heads): 2 x 8 x 128 x 80 x 2 bytes ≈ 0.33 MB/token → ~1.25 GB at the same 4,096 tokens",
-            "That's the difference between a cache that fits alongside the model weights on one GPU and one that doesn't"
-          ],
-          "symbol": "memorychip.fill",
-          "id": "7ef2516c-80d7-477e-934e-f026dd505b53"
-        },
-        {
-          "kind": "problem",
-          "title": "Where GQA doesn't help — and what it costs you",
-          "body": "GQA is not free and not always the right call.",
-          "bullets": [
-            "Small models rarely need it: below ~13B params, the KV cache usually isn't the memory bottleneck, so plain MHA's quality edge wins",
-            "The group count G is fixed at training/uptraining time — you can't change it per-request the way you'd change a batch size",
-            "Uptraining still costs real compute (~5% of pretraining) and a quality re-validation pass; it's not a free post-hoc toggle",
-            "GQA only reduces the KV cache — it does nothing for the O(n²) cost of computing attention scores itself (that's FlashAttention's job)"
-          ],
-          "id": "274a08fa-7a28-4cd8-94c5-59436491f74e"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "MHA = best quality, biggest cache. MQA = smallest cache, biggest quality risk. GQA = a tunable point between them",
-            "GQA groups N query heads into G groups, each sharing one K/V head; G=8 is a common sweet spot at 30B+ scale",
-            "Existing MHA checkpoints can be uptrained into GQA cheaply — you don't need to pretrain from scratch",
-            "Llama 2 34B/70B and Mistral 7B both ship GQA; smaller models (Llama 2 7B/13B) don't need it",
-            "GQA shrinks the KV cache, not attention's compute cost — pair it with FlashAttention/PagedAttention for the full picture"
-          ],
-          "id": "f69c62d3-6d45-4bc1-8014-a6a94cc956ca"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "In Llama 2 70B, 64 query heads are grouped into 8 groups. How many key-value heads does the model actually store?",
-            "options": [
-              "1",
-              "8",
-              "64",
-              "512"
-            ],
-            "correctIndex": 1,
-            "explanation": "GQA gives each of the 8 groups its own shared K/V head, so there are 8 K/V heads total — the 64 query heads split evenly into those 8 groups, 8 query heads per K/V head.",
-            "id": "4b56e53e-d9ce-474b-840b-a9791e1da8eb"
-          },
-          {
-            "prompt": "What happens if you set GQA's group count G equal to the total number of attention heads N?",
-            "options": [
-              "You get Multi-Query Attention (MQA)",
-              "You recover standard Multi-Head Attention (MHA)",
-              "The model fails to run",
-              "The KV cache disappears entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "G=N means every query head gets its own dedicated K/V head — no sharing at all — which is exactly the definition of standard multi-head attention. G=1 is the other extreme, which is MQA.",
-            "id": "8359e85d-c673-48dc-a785-1a3f401698c2"
-          },
-          {
-            "prompt": "Why did Llama 2's 7B and 13B models skip GQA while the 34B and 70B models use it?",
-            "options": [
-              "GQA only works on models with an even number of layers",
-              "Smaller models don't have a KV cache",
-              "At smaller scale, the KV cache isn't the memory bottleneck, so plain MHA's quality edge is worth keeping",
-              "GQA requires more training data than smaller models were given"
-            ],
-            "correctIndex": 2,
-            "explanation": "GQA's whole benefit is shrinking the KV cache, which only becomes a serving bottleneck at larger head counts and longer contexts. Below ~13B, that cache is small enough that it's not worth trading away MHA's quality.",
-            "id": "5a9c1260-fa18-4437-8f2f-a7ec0d94d60f"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)",
-          "url": "https://arxiv.org/abs/2305.13245",
-          "id": "afbbdf73-7ce2-458a-8c77-69165480dac6"
-        }
-      ],
-      "id": "a087cabb-a4ac-47aa-8372-2d20237ddbbc",
-      "publishedDate": "2026-08-04T12:42:29Z"
     }
   ]
 }
