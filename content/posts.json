@@ -1,6 +1,194 @@
 {
   "posts": [
     {
+      "id": "afff4f8e-fd9b-45c4-b32f-2aee34c32872",
+      "title": "Grouped-Query Attention: Splitting the Difference on KV Cache",
+      "subtitle": "Why Llama 2 70B and Mistral 7B don't give every attention head its own keys and values",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "gqa",
+        "kv-cache",
+        "inference",
+        "transformers"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "cpu.fill",
+      "heroImageURL": null,
+      "summary": "Grouped-Query Attention (GQA) shrinks the KV cache by clustering query heads into groups that each share a single key/value head, trading a small amount of representational capacity for a large cut in inference memory. It's the attention variant actually shipping in Llama 2's larger models and Mistral 7B, not just a research idea.",
+      "slides": [
+        {
+          "id": "b56f450d-5878-4fdb-ae2d-704da7188a36",
+          "kind": "cover",
+          "title": "Every Attention Head Used to Get Its Own Keys and Values",
+          "body": "Multi-head attention gives each head an independent key and value projection. That's expressive — and it's also the reason the KV cache eats so much memory during inference.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "934f7b07-2e61-4f81-bb88-1019868288cf",
+          "kind": "problem",
+          "title": "The KV Cache Grows With Every Head, Every Token",
+          "body": null,
+          "bullets": [
+            "During autoregressive generation, the model caches a key and value vector per head per token so it never recomputes them. With H heads, that cache is H times bigger than a single-head model's — and it keeps growing linearly with sequence length on top of that.",
+            "A 70B-class model with 64 attention heads stores 64 separate key/value pairs per token, per layer — across 80 layers that adds up fast, especially at long context lengths.",
+            "Multi-Query Attention (MQA) is the extreme fix: collapse all heads down to ONE shared key/value head. Memory savings are dramatic, but quality can suffer because every query head is now reading from the same compressed key/value space."
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "a4d226d3-3ad5-43e9-8b89-d17a75d8425d",
+          "kind": "solution",
+          "title": "GQA Groups Heads Instead of Sharing One K/V for All of Them",
+          "body": "Grouped-Query Attention splits the query heads into G groups. Every query head keeps its own projection, but all heads inside a group share one key head and one value head. G = H recovers standard multi-head attention; G = 1 recovers MQA. GQA picks a middle value of G.",
+          "bullets": [
+            "Fewer distinct key/value projections to store means a smaller KV cache — roughly H/G times smaller than full multi-head attention.",
+            "Existing MHA checkpoints can be 'uptrained' into GQA by mean-pooling each group's original key/value heads into one shared head, then fine-tuning briefly — no need to pretrain from scratch.",
+            "Because most of the architecture is unchanged, GQA models train and behave almost like standard transformers, just with a cheaper cache to carry at inference time."
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "15424367-112b-4d20-a134-7fdd91f8adaf",
+          "kind": "architecture",
+          "title": "The Query-to-KV-Head Ratio Is a Tunable Knob",
+          "body": "The group size G is a design choice made per model, usually picked so it divides evenly into the total head count.",
+          "bullets": [
+            "MHA: G = H (e.g. 64 query heads → 64 KV heads) — maximum quality, maximum cache size.",
+            "GQA: 1 < G < H (e.g. 64 query heads grouped down to 8 KV heads) — the middle ground most production models actually ship.",
+            "MQA: G = 1 (all query heads → a single shared KV head) — minimum cache, biggest quality risk."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "c8bd4443-1127-44c1-9508-6d51b9f34905",
+          "kind": "example",
+          "title": "Llama 2 70B and Mistral 7B Both Ship With GQA",
+          "body": null,
+          "bullets": [
+            "Llama 2 70B: 64 attention heads grouped down to 8 KV heads — roughly an 8x smaller KV cache than full MHA would need at that same head count.",
+            "Mistral 7B: 32 attention heads grouped down to 8 KV heads — a 4x reduction, part of what let it run efficiently on more modest hardware.",
+            "Meta kept standard MHA on the smaller Llama 2 variants (7B, 13B) — GQA's payoff is biggest where the cache is biggest: larger models and longer contexts."
+          ],
+          "symbol": "cylinder.split.1x2.fill",
+          "table": null
+        },
+        {
+          "id": "b64e8201-9acd-4ddb-9d07-dccd1b2ebd61",
+          "kind": "comparison",
+          "title": "Cache Size vs. Quality: Where Each Variant Lands",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Variant",
+              "Distinct KV heads",
+              "Relative cache size",
+              "Quality vs. MHA"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "= query heads (e.g. 64)",
+                "1x (largest)",
+                "Baseline"
+              ],
+              [
+                "GQA",
+                "a chosen group count (e.g. 8)",
+                "~H/G smaller (e.g. ~8x)",
+                "Close to MHA in practice"
+              ],
+              [
+                "MQA",
+                "1 (shared by all)",
+                "~H smaller (e.g. ~64x)",
+                "Can be noticeably lower"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "33ba7df1-2717-4b0b-a0b0-bb1507ecf65c",
+          "kind": "concept",
+          "title": "GQA Isn't Free, and It Isn't Always the Right Call",
+          "body": "The savings are real, but they come with caveats worth knowing before reaching for GQA.",
+          "bullets": [
+            "Converting a pretrained MHA model to GQA needs an uptraining pass — skipping it and just deleting KV heads outright tanks quality instead of gracefully trading it off.",
+            "Very small models rarely bother: when the KV cache isn't your inference bottleneck, GQA adds architectural complexity for little practical gain.",
+            "The group count G is a fixed choice baked in at training time — unlike batch size or context length, you can't tune it per request after the model is trained.",
+            "GQA doesn't reduce weight count or FLOPs per token the way something like Mixture of Experts does — it specifically targets the inference-time KV cache, so pair it with quantization or PagedAttention for compounding savings rather than expecting it to solve everything alone."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2aee9e4f-b468-404c-881e-2e8cf37626e9",
+          "kind": "takeaways",
+          "title": "The Core Idea in One Line",
+          "body": null,
+          "bullets": [
+            "KV cache size scales with the number of distinct key/value heads, not the number of query heads.",
+            "GQA groups query heads so they share key/value heads, landing between full MHA and single-head MQA on the memory-vs-quality spectrum.",
+            "Real models use it today: Llama 2 70B and Mistral 7B both ship GQA with 8 KV heads in production, not just as a research technique.",
+            "It's an inference-memory optimization, not a capacity optimization — combine it with other efficiency techniques rather than treating it as a complete solution."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b8451184-0d3f-4089-9552-23d2f9c8edae",
+            "prompt": "In Grouped-Query Attention, what do the query heads within one group share?",
+            "options": [
+              "Their own separate query projections",
+              "A single key projection and a single value projection",
+              "The final output projection only",
+              "The positional embeddings for the sequence"
+            ],
+            "correctIndex": 1,
+            "explanation": "Every query head keeps its own query projection — what's shared within a group is one key projection and one value projection. That's the whole mechanism: fewer distinct K/V projections to cache, while queries stay fully independent."
+          },
+          {
+            "id": "d3dd9e51-6912-443c-8adb-1a7596be5269",
+            "prompt": "Llama 2 70B uses GQA with 64 query heads grouped into 8 KV heads. Roughly how much smaller is its KV cache versus full multi-head attention at that same head count?",
+            "options": [
+              "About 2x smaller",
+              "About 8x smaller",
+              "About 64x smaller",
+              "No smaller — GQA doesn't change cache size"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cache size scales with the number of distinct KV heads, not query heads. 64 query heads grouped into 8 shared KV heads means roughly an 8x reduction in key/value storage compared to giving all 64 heads their own KV pair."
+          },
+          {
+            "id": "b3aa985d-99d3-4580-a9e1-09dcb1a42d89",
+            "prompt": "What's the main risk of pushing all the way to Multi-Query Attention (a single shared KV head for every query head)?",
+            "options": [
+              "Training becomes numerically unstable",
+              "The model can no longer be used for autoregressive generation",
+              "Quality can degrade because too much key/value information is compressed into one shared representation",
+              "Positional encoding stops working correctly"
+            ],
+            "correctIndex": 2,
+            "explanation": "MQA gets the biggest memory win by collapsing every query head down to one shared KV head, but that squeezes all of the model's key/value representational capacity into a single space — which can hurt output quality. GQA exists specifically to interpolate between that extreme and full multi-head attention."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-14T15:02:56Z"
+    },
+    {
       "id": "16812185-f65f-4d38-9b00-49c6dbd34ee8",
       "title": "Late Interaction: Retrieval That Keeps Every Token's Vote",
       "subtitle": "Bi-encoders squash a document into one vector; cross-encoders read every token pair but can't be precomputed. ColBERT's MaxSim gets both.",
@@ -11151,196 +11339,6 @@
       "references": [],
       "publishedDate": "2026-08-05T00:39:22Z",
       "id": "e5f63a60-1547-41cd-97e6-29ec7ce27a7a"
-    },
-    {
-      "title": "LoRA: Fine-Tune a 175B Model by Training 0.02% of It",
-      "subtitle": "Freeze the pretrained weights, learn a low-rank update instead — and merge it back with zero added latency",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "lora",
-        "fine-tuning",
-        "peft",
-        "adapters",
-        "quantization",
-        "efficient-training"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "puzzlepiece.extension.fill",
-      "summary": "LoRA freezes a pretrained model's weights entirely and learns a tiny low-rank update (two small matrices, B and A) injected into the attention projections. Because the update collapses to the same shape as the original weight matrix, it can be merged in after training for zero inference overhead — which is why almost every fine-tuning stack (and every multi-tenant model host) defaults to it today.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One low-rank trick cut fine-tuning cost by orders of magnitude",
-          "body": "Low-Rank Adaptation (LoRA), introduced by Hu et al. at Microsoft in 2021, doesn't touch a single one of a pretrained model's original weights. It learns a small correction instead — and that one design choice is why task-specific fine-tuning went from 'needs a GPU cluster' to 'fits on a single consumer card.'",
-          "bullets": [],
-          "symbol": "puzzlepiece.extension.fill",
-          "id": "b8c8d193-6073-4fa7-9aa8-a3e1f2b0d5b3"
-        },
-        {
-          "kind": "problem",
-          "title": "Full fine-tuning means a full-size checkpoint for every task",
-          "body": "Fine-tuning updates every parameter in the model, so the gradients and optimizer state you need during training are as large as the model itself — and the checkpoint you save afterward is a complete second copy.",
-          "bullets": [
-            "A 175B-parameter model in fp16 is already ~350GB; Adam's optimizer state (momentum + variance) roughly triples the memory needed to train it",
-            "Ship 10 fine-tuned variants (one per customer or task) and you're storing and swapping 10 full-size checkpoints",
-            "Every one of those checkpoints also needs its own copy loaded to serve — expensive for anyone hosting more than a handful of variants"
-          ],
-          "id": "ec448c02-0f33-4309-bead-dbc100be6125"
-        },
-        {
-          "kind": "solution",
-          "title": "Freeze W, learn ΔW as the product of two small matrices",
-          "body": "LoRA keeps the pretrained weight matrix W completely frozen. Next to it, it adds a trainable update ΔW = B·A, where A is a small r×k matrix and B is d×r — with rank r chosen far smaller than d or k (often 4, 8, or 16).",
-          "bullets": [
-            "Only A and B are trained; W never receives a gradient update",
-            "A is initialized with small random values, B is initialized to all zeros — so at step 0, ΔW = 0 and the model starts exactly at its pretrained behavior",
-            "In practice it's applied to the attention projections (Wq and Wv are the common minimal choice; some setups extend it to Wk and Wo too)",
-            "An α/r scaling factor controls how strongly the learned update perturbs the frozen weights"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "id": "619da749-539a-46ac-860d-b85560330b60"
-        },
-        {
-          "kind": "concept",
-          "title": "Why low rank works: fine-tuning updates live in a small subspace",
-          "body": "This isn't a compression trick applied after the fact — it's a bet, borne out empirically, that the *useful* update for adapting a pretrained model to a new task has low intrinsic rank, even though the full weight matrix does not.",
-          "bullets": [
-            "Because B is zero-initialized, training starts as a no-op and gradually grows a small, structured correction",
-            "After training, B·A can be added directly into W (W' = W + B·A) — the merged matrix has the exact same shape as the original",
-            "That merge step is why LoRA adds zero inference latency, unlike adapter layers that insert extra sequential computation into the forward pass"
-          ],
-          "id": "ad49c5e9-bf2e-4168-9a64-f5befec96365"
-        },
-        {
-          "kind": "comparison",
-          "title": "LoRA vs. the alternatives it replaced",
-          "table": {
-            "headers": [
-              "Method",
-              "Trainable params",
-              "Inference latency",
-              "Per-task storage"
-            ],
-            "rows": [
-              [
-                "Full fine-tuning",
-                "100%",
-                "Unchanged",
-                "Full model copy"
-              ],
-              [
-                "Adapter layers",
-                "~1-4%",
-                "Added (extra sequential layers)",
-                "Small adapter"
-              ],
-              [
-                "Prefix tuning",
-                "~0.1-1%",
-                "Shrinks usable context length",
-                "Small prefix vectors"
-              ],
-              [
-                "LoRA",
-                "~0.01-0.5%",
-                "Unchanged (merges into W)",
-                "Small A/B matrices"
-              ]
-            ]
-          },
-          "bullets": [
-            "Hu et al. report that for GPT-3 175B, LoRA cuts trainable parameters by roughly 10,000x and peak GPU memory during training by roughly 3x versus full fine-tuning with Adam"
-          ],
-          "id": "9526fb26-3362-4b8b-b28a-78dd6c79f64b"
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: LoRA on a 7B model's attention weights",
-          "body": "Take a 7B-parameter model with hidden size 4,096 across 32 layers, applying LoRA with rank r=8 to just Wq and Wv in every layer.",
-          "bullets": [
-            "Each frozen Wq or Wv is 4,096 × 4,096 = ~16.8M parameters — full fine-tuning of just those two matrices across 32 layers would train ~1.07B parameters",
-            "LoRA's A and B per matrix: (r × 4,096) + (4,096 × r) = 2 × 8 × 4,096 = 65,536 trainable parameters",
-            "Across both matrices and all 32 layers: 65,536 × 2 × 32 ≈ 4.2M trainable parameters — about 250x fewer than fine-tuning Wq/Wv alone, and a small fraction of a percent of the full 7B model",
-            "That's a checkpoint measured in tens of megabytes instead of gigabytes, which is what makes swapping dozens of task-specific adapters at serve time practical"
-          ],
-          "symbol": "chart.bar.doc.horizontal",
-          "id": "d7beea93-47c1-430e-adfc-c1de657fdbff"
-        },
-        {
-          "kind": "concept",
-          "title": "Where LoRA breaks down, and its natural extension",
-          "body": "Rank r is a real capacity limit, not a free lunch, and the base model still has to fit in memory during training.",
-          "bullets": [
-            "Set r too low and the model can underfit tasks that require a large behavioral shift from the pretrained distribution (e.g. a totally new domain or language)",
-            "LoRA shrinks the *trainable* footprint, but the frozen base weights still have to be loaded in full precision (or close to it) for the forward/backward pass",
-            "QLoRA (Dettmers et al., 2023) fixes that second limit by quantizing the frozen base model to 4-bit while keeping LoRA's adapters in higher precision — enabling fine-tuning of 65B-class models on a single 48GB GPU",
-            "Serving many merged variants still means picking one merge per request; multi-tenant servers instead keep adapters unmerged and swap B·A per request to serve hundreds of task variants from one loaded base model"
-          ],
-          "id": "336245f9-124a-4b7a-8992-502d856ad6ac"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The core idea in three moves",
-          "bullets": [
-            "Freeze the pretrained weights entirely — never update them",
-            "Learn a low-rank update B·A instead, sized by a rank r that's a tiny fraction of the original matrix dimensions",
-            "Merge B·A back into W after training for zero added inference cost, or keep it unmerged to swap task adapters on the fly"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "1f92f2b8-2695-4133-94ec-8e94d1f646f9"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "During LoRA fine-tuning, what happens to the original pretrained weight matrix W?",
-            "options": [
-              "It is frozen and never updated",
-              "It is quantized to 4-bit before training starts",
-              "It is replaced entirely by B·A",
-              "It is fine-tuned alongside A and B"
-            ],
-            "correctIndex": 0,
-            "explanation": "LoRA's entire memory and compute savings come from never touching W. Only the small matrices A and B receive gradients — W stays exactly as it was pretrained.",
-            "id": "9f82085a-a3c1-4a67-8f54-2a0cf0db27e9"
-          },
-          {
-            "prompt": "Why does merging LoRA's update into W add zero latency at inference time?",
-            "options": [
-              "Because B·A is computed on a separate GPU",
-              "Because B·A has the same shape as W, so W' = W + B·A is a single matrix indistinguishable from a normal weight",
-              "Because rank r is always equal to 1",
-              "Because the base model is quantized after merging"
-            ],
-            "correctIndex": 1,
-            "explanation": "B (d×r) times A (r×k) produces a d×k matrix — exactly W's shape. Adding it once after training gives a normal, single weight matrix, so serving looks identical to serving the unmodified base model.",
-            "id": "7ca26bac-8a43-4e30-a68b-a874f7ff4948"
-          },
-          {
-            "prompt": "What's the main risk of choosing LoRA's rank r too small for a given task?",
-            "options": [
-              "Training runs slower than full fine-tuning",
-              "The optimizer state size doubles",
-              "The model can underfit tasks that need a large behavioral shift from the pretrained distribution",
-              "Inference latency increases proportionally to 1/r"
-            ],
-            "correctIndex": 2,
-            "explanation": "Rank r caps how much the update can express. A very small r is fine for narrow style/format adaptation but can be too limited for tasks that require the model to shift substantially from what it learned during pretraining.",
-            "id": "12746ad9-d599-4461-b41e-4c7db68b5e03"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)",
-          "url": "https://arxiv.org/abs/2106.09685",
-          "id": "127423c8-05c5-4a65-bac5-029e21cf5493"
-        }
-      ],
-      "id": "b3b50b4a-834a-401b-9ef0-6b37de326868",
-      "publishedDate": "2026-08-04T18:39:37Z"
     }
   ]
 }
