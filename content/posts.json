@@ -1,6 +1,538 @@
 {
   "posts": [
     {
+      "id": "a373fe5f-27a6-4e8b-97c1-cfcc601bcba5",
+      "title": "LoRA: Fine-Tuning Without Touching Most of the Weights",
+      "subtitle": "Freeze the model, learn a low-rank patch instead",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "peft",
+        "low-rank",
+        "llms"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "slider.horizontal.3",
+      "summary": "LoRA freezes a pretrained model's weights entirely and learns a small low-rank update instead of retraining everything. It cuts trainable parameters by orders of magnitude, adds zero inference latency once merged, and is why serving many fine-tuned variants of one base model became cheap.",
+      "slides": [
+        {
+          "id": "e460c9c0-f916-45eb-bc2c-9c2ed9acaa36",
+          "kind": "cover",
+          "title": "LoRA: Fine-Tuning Without Touching Most of the Weights",
+          "body": "Full fine-tuning updates every weight in a model. LoRA freezes them all and learns a tiny low-rank patch instead — often under 1% of the parameters.",
+          "bullets": [],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "926ef9ab-8896-4492-905e-66adb515409e",
+          "kind": "problem",
+          "title": "Full Fine-Tuning Doesn't Scale Per Task",
+          "body": "Adam keeps two extra states per parameter (momentum and variance), so fine-tuning a 7B model in fp32 needs roughly 4x the parameter memory just for the optimizer — before activations.",
+          "bullets": [
+            "A 7B-parameter model fully fine-tuned with Adam needs ~28GB just for optimizer states (fp32), on top of the weights and activations",
+            "Every downstream task needs its own full model copy to store and serve — expensive to keep and swap",
+            "Fine-tuning on a small dataset risks catastrophically overwriting general pretrained knowledge"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "575f6a92-d174-4fdc-913f-b89eda7c2f86",
+          "kind": "solution",
+          "title": "Freeze W, Learn a Low-Rank Delta Instead",
+          "body": "LoRA keeps the pretrained weight matrix W frozen and adds ΔW = BA, where B and A are much smaller matrices of rank r. Only B and A get trained.",
+          "bullets": [
+            "For a weight matrix W of size d×d, B is d×r and A is r×d, with r commonly as small as 4-16",
+            "At inference, W' = W + BA is just a matrix add — no extra layers, no added latency",
+            "The original LoRA paper reports cutting trainable parameters by up to 10,000x and GPU memory by 3x versus full fine-tuning GPT-3 175B with Adam"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "27690cc8-82c2-4697-bac9-d10d72e0492c",
+          "kind": "example",
+          "title": "Worked Example: Rank 8 on the Attention Projections",
+          "body": "Applying LoRA with rank r=8 only to the query and value projection matrices is the classic setup from the original paper — and it's enough to match full fine-tuning quality on many tasks.",
+          "bullets": [
+            "For a 4096×4096 projection, full fine-tuning trains ~16.8M parameters; rank-8 LoRA trains 4096×8 + 8×4096 ≈ 65K — about 0.4% of that",
+            "Across an entire 7B model, LoRA adapters commonly total well under 1% of the base model's parameters",
+            "Only the tiny A/B matrices need checkpointing per task — swapping tasks means swapping megabytes, not gigabytes"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "b7053eb1-ccb6-4956-808d-3d5ed498e651",
+          "kind": "comparison",
+          "title": "LoRA vs Full Fine-Tuning vs Adapter Layers",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Approach",
+              "Trainable Params",
+              "Inference Latency",
+              "Merges Into Base?"
+            ],
+            "rows": [
+              [
+                "Full fine-tuning",
+                "100%",
+                "Same as base",
+                "N/A — it IS the base"
+              ],
+              [
+                "Adapter layers",
+                "~1-5%",
+                "Extra forward pass through adapters",
+                "No — adapters stay separate"
+              ],
+              [
+                "LoRA",
+                "<1% typical",
+                "None, once merged",
+                "Yes — W' = W + BA"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8449c7f9-b892-49ff-b1aa-ba6fb91970e1",
+          "kind": "concept",
+          "title": "Where LoRA Struggles",
+          "bullets": [
+            "Rank is a real tradeoff: too low underfits tasks needing substantial new knowledge; pushed too high, it approaches full fine-tuning's cost for little extra benefit",
+            "Training still runs a full forward and backward pass through the frozen base — LoRA saves memory and storage, not training-time compute",
+            "Works best when the target task is reasonably close to the pretraining distribution; large domain shifts often still need broader tuning",
+            "QLoRA extends the idea to a 4-bit quantized frozen base, trading a bit more compute for even lower memory"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "body": null,
+          "table": null
+        },
+        {
+          "id": "bdf82644-4e86-4bb8-b213-c3bb07b44fe3",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "bullets": [
+            "Freeze the base model, train a low-rank delta — often under 1% of the parameters",
+            "Merged LoRA adds zero inference latency; adapter layers add a forward pass",
+            "Rank r is the main knob: small for cheap adaptation, larger when the task needs more capacity",
+            "One base model, many cheap LoRA adapters swapped in and out — that's the real unlock for serving many fine-tunes"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "body": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c31a6696-647d-4325-8a37-3d767ed36591",
+            "prompt": "What does LoRA actually train?",
+            "options": [
+              "The full weight matrix W",
+              "Two small low-rank matrices A and B, with W frozen",
+              "Only the model's biases",
+              "A separate full-size adapter model"
+            ],
+            "correctIndex": 1,
+            "explanation": "LoRA freezes the pretrained W entirely and learns ΔW = BA, where B and A are low-rank — that's the whole trainable set."
+          },
+          {
+            "id": "9329ebf5-5696-47d3-a070-c50169a944c5",
+            "prompt": "Why does a merged LoRA adapter add no inference latency?",
+            "options": [
+              "Because it only modifies the tokenizer",
+              "Because W' = W + BA is computed once and used like any other weight matrix",
+              "Because LoRA skips the attention layers entirely",
+              "Because it runs on a separate GPU in parallel"
+            ],
+            "correctIndex": 1,
+            "explanation": "Once training is done, B and A can be multiplied and added directly into W, producing a normal-sized weight matrix — no extra layers run at inference."
+          },
+          {
+            "id": "cf2c57a9-3a5f-45bc-95bb-68d34c07f1d7",
+            "prompt": "What's the main tradeoff when picking the rank r?",
+            "options": [
+              "Higher r always trains faster",
+              "Lower r always improves quality",
+              "Low r risks underfitting; high r approaches full fine-tuning's cost",
+              "Rank has no effect on results"
+            ],
+            "correctIndex": 2,
+            "explanation": "r controls how much capacity the low-rank update has — too small and it can't capture the task, too large and you lose most of LoRA's efficiency advantage."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "fba8de8d-d173-4926-a6ef-5093d812e377",
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)",
+          "url": "https://arxiv.org/abs/2106.09685"
+        }
+      ],
+      "publishedDate": "2026-08-15T00:44:52Z",
+      "heroImageURL": null
+    },
+    {
+      "id": "4692ec7d-b7a7-4878-8fc4-eb2c15126f33",
+      "title": "OpenART: Red-Teaming Agents With Environments That Evolve",
+      "subtitle": "10,000+ stateful scenarios built to find the attacks static benchmarks miss",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "ai-agents",
+        "red-teaming",
+        "safety",
+        "benchmarks",
+        "security"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "shield.lefthalf.filled",
+      "summary": "OpenART is a new open-ended arena for stress-testing AI agents across long, stateful tool-use sessions instead of short static prompts. Its evolutionary attack method hits an 85% pooled success rate across 75 agent-model configurations, with the widest gap over simpler baselines showing up on the hardest, longest-running tasks.",
+      "slides": [
+        {
+          "id": "308bc00d-9894-4296-a7be-61fa97b23427",
+          "kind": "cover",
+          "title": "OpenART: Red-Teaming Agents With Environments That Evolve",
+          "body": "Most AI safety benchmarks test one short exchange. Real agents run dozens of tool calls in a row, and risk can build up quietly across that whole session — OpenART is built to catch that.",
+          "bullets": [],
+          "symbol": "shield.lefthalf.filled",
+          "table": null
+        },
+        {
+          "id": "b1323d74-f8f3-40a6-a6e7-500b3a55ba6d",
+          "kind": "problem",
+          "title": "Static Benchmarks Miss Cumulative Risk",
+          "body": "Conventional red-teaming treats each prompt as independent. Agent behavior is mediated through shared state — files, memory, tool outputs — that gets modified and reused across a long-horizon workflow.",
+          "bullets": [
+            "Short, static single-turn tests can't capture a risk that only emerges after many chained tool calls",
+            "OpenART's tasks require a median of 97 tool calls each — far beyond what one-shot prompt tests probe",
+            "The benchmark spans 10,000+ validated stateful scenarios across 50 domains, drawn from a pool of 500,000+ tools and skills"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "55bcb9ca-03b5-45c6-a334-d61c84896d04",
+          "kind": "solution",
+          "title": "EMHA: Let the Attack Evolve With the Environment",
+          "body": "Instead of a fixed jailbreak prompt, OpenART's Evolutionary Markov Hypergraph Attack (EMHA) evolves both the attack strategy and the environment together, searching for the sequences of tool calls that actually break an agent.",
+          "bullets": [
+            "The environment itself is treated as evolvable, not fixed — new scenario variants get generated as weaknesses are found",
+            "Attacks are modeled over a hypergraph of possible agent-tool-state transitions rather than a single conversation thread",
+            "Evaluation spans 75 different agent-model configurations for a unified, comparable measure of robustness"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "cd180349-f5e2-4768-8c5c-d6b39c227c3d",
+          "kind": "comparison",
+          "title": "EMHA vs a Simpler Instruction-Only Baseline",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Metric",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Pooled attack success rate (EMHA, all configs)",
+                "85.0%"
+              ],
+              [
+                "EMHA advantage over instruction-only evolution — simple environments",
+                "≈2 points"
+              ],
+              [
+                "EMHA advantage over instruction-only evolution — complex environments",
+                ">17 points"
+              ],
+              [
+                "Agent-model configurations evaluated",
+                "75"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "d79ef192-104f-473e-82c7-375ff148dfcf",
+          "kind": "example",
+          "title": "The Kind of Scenario That Trips Agents Up",
+          "body": "Picture an agent given a long task in a simulated file-and-tool environment — nothing in any single step looks dangerous, but the state it accumulates over ~97 tool calls quietly narrows toward an unsafe action by the end.",
+          "bullets": [
+            "No single tool call in the chain looks obviously adversarial in isolation",
+            "The risk is emergent from accumulated state, not from any one instruction — which is exactly what short static tests can't see",
+            "This is the gap EMHA is built to search for systematically instead of by hand"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "efd9fac6-5b19-4098-9bb0-0d07201972b3",
+          "kind": "concept",
+          "title": "Where This Kind of Benchmark Still Falls Short",
+          "bullets": [
+            "It's a simulated arena — attack success in OpenART's environments doesn't automatically transfer 1:1 to production deployments",
+            "An 85% pooled ASR is an average across 75 configurations; individual agent-model pairs will vary a lot around that number",
+            "Benchmarks that measure attack success can themselves become optimization targets — a model tuned to score well on OpenART isn't guaranteed to be safer against attacks the benchmark doesn't cover",
+            "Generating 10,000+ validated scenarios is expensive; keeping the arena current as agents change requires ongoing investment"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "body": null,
+          "table": null
+        },
+        {
+          "id": "910953c3-2d9a-4931-b12a-ca19af2f6ea4",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "bullets": [
+            "Agent risk often builds up across a long tool-using session, not in any single step — that's what OpenART tests for",
+            "EMHA evolves the attack and the environment together instead of reusing a fixed jailbreak prompt",
+            "85% pooled attack success rate across 75 agent-model configurations, with the largest baseline gap on the hardest tasks",
+            "A high score here is a signal to investigate, not proof of real-world exploitability — sim-to-real gap still applies"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "body": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "f67af158-d1c5-48eb-b8c1-9519ff1c9ca9",
+            "prompt": "Why do static, single-turn safety benchmarks struggle to catch some agent risks?",
+            "options": [
+              "They run too slowly to be useful",
+              "Risk can build up across many chained tool calls and shared state, which a single-turn test never exercises",
+              "They only work on text models, not agents",
+              "They require too much compute to run at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "OpenART's tasks need a median of 97 tool calls — the kind of cumulative, stateful risk that a one-shot prompt test simply never triggers."
+          },
+          {
+            "id": "94e927e5-199c-4079-8e24-237201e094a0",
+            "prompt": "What does EMHA evolve, according to the paper?",
+            "options": [
+              "Only the attacker's prompt wording",
+              "Only the model being tested",
+              "Both the attack strategy and the environment/scenario itself",
+              "Only the evaluation metric"
+            ],
+            "correctIndex": 2,
+            "explanation": "EMHA treats the environment as evolvable alongside the attack, generating new scenario variants as it searches for weaknesses — not just rewording a fixed jailbreak."
+          },
+          {
+            "id": "b9b8a6de-1dd8-4f26-ad0b-78aea63153eb",
+            "prompt": "Where did EMHA's advantage over the instruction-only baseline grow the most?",
+            "options": [
+              "On the simplest environments",
+              "It was constant across all environments",
+              "On the most complex environments, where the gap exceeded 17 points",
+              "The baseline always outperformed EMHA"
+            ],
+            "correctIndex": 2,
+            "explanation": "The advantage grew from about 2 points on simple environments to over 17 points on the most complex ones — the harder the task, the more evolving the environment mattered."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "a6ded152-b4f4-460a-be4c-4c0ad04023ea",
+          "title": "OpenART: Scaling Agent Red Teaming via Open-Ended Environment Evolution",
+          "url": "https://arxiv.org/abs/2608.00677"
+        }
+      ],
+      "publishedDate": "2026-08-15T00:44:52Z",
+      "heroImageURL": null
+    },
+    {
+      "id": "953d0c0c-816a-4ff8-a911-9a23fa6d2b89",
+      "title": "Gemini 3.7 Flash: Google's Cheaper Coding Workhorse",
+      "subtitle": "Three weeks after 3.6 Flash, half the introductory price and a real jump on coding benchmarks",
+      "category": "AI News",
+      "difficulty": "Beginner",
+      "postKind": "release",
+      "tags": [
+        "gemini",
+        "google",
+        "llm-release",
+        "pricing",
+        "coding-agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "sparkles",
+      "summary": "Google shipped Gemini 3.7 Flash on August 13, 2026, just three weeks after Gemini 3.6 Flash, positioning it as its workhorse model for coding and agents. It posts double-digit gains on coding benchmarks and launches at half the introductory price of its predecessor.",
+      "slides": [
+        {
+          "id": "90523d80-a79d-4da3-bf3d-851a593e14fc",
+          "kind": "cover",
+          "title": "Gemini 3.7 Flash: Google's Cheaper Coding Workhorse",
+          "body": "Google calls it 'our most intelligent workhorse model yet for coding and agents' — and it arrived just three weeks after the model it replaces.",
+          "bullets": [],
+          "symbol": "sparkles",
+          "table": null
+        },
+        {
+          "id": "47a0e2cf-d114-4658-a5c9-4ae257034c6b",
+          "kind": "problem",
+          "title": "Why Ship a New Flash Model So Fast",
+          "body": "Gemini 3.6 Flash had only been out three weeks. Google's stated driver was direct developer feedback plus algorithmic improvements it could ship without waiting for the next Pro-tier cycle.",
+          "bullets": [
+            "Flash-tier models are the ones developers actually put behind high-volume coding and agent workloads, where cost per call compounds fast",
+            "A 3-week iteration cadence on the cheap tier is unusually fast, even by 2026 standards",
+            "It shipped while Gemini 3.5 Pro was still the current Pro-tier model — Flash moved first"
+          ],
+          "symbol": "clock.fill",
+          "table": null
+        },
+        {
+          "id": "fe33556c-b34e-444e-817a-326526387919",
+          "kind": "solution",
+          "title": "What Actually Improved",
+          "body": "Google reports substantial gains specifically on software engineering and agentic coding benchmarks, alongside broader knowledge-work tasks like dense document comprehension.",
+          "bullets": [
+            "DeepSWE v1.1: 49.0% → 65.3%",
+            "FrontierCode 1.1 Main: 34.4% → 43.6%",
+            "GDP.pdf (dense document comprehension): 22.0% → 34.0%",
+            "Gemini Spark switched to Gemini 3.7 Flash the day of the announcement"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "ac94d81a-dbcb-42ed-8d2e-760e876c4177",
+          "kind": "comparison",
+          "title": "GDP.pdf: How It Stacks Up Against Competing Models",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Model",
+              "GDP.pdf Score"
+            ],
+            "rows": [
+              [
+                "Gemini 3.7 Flash",
+                "34.0%"
+              ],
+              [
+                "Claude Sonnet 5",
+                "28.0%"
+              ],
+              [
+                "GPT-5.6 Terra",
+                "24.7%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "9b3d9cbd-e9a7-41e6-9303-1c86e05f3761",
+          "kind": "example",
+          "title": "What the Price Cut Means in Practice",
+          "body": "The introductory pricing runs through the end of 2026, after which it steps up to Google's standard rate.",
+          "bullets": [
+            "Introductory: $0.75 per million input tokens, $3.75 per million output tokens — half of Gemini 3.6 Flash's launch price",
+            "After December 31, 2026: standard pricing rises to $1.50 / $7.50 per million tokens",
+            "For an agent making thousands of tool-augmented calls a day, that 2x price swing is worth budgeting for well before the deadline"
+          ],
+          "symbol": "dollarsign.circle.fill",
+          "table": null
+        },
+        {
+          "id": "169bce0f-685c-49d5-90bc-1f7eeb6915f7",
+          "kind": "concept",
+          "title": "What to Watch Before Betting Production Traffic on It",
+          "bullets": [
+            "These are Google's own reported benchmark deltas versus its predecessor — independent, task-specific evaluation on your own workload still matters",
+            "Introductory pricing is temporary; a workload sized for $0.75/$3.75 doubles in cost after the cutoff unless usage or pricing shifts again",
+            "It launched days after a leadership shakeup at Google DeepMind — worth watching for any near-term roadmap changes",
+            "\"Workhorse\" positioning means it's tuned for coding/agent throughput, not necessarily the best choice for tasks Gemini's Pro tier targets"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "body": null,
+          "table": null
+        },
+        {
+          "id": "730d06f2-4792-40c0-9e11-f69e29012616",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "bullets": [
+            "Released August 13, 2026 — three weeks after Gemini 3.6 Flash, which it replaces as Google's coding/agent workhorse",
+            "Big reported jumps on coding-specific benchmarks: DeepSWE v1.1 and FrontierCode 1.1 both up double digits",
+            "Introductory price is half of 3.6 Flash's, but only through end of 2026",
+            "Leads competing models shown on the GDP.pdf document-comprehension benchmark"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "body": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "9bd7fff7-b4b7-4830-8b95-9be8fcb9847c",
+            "prompt": "How long after Gemini 3.6 Flash did Gemini 3.7 Flash launch?",
+            "options": [
+              "About 3 weeks",
+              "6 months",
+              "1 year",
+              "Same day"
+            ],
+            "correctIndex": 0,
+            "explanation": "Gemini 3.7 Flash shipped roughly three weeks after 3.6 Flash — an unusually fast iteration for the tier."
+          },
+          {
+            "id": "8dd144fb-0109-425b-b550-2c6dbd8e032b",
+            "prompt": "What happens to Gemini 3.7 Flash's pricing after December 31, 2026?",
+            "options": [
+              "It stays at the introductory rate forever",
+              "It gets even cheaper",
+              "It rises to standard pricing of $1.50/$7.50 per million tokens",
+              "It becomes free"
+            ],
+            "correctIndex": 2,
+            "explanation": "The $0.75/$3.75 launch pricing is introductory only — standard pricing doubles to $1.50/$7.50 per million tokens after the cutoff."
+          },
+          {
+            "id": "2842d70c-7e0e-46c7-ba9a-6ae1f6dd1f02",
+            "prompt": "On the GDP.pdf document-comprehension benchmark, how did Gemini 3.7 Flash compare to the competing models cited?",
+            "options": [
+              "It scored lowest of the three",
+              "It scored highest, ahead of Claude Sonnet 5 and GPT-5.6 Terra",
+              "It tied with GPT-5.6 Terra",
+              "It wasn't tested on this benchmark"
+            ],
+            "correctIndex": 1,
+            "explanation": "Gemini 3.7 Flash posted 34.0% versus 28.0% for Claude Sonnet 5 and 24.7% for GPT-5.6 Terra on this benchmark."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "42d4ea77-ecd7-450f-827d-2beb3be8657d",
+          "title": "Gemini 3.7 Flash: our most intelligent workhorse model (Google)",
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-3-7-flash/"
+        }
+      ],
+      "publishedDate": "2026-08-15T00:44:52Z",
+      "heroImageURL": null
+    },
+    {
       "id": "f1b839cc-c16e-4b68-9bce-8b3f05cd9b9a",
       "title": "Tool Calling: How an LLM Actually Triggers a Function",
       "subtitle": "The model never runs code — it emits structured JSON and a host process does the rest",
@@ -10822,544 +11354,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-05T12:47:33Z"
-    },
-    {
-      "id": "d3bb5699-0174-49e4-b5ca-858f59a8a9d9",
-      "title": "Context Engineering: Curating What an Agent Actually Sees",
-      "subtitle": "Prompt engineering picks the words; context engineering picks what's in the window at all",
-      "category": "AI Agents",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "context-engineering",
-        "ai-agents",
-        "context-window",
-        "long-horizon-tasks",
-        "memory",
-        "tool-use"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "list.bullet.rectangle.portrait",
-      "summary": "Context engineering is the discipline of deciding what goes into an agent's context window on every turn — system prompt, tools, retrieved data, and history — instead of just how it's phrased. As agents run longer and call more tools, the bottleneck shifts from prompt wording to context curation: what to load just-in-time, what to compact, and what to hand off to a sub-agent with its own clean window.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The Window Is the Bottleneck, Not the Wording",
-          "body": "A single-shot chatbot lives or dies by prompt phrasing. A multi-step agent lives or dies by what's still in its context window on turn 40 — and most of what's in there by then isn't the system prompt.",
-          "bullets": [],
-          "symbol": "list.bullet.rectangle.portrait",
-          "id": "5ab8bc67-bc57-4341-adf5-4bcaee10433d",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Long Agent Runs Drown Their Own Context",
-          "body": "Every tool call, file read, and sub-task result gets appended to the transcript. Left unmanaged, that transcript grows until it crowds out the instructions that actually matter.",
-          "bullets": [
-            "A coding agent that greps a large repo can accumulate tens of thousands of tokens of file contents in a few turns — most of it irrelevant by the time it's needed again",
-            "Attention degrades over long, cluttered contexts (context rot): the model still 'sees' early instructions but weighs them less as noise piles up",
-            "Redundant or stale tool outputs increase both cost and latency without adding information",
-            "More tools in the system prompt means more candidates to misuse — tool-selection errors climb with an unpruned toolbox"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "d5a2f75f-5637-4121-ba73-eb253a7089a8",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "Four Levers: Prompt, Tools, Retrieval, Compaction",
-          "body": "Context engineering isn't one trick — it's a set of decisions made fresh on every turn about what earns a place in a finite window.",
-          "bullets": [
-            "System prompt altitude: specific enough to be actionable, general enough to not hard-code brittle logic — the same failure mode as over-fitted few-shot prompts",
-            "Tool curation: ship the minimal set of non-overlapping tools for the current task, not every tool the agent could ever need",
-            "Just-in-time retrieval: keep lightweight references (file paths, doc IDs) in context and load full content only when a step actually needs it, mirroring how a human keeps a file system instead of memorizing every file",
-            "Compaction: summarize or discard stale turns before they push out live information, preserving decisions and open threads while dropping raw tool output that's already been used"
-          ],
-          "symbol": "slider.horizontal.3",
-          "id": "a924e425-2fda-46d6-985e-57667179b612",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "A Scratchpad Survives What the Context Window Doesn't",
-          "body": "Long-horizon agents externalize state instead of trusting it to stay in the window. A persistent note file acts as memory that outlives compaction.",
-          "bullets": [
-            "Agent writes key facts (file locations, decisions made, remaining steps) to a NOTES.md or task-state file as it works",
-            "When context is compacted or a sub-agent finishes, the note file — not the transcript — is the source of truth for what happened",
-            "Sub-agents get a clean, narrow context window scoped to one piece of work, then return only a condensed result to the parent's window",
-            "This trades some coordination overhead (writing/reading notes costs tokens too) for a context budget that doesn't grow unbounded"
-          ],
-          "symbol": "note.text",
-          "id": "e5d4d15a-cac7-44da-adac-457c6b975fe2",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "Same Task, Two Context Strategies",
-          "body": "A coding agent is asked to fix a bug in a 400-file repo.",
-          "bullets": [
-            "Context-stuffing approach: agent greps broadly and pastes every plausibly-related file into context up front — 60K+ tokens before it writes a single line, and the actual bug is buried between two unrelated files",
-            "Context-engineered approach: agent starts with just file names and a directory tree, greps for the specific error string, opens only the 2-3 files that match, and notes 'bug is in auth/session.py:142, cause: expired token not refreshed' before making the edit",
-            "The second run finishes with a fraction of the tokens spent and a note trail that lets it resume correctly even if the session is compacted mid-fix"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "id": "81486637-8b3a-4ae4-aed4-736ed35244c5",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Context-Stuffed vs. Context-Engineered Agents",
-          "body": null,
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Dimension",
-              "Stuff everything up front",
-              "Engineer the context"
-            ],
-            "rows": [
-              [
-                "Token cost per turn",
-                "High, grows with repo/data size",
-                "Low, scales with what's actually needed"
-              ],
-              [
-                "Accuracy on long tasks",
-                "Drops as clutter increases (context rot)",
-                "Stays stable — window stays lean"
-              ],
-              [
-                "Latency",
-                "Slower prefill on every turn",
-                "Extra tool round-trips, but smaller prefill"
-              ],
-              [
-                "Resilience to compaction",
-                "Loses state when transcript is summarized",
-                "Notes/scratchpad survive compaction"
-              ]
-            ]
-          },
-          "symbol": "tablecells",
-          "id": "450acd5b-ed58-48b0-b539-20476d3535df"
-        },
-        {
-          "kind": "problem",
-          "title": "When Context Engineering Backfires",
-          "body": "These techniques add moving parts, and moving parts fail in their own ways.",
-          "bullets": [
-            "Over-aggressive compaction can silently drop a constraint the agent needed three steps later — summarization is lossy by definition",
-            "Just-in-time retrieval adds real latency: extra tool calls to fetch what could have been loaded once, which hurts on short, simple tasks",
-            "Sub-agent isolation can lose shared context the parent needed — a sub-agent that 'fixes' one file without knowing a sibling file depends on its interface",
-            "For short tasks with small, stable data, a big context window plus prompt caching is simpler and cheaper than building retrieval/compaction machinery"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "id": "d88d2eb8-629c-470c-b73b-46c19fac7123",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Treat the Context Window Like Scarce Memory",
-          "bullets": [
-            "Prompt engineering optimizes what you say; context engineering optimizes what's even in the room",
-            "Load just-in-time, not just-in-case — references beat pasted content until the content is actually needed",
-            "Externalize state to a scratchpad/notes file so long runs survive compaction and sub-agent handoffs",
-            "It's an added cost, not a default — reach for it when tasks are long-horizon and tool-heavy, not for short single-turn calls"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "74bbd5d7-2dd5-430c-b82a-b535624825e3",
-          "body": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "33549092-e54b-42a1-821b-090655e54587",
-            "prompt": "What is the main failure mode that 'context rot' describes?",
-            "options": [
-              "The model runs out of API credits mid-task",
-              "The model technically still has early instructions in context but weighs them less as clutter accumulates",
-              "The context window physically deletes old tokens after a fixed time limit",
-              "The model refuses to process contexts longer than its training data"
-            ],
-            "correctIndex": 1,
-            "explanation": "Context rot isn't about hitting a hard token limit — it's that attention over a long, cluttered context degrades, so instructions from early in the conversation get effectively deprioritized even though they're still technically present."
-          },
-          {
-            "id": "8d802862-8b21-4a6c-a625-a6e724de7c17",
-            "prompt": "Why do long-horizon agents write to an external notes/scratchpad file instead of relying only on the transcript?",
-            "options": [
-              "It's required by most LLM APIs for tool calling to work",
-              "It makes the model's responses faster to generate",
-              "It preserves key state (decisions, remaining steps) across compaction or sub-agent handoffs, where the raw transcript can't be trusted to survive",
-              "It reduces the number of tools the agent needs"
-            ],
-            "correctIndex": 2,
-            "explanation": "Compaction summarizes or drops old turns, and sub-agents return only condensed results to the parent. A notes file gives the agent a durable source of truth that doesn't depend on the transcript staying intact."
-          },
-          {
-            "id": "018fbc60-ec15-405f-b215-e69ff3a0c7f0",
-            "prompt": "When is context engineering LEAST worth the added complexity?",
-            "options": [
-              "A multi-hour agent run over a large, changing codebase with many tool calls",
-              "A short, single-turn task over small, stable data where a big context window and prompt caching already work fine",
-              "An agent that spawns many sub-agents to parallelize research",
-              "A task where the transcript is likely to be compacted multiple times"
-            ],
-            "correctIndex": 1,
-            "explanation": "Just-in-time retrieval and compaction add tool round-trips and lossy summarization — real costs. For short tasks with small, stable inputs, simply keeping everything in a large cached context window is cheaper and simpler."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-05T06:41:27Z"
-    },
-    {
-      "title": "VideoCoCo: Simulate the Physics Before You Render It",
-      "subtitle": "An agent writes executable Blender code as its chain-of-thought so video generation stops faking gravity",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "video-generation",
-        "chain-of-thought",
-        "physical-consistency",
-        "agentic-ai",
-        "diffusion-models"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "film.fill",
-      "summary": "VideoCoCo has a coding agent write an executable Blender program as a process-level chain-of-thought before any pixel is generated, producing a deterministic 'clay proxy' video that gets the physics right, then restyling that proxy into a photorealistic clip. On PhyGenBench and VBench-2.0 it beats its OmniWeaving baseline and the strongest open text-to-video baselines by a wide margin, though it's still validated on a small, hand-checked set of physical phenomena.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Text-to-video models don't know what gravity is",
-          "body": "VideoCoCo (Li, Ren, Ma, et al.) argues that text-to-video models fail at physics not because they lack scale, but because they're asked to infer an entire scene's temporal evolution from a few compressed words — with no explicit model of state anywhere in the pipeline.",
-          "bullets": [],
-          "symbol": "film.fill",
-          "id": "a73ba17c-c632-40e3-bcfe-2cbd2fe6e83c"
-        },
-        {
-          "kind": "problem",
-          "title": "Chain-of-thought for video has been non-executable so far",
-          "body": "Prior attempts to add reasoning to video generation insert intermediate plans or sketch frames as a CoT step — but those representations are either not executable or too temporally sparse to actually control the full spatiotemporal process.",
-          "bullets": [
-            "A melting ice cube, a boiling pot, or a buoyant object floating all require causal state that unfolds over time — you can't fake that with a text prompt alone",
-            "A caption like 'ice melts in water' tells a model the destination, not the mechanism — nothing enforces that displaced water rises as the cube shrinks",
-            "Sketch-based or keyframe-based CoT still leaves the model to interpolate physics between sparse anchors, which is exactly where errors creep back in"
-          ],
-          "id": "496804f7-a530-4442-b3e4-d4e505639902"
-        },
-        {
-          "kind": "solution",
-          "title": "Make the chain-of-thought a program that actually runs",
-          "body": "VideoCoCo's coding agent writes a Blender program from the prompt — real simulation code with mass, forces, and collisions — and an execution engine runs it to produce a neutral white/clay proxy video that captures correct motion and causality through shape and deformation, deliberately stripped of color and texture.",
-          "bullets": [
-            "The proxy is 'physically correct but visually boring' by design — geometry and motion are locked in before style enters the pipeline",
-            "A verification step checks the proxy against the physical plan for causality: a caused state (water rising) must stay hidden until its causing transition (cube sinking) actually happens",
-            "Only after the proxy passes verification does a generative video engine restyle it into a photorealistic clip via draft-conditioned editing"
-          ],
-          "symbol": "cube.transparent",
-          "id": "057cdcaf-2dda-4bb8-b7c4-c0f9cd707b76"
-        },
-        {
-          "kind": "architecture",
-          "title": "A three-stage, agentic dual-engine pipeline",
-          "body": "The system pairs a deterministic simulation engine (for the physics-correct draft) with a generative video engine (for photorealism), coordinated by an agent through five reusable 'Agent Skills.'",
-          "bullets": [
-            "Stage 1 — Code planning: agent synthesizes Blender code specifying the scene and its full temporal evolution",
-            "Stage 2 — Deterministic draft: the simulation engine executes that code into a clay-proxy video, then checks it for causal consistency",
-            "Stage 3 — Photorealistic restyle: a video-editing model transforms the verified proxy into the final clip using per-case edit instructions, without touching the underlying motion"
-          ],
-          "id": "6bbcd1c7-53c5-4ace-9585-3f9d0b828def"
-        },
-        {
-          "kind": "comparison",
-          "title": "It beats its own baseline and the strongest open model",
-          "table": {
-            "headers": [
-              "Model",
-              "PhyGenBench",
-              "VBench-2.0"
-            ],
-            "rows": [
-              [
-                "OmniWeaving (baseline)",
-                "0.475",
-                "52.18"
-              ],
-              [
-                "Wan2.2-TI2V-5B (best open T2V)",
-                "0.544",
-                "—"
-              ],
-              [
-                "VideoCoCo",
-                "0.558 (best)",
-                "77.88 (best)"
-              ]
-            ]
-          },
-          "body": "VideoCoCo posts the best per-category PhyGenBench scores in mechanics (0.558), optics (0.613), and material (0.525) — the categories most likely to expose a model 'faking' physics with texture tricks instead of real motion.",
-          "id": "80bdb4ce-a597-4237-bf8e-f04022209b60"
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: a melting ice cube in water",
-          "body": "This is one of the eight hand-checked toy cases in VideoCoCo's public dataset, covering buoyancy, stress/deformation, melting, surface tension, sublimation, elasticity, and boiling.",
-          "bullets": [
-            "A plain T2V model given 'ice cube melts in a glass of water' has to hallucinate the whole sequence from that one sentence — it often shrinks the cube uniformly with no displaced water and no thermal gradient",
-            "VideoCoCo's agent instead writes simulation code with an actual thermal-melt model and buoyant force on the shrinking solid",
-            "The clay-proxy stage locks in correct water displacement and cube deformation before any photorealistic texture is applied — so the final restyled clip inherits physics that were verified, not generated"
-          ],
-          "id": "656c9f93-78d3-4cc3-b5e9-0e027e288d73"
-        },
-        {
-          "kind": "problem",
-          "title": "Where it breaks down",
-          "body": "The pipeline is only as physically correct as the code the agent writes — and it adds real cost before a single video frame appears.",
-          "bullets": [
-            "Garbage in, garbage out: if the coding agent's Blender program models the physics wrong, the 'verified' proxy just locks in the wrong answer with more confidence",
-            "Two extra heavyweight steps (code generation + simulation execution) run before the generative video engine even starts — meaningfully higher latency and compute than a single-pass T2V model",
-            "The public toy dataset is 8 hand-checked cases — illustrative of specific phenomena, not evidence the approach scales cleanly to arbitrary, open-ended scenes",
-            "Photorealistic restyling can still introduce texture-level inconsistencies (lighting, material appearance) that the geometry-locked proxy never had to solve"
-          ],
-          "id": "0335c340-c4e6-4f1a-a72e-55b942bb8d81"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Executable code as chain-of-thought is a stronger guarantee than sketches or keyframes because you can actually run it and check its output",
-            "Separating 'get the motion right' (simulation) from 'get the pixels right' (generative restyle) lets each engine specialize instead of one model doing both badly",
-            "The causality-verification step — a caused state can't appear before its cause — is a cheap, general check that's easy to reuse in other agentic video pipelines",
-            "Biggest open question: does this generalize past hand-checked toy phenomena to the long tail of real-world scenes?"
-          ],
-          "id": "4318b31d-9b2c-44ee-a47c-ed8795fd3f93"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What makes VideoCoCo's chain-of-thought different from earlier sketch- or keyframe-based CoT for video generation?",
-            "options": [
-              "It uses a larger language model to write longer captions",
-              "It's executable code (Blender simulation) that can actually be run and verified, not a static intermediate representation",
-              "It skips reasoning entirely and generates video in one pass",
-              "It only works on 2D animations, not 3D scenes"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sketches and keyframes are non-executable or temporally sparse — they still leave physics to be interpolated. Executable simulation code fully specifies the temporal evolution and can be run and checked before any pixels are generated.",
-            "id": "f6c159f5-a0db-4f69-a9ea-89de0008fa97"
-          },
-          {
-            "prompt": "Why does the first-stage 'clay proxy' video deliberately have no color or texture?",
-            "options": [
-              "To save GPU memory during training",
-              "Because Blender can't render color",
-              "To isolate and verify motion, deformation, and causality before style is layered on, so physics errors don't hide behind photorealistic texture",
-              "Because the dataset only contains grayscale footage"
-            ],
-            "correctIndex": 2,
-            "explanation": "Stripping color/texture forces the verification step to judge motion and causality purely on shape and deformation — exactly the signals that a photorealistic render could otherwise mask.",
-            "id": "230bc55f-665e-487e-92da-80bc38300736"
-          },
-          {
-            "prompt": "On PhyGenBench, VideoCoCo improves the OmniWeaving baseline from 0.475 to 0.558. What's the main caveat on that result?",
-            "options": [
-              "The improvement is entirely due to a bigger base video model",
-              "It's only validated on a small, hand-checked set of toy physical phenomena, not broad open-domain scenes",
-              "PhyGenBench doesn't measure physical consistency",
-              "The comparison excludes all open-source baselines"
-            ],
-            "correctIndex": 1,
-            "explanation": "The public dataset released alongside VideoCoCo is 8 hand-checked video-to-video cases covering specific phenomena (buoyancy, melting, etc.) — illustrative, not a large-scale generalization test.",
-            "id": "698affb5-616f-4f15-8c97-5998c9e72948"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "VideoCoCo: Code-as-CoT for Physically-Consistent Video Generation via an Agentic Dual-Engine System (arXiv:2607.27380)",
-          "url": "https://arxiv.org/abs/2607.27380",
-          "id": "1513fd9a-6863-43cf-a5bc-8ecf154ad203"
-        }
-      ],
-      "publishedDate": "2026-08-05T00:39:22Z",
-      "id": "61641029-0cfe-4f63-abcc-c343f778df5d"
-    },
-    {
-      "title": "Muse Spark 1.1: Meta's First Paid Model, Built for Agents",
-      "subtitle": "Meta finally opens a public API — and tunes the model for tool orchestration, not chat",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "meta",
-        "agentic-ai",
-        "model-release",
-        "tool-use",
-        "benchmarks"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "wand.and.stars",
-      "summary": "On July 9, 2026, Meta Superintelligence Labs shipped Muse Spark 1.1 with a public, paid developer API — Meta's first — priced between GPT-5 mini and Claude Sonnet 4.6. It's tuned specifically for agentic orchestration: planning across external tools, zero-shot generalizing to new ones, and delegating to parallel subagents, and it tops rivals on tool-use benchmarks even where it trails on raw coding depth.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Meta's first model you can actually pay to use",
-          "body": "Muse Spark 1.1 is Meta Superintelligence Labs' successor to the original Muse Spark ('Avocado', April 2026), which shipped only to a closed partner program. This one comes with a public 'Meta Model API' — priced access, open to developers.",
-          "bullets": [],
-          "symbol": "wand.and.stars",
-          "id": "e7f0813a-906d-44d3-9ca8-ae9f248fb049"
-        },
-        {
-          "kind": "problem",
-          "title": "Meta needed a credible agentic story, not another chat model",
-          "body": "After a rocky Llama 4 cycle, Meta's frontier push has been about agentic capability specifically — tools, orchestration, multi-step planning — rather than competing head-on with GPT and Claude on raw benchmark leaderboards.",
-          "bullets": [
-            "Mark Zuckerberg posted about it on X directly — his first post there in three years — signaling this launch mattered strategically, not just technically",
-            "The prior Muse Spark was partner-only; without a public API, Meta had no way to prove agentic claims to the broader developer market",
-            "Rivals (OpenAI, Anthropic) already had mature agent/tool-use ecosystems around GPT-5.5 and Claude Opus 4.8"
-          ],
-          "id": "e86dc614-4553-485f-9bdf-9670a19aca90"
-        },
-        {
-          "kind": "solution",
-          "title": "A multimodal reasoning model tuned for orchestration",
-          "body": "Muse Spark 1.1 is built for personal and developer agentic tasks that require planning and coordination across a range of external apps and services — not just answering questions well.",
-          "bullets": [
-            "Trained to orchestrate multi-agent systems: it delegates subtasks to parallel subagents to finish projects faster than its predecessor",
-            "Zero-shot generalizes to new tools and services it wasn't explicitly trained on",
-            "Major reported gains specifically in tool/computer use, coding, and multimodal understanding over the earlier partner-only version"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "id": "3e3ff339-c3c3-40c0-a188-f1799e52f128"
-        },
-        {
-          "kind": "comparison",
-          "title": "Leads on tool use, trails on deep single-shot coding",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Muse Spark 1.1",
-              "GPT-5.5",
-              "Claude Opus 4.8"
-            ],
-            "rows": [
-              [
-                "Meta internal coding bench",
-                "68.3",
-                "67.1",
-                "69.0"
-              ],
-              [
-                "Terminal-Bench 2.1",
-                "80.0",
-                "83.4",
-                "82.7"
-              ],
-              [
-                "SWE-Bench Pro",
-                "61.5",
-                "58.6",
-                "69.2"
-              ],
-              [
-                "MCP Atlas (scaled tool use)",
-                "88.1 (best)",
-                "75.3",
-                "82.2"
-              ]
-            ]
-          },
-          "body": "The pattern is consistent across Meta's own evaluation report and independent write-ups: Muse Spark 1.1 clearly leads on orchestration-heavy tool-use benchmarks like MCP Atlas, but Claude Opus 4.8 still leads on deep, single-agent coding tasks like SWE-Bench Pro.",
-          "id": "5cdc4909-34ac-405a-bf05-50fd53eda479"
-        },
-        {
-          "kind": "example",
-          "title": "Where the orchestration focus shows up in practice",
-          "body": "Picture an agent asked to plan a multi-city trip: book flights, check a shared calendar, and stay under budget.",
-          "bullets": [
-            "A model tuned only for single-turn coding would need the whole plan handed to it as one prompt",
-            "Muse Spark 1.1 is designed to split this into parallel subagents — one per app/service — and coordinate their outputs into one final plan",
-            "The 'zero-shot generalizes to new tools' claim matters here: it doesn't need every travel API pre-baked into training to use one it's never seen"
-          ],
-          "id": "f70af403-3e3a-4ed8-9274-c1f7ebf56ecf"
-        },
-        {
-          "kind": "problem",
-          "title": "Pricing, availability, and where it doesn't win",
-          "body": "$1.25 per million input tokens / $4.25 per million output tokens — above OpenAI's entry-level GPT-5 mini and Anthropic's Claude Haiku 4.5, but below Claude Sonnet 4.6.",
-          "bullets": [
-            "Public preview is US-only for now, not a global GA release",
-            "On raw agentic coding depth (SWE-Bench Pro: 61.5 vs. Opus 4.8's 69.2), it's not the model to reach for on hard, single-agent coding tasks",
-            "Choose by workload: tool-orchestration-heavy agents favor Muse Spark 1.1; deep autonomous coding still favors Opus 4.8 or GPT-5.5"
-          ],
-          "id": "0b6fd774-e7f2-4f70-ab10-742656d37c14"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Meta's first public paid model API is a strategic agentic bet, not a generalist chat-model launch",
-            "It wins clearly on scaled tool-use/orchestration benchmarks (MCP Atlas) while trailing on deep single-agent coding (SWE-Bench Pro)",
-            "Mid-tier pricing ($1.25/$4.25 per M tokens) positions it between budget and premium frontier models",
-            "US-only public preview — treat availability and pricing as still evolving"
-          ],
-          "id": "2a063e10-75cd-46d7-8ffc-bad77717f13c"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is new about Muse Spark 1.1 compared to the original Muse Spark from April 2026?",
-            "options": [
-              "It's Meta's first model with a public, paid developer API",
-              "It's Meta's first multimodal model",
-              "It's open-weight while the original was closed",
-              "It removed agentic capabilities to focus on chat"
-            ],
-            "correctIndex": 0,
-            "explanation": "The original Muse Spark ('Avocado') shipped only to a closed partner program. Muse Spark 1.1 is the first version with a public 'Meta Model API' that any developer can pay to access.",
-            "id": "b98aa5dc-697a-4bd3-a924-c6146f754a45"
-          },
-          {
-            "prompt": "On which benchmark does Muse Spark 1.1 most clearly outperform both GPT-5.5 and Claude Opus 4.8?",
-            "options": [
-              "SWE-Bench Pro",
-              "Terminal-Bench 2.1",
-              "MCP Atlas, a scaled tool-use benchmark",
-              "Meta's internal coding benchmark"
-            ],
-            "correctIndex": 2,
-            "explanation": "Muse Spark 1.1 scores 88.1 on MCP Atlas versus 82.2 (Opus 4.8) and 75.3 (GPT-5.5) — its clearest win, and consistent with its design focus on tool orchestration.",
-            "id": "ece6e959-4e1f-4975-98e5-1a6be15f7ef8"
-          },
-          {
-            "prompt": "Where does Muse Spark 1.1 trail the field most, and what does that suggest about picking a model for a task?",
-            "options": [
-              "It trails on SWE-Bench Pro (deep single-agent coding) — pick it for tool-orchestration-heavy agents, not for hard autonomous coding",
-              "It trails on every benchmark, so it should be avoided entirely",
-              "It trails only on price, not on any benchmark",
-              "It trails on multimodal tasks, so use it for text-only workloads"
-            ],
-            "correctIndex": 0,
-            "explanation": "Opus 4.8 leads SWE-Bench Pro 69.2 to Muse Spark 1.1's 61.5. The benchmark spread argues for matching the model to the workload rather than picking one 'best overall' model.",
-            "id": "a6e206d5-b52c-41b1-bdb4-14971107e992"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing Muse Spark 1.1 — Meta AI Blog",
-          "url": "https://ai.meta.com/blog/introducing-muse-spark-meta-model-api/",
-          "id": "83514c34-7180-4e4a-b7ac-8b705d80be59"
-        }
-      ],
-      "publishedDate": "2026-08-05T00:39:22Z",
-      "id": "8e9034ea-3e94-4b84-be05-276435ac7f27"
     }
   ]
 }
