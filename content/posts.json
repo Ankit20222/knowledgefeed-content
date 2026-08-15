@@ -1,6 +1,206 @@
 {
   "posts": [
     {
+      "id": "df30d38b-a1ea-4abf-b017-3b8863b10cee",
+      "title": "PagedAttention: Borrowing Virtual Memory to Fix KV Cache Waste",
+      "subtitle": "vLLM treats GPU memory like an OS treats RAM — pages, not one giant reserved slab",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "paged-attention",
+        "vllm",
+        "kv-cache",
+        "memory-management",
+        "llm-serving",
+        "gpu-memory"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "rectangle.stack.fill",
+      "publishedDate": "2026-08-15T18:39:51Z",
+      "summary": "Naive LLM serving reserves one giant contiguous slab of GPU memory per request, sized for the worst case — and wastes most of it to fragmentation. PagedAttention borrows the operating system's virtual-memory trick: split the KV cache into fixed-size blocks, address them through a per-sequence block table, and let the attention kernel gather them on the fly. The payoff is memory waste that drops from the 60-80% typical of contiguous allocation to under 4%, plus the ability to share cache blocks across requests that partially overlap.",
+      "body": null,
+      "artPrompt": null,
+      "slides": [
+        {
+          "id": "54b6296b-2d90-449a-ac16-544371fefcd7",
+          "kind": "cover",
+          "title": "The KV Cache Is the Real Memory Hog, Not the Weights",
+          "body": "Every token an LLM generates needs the key and value vectors of every prior token kept around for attention. For long sequences and large batches, this KV cache — not the model weights — is what actually runs a GPU out of memory. How you lay it out in memory decides how many requests you can serve at once.",
+          "bullets": [],
+          "symbol": "rectangle.stack.fill",
+          "table": null
+        },
+        {
+          "id": "56a50e41-bf75-4d93-9c49-0eb9133f6314",
+          "kind": "problem",
+          "title": "Contiguous Allocation Reserves for the Worst Case",
+          "body": null,
+          "bullets": [
+            "Early LLM serving systems allocated each request's KV cache as one contiguous block of GPU memory, sized for the maximum sequence length the request could reach — even if the actual output ends up far shorter.",
+            "That over-reservation is internal fragmentation: memory sits allocated to a request but unused because the model stopped generating early. The vLLM paper measured 60-80% of allocated KV cache memory going to waste this way across real serving workloads.",
+            "Contiguous layout also blocks any sharing. If two requests share an identical prompt prefix (a system prompt, a few-shot example, parallel samples from one prompt), each still gets its own fully separate memory region — duplicating cache that is byte-for-byte identical.",
+            "The consequence compounds: memory waste caps how many sequences can be batched together at once, and batch size is the main lever for GPU throughput in LLM serving — so wasted memory directly costs served requests per second."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "958d6624-2d43-481f-9190-e4dbeb5bba3c",
+          "kind": "solution",
+          "title": "Split the Cache Into Fixed-Size Blocks, Address Them Indirectly",
+          "body": null,
+          "bullets": [
+            "PagedAttention (vLLM, Kwon et al.) divides each sequence's KV cache into fixed-size blocks — each holding the key/value vectors for a small, constant number of tokens — instead of one contiguous reservation.",
+            "A per-sequence block table maps logical block indices (block 0, 1, 2… of this sequence) to physical block locations anywhere in GPU memory, exactly like a page table maps virtual pages to physical frames in an OS.",
+            "Blocks are allocated on demand as generation produces new tokens, not upfront for a hypothetical maximum length — so a sequence that stops early never reserved memory it didn't use.",
+            "The attention kernel is rewritten to read key/value vectors through the block table's indirection, gathering scattered physical blocks at compute time instead of assuming one contiguous memory span."
+          ],
+          "symbol": "square.grid.3x2.fill",
+          "table": null
+        },
+        {
+          "id": "6499e39f-48fd-4431-9f8d-8c8991ddbedb",
+          "kind": "concept",
+          "title": "Indirection Also Buys Free Sharing",
+          "body": null,
+          "bullets": [
+            "Because a logical block can point to any physical block, two sequences with an identical prefix can point their early logical blocks at the very same physical blocks — no copying, just two block-table entries referencing one region.",
+            "Parallel sampling (multiple completions from one prompt) and beam search are the direct beneficiaries: the shared prompt prefix's KV cache is written once and referenced by every branch.",
+            "When a shared block needs to diverge — one beam continues differently than another — vLLM uses copy-on-write: only that one block is duplicated at the moment of divergence, not the whole cache.",
+            "This mirrors exactly how an OS shares a read-only code segment across processes and copy-on-writes a page only when one process actually modifies it — PagedAttention imports the whole idea, not just the block-table part."
+          ],
+          "symbol": "square.on.square",
+          "table": null
+        },
+        {
+          "id": "ef71c18f-5886-46a3-b11e-4367360b394e",
+          "kind": "example",
+          "title": "Worked Example: Four Parallel Samples, One Shared Prefix",
+          "body": "A request asks for 4 sampled completions of the same 500-token prompt, each generating up to 200 more tokens.",
+          "bullets": [
+            "Contiguous allocation: 4 independent reservations, each sized for 700 tokens worst case — the 500-token shared prompt gets stored 4 separate times, and any completion shorter than 200 tokens wastes the unused tail of its own slab.",
+            "PagedAttention: the ~500-token prompt occupies one set of physical blocks, referenced by all 4 block tables. Generation only allocates new blocks per branch as tokens are actually produced, and stops allocating the moment a branch finishes.",
+            "If the branches diverge after the first 50 generated tokens, only the blocks after that divergence point get copy-on-write duplicated — the prompt's blocks and the first 50 shared generated tokens stay shared across all 4.",
+            "Net effect on this single request: the prompt's memory footprint drops from 4x to 1x, and no branch ever reserves memory for tokens it never generates."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "eccc31d6-a9cf-46f2-ae4e-5cc7d5c0446f",
+          "kind": "comparison",
+          "title": "Contiguous vs. Paged KV Cache",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Property",
+              "Contiguous allocation",
+              "PagedAttention"
+            ],
+            "rows": [
+              [
+                "Allocation size",
+                "Reserved upfront for max possible length",
+                "Allocated block-by-block as tokens generate"
+              ],
+              [
+                "Typical memory waste",
+                "60-80% (vLLM paper measurement)",
+                "Under 4%"
+              ],
+              [
+                "Sharing identical prefixes",
+                "Not possible — each request fully separate",
+                "Shared via block-table indirection + copy-on-write"
+              ],
+              [
+                "Attention kernel",
+                "Reads one contiguous memory span",
+                "Gathers scattered physical blocks per lookup"
+              ],
+              [
+                "Effective batch size at fixed memory",
+                "Lower — waste eats into headroom",
+                "Higher — reclaimed memory serves more sequences"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "daf11722-660c-4c74-b679-9ddb73dbb2d5",
+          "kind": "concept",
+          "title": "What This Doesn't Fix, and What It Costs",
+          "body": null,
+          "bullets": [
+            "PagedAttention addresses memory layout, not scheduling — it's complementary to, not a substitute for, continuous batching, which decides when requests enter and leave a running batch. vLLM uses both together.",
+            "Block-table indirection adds a real kernel cost: gathering scattered physical blocks is slower per memory access than reading one contiguous span, so the attention kernel itself has to be specifically written (and optimized) for gather-style reads.",
+            "Block size is a genuine tuning knob: small blocks maximize sharing granularity and minimize waste from partially-filled blocks, but increase block-table bookkeeping overhead; large blocks cut overhead but reintroduce some internal fragmentation in the last partially-used block per sequence.",
+            "When it matters less: for workloads dominated by a handful of very long, fully independent sequences with no shared prefixes and generous memory headroom, the fragmentation and sharing gains shrink — the win is largest precisely when batches are large and requests share structure."
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "10178e57-6965-458d-ba1d-08ec616210aa",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "PagedAttention replaces one contiguous, worst-case-sized KV cache reservation per sequence with fixed-size blocks addressed through a per-sequence block table — the same virtual-memory idea an OS uses for RAM.",
+            "That indirection cuts typical memory waste from 60-80% down to under 4%, and as a side effect lets sequences with a shared prefix reference the same physical blocks, with copy-on-write only when they diverge.",
+            "It's a memory-layout fix, not a scheduling fix — it pairs with continuous batching rather than replacing it, and the gather-style attention kernel it requires is genuinely more complex than reading contiguous memory.",
+            "The gain scales with how much batches share structure and how tight memory headroom already is — it is the mechanism that made high-throughput, highly-batched LLM serving (vLLM) practical, not a universal speedup for every workload."
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "096f9f50-1c60-4568-828b-72860cef9112",
+            "prompt": "What causes the 60-80% memory waste in contiguous KV cache allocation that PagedAttention targets?",
+            "options": [
+              "The model weights are duplicated once per GPU",
+              "Each request reserves a contiguous block sized for the worst-case (maximum) sequence length, even if generation stops much earlier",
+              "The attention kernel recomputes keys and values for every new token",
+              "Every request must run on a separate GPU"
+            ],
+            "correctIndex": 1,
+            "explanation": "Contiguous allocation has to reserve for the worst case upfront because it can't grow a fixed memory span later — so memory sits allocated but unused whenever a sequence finishes shorter than its reserved maximum."
+          },
+          {
+            "id": "ca93c254-01ff-47a4-a42f-d912a3a2330c",
+            "prompt": "How does PagedAttention let two sequences share an identical prompt prefix without duplicating memory?",
+            "options": [
+              "It compresses the shared prefix using quantization",
+              "It reruns the forward pass once and broadcasts the result to both sequences",
+              "Each sequence's block table can point its logical blocks at the same physical blocks, with copy-on-write only when the sequences diverge",
+              "It merges the two requests into a single batch item until generation finishes"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because blocks are addressed indirectly through a per-sequence block table, multiple sequences can reference the same physical block. Only the block where their outputs actually start to differ needs to be duplicated (copy-on-write)."
+          },
+          {
+            "id": "3cddd500-d1c2-42e7-8403-9c7b1ab222fb",
+            "prompt": "Which statement correctly describes what PagedAttention does NOT solve on its own?",
+            "options": [
+              "It doesn't reduce KV cache memory waste from fragmentation",
+              "It doesn't decide which requests enter or leave the running batch — that's the job of continuous batching, which vLLM uses alongside it",
+              "It doesn't allow multiple sequences to share cache blocks",
+              "It doesn't work with beam search or parallel sampling"
+            ],
+            "correctIndex": 1,
+            "explanation": "PagedAttention is a memory-layout mechanism for the KV cache. Deciding when requests join or leave a batch is a separate scheduling concern, handled by continuous batching — vLLM runs both together."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "ec9a6b7c-090e-4780-a6e6-6873b7cf213a",
       "title": "LLMRouter: One Framework to Stop Guessing Which Model to Call",
       "subtitle": "16+ routing strategies, one benchmark, a 14.6% jump over always calling your best model",
@@ -11171,207 +11371,6 @@
       "references": [],
       "id": "8484a8e5-416f-43e4-900e-82cad7df77db",
       "publishedDate": "2026-08-06T00:44:23Z"
-    },
-    {
-      "title": "MCP Sampling: A Server Borrows the Client's Model",
-      "subtitle": "The primitive that lets a tool server 'think' without ever holding its own API key.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "sampling",
-        "llm",
-        "protocol",
-        "agents",
-        "human-in-the-loop"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Sampling is the MCP primitive that runs in the opposite direction from Tools: instead of a client asking a server to do something, a server asks the client to run an LLM completion on its behalf. The client — not the server — picks the actual model and can insert a human-approval step before anything runs. That means servers never need their own API key, and users keep control over which model sees their data and what it's allowed to generate.",
-      "body": null,
-      "slides": [
-        {
-          "id": "c04f77e7-8f27-48ec-839b-8ce1955e18d4",
-          "kind": "cover",
-          "title": "Most MCP Primitives Flow One Way — Sampling Flows Back",
-          "body": "Tools, Resources, and Prompts all exist for the client's LLM to reach into a server. Sampling is the mirror image: a server that needs an LLM to do some thinking asks the client to run one for it.",
-          "bullets": [
-            "Declared as a client capability during MCP's initialize handshake — a server has to check for it before relying on it",
-            "The request travels server → client, the opposite direction of a normal tool call",
-            "It exists so servers can 'think' without shipping their own model, API key, or billing relationship"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "4fc78d6c-aaa3-4b89-a58e-8fa1f74c114e",
-          "kind": "problem",
-          "title": "A Tool Server Sometimes Needs an LLM It Doesn't Have",
-          "body": "Plenty of useful server-side logic isn't deterministic code — it's judgment: summarizing, classifying, drafting. Without sampling, a server has three bad options.",
-          "bullets": [
-            "Ship its own API key and pay for every call itself — an ops burden and a cost the server author didn't sign up for",
-            "Force the user to configure a second, separate model just for this one server — friction that kills adoption",
-            "Punt the judgment call back to the client's main LLM as a giant tool result and hope it handles it well — wasteful and imprecise"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "cd072876-da37-440f-bfbe-4c1b11c8a9f3",
-          "kind": "solution",
-          "title": "sampling/createMessage: Ask the Client to Run the Completion",
-          "body": "A server that needs a generation sends a sampling/createMessage request over the same JSON-RPC connection, and the client decides how to fulfill it.",
-          "bullets": [
-            "Request carries messages (the conversation so far), an optional systemPrompt, maxTokens, and modelPreferences — hints plus 0-1 priorities for cost, speed, and intelligence, not a hard model name",
-            "The CLIENT resolves modelPreferences to an actual model — a server can ask for 'fast and cheap' or 'most capable' but never dictates the exact model",
-            "includeContext lets the server request none, thisServer's context, or allServers' context be attached — the client still governs what's actually shared"
-          ],
-          "symbol": "text.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "3b9bef88-c423-4eb9-a3ef-25ac4a4a9dc5",
-          "kind": "architecture",
-          "title": "The Round Trip Has a Human Checkpoint Built In",
-          "body": "Because a server is effectively spending the user's model budget and attention, the spec expects the client to keep a human in the loop.",
-          "bullets": [
-            "1. Server sends sampling/createMessage with the draft messages and preferences",
-            "2. Client MAY show the user the outgoing request for review/edit before it ever reaches a model",
-            "3. Client calls whichever LLM it resolved the preferences to (its own configured model, not the server's choice)",
-            "4. Client MAY show the user the completion before returning it, then sends the result back to the server"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "7c6ca076-977e-475c-a057-772632e31abe",
-          "kind": "example",
-          "title": "A Meeting-Notes Server With No Model of Its Own",
-          "body": "An MCP server exposes a summarize_transcript tool that condenses a 40-minute call into five action items.",
-          "bullets": [
-            "Instead of embedding an OpenAI key, the tool handler issues one sampling/createMessage call with the transcript and a systemPrompt asking for action items",
-            "The client resolves that to whatever model the user already pays for — their Claude subscription, say — so the server never touches billing or credentials",
-            "The user's client can surface the outgoing prompt first, so a transcript with sensitive names doesn't silently leave the device without a glance"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "36ce411e-2ec9-494f-b39e-403d243d5183",
-          "kind": "comparison",
-          "title": "Sampling vs. a Server Holding Its Own API Key",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "",
-              "Server-owned API key",
-              "MCP Sampling"
-            ],
-            "rows": [
-              [
-                "Who pays for tokens",
-                "The server operator",
-                "Whoever the client's model subscription belongs to"
-              ],
-              [
-                "Model choice",
-                "Fixed by the server author",
-                "Resolved by the client from preferences/hints"
-              ],
-              [
-                "User visibility",
-                "None by default",
-                "Client can show the prompt and result before either fires"
-              ],
-              [
-                "Credential exposure",
-                "Server must store and protect a key",
-                "Server never holds a model credential at all"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e906d6e5-1115-4ad5-a9fa-69c4f02ba0b8",
-          "kind": "concept",
-          "title": "Sampling Is Optional and Adds a Real Round Trip",
-          "body": "It's easy to design a server that assumes sampling is always there. The protocol doesn't promise that.",
-          "bullets": [
-            "Support is an optional client capability — many hosts don't implement it, so a server depending on it needs a fallback (e.g. degrade the feature, or ask the user directly)",
-            "Every sampling call is a full round trip through the client, plus an optional human-approval pause — noticeably slower than a server calling a model directly",
-            "Results aren't deterministic across clients: the same server prompt can hit a different model depending on whose client is connected, so outputs will vary",
-            "Because the server crafts the messages, a compromised or careless server can still attempt prompt injection against the client's model — sampling moves who pays, not who's responsible for reviewing the prompt"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "fe3d7084-be90-495e-825d-8079ae7403f9",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Sampling flows server → client: a server asks the client to run an LLM completion instead of calling a model itself",
-            "The client — not the server — resolves modelPreferences to an actual model, and can review both the outgoing prompt and the completion",
-            "Servers gain zero-key, zero-billing access to 'thinking' — at the cost of an optional capability, real latency, and no determinism guarantee",
-            "It doesn't remove the need for prompt-injection care — the server still authors what the client's model will see"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "69ec73cc-9107-4158-b70a-4774e85facf7",
-            "prompt": "Which direction does an MCP sampling request travel?",
-            "options": [
-              "Client to server, like a normal tool call",
-              "Server to client — the server asks the client to run a completion",
-              "Server to server, bypassing the client entirely",
-              "It's a broadcast to every connected MCP server at once"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sampling is the mirror image of a tool call: the server sends sampling/createMessage to the client, asking the client to run an LLM completion on its behalf."
-          },
-          {
-            "id": "2c71a11b-4fff-4c36-84f4-c276d4854bfb",
-            "prompt": "A server sets modelPreferences with a high intelligencePriority. What actually decides which model runs?",
-            "options": [
-              "The server, which names an exact model in the request",
-              "The preference value directly maps to a fixed model ID chosen by the MCP spec",
-              "The client, which resolves the hints and priorities to whichever model it has configured",
-              "Whichever model responds fastest to a race between multiple providers"
-            ],
-            "correctIndex": 2,
-            "explanation": "modelPreferences are hints and 0-1 priorities (cost, speed, intelligence), not a model name. The client is the one that resolves them to an actual model it has access to."
-          },
-          {
-            "id": "110094e1-276d-411b-ba32-d9e2cdac4f72",
-            "prompt": "Why can't a server assume every MCP client supports sampling?",
-            "options": [
-              "Sampling was deprecated in favor of Tools",
-              "It's an optional client capability that must be checked for and isn't implemented by every host",
-              "Sampling only works with open-weight models",
-              "Servers must pay a licensing fee to use sampling"
-            ],
-            "correctIndex": 1,
-            "explanation": "Like Roots, sampling is declared as an optional capability during the initialize handshake. A server that depends on it needs a sensible fallback for clients that don't support it."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "b0dadb3e-5089-4223-a73b-a117f185475a",
-          "title": "Sampling — Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/draft/client/sampling"
-        }
-      ],
-      "id": "2e004d77-8bbf-4f61-8aa6-6b5636500d08",
-      "publishedDate": "2026-08-05T18:40:16Z"
     }
   ]
 }
