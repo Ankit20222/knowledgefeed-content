@@ -1,6 +1,201 @@
 {
   "posts": [
     {
+      "id": "04fd5ed9-fbcb-4691-b65e-a0d6a42f6c24",
+      "title": "Multi-Head Latent Attention: One Cache, Any Head",
+      "subtitle": "How DeepSeek shrinks the KV cache by caching one compressed vector instead of one per head",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "inference-optimization",
+        "deepseek",
+        "transformers"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "rectangle.compress.vertical",
+      "summary": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2 and carried through DeepSeek's later models, caches a single low-rank latent vector per token instead of a separate key and value per attention head. A small decoupled slice still carries rotary position info at full size, and inference engines fold the reconstruction math into existing projections so decoding never materializes full per-head keys and values. The result is a KV cache close to a heavily-grouped GQA setup in size, without the quality hit GQA and MQA usually trade away.",
+      "body": null,
+      "table": null,
+      "explanation": null,
+      "slides": [
+        {
+          "id": "249385b3-eb4a-42d4-9d0e-e8bd7e71735d",
+          "kind": "cover",
+          "title": "What If You Cached One Vector Instead of One Per Head?",
+          "body": "Multi-Head Latent Attention (MLA) compresses every token's key and value into a single small latent vector, then reconstructs per-head attention from it on the fly.",
+          "bullets": [],
+          "symbol": "rectangle.compress.vertical",
+          "table": null
+        },
+        {
+          "id": "2e2fa0ed-75cd-4ff1-af97-139fc352e8b0",
+          "kind": "problem",
+          "title": "GQA Shrinks the Cache — It Doesn't Change Its Shape",
+          "body": null,
+          "bullets": [
+            "Standard multi-head attention (MHA) caches a distinct key and value vector per head, per token, per layer — cache size scales directly with head count.",
+            "Multi-Query Attention (MQA) shares one K/V pair across all heads, cutting the cache a lot but often costing model quality.",
+            "Grouped-Query Attention (GQA) groups heads into small clusters that share K/V — a tunable middle ground, and the default in models like Llama 3 and Mistral.",
+            "All three still cache full-width vectors per group. At long context lengths, reading that cache back from HBM — not the attention math itself — is what throttles decode speed."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "c59cf885-b22e-4b5b-93cb-e0e88584a1ae",
+          "kind": "solution",
+          "title": "Compress the Content, Decouple the Position",
+          "body": null,
+          "bullets": [
+            "MLA down-projects each token's hidden state into one small latent vector (c_KV) and caches only that — not separate per-head keys and values.",
+            "At attention time, learned up-projection matrices reconstruct per-head keys and values from the shared latent — one compressed vector expands back into every head's view.",
+            "Rotary position embeddings (RoPE) don't survive that compression cleanly: rotating a shared latent and then splitting it per head doesn't equal rotating each head's key first. MLA's fix is to decouple position from content — a small extra per-head slice is computed and cached at full size purely to carry RoPE's position signal, while the compressed latent carries content only.",
+            "So the cache holds two small pieces per token: the shared compressed latent, plus a tiny per-head positional slice — nowhere near the size of caching full keys and values per head."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "e0037c61-c312-407e-8b1d-93f3273c2543",
+          "kind": "architecture",
+          "title": "The Trick That Keeps Decoding Fast: Never Rebuild the Full Cache",
+          "body": null,
+          "bullets": [
+            "Naively, you'd decompress the latent back into full per-head K/V at every decode step — expanding the compression you just did, and adding matrix multiplies to the critical path.",
+            "Inference engines instead absorb the up-projection matrices into the query and output projections algebraically, so attention scores are computed directly against the compressed latent — the full-size K/V is never materialized at all.",
+            "That absorption is why MLA's decode-time compute stays close to a low-rank operation instead of ballooning back to MHA-sized matrices — the compression is real, not just cosmetic in storage.",
+            "This is also why MLA isn't a drop-in kernel swap: serving it fast requires an inference engine (vLLM, SGLang, and similar) that implements this absorbed form, not just a generic attention kernel."
+          ],
+          "symbol": "cpu",
+          "table": null
+        },
+        {
+          "id": "275c0ccc-7839-4143-a4db-07f199b49fc3",
+          "kind": "comparison",
+          "title": "Where MLA Sits Against MHA, MQA, and GQA",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Variant",
+              "Cached per token",
+              "Typical quality tradeoff"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "Full K and V for every head",
+                "Best quality baseline, largest cache"
+              ],
+              [
+                "MQA",
+                "One shared K/V pair for all heads",
+                "Smallest cache, but often a real quality drop"
+              ],
+              [
+                "GQA",
+                "K/V shared within small head groups",
+                "Tunable middle ground — group count trades cache size for quality"
+              ],
+              [
+                "MLA",
+                "One shared low-rank latent + a small positional slice",
+                "DeepSeek-V2's reported design goal: cache footprint near a heavily-grouped GQA, quality at or above full MHA"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "6561347b-4206-4450-ad71-874d952d0b17",
+          "kind": "example",
+          "title": "Worked Example: What Compression Actually Buys You",
+          "body": null,
+          "bullets": [
+            "Illustrative numbers, not a specific model's real config: say a layer has 64 heads with head_dim 128. Full MHA caches 64 × 128 × 2 (K and V) = 16,384 values per token, per layer.",
+            "GQA with 8 groups cuts that 8x, to 2,048 values per token — still scales with group count.",
+            "MLA instead caches one shared latent of a few hundred values, plus a small fixed-size positional slice — independent of head count, because every head reconstructs from the same latent.",
+            "Multiply that per-token savings by every token in a long conversation or document, across every layer, and the difference decides how many concurrent long-context requests fit in a fixed amount of GPU memory."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "ae1d1df9-d2bd-471b-b287-29ba77e87a45",
+          "kind": "concept",
+          "title": "The Catch: This Isn't a Free Upgrade to an Existing Model",
+          "body": null,
+          "bullets": [
+            "MLA changes the attention computation itself, not just how it's cached — you can't bolt it onto an already-trained MHA or GQA checkpoint the way you might swap a serving-side cache format.",
+            "A model has to be pretrained (or substantially adapted) with MLA's compress-then-reconstruct math from the start, which is a much bigger commitment than choosing a GQA group count at architecture-design time.",
+            "Fast serving depends on an inference engine that implements the weight-absorption trick — without it, naively decompressing the latent every step can erase the savings.",
+            "The decoupled positional slice means MLA doesn't shrink the cache as cleanly as the headline number suggests — there's a fixed per-head cost that doesn't go away."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d73d053c-5dbc-414d-a7a8-e74b963730fa",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "MLA caches one compressed latent vector per token instead of separate keys and values per head, reconstructing per-head attention from it at inference time.",
+            "A small decoupled slice carries rotary position info at full size because compression and RoPE don't commute — the rest of the savings come from the shared low-rank content.",
+            "Weight absorption is what makes it fast in practice: engines fold the reconstruction into existing projections so full-size keys and values are never rebuilt.",
+            "It's an architecture choice made at pretraining time, not a serving-side toggle — the payoff is a KV cache footprint closer to aggressive GQA, without GQA's usual quality tradeoff."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "42015714-804b-4fc6-83f9-11f59d18289d",
+            "prompt": "What does Multi-Head Latent Attention cache per token, instead of a separate key and value per head?",
+            "options": [
+              "Nothing — it recomputes attention from scratch every step",
+              "One shared low-rank latent vector, plus a small per-head positional slice",
+              "A quantized 4-bit version of the full multi-head cache",
+              "Only the value vectors, never the keys"
+            ],
+            "correctIndex": 1,
+            "explanation": "MLA down-projects each token into one compressed latent that all heads reconstruct from, plus a small decoupled slice that carries rotary position information at full size."
+          },
+          {
+            "id": "d17c1f36-389c-4fc4-b168-2b4ec034f249",
+            "prompt": "Why does MLA need a separate 'decoupled' piece just for position information?",
+            "options": [
+              "Because rotary position embeddings don't commute with reconstructing per-head keys from a shared compressed latent",
+              "Because position information is always cached uncompressed in every attention variant",
+              "Because MLA doesn't support long context windows",
+              "Because it's a leftover implementation detail with no technical reason"
+            ],
+            "correctIndex": 0,
+            "explanation": "Rotating a shared latent and then splitting it per head isn't equivalent to rotating each head's key individually, so MLA carries position via a small full-size per-head slice instead of through the compressed content."
+          },
+          {
+            "id": "2449d5c4-2bd3-4b9e-b583-aa8d2ee7ae57",
+            "prompt": "What's a real limitation of adopting MLA?",
+            "options": [
+              "It only works on CPU inference",
+              "It requires pretraining (or substantial adaptation) with MLA's math from the start, and fast serving needs an engine that implements weight absorption",
+              "It increases the KV cache size compared to standard MHA",
+              "It eliminates the need for an attention mechanism entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "MLA is an architecture decision baked in at training time, not a serving-side cache format you can swap onto an existing checkpoint — and without an engine that absorbs the up-projection into existing weights, naive decompression can erase the cache savings."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-16T00:40:59Z"
+    },
+    {
       "id": "df30d38b-a1ea-4abf-b017-3b8863b10cee",
       "title": "PagedAttention: Borrowing Virtual Memory to Fix KV Cache Waste",
       "subtitle": "vLLM treats GPU memory like an OS treats RAM — pages, not one giant reserved slab",
@@ -11185,191 +11380,6 @@
         }
       ],
       "id": "1e62f2d6-8ae7-457e-ae22-46a97c274f0d",
-      "publishedDate": "2026-08-06T00:44:23Z"
-    },
-    {
-      "title": "Test-Time Compute: Trading Tokens for Accuracy at Inference",
-      "subtitle": "Why reasoning models let a fixed-size network think longer instead of just training it bigger.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "test-time compute",
-        "inference scaling",
-        "reasoning models",
-        "chain-of-thought",
-        "best-of-n",
-        "search"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "Test-time compute scaling spends extra computation per query at inference — longer reasoning, more parallel samples, or explicit search — instead of only scaling the model's parameters and training data. It's the mechanism behind 'reasoning' models like o1-style and DeepSeek-R1-style systems, and it trades latency and cost for accuracy on hard problems, with sharp diminishing returns once the model's easy answer is already the popular one.",
-      "body": null,
-      "slides": [
-        {
-          "id": "233a342d-b817-42a5-ac97-952152b46da9",
-          "kind": "cover",
-          "title": "A Fixed Model Can Get Smarter Without Retraining — If You Let It Think Longer",
-          "body": "Test-time compute scaling spends extra computation per query instead of per parameter: the same trained model answers hard problems by generating more reasoning, sampling more candidates, or searching more branches before committing to an answer.",
-          "bullets": [
-            "Classic scaling law: bigger model + more training FLOPs = better average performance, same fixed cost at inference",
-            "Test-time scaling: same weights, but the cost now varies per query — easy questions get a fast answer, hard ones get thousands of extra 'thinking' tokens",
-            "This is the mechanism behind 'reasoning' models (o1-style, DeepSeek-R1-style, Gemini Thinking-style): they're trained specifically to make good use of a longer inference budget"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "7026c70d-525a-4086-bcf4-523a668d88aa",
-          "kind": "problem",
-          "title": "One-Shot Decoding Spends the Same Effort on Easy and Hard Problems",
-          "body": "A standard LLM emits its answer autoregressively in a single pass, with no built-in mechanism to notice 'this one is hard, I should try more approaches.'",
-          "bullets": [
-            "Token budget for reasoning is fixed by training and prompt length, not by how hard the specific question actually is",
-            "A small arithmetic or logic slip early in a long derivation propagates uncorrected — there's no automatic retry or self-check",
-            "Labs historically scaled pretraining compute and parameter count to raise average accuracy; the compute spent per individual query at inference stayed nearly flat regardless of difficulty"
-          ],
-          "symbol": "timer",
-          "table": null
-        },
-        {
-          "id": "3193c672-1009-4b14-bff1-d49e4ceb09f0",
-          "kind": "solution",
-          "title": "Three Families of Test-Time Compute",
-          "body": "All three trade extra inference compute for a better final answer, but they spend that compute in different shapes.",
-          "bullets": [
-            "Sequential (longer chain-of-thought): the model generates far more intermediate reasoning tokens before answering, trained via RL to backtrack and double-check mid-generation — this is what dedicated 'thinking' models do",
-            "Parallel sampling (best-of-N / self-consistency): draw N independent full solutions at temperature > 0, then pick the majority answer or the one a verifier/reward model scores highest",
-            "Search (tree-of-thought / MCTS-style): branch at each reasoning step, score partial paths with a value function, and prune weak branches — closer to classic search algorithms than to plain autoregressive generation"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "b5c7e93e-ccc4-452a-afd9-ff8f39d7ebd9",
-          "kind": "example",
-          "title": "Worked Example: Solving a Hard Word Problem Three Ways",
-          "body": "Same model, same multi-step optimization word problem — three different test-time budgets, three different failure/success profiles.",
-          "bullets": [
-            "One-shot: the model emits an answer directly; if it mis-sets up one equation, the wrong answer ships with full apparent confidence",
-            "Self-consistency (N=8): the model solves the problem 8 independent times at nonzero temperature; the numeric answer that shows up most often across those 8 runs is returned",
-            "Extended reasoning: the model writes a long scratchpad, notices its first equation double-counts a constraint, discards that branch, and re-derives — all inside one generation before producing the final answer"
-          ],
-          "symbol": "list.number",
-          "table": null
-        },
-        {
-          "id": "911279a7-5e91-4ca5-aa3a-c02f0b17dfe5",
-          "kind": "comparison",
-          "title": "Sequential vs. Parallel vs. Search",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "",
-              "Sequential CoT",
-              "Parallel (best-of-N)",
-              "Search (tree / MCTS-style)"
-            ],
-            "rows": [
-              [
-                "Extra cost driver",
-                "One longer generation",
-                "N full generations",
-                "Branching + scoring at each step"
-              ],
-              [
-                "Needs a verifier?",
-                "No — self-corrects inline",
-                "Optional (can just vote)",
-                "Yes — a value/reward model to prune"
-              ],
-              [
-                "Latency shape",
-                "One long stream",
-                "N generations, parallelizable",
-                "Many short steps, harder to parallelize"
-              ],
-              [
-                "Needs special training?",
-                "Yes — RL on long reasoning traces",
-                "No — works on any base model",
-                "Usually yes — needs a trained verifier"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "86fe0410-5ab2-4b52-9df5-ed842f7b0f7b",
-          "kind": "problem",
-          "title": "When Test-Time Compute Stops Paying Off",
-          "body": "More inference compute is not a free accuracy dial — it has sharp diminishing returns and real failure modes.",
-          "bullets": [
-            "Diminishing returns: majority-vote gains flatten fast once N is large enough that the model's 'mode' answer is already the majority — extra samples beyond that just burn tokens and money",
-            "Latency-sensitive products (chat, autocomplete) often can't afford a generation that's 10x longer just to shave a few points off accuracy",
-            "Search and best-of-N are only as good as the verifier scoring candidates — a weak or miscalibrated verifier can confidently promote a wrong answer over a right one",
-            "Long reasoning traces can loop or ramble without ever converging, burning the entire token budget with no better final answer than a short generation would have given"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "6189d059-328b-4375-82e3-82617d1b84cf",
-          "kind": "takeaways",
-          "title": "Compute Now Has Two Knobs, Not One",
-          "body": null,
-          "bullets": [
-            "Training-time compute (bigger model, more data) raises the average; test-time compute (more thinking per query) raises the ceiling on individual hard problems",
-            "Pick sequential reasoning when you can afford one longer generation and want inline self-correction; pick parallel sampling when generations are cheap to run concurrently; reach for search only when you have a trustworthy verifier",
-            "The practical lesson for building on these models: budget tokens (and dollars) per query by difficulty, not as one flat setting for every request"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "76a5d3b0-1064-4c2f-8e23-3c34b62f38dc",
-            "prompt": "What's the core idea behind test-time compute scaling?",
-            "options": [
-              "Training a bigger model on more data",
-              "Spending extra computation per query at inference instead of only at training time",
-              "Reducing the model's parameter count to save memory",
-              "Caching previous responses to skip recomputation"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time compute scaling keeps the trained model fixed and instead lets it use more compute — longer reasoning, more samples, or search — for a specific query, trading inference cost for accuracy on that query."
-          },
-          {
-            "id": "1bd13fde-1b2b-477f-badf-90ac0854c481",
-            "prompt": "In self-consistency / best-of-N sampling, how is the final answer typically chosen?",
-            "options": [
-              "The first completion the model generates",
-              "The completion with the fewest tokens",
-              "By majority vote across N independently sampled completions, or the one a verifier ranks highest",
-              "By averaging the raw logits of all N completions"
-            ],
-            "correctIndex": 2,
-            "explanation": "Self-consistency draws multiple independent reasoning paths at nonzero temperature and takes the most common final answer (or the one a reward/verifier model ranks highest) — diverse, non-repeating errors get outvoted by the correct answer showing up more consistently."
-          },
-          {
-            "id": "87f0309e-b4df-4cca-a313-76f4dd9aed0c",
-            "prompt": "Which test-time compute approach most depends on having a trained value/verifier model to work well?",
-            "options": [
-              "Sequential chain-of-thought extension",
-              "Search-based methods like tree-of-thought / MCTS-style reasoning",
-              "Greedy one-shot decoding",
-              "Simple prompt truncation"
-            ],
-            "correctIndex": 1,
-            "explanation": "Search methods branch into multiple partial reasoning paths and need a value function or verifier to score and prune those branches — without a good verifier, the search can't tell a promising partial path from a dead end."
-          }
-        ]
-      },
-      "references": [],
-      "id": "8484a8e5-416f-43e4-900e-82cad7df77db",
       "publishedDate": "2026-08-06T00:44:23Z"
     }
   ]
