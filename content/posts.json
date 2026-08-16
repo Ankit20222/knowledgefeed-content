@@ -1,6 +1,201 @@
 {
   "posts": [
     {
+      "id": "5a09ad66-1f8b-44ed-8323-ba3693e597bc",
+      "title": "Prefill-Decode Disaggregation: Splitting Inference in Two",
+      "subtitle": "Why serving an LLM well means running two different machines, not one",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "inference-optimization",
+        "llm-serving",
+        "prefill-decode",
+        "kv-cache",
+        "gpu-scheduling"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "rectangle.split.2x1.fill",
+      "summary": "Prefill (processing the prompt) is compute-bound; decode (generating tokens one at a time) is memory-bandwidth-bound. Running both on the same GPU pool means a burst of prompt processing stalls in-flight token generation. Prefill-decode disaggregation splits them into two independently-scheduled, independently-scaled GPU pools connected by a KV-cache handoff over a fast interconnect — trading a per-request network transfer for far more predictable latency and decoupled scaling knobs.",
+      "body": null,
+      "table": null,
+      "explanation": null,
+      "slides": [
+        {
+          "id": "f624f5ec-2729-4455-b218-f8da2be230af",
+          "kind": "cover",
+          "title": "Two Jobs Pretending to Be One",
+          "body": "Every LLM request actually runs two very different workloads back to back: reading the prompt (prefill) and generating tokens one at a time (decode). Serving them on the same GPU pool means picking one scheduling policy for two opposite bottlenecks.",
+          "bullets": [],
+          "symbol": "rectangle.split.2x1.fill",
+          "table": null
+        },
+        {
+          "id": "a9031c6c-d809-4d9b-8a93-d7374f3ec34a",
+          "kind": "problem",
+          "title": "Prefill and Decode Fight Over the Same GPU",
+          "body": null,
+          "bullets": [
+            "Prefill processes every prompt token in one batched forward pass — a large, dense matrix-multiply burst that's compute-bound and can saturate the GPU's FLOPs for the duration of that pass.",
+            "Decode generates a single new token per step, but each step still has to read the entire growing KV cache from GPU memory — it's memory-bandwidth-bound, with very little actual compute per step.",
+            "When both run on one shared pool (as in standard continuous batching), a new request's prefill burst competes for the same compute engines that in-flight decode steps need on every iteration.",
+            "The result is a stall: users mid-generation see their next token delayed because the GPU just got handed a large prompt to chew through — tail latency spikes exactly when the system looks busiest."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "53b72100-a502-46c8-9e28-990fccdfc819",
+          "kind": "solution",
+          "title": "Split Into Two Pools, Hand Off the KV Cache",
+          "body": null,
+          "bullets": [
+            "Disaggregation runs prefill and decode as separately-scheduled worker pools instead of one shared pool — prefill workers only ever run the compute-heavy first pass over a prompt; decode workers only run the memory-bound, one-token-at-a-time loop.",
+            "Once a prefill worker finishes a prompt, it streams that request's freshly-computed KV cache to a decode worker over a fast interconnect (NVLink within a node, RDMA over InfiniBand across nodes) — the decode worker then owns the request for the rest of generation.",
+            "Each pool is provisioned for its own bottleneck: prefill favors raw FLOPs and can tolerate fewer, cheaper GPUs; decode favors HBM bandwidth and capacity to hold many concurrent requests' KV caches at once.",
+            "A router sits in front, assigning incoming requests to a prefill worker and then to whichever decode worker has spare capacity — replacing one monolithic batcher with two specialized ones."
+          ],
+          "symbol": "arrow.left.arrow.right",
+          "table": null
+        },
+        {
+          "id": "02dd30be-7e0b-446e-b369-19565c4971c5",
+          "kind": "architecture",
+          "title": "How One Request Actually Flows",
+          "body": null,
+          "bullets": [
+            "1. Router receives the request and assigns it to a prefill worker with available capacity.",
+            "2. The prefill worker runs a single forward pass over the whole prompt, producing the KV cache for every prompt token plus the first output token.",
+            "3. That KV cache is transferred to a decode worker over the interconnect — the prefill worker is now free to pick up the next request immediately.",
+            "4. The decode worker appends new KV entries and streams tokens back to the client one step at a time until it hits an end-of-sequence token or the length limit."
+          ],
+          "symbol": "network",
+          "table": null
+        },
+        {
+          "id": "049e7ba0-5cd4-4651-8229-52abaeac945c",
+          "kind": "comparison",
+          "title": "Colocated vs. Disaggregated",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Aspect",
+              "Colocated (one shared pool)",
+              "Disaggregated (split pools)"
+            ],
+            "rows": [
+              [
+                "Bottleneck per GPU",
+                "Compute-bound and bandwidth-bound work interleaved on the same hardware",
+                "Each pool tuned to a single, matching bottleneck"
+              ],
+              [
+                "Decode tail latency",
+                "New prefill bursts can stall in-flight decode steps",
+                "Decode steps run undisturbed by incoming prompt traffic"
+              ],
+              [
+                "Extra cost",
+                "None — no cross-GPU transfer needed",
+                "KV cache must cross the network for every request"
+              ],
+              [
+                "Scaling knob",
+                "One batch size has to trade off both phases at once",
+                "Prefill and decode pools scale independently to match traffic mix"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "2992eb48-f827-46dd-9027-c99371677806",
+          "kind": "example",
+          "title": "Worked Example: A Mixed Traffic Batch",
+          "body": null,
+          "bullets": [
+            "A service handles two traffic types at once: document summarization (a 6,000-token prompt, a short 100-token summary) and live chat (a 50-token prompt, a 500-token reply).",
+            "Colocated: the summarization request's 6,000-token prefill occupies the GPU's compute engines for one long burst — every chat request currently mid-decode has to wait out that burst before its next token lands, so chat users see a visible stutter.",
+            "Disaggregated: the summarization prompt's prefill runs entirely on a prefill-pool GPU while chat decode steps keep streaming smoothly on the decode pool; once prefill finishes, the summarization request's KV cache is handed off in one transfer and it starts decoding on its own worker.",
+            "Net effect: both request types get far more predictable latency, at the cost of one KV-cache transfer per request — including the short chat prompts, which now also pay that hop even though their own prefill was cheap."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "f22baa3f-c351-4393-a308-063de0b76184",
+          "kind": "concept",
+          "title": "The Catch: Transfer Cost and Pool Sizing",
+          "body": null,
+          "bullets": [
+            "The KV-cache handoff isn't free: for a large model, one request's KV cache can run to hundreds of megabytes, and every request pays this network hop — for very short prompts, the transfer overhead can exceed the compute the split saved.",
+            "Pool sizing depends on knowing the workload: if most traffic is short-prompt/long-output or the reverse, one pool ends up idle while the other is the actual bottleneck, so the split has to be re-tuned as traffic patterns shift.",
+            "Operational surface roughly doubles — two fleets to deploy, monitor, and autoscale, plus a KV-transfer path that has to stay fast and reliable or it becomes the new bottleneck itself.",
+            "When NOT to use it: small models or low-traffic services where a single GPU pool is rarely saturated by either phase — disaggregation adds cross-machine complexity and network cost without a real bottleneck to relieve; plain continuous batching on one pool stays simpler and cheaper."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "03ee162d-b825-4bb2-9f11-f8919f571283",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Prefill (compute-bound, one burst per prompt) and decode (memory-bandwidth-bound, one token per step) are fundamentally different workloads that compete for the same GPU resources when colocated.",
+            "Disaggregation runs them as two independently-scheduled, independently-scaled pools, connected by a KV-cache handoff over a fast interconnect (NVLink or RDMA).",
+            "The payoff is more predictable tail latency and decoupled scaling knobs; the cost is a KV-cache transfer for every request and roughly double the operational surface to run.",
+            "It pays off at scale, with high traffic and heterogeneous prompt/output lengths — not for small deployments where a single GPU pool was never the bottleneck to begin with."
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "5d80ce4a-ff91-4c43-909e-b0a40265bbd7",
+            "prompt": "Why do prefill and decode create opposite pressure on the same GPU?",
+            "options": [
+              "Prefill is compute-bound processing the whole prompt in one burst; decode is memory-bandwidth-bound, reading the KV cache once per generated token",
+              "Prefill uses more memory bandwidth than decode",
+              "They require completely different model weights",
+              "Decode performs more matrix multiplications than prefill"
+            ],
+            "correctIndex": 0,
+            "explanation": "Prefill runs one large batched forward pass over every prompt token, saturating compute. Decode does very little math per step but has to read the full, growing KV cache from memory on every single token — the two bottlenecks are opposite, and colocating them means one stalls the other."
+          },
+          {
+            "id": "dc4d238d-ae7e-495f-8dd6-d5ce497a2fa6",
+            "prompt": "What has to be transferred from the prefill worker to the decode worker for each request?",
+            "options": [
+              "The request's KV cache",
+              "The model's weights",
+              "The full training dataset",
+              "Nothing — they share GPU memory automatically"
+            ],
+            "correctIndex": 0,
+            "explanation": "Since a different physical worker now owns the rest of generation, the KV cache produced during prefill has to be streamed to a decode worker over a fast interconnect like NVLink or RDMA before decoding can continue."
+          },
+          {
+            "id": "87adbd51-3115-4a5d-af29-89c84322758e",
+            "prompt": "When is prefill-decode disaggregation a poor fit?",
+            "options": [
+              "Low-traffic deployments where a single GPU pool is rarely saturated by either phase",
+              "High-traffic services with widely varying prompt and output lengths",
+              "Services that need predictable decode tail latency",
+              "Large-scale multi-tenant inference clusters"
+            ],
+            "correctIndex": 0,
+            "explanation": "At low traffic or with a small model, neither phase saturates the GPU on its own, so splitting adds cross-machine KV-transfer overhead and roughly doubles operational surface without relieving any real bottleneck."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-16T12:41:32Z"
+    },
+    {
       "id": "6d7e4e7e-4224-4dcd-9aab-4dedfe3831cc",
       "title": "Test-Time Compute: Buying Accuracy With Extra Tokens",
       "subtitle": "Why reasoning models get smarter by thinking longer, not by growing bigger",
@@ -11190,196 +11385,6 @@
         }
       ],
       "id": "567cf718-6774-4691-96bf-43796faae9b0",
-      "publishedDate": "2026-08-06T06:46:41Z"
-    },
-    {
-      "title": "ReAct: Making an LLM Think Before Every Action",
-      "subtitle": "Interleaving Thought, Action, and Observation grounds an agent's reasoning in what actually happened — instead of what it assumed happened.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "react",
-        "agents",
-        "prompting",
-        "tool use",
-        "reasoning"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "ReAct interleaves short reasoning steps with tool actions and real observations in a single loop, so an agent's plan gets checked against reality at every step instead of only at the end. On ALFWorld and WebShop it beat imitation- and RL-trained baselines by 34 and 10 absolute points in success rate, without any task-specific training.",
-      "body": null,
-      "slides": [
-        {
-          "id": "c181851f-0f6f-4b7f-bf7f-fcc61b68ead8",
-          "kind": "cover",
-          "title": "Reasoning Alone Drifts. Acting Alone Loops. ReAct Does Both.",
-          "body": "A simple prompting pattern — Thought, Action, Observation, repeat — that grounds an agent's reasoning in real feedback from its tools.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "bcff6db7-3c65-49d4-9534-fd33b1c0c7da",
-          "kind": "problem",
-          "title": "Two Ways Agents Fail Without ReAct",
-          "bullets": [
-            "Reasoning-only (pure chain-of-thought): the model reasons entirely from its own internal knowledge, ungrounded in the real world — small early errors compound into confident, wrong conclusions",
-            "Acting-only (tool calls with no explicit reasoning): the model fires off actions without planning or reflecting, so it repeats failed actions or loses track of the goal mid-task",
-            "Neither approach lets the model check a plan against fresh evidence before continuing"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "c3268ad3-bcf1-4bb5-98fc-4232d009a5d6",
-          "kind": "solution",
-          "title": "The Loop: Thought, Action, Observation",
-          "body": "Each turn, the model writes a short thought (what to do next and why), takes one action from its tool set, and receives a real observation before thinking again.",
-          "bullets": [
-            "Thought: 'I need the release date, so I should search for it'",
-            "Action: search('Shieldstral release date')",
-            "Observation: the real tool output gets appended to context — not a guess",
-            "The loop repeats until the model emits a Finish action with its answer"
-          ],
-          "symbol": "text.badge.checkmark",
-          "table": null
-        },
-        {
-          "id": "ef0c0e00-d767-424c-96cd-79c978c4d417",
-          "kind": "architecture",
-          "title": "Just a Prompting Pattern, No New Architecture",
-          "bullets": [
-            "Works with any instruction-following base model — nothing about the weights changes",
-            "The full trajectory (every prior thought/action/observation) stays in context and is re-fed each step",
-            "Thoughts serve two jobs: inducing/updating the action plan, and handling exceptions when an action's result is unexpected",
-            "Actions are what connect the model to ground truth — a search API, a calculator, a code executor, a database query"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "564c6df3-bc0b-4820-ac43-5a045c46a867",
-          "kind": "comparison",
-          "title": "What the Original Paper Measured",
-          "body": "Yao et al. (2022) tested ReAct on knowledge tasks (HotpotQA, FEVER, with Wikipedia API access) and decision-making tasks (ALFWorld, WebShop).",
-          "bullets": [
-            "On HotpotQA and FEVER: ReAct clearly beat act-only prompting and matched chain-of-thought's accuracy, while producing far more grounded, less hallucinated reasoning traces",
-            "On ALFWorld and WebShop: one- and two-shot ReAct prompting beat imitation- and reinforcement-learning baselines trained on roughly 100,000 task instances"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "ReAct vs. trained baselines"
-            ],
-            "rows": [
-              [
-                "ALFWorld (household tasks)",
-                "+34 points absolute success rate"
-              ],
-              [
-                "WebShop (web shopping tasks)",
-                "+10 points absolute success rate"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "4dc0238f-cd58-4605-ab6c-2b72f11fa526",
-          "kind": "example",
-          "title": "Worked Example: Answering a Multi-Hop Question",
-          "body": "\"What is the elevation range of the area that the eastern sector of the Colorado orogeny extends into?\"",
-          "bullets": [
-            "Thought: I need to find what the eastern sector extends into, then its elevation range — search first",
-            "Action: search('Colorado orogeny eastern sector')",
-            "Observation: '...eastern sector extends into the High Plains...'",
-            "Thought: now I need the High Plains' elevation range",
-            "Action: search('High Plains elevation range') → Observation: '1,800 to 7,000 ft' → Finish('1,800 to 7,000 ft')"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "0ccb17ed-2b64-41d5-adc1-c086bcc9d7c5",
-          "kind": "problem",
-          "title": "When ReAct Struggles",
-          "bullets": [
-            "Non-informative observations (e.g. a search that returns nothing useful) can send the model down a repeated retry loop",
-            "Every thought and observation adds tokens — long trajectories get expensive and can eventually crowd out earlier context",
-            "It's still only as good as the tools it's given: a bad search API caps how grounded the reasoning can be",
-            "Doesn't fix flawed few-shot examples — the paper notes prompt quality still meaningfully affects trajectory quality"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "99951a53-650a-4528-8c7f-2745bd56c9d5",
-          "kind": "takeaways",
-          "title": "Why ReAct Became the Default Agent Loop",
-          "bullets": [
-            "Grounding reasoning in real observations, every step, catches errors before they compound",
-            "No fine-tuning required — it's a prompting/orchestration pattern, so it works the day you adopt it",
-            "It's the loop underneath most modern tool-calling agent frameworks, even when they don't say 'ReAct' by name",
-            "Pairs well with explicit memory or reflection steps for tasks longer than a handful of hops"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "b9d78504-a67a-4e6b-92dc-58b5cd8791f3",
-            "prompt": "What is the core weakness of pure chain-of-thought reasoning that ReAct addresses?",
-            "options": [
-              "It's too slow for real-time use",
-              "It's ungrounded in the real world, so small errors in internal knowledge compound into confidently wrong answers",
-              "It cannot be used with few-shot prompting",
-              "It only works on math problems"
-            ],
-            "correctIndex": 1,
-            "explanation": "Chain-of-thought reasons entirely from the model's internal knowledge with no way to check itself against the world, so errors and hallucinations compound across steps."
-          },
-          {
-            "id": "03371cb0-a027-4ccd-abaa-f50056de90c3",
-            "prompt": "In the Thought-Action-Observation loop, what does the Observation come from?",
-            "options": [
-              "The model's own guess about what the action probably returned",
-              "A real result returned by executing the action (e.g. actual search results)",
-              "A summary generated by a second, separate model",
-              "The original user prompt, repeated"
-            ],
-            "correctIndex": 1,
-            "explanation": "The observation is the real output of executing the chosen action against an actual tool or environment — that's what grounds the next thought in reality instead of assumption."
-          },
-          {
-            "id": "9d43ec12-b3c3-4cb9-a8fa-c8807bbf8669",
-            "prompt": "On ALFWorld and WebShop, how did one/two-shot ReAct prompting compare to imitation- and RL-trained baselines?",
-            "options": [
-              "It performed worse, since it had no task-specific training",
-              "It performed about the same",
-              "It beat those baselines by 34 and 10 absolute points in success rate respectively, despite the baselines being trained on ~100,000 task instances",
-              "It only worked on ALFWorld, not WebShop"
-            ],
-            "correctIndex": 2,
-            "explanation": "Despite using only one or two in-context examples and no task-specific training, ReAct prompting outperformed baselines trained on roughly 10^5 task instances by 34 points on ALFWorld and 10 points on WebShop."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "ReAct: Synergizing Reasoning and Acting in Language Models (arXiv:2210.03629)",
-          "url": "https://arxiv.org/abs/2210.03629",
-          "id": "c2aa1224-abd3-4bfa-8120-4af534796c66"
-        },
-        {
-          "title": "ReAct: Synergizing Reasoning and Acting in Language Models — Google Research Blog",
-          "url": "https://research.google/blog/react-synergizing-reasoning-and-acting-in-language-models/",
-          "id": "796c6656-d0dd-4e5d-bb3d-f5226e525b3f"
-        }
-      ],
-      "id": "1f5dde1b-7820-4ec6-9bbc-def4c065e545",
       "publishedDate": "2026-08-06T06:46:41Z"
     }
   ]
