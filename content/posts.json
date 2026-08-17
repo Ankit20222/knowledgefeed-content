@@ -1,6 +1,191 @@
 {
   "posts": [
     {
+      "id": "bfb86f4a-ed5d-4e12-9516-9a26a08d7c27",
+      "postKind": "concept",
+      "title": "Quantization: Same Model, a Quarter of the Memory",
+      "subtitle": "How GPTQ, AWQ, and GGUF squeeze 16-bit weights into 4 bits without wrecking the model.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "tags": [
+        "quantization",
+        "gptq",
+        "awq",
+        "gguf",
+        "inference",
+        "llms"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Quantization maps a model's 16-bit weights to lower-precision integers (INT8, INT4) to cut memory and speed up inference. Methods like GPTQ and AWQ differ in which weights they protect and how they correct for the introduced error, and picking the right one is a tradeoff between size, speed, and quality.",
+      "publishedDate": "2026-08-17T18:39:38Z",
+      "heroImageURL": null,
+      "slides": [
+        {
+          "id": "448ee684-3187-4fd5-9993-28d055b8b417",
+          "kind": "cover",
+          "title": "A 70B Model Doesn't Have to Mean 140GB of VRAM",
+          "body": "Quantization stores each weight in fewer bits, shrinking memory and often speeding up inference — for a small, controllable hit to accuracy.",
+          "bullets": [],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "02a48b8e-135f-44fc-bc2f-a422138fb739",
+          "kind": "problem",
+          "title": "Every Parameter Costs Bytes, and Big Models Have Billions of Them",
+          "body": null,
+          "bullets": [
+            "FP32 stores each weight in 4 bytes, FP16/BF16 in 2 — a 7B-parameter model in FP16 needs roughly 14GB just for weights.",
+            "A 70B model in FP16 needs roughly 140GB — more VRAM than a single high-end GPU has, forcing multi-GPU setups just to load it.",
+            "Decoding is usually memory-bandwidth bound, not compute bound — smaller weights mean less data to move per generated token.",
+            "The KV cache adds more memory pressure on top of the weights, so shrinking weight size directly buys headroom for longer contexts."
+          ],
+          "symbol": "internaldrive.fill",
+          "table": null
+        },
+        {
+          "id": "51d359cb-28cf-47d4-96a7-83b7cfaeb423",
+          "kind": "solution",
+          "title": "Quantization Maps Each Weight to a Small Integer Plus a Scale",
+          "body": "Instead of storing a 16-bit float, you store a low-bit integer and a per-group scale (and sometimes a zero-point) that maps it back to an approximate float value.",
+          "bullets": [
+            "INT8 uses 1 byte/weight, INT4 uses 0.5 byte — an INT4 model is roughly a quarter the size of its FP16 original.",
+            "Weights are grouped (e.g. 128 per group) so each group gets its own scale factor, keeping the mapping precise despite the low bit count.",
+            "Weight-only quantization keeps activations in higher precision (simpler, less accuracy loss); weight+activation quantization compresses both for extra speed but is harder to get right.",
+            "Quantization can happen after training (PTQ — cheap, minutes to hours) or during training (QAT — expensive, but better quality at very low bit-widths)."
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "d4645ed0-7a04-45ca-bc7c-170b5796afc0",
+          "kind": "comparison",
+          "title": "GPTQ, AWQ, and GGUF Disagree on What to Protect",
+          "body": null,
+          "bullets": [
+            "GPTQ quantizes layer by layer, using approximate second-order (Hessian) information to adjust remaining weights and cancel out the error each rounding step introduces.",
+            "AWQ observes that a small fraction of weight channels dominate activation magnitude, and protects exactly those channels with per-channel scaling instead of treating every weight equally.",
+            "GGUF (llama.cpp) uses mixed 'k-quant' block schemes tuned for CPU and edge inference, trading a bit more size for simple, dependency-free deployment.",
+            "NF4 (used in QLoRA) is a 4-bit format shaped to match the bell-curve distribution of neural network weights, not a plain linear integer grid."
+          ],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "Method",
+              "Bit-width",
+              "Best for"
+            ],
+            "rows": [
+              [
+                "GPTQ",
+                "4-bit",
+                "GPU serving, one-shot calibration"
+              ],
+              [
+                "AWQ",
+                "4-bit",
+                "GPU serving, protects salient channels"
+              ],
+              [
+                "GGUF k-quant",
+                "2-8 bit mixed",
+                "CPU / edge / llama.cpp"
+              ],
+              [
+                "NF4 (QLoRA)",
+                "4-bit",
+                "Fine-tuning a frozen base model"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "64bbdb80-81a9-4417-bd0f-db299fe9c222",
+          "kind": "example",
+          "title": "Fitting an 8B-Class Model on a Single Consumer GPU",
+          "body": "An 8B-parameter model in FP16 needs about 16GB — already tight on a 16GB card once KV cache and activations are added. Quantized to INT4, the weights drop to roughly 4-5GB.",
+          "bullets": [
+            "That smaller footprint leaves room for a much larger KV cache, so the same GPU now handles longer conversations, not just a smaller model.",
+            "On a laptop with 8-16GB of unified memory, INT4 is often the difference between a model loading at all and not fitting in memory.",
+            "4-bit GPTQ/AWQ on a 7-8B model typically stays close to FP16 quality on standard benchmarks, while pushing further to 2-bit causes a visible, noticeable drop.",
+            "Serving stacks each support a different subset of formats — vLLM and TGI favor GPTQ/AWQ, llama.cpp favors GGUF — so the quantization method also picks your deployment stack."
+          ],
+          "symbol": "laptopcomputer",
+          "table": null
+        },
+        {
+          "id": "61257040-1380-43e4-94ca-e7d30305202a",
+          "kind": "concept",
+          "title": "Quantization Error Doesn't Show Up Evenly",
+          "body": null,
+          "bullets": [
+            "Outlier weights and activations, common in larger models, are hardest to represent in low bits — naive rounding can wreck exactly the values that matter most.",
+            "Calibration-based methods (GPTQ, AWQ) need a small representative dataset; a mismatched calibration set can quietly degrade quality on domains it never saw.",
+            "Rounding error compounds across layers and across generation steps, so quantization tends to hurt long chain-of-thought and multi-step reasoning more than single-turn answers.",
+            "Not every quantized format has a fast kernel on every GPU — a format that looks great on paper can still run slower than FP16 without an optimized kernel for it."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "1021eb37-c2ff-4427-b772-4eca50d7d8a3",
+          "kind": "takeaways",
+          "title": "Pick the Bit-Width the Deployment Target Actually Needs",
+          "body": null,
+          "bullets": [
+            "INT8 is close to a free lunch: half the memory of FP16, minimal quality loss — a good default when you're not memory-constrained.",
+            "INT4 (GPTQ/AWQ/NF4) is the sweet spot for running large models on limited hardware, at the cost of a small, usually acceptable quality dip.",
+            "Below 4-bit, quality loss becomes visible fast — reserve 2-3 bit for cases where fitting the model at all matters more than peak accuracy.",
+            "Match the format to the serving stack (vLLM/TGI want GPTQ or AWQ; llama.cpp wants GGUF) before optimizing anything else."
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b236e08f-f2d2-4041-9aba-68de47b34f3a",
+            "prompt": "What's the main memory saving from moving a model's weights from FP16 to INT4?",
+            "options": [
+              "No change — only compute speed improves",
+              "Weights shrink to roughly a quarter of the FP16 size",
+              "Weights double in size",
+              "Only the KV cache shrinks, not the weights"
+            ],
+            "correctIndex": 1,
+            "explanation": "FP16 uses 2 bytes per weight and INT4 uses 0.5 bytes — a 4x reduction, which is why a 70B model's weight memory can shrink from roughly 140GB toward roughly 35GB."
+          },
+          {
+            "id": "8dae351b-7744-402b-bd9d-701adb73b6fc",
+            "prompt": "What does AWQ specifically protect that naive rounding would damage?",
+            "options": [
+              "Every weight equally, via one global scale",
+              "The small fraction of weight channels with the largest activation magnitude",
+              "Only the first layer of the network",
+              "The KV cache values"
+            ],
+            "correctIndex": 1,
+            "explanation": "AWQ identifies that a small percentage of weight channels dominate activation magnitude and applies per-channel scaling to protect exactly those channels, rather than treating all weights the same."
+          },
+          {
+            "id": "2db132cd-acf9-4ed5-918a-abae4b21722b",
+            "prompt": "Why can quantization hurt multi-step reasoning more than single-turn answers?",
+            "options": [
+              "It doesn't — reasoning is unaffected by quantization",
+              "Rounding error introduced at each layer and each generation step compounds over a longer chain of steps",
+              "Quantized models can't do reasoning at all",
+              "Multi-step reasoning always requires FP32 precision"
+            ],
+            "correctIndex": 1,
+            "explanation": "Small per-step rounding errors accumulate — a chain-of-thought with many steps has more opportunities for compounding drift than a single-turn factual answer."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "Plan-and-Execute: Separating Planning From Acting",
       "subtitle": "Why some agents draft the whole itinerary first instead of deciding one step at a time.",
       "category": "AI Agents",
@@ -11180,179 +11365,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-07T06:39:48Z"
-    },
-    {
-      "id": "2494e064-6477-41e2-b647-5dfcf5ad13ab",
-      "title": "Beacon: Teaching a Vision Model When to Reach for a Tool",
-      "subtitle": "Most visual agents either call a tool every time or never learn to — Beacon's reward function teaches the difference, and picks up 6 points for it.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "agentic ai",
-        "visual reasoning",
-        "reinforcement learning",
-        "tool use",
-        "multimodal"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "eye.trianglebadge.exclamationmark",
-      "summary": "Beacon is a multimodal LLM trained with two targeted reinforcement-learning mechanisms that teach it not just to use visual tools (zoom, crop, code execution) but to recognize when a tool is actually necessary versus wasted overhead. Beacon-RL-8B ranks first on 11 of 13 open-source visual-reasoning benchmarks, beating its own base model by an average of 6.07 points — gains the paper attributes specifically to better judgment about when to act, not just more tool use.",
-      "body": null,
-      "slides": [
-        {
-          "id": "630771a2-5dc3-47eb-9aba-0944f8e78e91",
-          "kind": "cover",
-          "title": "Beacon: Teaching a Vision Model When to Reach for a Tool",
-          "body": "Give a vision-language model a zoom tool and a code interpreter, and it will either ignore them or lean on them for every single question. Neither is what you want.",
-          "bullets": [],
-          "symbol": "eye.trianglebadge.exclamationmark",
-          "table": null
-        },
-        {
-          "id": "6ec1e144-6d18-45c3-8825-4186beff2a24",
-          "kind": "problem",
-          "title": "Tool Access Isn't the Same as Tool Judgment",
-          "body": "Multimodal LLMs equipped with visual tools tend to fall into one of two failure modes, and standard RL training doesn't fix either.",
-          "bullets": [
-            "Under-use: the model answers straight from a downsampled image even when small text or fine detail actually requires zooming in first, and just gets it wrong",
-            "Over-use: the model invokes a tool reflexively on every question, including trivial ones, burning latency and compute for no accuracy gain",
-            "Standard RL rewards only the final answer's correctness — it can't tell the difference between 'the tool call helped' and 'the tool call was irrelevant but the answer happened to be right anyway'"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "e6fd13a0-3a70-4311-a570-fd5d30fd4034",
-          "kind": "solution",
-          "title": "Two Reward Mechanisms, Aimed at Judgment Not Just Accuracy",
-          "body": "Beacon adds two mechanisms to the RL training stage, each targeting a specific failure mode.",
-          "bullets": [
-            "Necessity-Aware Adaptive Reward: shapes the reward around whether a tool call was actually necessary for that specific example, not just whether the final answer was correct — this is what teaches the model to skip tools on easy questions",
-            "Hint-Guided Capability Expansion: focuses additional training signal on the hardest problems, where the base model tends to fail without tool assistance — strengthening tool-use specifically where it matters most",
-            "The paper evaluates on two separate axes rather than one aggregate score: Mode Adaptiveness (does it correctly recognize when a tool is needed?) and Tool Effect (does invoking the tool actually improve the answer?)"
-          ],
-          "symbol": "gearshape.2",
-          "table": null
-        },
-        {
-          "id": "1924b2a0-6b7c-494e-839c-8b56583b8aed",
-          "kind": "comparison",
-          "title": "Results: Beacon-RL-8B vs. the Field",
-          "body": "Against other open-source multimodal models across 13 benchmarks:",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Metric",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Benchmarks ranked #1 on",
-                "11 of 13"
-              ],
-              [
-                "Avg. improvement over its own base model",
-                "+6.07 points"
-              ],
-              [
-                "What improved most",
-                "Mode Adaptiveness & Tool Effect, not raw tool-call frequency"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "af1ee547-9bf9-40c3-b3be-e004e1b23e82",
-          "kind": "example",
-          "title": "Worked Example: One Chart, Two Different Calls",
-          "body": "Show the same model two questions about the same chart image.",
-          "bullets": [
-            "Q1: 'Which bar is the tallest?' — answerable at a glance; a well-tuned Beacon-style model skips the zoom tool entirely and answers directly, saving a full tool round-trip",
-            "Q2: 'What's the exact value printed on the third bar's tiny axis label?' — the label is unreadable at the image's native resolution, so the model correctly triggers a zoom/crop tool call before answering",
-            "A model without Necessity-Aware Adaptive Reward tends to call the tool for both questions (over-use) or neither (under-use) — Beacon's training signal is what produces the split behavior"
-          ],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": null
-        },
-        {
-          "id": "a79391a4-837f-4384-bca5-0cd8a9379ac0",
-          "kind": "problem",
-          "title": "Where This Doesn't Automatically Generalize",
-          "body": "The gains are real but scoped — worth knowing the boundaries before assuming this transfers everywhere.",
-          "bullets": [
-            "This is validated on visual-reasoning benchmarks specifically; the paper doesn't claim the same reward-shaping mechanisms transfer directly to pure text-based tool-use agents",
-            "Hint-Guided Capability Expansion depends on having a good supply of genuinely hard examples where tools are actually necessary — a training set skewed toward easy questions would undercut this half of the method",
-            "It's still an RL-trained model with the usual RL costs: more expensive and slower to train than supervised fine-tuning, and the reward shaping itself is a hyperparameter that has to be tuned per task distribution"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "29d3ddf1-8f63-4833-aea9-5cbaf70290c0",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "The bottleneck in tool-using visual agents often isn't tool access — it's judgment about when a tool is worth the cost",
-            "Beacon separates 'did the tool call happen' from 'did the tool call actually help,' and rewards the latter directly via Necessity-Aware Adaptive Reward",
-            "Hint-Guided Capability Expansion concentrates training signal on the hard cases where tools genuinely change the outcome",
-            "Result: Beacon-RL-8B leads 11 of 13 open-source benchmarks with a +6.07 point average gain, driven by better tool-use judgment rather than more tool calls"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "76a0e05a-5a4c-464f-9050-86d9cee00454",
-            "prompt": "What core problem does Beacon target that plain 'give the model a tool and do RL' doesn't fix?",
-            "options": [
-              "Models can't call tools at all without Beacon",
-              "Models can't tell when a tool call is actually necessary versus wasted overhead",
-              "Tools are too slow to ever be useful",
-              "Vision models can't process images larger than 224x224"
-            ],
-            "correctIndex": 1,
-            "explanation": "Standard RL only rewards the final answer, so it can't distinguish a tool call that genuinely helped from one that was irrelevant — Beacon's reward mechanisms specifically target that judgment gap."
-          },
-          {
-            "id": "f9f0417e-30d6-4134-a27c-9af544dc9d43",
-            "prompt": "What does 'Necessity-Aware Adaptive Reward' specifically teach the model to do?",
-            "options": [
-              "Always call every available tool",
-              "Never call tools, to save compute",
-              "Invoke tools proportionally to how necessary they are for that specific example",
-              "Randomly sample which tool to call"
-            ],
-            "correctIndex": 2,
-            "explanation": "It shapes the reward around whether the tool call was actually necessary for that example, teaching the model to skip tools on easy questions and use them on ones that genuinely require them."
-          },
-          {
-            "id": "f684550b-e025-4dd8-a274-61ec71938b8a",
-            "prompt": "On how many of the 13 benchmarks did Beacon-RL-8B rank first among open-source models?",
-            "options": [
-              "2 of 13",
-              "6 of 13",
-              "11 of 13",
-              "13 of 13"
-            ],
-            "correctIndex": 2,
-            "explanation": "Beacon-RL-8B achieved the highest average performance among open-source models, ranking first on 11 of the 13 benchmarks tested, with a +6.07 point average gain over its base model."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "a6f195e1-d2ca-4900-b911-0f65589d5a8c",
-          "title": "Beacon: Knowing When and How to Perform Agentic Visual Reasoning (arXiv:2607.28595)",
-          "url": "https://arxiv.org/abs/2607.28595"
-        }
-      ],
-      "publishedDate": "2026-08-07T00:39:31Z",
-      "heroImageURL": null
     }
   ]
 }
