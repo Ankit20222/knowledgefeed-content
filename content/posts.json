@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "id": "2cee4071-6a45-4ec5-a94f-50a9876925b6",
+      "title": "DPO: Skipping the Reward Model Entirely",
+      "subtitle": "Turning a preference pair directly into a loss function — no reward model, no PPO rollouts.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "preference-tuning",
+        "fine-tuning",
+        "alignment"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Direct Preference Optimization reframes RLHF as a single supervised classification loss: given a chosen and rejected response to the same prompt, it directly increases the model's relative log-probability of the chosen one. It proves that this loss has the exact same optimal policy as the RL objective PPO is trying to solve — RLHF's math, without RLHF's machinery. The tradeoff is that DPO fits a fixed, offline preference dataset, while PPO-based RLHF can keep sampling and re-ranking new completions as the policy shifts.",
+      "publishedDate": "2026-08-18T18:39:38Z",
+      "slides": [
+        {
+          "id": "8bb500e0-12b8-4d4a-9ddf-ece2c9b6f1ba",
+          "kind": "cover",
+          "title": "One Loss Function, No Reward Model",
+          "body": "RLHF normally needs three models in memory at once: policy, reward model, and a frozen reference copy, coordinated through PPO. DPO collapses that into one classification-style loss on preference pairs.",
+          "bullets": [
+            "Introduced in 2023 (Rafailov et al., Stanford) as a drop-in replacement for the RL stage of RLHF",
+            "Trains directly on (prompt, chosen response, rejected response) triples",
+            "No reward model to train, no rollouts to sample, no PPO hyperparameters to tune"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "8101c9bf-aa48-4b3a-ae00-9ccebd606cda",
+          "kind": "problem",
+          "title": "Classic RLHF Is a Three-Stage Rube Goldberg Machine",
+          "body": "Standard RLHF trains a reward model on human preference pairs, then runs PPO to optimize the policy against that reward model, all while a KL penalty holds it near a frozen reference model.",
+          "bullets": [
+            "Stage 1: train a reward model r(x,y) on labeled (chosen, rejected) pairs",
+            "Stage 2: run PPO — sample completions, score them with r, update the policy, repeat for thousands of steps",
+            "PPO is notoriously finicky: reward hacking, value-function instability, and sensitive hyperparameters make it hard to reproduce"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "5703128c-b9fd-4f7a-a7d3-ad0afc13f230",
+          "kind": "solution",
+          "title": "The Reward Model Has a Closed-Form Solution",
+          "body": "The key insight: for a KL-constrained reward maximization objective, the optimal policy can be written analytically in terms of the reward function. Invert that relationship and the reward function drops out of the training loss entirely.",
+          "bullets": [
+            "The RLHF objective's optimal policy has a known closed form: it's the reference policy re-weighted by exp(reward / beta)",
+            "Solving that equation for the reward turns it into a function of the policy itself, not a separate network",
+            "Substituting that back into the standard Bradley-Terry preference loss gives a loss written purely in terms of policy log-probabilities"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "b10659f3-3424-419b-9113-72c59e3c08d1",
+          "kind": "concept",
+          "title": "The DPO Loss, in Plain Terms",
+          "body": "For each pair, DPO compares how much the policy's log-probability of the chosen response has grown relative to the reference model, versus how much the rejected response's has grown.",
+          "bullets": [
+            "loss = -log sigmoid( beta * [ (logP_policy(chosen) - logP_ref(chosen)) - (logP_policy(rejected) - logP_ref(rejected)) ] )",
+            "beta controls how far the policy is allowed to drift from the frozen reference model — small beta means aggressive updates",
+            "The reference model's log-probs are computed once and cached; only the policy model needs gradient updates"
+          ],
+          "symbol": "sum",
+          "table": null
+        },
+        {
+          "id": "3d6e9c10-ca68-4ed1-97e7-c4fe25a2d018",
+          "kind": "example",
+          "title": "Worked Example: One Preference Pair",
+          "body": "Prompt: 'Explain recursion.' Chosen: a clear explanation with a base case. Rejected: a vague, circular non-answer.",
+          "bullets": [
+            "Suppose the policy already assigns the chosen response a higher log-prob than the reference model does (+2.1 nats), and the rejected response a lower one (-0.4 nats)",
+            "The margin (+2.1) - (-0.4) = 2.5 is scaled by beta (e.g. 0.1) and passed through -log(sigmoid(x))",
+            "A positive, growing margin drives the loss toward zero; the gradient step nudges the model to further favor the chosen response and suppress the rejected one, in that single backward pass"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "268ecd52-5ac3-4537-af0e-3e9b4dfa395d",
+          "kind": "comparison",
+          "title": "DPO vs. PPO-Based RLHF",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "",
+              "PPO-based RLHF",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "Policy + reward model + reference (3)",
+                "Policy + reference (2)"
+              ],
+              [
+                "Data source",
+                "Online — samples new completions each step",
+                "Offline — fixed preference dataset"
+              ],
+              [
+                "Stability",
+                "Sensitive to reward hacking, value-loss collapse",
+                "Standard supervised-style training, far more stable"
+              ],
+              [
+                "Can improve past the dataset's ceiling",
+                "Yes — reward model generalizes to new samples",
+                "Bounded by what the static pairs teach it"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "40ca9b02-e8aa-4449-a699-6b52d0aebd0c",
+          "kind": "concept",
+          "title": "Where DPO Falls Short",
+          "body": "Removing the reward model removes a source of instability, but also removes a capability: PPO's reward model can score completions the policy hasn't seen yet, which is exactly how online RL keeps improving past its seed data.",
+          "bullets": [
+            "DPO can overfit to the specific chosen/rejected pairs it was given, especially with a small or noisy preference dataset",
+            "Because the loss only looks at relative log-probs, a policy can 'win' by pushing rejected-response probability toward zero rather than actually improving the chosen response",
+            "For domains where preferences shift as the policy improves (e.g. iterative red-teaming), online RL methods still have an edge — DPO needs a fresh round of pairs to catch up"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "04760830-26ff-46bf-a5d6-0ed606cd6f1d",
+          "kind": "takeaways",
+          "title": "What to Remember",
+          "body": null,
+          "bullets": [
+            "DPO proves the RLHF reward-then-PPO pipeline has a hidden closed form — you can optimize the same objective with one supervised-style loss on preference pairs",
+            "beta is the one knob that matters: it sets how far the policy can drift from the reference model per pair",
+            "Reach for DPO when you have a solid static preference dataset and want RLHF-grade alignment without PPO's instability; reach for online RL when the policy needs to keep improving past that dataset"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "cbc8640c-9462-4e26-bdda-a5d2072c52ef",
+            "prompt": "What does DPO eliminate from the standard RLHF pipeline?",
+            "options": [
+              "The frozen reference model",
+              "The separate reward model and the PPO sampling loop",
+              "The need for any human preference labels",
+              "The KL penalty entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO still uses a frozen reference model and still relies on human (or AI) preference labels — it just proves the reward model and PPO's online sampling loop are unnecessary, because the optimal policy has a closed-form relationship to the reward that lets you substitute it directly into the loss."
+          },
+          {
+            "id": "111461d6-9ce5-4552-8544-4a2bcf3b5c23",
+            "prompt": "In the DPO loss, what does the beta parameter control?",
+            "options": [
+              "The learning rate of the optimizer",
+              "How many preference pairs are used per batch",
+              "How far the policy is allowed to drift from the reference model",
+              "The temperature used during inference sampling"
+            ],
+            "correctIndex": 2,
+            "explanation": "Beta scales the margin between chosen and rejected log-probability ratios inside the loss. A smaller beta permits larger deviations from the reference model per update; a larger beta keeps the policy closer to its starting point."
+          },
+          {
+            "id": "6a13e2f2-8708-4f57-8a4d-b8ff8319a0bc",
+            "prompt": "Why might PPO-based RLHF still outperform DPO in some settings?",
+            "options": [
+              "PPO doesn't require any human labels at all",
+              "PPO's reward model can score newly sampled completions, letting the policy keep improving past its original dataset",
+              "PPO is simpler to implement and more stable to train",
+              "DPO cannot be used with a KL penalty"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because PPO samples fresh completions and scores them with a learned reward model, it can keep discovering and reinforcing better behavior online. DPO trains on a fixed, offline set of pairs, so it's bounded by what those pairs teach it — it can't generalize a reward signal to responses it never saw labeled."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "75460339-9263-4a73-87c9-35c8b4d443bd",
       "title": "MCP Prompts: Templates the User Invokes, Not the Model",
       "subtitle": "The one MCP primitive where a human, not the LLM, decides when it fires.",
@@ -11180,205 +11370,6 @@
       "references": [],
       "id": "0fef7d6c-0852-41c9-b5c1-7ad98e0fd40d",
       "publishedDate": "2026-08-09T00:40:34Z"
-    },
-    {
-      "title": "Activity Frames: Replay a Task Instead of Re-Deriving It",
-      "subtitle": "A deterministic compiler turns a day of screen activity into workflows an agent can run at near-zero token cost",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "agent-memory",
-        "computer-use",
-        "mcp",
-        "screen-recording",
-        "workflow-replay"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "record.circle",
-      "summary": "Activity Frames compiles raw screen recordings into deterministic, agent-executable 'frames' instead of feeding raw pixels to an LLM. Computer-use agents stop re-deriving the same repetitive task from scratch and instead replay a compiled workflow, cutting token cost on the happy path to near zero.",
-      "body": null,
-      "id": "341ed627-9dab-4b3b-852a-134082e1c987",
-      "publishedDate": "2026-08-08T18:42:11Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Your agent forgets what you did five minutes ago",
-          "body": "Every new conversation with a computer-use agent starts blind — it doesn't know what you already did today, and it re-reasons through tasks it has already solved dozens of times.",
-          "bullets": [],
-          "symbol": "record.circle",
-          "table": null,
-          "id": "c952252a-6240-42da-99b2-4ef86fcd6fd8"
-        },
-        {
-          "kind": "problem",
-          "title": "Two failures, one root cause: no persistent activity record",
-          "body": "Computer-use agents burn tokens re-deriving repetitive tasks from scratch, and they start every session with zero awareness of what the user did between conversations.",
-          "bullets": [
-            "Repetitive tasks (same LinkedIn outreach, same weekly report) get fully re-reasoned every single time",
-            "Agents have no grounded record of prior screen activity — no memory of apps used, sites visited, or steps taken",
-            "Feeding raw screen video to an LLM for this is expensive and non-deterministic"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "0f80d86f-2b4c-429d-b910-beae8b96d2f0"
-        },
-        {
-          "kind": "architecture",
-          "title": "A three-stage, deterministic pipeline — no LLM in the loop",
-          "body": "Capture, Compilation, and Serving are cleanly separated, and the compiler stage is 100% deterministic: same input always produces the same frame.",
-          "bullets": [
-            "Capture: screen snapshots + accessibility-tree data + input events stream into local SQLite storage",
-            "Compilation: sessionizes activity, detects dwell periods and gaps, merges flicker, types entities via 25+ site parsers — using on-device OCR only, no remote model calls",
-            "Serving: an MCP server exposes six tools — get_context, get_activity, get_steps, get_day_summary, get_patterns, get_communications"
-          ],
-          "symbol": "gearshape.2",
-          "table": null,
-          "id": "ea2dd60d-7b68-4c04-a14a-67a62d12132a"
-        },
-        {
-          "kind": "concept",
-          "title": "Tier 1 facts vs. Tier 2 inference — a hard contract",
-          "body": "Every frame enforces a two-tier honesty contract so an agent never mistakes a guess for a fact.",
-          "bullets": [
-            "Tier 1: only measurable, deterministically-derived facts — app name, site, timestamps, duration, click/key counts",
-            "Tier 2 (optional): any inferred label gets tagged with an explicit confidence level, never presented as ground truth",
-            "Every frame keeps evidence pointers back to the raw capture rows it was built from"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "e4c97303-0262-4c0d-8d4f-98e7b251e70d"
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: a LinkedIn outreach message, replayed not re-reasoned",
-          "body": "A messaging workflow performed once becomes a reusable, executable script.",
-          "bullets": [
-            "The compiler reduces the demonstrated task to ordered operations — focus, click, type — grounded by element name and role",
-            "Next time, the agent slots in a new recipient and new message text, then replays the script instead of re-deriving the steps",
-            "Roughly 342 minutes of a day's raw activity compresses to about 150 words of context — and a full day compiles in under one second"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "id": "9c4017f8-6082-4404-a73c-d2539cd1eb88"
-        },
-        {
-          "kind": "comparison",
-          "title": "Re-deriving vs. replaying a known task",
-          "body": "The paper's core metric, Routine Overhead Ratio, measures exactly this gap across weeks of real activity.",
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "",
-              "Re-derive every time",
-              "Activity Frames replay"
-            ],
-            "rows": [
-              [
-                "Token cost per repeat task",
-                "Full re-reasoning",
-                "Near-zero on the happy path"
-              ],
-              [
-                "Determinism",
-                "Varies run to run",
-                "Deterministic compiled script"
-              ],
-              [
-                "Context needed",
-                "Raw screenshots / video",
-                "~150 words per session block"
-              ],
-              [
-                "Compile latency",
-                "N/A",
-                "Under 1 second for a full day"
-              ]
-            ]
-          },
-          "id": "598ffa38-e5f8-4372-8008-344c2250abe4"
-        },
-        {
-          "kind": "problem",
-          "title": "Where it breaks down",
-          "body": "This only helps with tasks the user has already performed — and it trades some setup complexity for that speedup.",
-          "bullets": [
-            "Genuinely novel, first-time tasks have no prior frame to replay — the agent is back to full reasoning",
-            "Unknown or unlisted websites fall back to generic references instead of rich, typed entities (25+ sites get full parsing, the long tail doesn't)",
-            "Local-only by design: typed text capture is opt-in (--include-text) and audio is off by default, so some workflows need explicit consent flags",
-            "v0.2, tested primarily on Apple Silicon macOS — the Intel build exists but is less exercised"
-          ],
-          "symbol": "xmark.octagon",
-          "table": null,
-          "id": "7670b47b-6173-4cd6-9003-dd2dafaad7ea"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Deterministic compilation, not another model call, is what makes agent memory cheap and trustworthy.",
-          "bullets": [
-            "Separating capture, deterministic compilation, and MCP serving keeps the expensive part (LLM reasoning) out of the memory pipeline entirely",
-            "The Tier 1 / Tier 2 fact-vs-inference split is a reusable pattern for any agent memory system that wants to avoid hallucinated context",
-            "Replay only pays off for repeated work — pair it with normal reasoning for anything the user hasn't done before"
-          ],
-          "symbol": "flag.checkered",
-          "table": null,
-          "id": "b4e78d45-f3f8-4168-baa0-fdbde8e39019"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the main problem Activity Frames is designed to solve?",
-            "options": [
-              "Slow screen recording performance on older hardware",
-              "Agents re-deriving repetitive tasks from scratch and lacking a record of what the user already did",
-              "LLMs being unable to read accessibility trees",
-              "A lack of open-source screen recording software"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper targets two linked failures: agents burning tokens re-reasoning through tasks they've already performed, and agents starting each session blind to prior user activity.",
-            "id": "ccb12bd4-165d-4eeb-b1e6-0c999b3c23ef"
-          },
-          {
-            "prompt": "Why does the compilation stage use no LLM calls?",
-            "options": [
-              "LLMs are too slow to run locally",
-              "To keep compilation deterministic and cheap — the same capture data always produces the same frame",
-              "Because the accessibility tree cannot be read by language models",
-              "To comply with app store policies"
-            ],
-            "correctIndex": 1,
-            "explanation": "Compilation relies on on-device OCR and rule-based sessionizing/entity-typing instead of a model, so the same input reliably produces the same output — a property replay depends on.",
-            "id": "76eb79c9-6b92-4e6e-8237-140cfd0bca30"
-          },
-          {
-            "prompt": "What does the Tier 1 / Tier 2 distinction protect against?",
-            "options": [
-              "Running out of disk space",
-              "Presenting an inferred or guessed label as if it were a measured fact",
-              "Exceeding the MCP server's rate limit",
-              "Losing data if the recording app crashes"
-            ],
-            "correctIndex": 1,
-            "explanation": "Tier 1 holds only directly measurable facts (timestamps, click counts, app names); Tier 2 holds inferences, always tagged with a confidence level, so downstream agents can tell a fact from a guess.",
-            "id": "9267811a-0ea3-4060-a1f2-cca300722c49"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Activity Frames: Deterministic Screen-Activity Compilation for Agent Memory and Replay (arXiv:2608.05784)",
-          "url": "https://arxiv.org/abs/2608.05784",
-          "id": "dd88cdfd-7856-4c75-b008-34ea99b91d6f"
-        },
-        {
-          "title": "activity-frames — official implementation (GitHub)",
-          "url": "https://github.com/nossa-y/activity-frames",
-          "id": "9f9d6bd4-fcdd-4c36-8a57-00a88faf6132"
-        }
-      ]
     }
   ]
 }
