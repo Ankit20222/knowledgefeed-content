@@ -1,6 +1,494 @@
 {
   "posts": [
     {
+      "id": "e3cbf410-2703-4b0a-a03a-a266996b762e",
+      "title": "DFlash: Drafting a Whole Block Before Verifying It",
+      "subtitle": "A diffusion drafter replaces the autoregressive bottleneck in speculative decoding.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "speculative-decoding",
+        "diffusion-models",
+        "inference-optimization",
+        "llm-serving"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "speedometer",
+      "summary": "DFlash replaces the small autoregressive draft model in speculative decoding with a lightweight block diffusion model that drafts an entire block in one forward pass. Independent benchmarks show it beating EAGLE-3 by roughly 2x-2.5x, and it's already shipped in vLLM's speculators library.",
+      "publishedDate": "2026-08-20T12:44:10Z",
+      "slides": [
+        {
+          "id": "a3a2aeaf-d3f8-4646-9a83-c09f3cd22ce4",
+          "kind": "cover",
+          "title": "Speculative Decoding's Draft Step Was Still the Bottleneck",
+          "body": "Speculative decoding speeds up LLM inference by having a small model draft several tokens, then having the big model verify them in one pass. DFlash asks: why is the draft model still autoregressive?",
+          "bullets": [],
+          "symbol": "speedometer",
+          "table": null
+        },
+        {
+          "id": "648a2a4f-dbcf-4e98-9e7a-5dcd23adbc69",
+          "kind": "problem",
+          "title": "The Draft Model Drafts One Token at a Time",
+          "body": "Classic speculative decoding (and drafters like EAGLE-3) still generate their draft tokens sequentially, token by token. That serial chain caps how much latency you can hide, even though the draft model is small.",
+          "bullets": [
+            "Each draft token still waits on the previous one — the draft phase is fast per-token, but not parallel.",
+            "Bigger draft trees (more candidate continuations) help acceptance rate but add more sequential steps, not fewer.",
+            "The target model's single verification pass is cheap; the serial drafting is what limits the ceiling."
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "9281416c-ebe0-44ef-8537-e7c6bc909796",
+          "kind": "solution",
+          "title": "A Block Diffusion Model Drafts the Whole Block at Once",
+          "body": "DFlash swaps the autoregressive drafter for a lightweight block diffusion model, conditioned on hidden-state features pulled from the target model, that denoises an entire block of draft tokens in a single forward pass.",
+          "bullets": [
+            "One forward pass produces a full candidate block instead of one token per step.",
+            "Conditioning on the target model's own context features keeps the draft distribution close to what the target would actually produce, which keeps acceptance rates high.",
+            "Verification stays exactly as in standard speculative decoding — output is provably identical to greedy/sampled decoding from the target model (lossless)."
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "0b35eb37-58fd-40d8-8c17-50a571f72146",
+          "kind": "comparison",
+          "title": "Reported Speedups vs. EAGLE-3",
+          "body": "Independent write-ups (LMSYS Org, UC San Diego benchmarks) report DFlash consistently ahead of EAGLE-3 at matched tree size, with the gap widening under greedy decoding.",
+          "bullets": [
+            "Headline claim: over 6x lossless acceleration overall, up to ~2.5x higher speedup than EAGLE-3.",
+            "UCSD single-stream benchmark on Qwen3-8B: DFlash ~4.86x avg vs EAGLE-3 ~1.76x avg at matched tree size."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Decoding mode",
+              "DFlash vs. baseline",
+              "Improvement over EAGLE-3"
+            ],
+            "rows": [
+              [
+                "Greedy (temp=0)",
+                "~4.9x",
+                "~2.4x"
+              ],
+              [
+                "Sampling (temp=1)",
+                "~4.1x",
+                "~2.2x"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "86d6be34-aa58-4e1f-969e-ac2084a5b496",
+          "kind": "example",
+          "title": "Production Impact: More Concurrent Users on the Same GPU",
+          "body": "This isn't just a benchmark number — it changes how many users one GPU can serve. On NVIDIA Blackwell hardware running TensorRT-LLM, DFlash was measured serving more than 15x the concurrent user load of standard autoregressive decoding at the same latency budget.",
+          "bullets": [
+            "Throughput gains from faster drafting translate directly into serving cost per token.",
+            "DFlash checkpoints already exist for open models like Qwen3.8-27B and Muse-Glimmer-30B, so it's not just a research demo — it's integrated into vLLM's speculators library."
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "bc526a0e-694b-4e98-960b-2bffe13f934b",
+          "kind": "takeaways",
+          "title": "When Block Diffusion Drafting Is Worth Adopting",
+          "body": "Use DFlash-style drafting when you're already running speculative decoding and drafting latency, not verification, is your bottleneck.",
+          "bullets": [
+            "Best fit: high-throughput serving where GPU has slack to run a lightweight diffusion drafter alongside the target model.",
+            "Needs its own trained/fine-tuned drafter per target model family — it isn't a drop-in for every checkpoint on day one.",
+            "Block size is a tuning knob: larger blocks mean more parallelism but can lower acceptance rate on divergent continuations, so the sweet spot is workload-dependent.",
+            "Not a magic multiplier if you're already compute-bound with large batches — the free lunch comes from underused GPU cycles during the draft step."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "dbdfdf4c-f716-42fe-895a-75b6797f14a6",
+            "prompt": "What was the actual bottleneck DFlash targets in standard speculative decoding?",
+            "options": [
+              "The target model's verification pass is too slow",
+              "The draft model still generates its candidate tokens one at a time, sequentially",
+              "GPUs can't run two models simultaneously",
+              "KV cache memory runs out during drafting"
+            ],
+            "correctIndex": 1,
+            "explanation": "Verification by the target model is a single cheap forward pass. The draft phase was the serial bottleneck because even small autoregressive drafters still generate token-by-token."
+          },
+          {
+            "id": "44e3248a-d727-4ac5-bc1a-60ce7df40843",
+            "prompt": "How does DFlash's block diffusion drafter stay lossless (produce output identical to the target model)?",
+            "options": [
+              "It replaces the target model entirely",
+              "It shrinks the vocabulary to reduce ambiguity",
+              "Verification against the target model still happens exactly as in standard speculative decoding — only the drafting step changed",
+              "It rounds probabilities to remove low-likelihood tokens"
+            ],
+            "correctIndex": 2,
+            "explanation": "Losslessness in speculative decoding comes from the verification step, not the drafter. DFlash only changes how draft candidates are generated (in parallel via diffusion); the target model still verifies every token exactly."
+          },
+          {
+            "id": "cce6c3a6-cb76-4e68-93cd-d0e5c075461b",
+            "prompt": "What's a real tradeoff of increasing DFlash's block size?",
+            "options": [
+              "It has no effect on performance",
+              "Larger blocks always increase acceptance rate",
+              "Larger blocks add more parallelism but can lower acceptance rate on continuations that diverge more from the conditioned context",
+              "Larger blocks require a bigger target model"
+            ],
+            "correctIndex": 2,
+            "explanation": "Block size is a real tuning knob — bigger blocks parallelize more drafting work, but the diffusion model has to commit to more tokens at once, which can hurt acceptance when the true continuation branches unpredictably."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "08d3850a-dc10-4f05-b8f8-6012f31603fc",
+          "title": "DFlash: Block Diffusion for Flash Speculative Decoding (arXiv:2602.06036)",
+          "url": "https://arxiv.org/abs/2602.06036"
+        },
+        {
+          "id": "9653e3a9-b7e9-41b2-a2cf-dff915dd103c",
+          "title": "z-lab/dflash — official implementation",
+          "url": "https://github.com/z-lab/dflash"
+        }
+      ]
+    },
+    {
+      "id": "6ef3bedf-e300-4a45-ad6c-0e1c4a358e0b",
+      "title": "OpenAI Gates Its Most Capable Model Behind a Trust List",
+      "subtitle": "Daybreak splits into a defender tier and a locked-down offensive-capability tier.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "ai-security",
+        "cybersecurity",
+        "openai",
+        "model-access-control"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "lock.shield.fill",
+      "summary": "OpenAI expanded Daybreak, its cyber defense program, into two tiers: a broadly-available defensive model and a far more capable offensive-research model restricted to vetted partners. The gap between them — 1.5% vs 95% success on high-risk exploit tasks — is the real story.",
+      "publishedDate": "2026-08-20T12:44:10Z",
+      "slides": [
+        {
+          "id": "31b3be25-cc6e-4554-ba76-e80ee25d3d3a",
+          "kind": "cover",
+          "title": "OpenAI Splits Daybreak Into a Defender Tier and a Locked Tier",
+          "body": "OpenAI expanded its Daybreak cyber-defense program with two models built for opposite audiences: one for defenders everywhere, one for a short list of vetted partners.",
+          "bullets": [],
+          "symbol": "lock.shield.fill",
+          "table": null
+        },
+        {
+          "id": "6a07b666-aa51-4f7d-8332-516fa134f7b7",
+          "kind": "problem",
+          "title": "The Defense Window Is Narrowing",
+          "body": "Attackers are already using AI to accelerate exploit development. Defenders need equally capable tools, but a model that's great at finding zero-days is, by construction, also great at exploit chain development — the same capability cuts both ways.",
+          "bullets": [
+            "A model strong enough to find a real zero-day is strong enough to help build one.",
+            "Releasing that capability broadly helps attackers as much as defenders — so OpenAI split access instead of picking one tradeoff for everyone."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "e05eb8bf-73f3-4b4b-859e-bd027fd18a9a",
+          "kind": "solution",
+          "title": "Two Tiers, Two Different Models",
+          "body": "Daybreak Blue runs GPT-5.6 Sol with safety recalibrated for defensive work. Daybreak Red runs GPT-5.6 Cyber, trained specifically for offense-style tasks, and is only available to trusted partners.",
+          "bullets": [
+            "Daybreak Blue (GPT-5.6 Sol): vulnerability discovery, detection engineering, incident response, patch validation — open to defenders broadly.",
+            "Daybreak Red (GPT-5.6 Cyber): zero-day discovery and exploit chain development — access gated to named trusted partners only."
+          ],
+          "symbol": "square.split.2x1.fill",
+          "table": null
+        },
+        {
+          "id": "5dc3d568-3fca-433e-b73a-8f4abe686d0e",
+          "kind": "comparison",
+          "title": "The Capability Gap Is the Whole Point",
+          "body": "OpenAI's own security evaluation tested both models on high-risk tasks: exploit chain development, authentication bypass, privilege escalation.",
+          "bullets": [
+            "That ~60x gap is what justifies gating Cyber to a short partner list instead of general release."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Model",
+              "Success rate on high-risk exploit tasks"
+            ],
+            "rows": [
+              [
+                "GPT-5.6 Sol (Daybreak Blue)",
+                "~1.5%"
+              ],
+              [
+                "GPT-5.6 Cyber (Daybreak Red)",
+                "~95%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "3c07e642-1f45-4d24-8180-1cadbed30616",
+          "kind": "example",
+          "title": "Rollout: Vendor Partnerships and Cloud Access",
+          "body": "The expansion shipped alongside partnerships with roughly 16 cybersecurity vendors, and OpenAI's cyber models became available to eligible customers on Amazon Bedrock.",
+          "bullets": [
+            "Reported partners include names like Accenture, IBM, CrowdStrike, and Cloudflare.",
+            "Amazon Bedrock listed the models for eligible customers on August 11, 2026 — distribution through existing enterprise cloud channels, not a public API."
+          ],
+          "symbol": "building.2.fill",
+          "table": null
+        },
+        {
+          "id": "20a8faa0-013b-41a5-b96a-4de34f639b9d",
+          "kind": "takeaways",
+          "title": "Access Control Is Now Part of the Model Release Itself",
+          "body": "This is less a capability story than an access-control story: the model card decides who gets it, not just what it can do.",
+          "bullets": [
+            "\"Trusted partner\" gating is doing real safety work here — it's not marketing, given the 60x capability gap on offensive tasks.",
+            "It also concentrates powerful offensive-security AI in a small set of vetted organizations, which raises its own governance questions about who decides \"trusted.\"",
+            "Smaller defenders without a partner relationship still only get the weaker Blue tier."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "e17955e4-6299-4d70-9f73-8f0ebd4babaf",
+            "prompt": "Why did OpenAI split Daybreak into two separate models instead of releasing one?",
+            "options": [
+              "To charge two different prices",
+              "Because a model capable enough to find real zero-days is also capable enough to help build exploits, so broad release of the stronger model would help attackers too",
+              "GPT-5.6 Sol and GPT-5.6 Cyber are unrelated products",
+              "To comply with a specific government mandate named in the announcement"
+            ],
+            "correctIndex": 1,
+            "explanation": "The dual-use nature of offensive security capability is the core reason: the same skill that finds a zero-day for a defender can build an exploit for an attacker, so OpenAI gated the stronger model to vetted partners instead of general release."
+          },
+          {
+            "id": "c17ee94c-58fb-4751-b8df-5dcee7f8cca2",
+            "prompt": "In OpenAI's security evaluation, roughly what was the gap between the two models on high-risk exploit tasks?",
+            "options": [
+              "No meaningful difference",
+              "GPT-5.6 Sol succeeded ~1.5% of the time vs. ~95% for GPT-5.6 Cyber",
+              "Both succeeded above 90%",
+              "GPT-5.6 Cyber failed more often than Sol"
+            ],
+            "correctIndex": 1,
+            "explanation": "OpenAI reported Sol (the broadly-available defensive model) succeeding on about 1.5% of high-risk requests like exploit chain development, versus about 95% for Cyber (the gated model) — a roughly 60x gap that underpins the access restriction."
+          },
+          {
+            "id": "7c01c160-289a-44b8-a54e-886588ae9da6",
+            "prompt": "How is Daybreak Red (GPT-5.6 Cyber) distributed?",
+            "options": [
+              "Open weights on Hugging Face",
+              "Free public API access",
+              "Restricted to a short list of trusted partners, plus availability to eligible customers via Amazon Bedrock",
+              "Only available inside OpenAI's internal red team"
+            ],
+            "correctIndex": 2,
+            "explanation": "Access is gated to named trusted partners (reported to include firms like Accenture, IBM, CrowdStrike, and Cloudflare), with cloud distribution through Amazon Bedrock for eligible customers rather than open or public API access."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "06f716a4-a8c0-4b2d-b9aa-9b33f7a4cc0b",
+          "title": "Expanding Daybreak as the Cyber Defense Window Narrows — OpenAI",
+          "url": "https://openai.com/index/expanding-daybreak-as-the-cyber-defense-window-narrows/"
+        },
+        {
+          "id": "37d9d3a9-1274-44ec-83db-d9414e46c9a0",
+          "title": "As AI-led attacks multiply, OpenAI launches a new cyber model — TechCrunch",
+          "url": "https://techcrunch.com/2026/08/10/as-ai-led-attacks-multiply-openai-launches-a-new-cyber-model/"
+        }
+      ]
+    },
+    {
+      "id": "368628eb-a74a-4f05-8d17-3bfa7abe96e2",
+      "title": "Hybrid Search: Why RAG Still Needs Keywords",
+      "subtitle": "Dense embeddings miss exact strings — a sparse retriever catches what they smear away.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "hybrid-search",
+        "bm25",
+        "dense-retrieval",
+        "reciprocal-rank-fusion"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "Dense vector search is great at paraphrase and semantic similarity but quietly fails on exact strings like error codes, SKUs, and rare proper nouns. Hybrid search runs a lexical retriever (BM25) alongside dense retrieval and fuses the two ranked lists, usually with Reciprocal Rank Fusion, to catch both.",
+      "publishedDate": "2026-08-20T12:44:10Z",
+      "slides": [
+        {
+          "id": "f4b8d61a-80dc-49dd-bad6-9cda2fb3c8bb",
+          "kind": "cover",
+          "title": "Your Embedding Model Doesn't Know What 'E0442' Means",
+          "body": "Dense retrieval is excellent at semantic similarity and terrible at exact strings. Hybrid search fixes that by never relying on embeddings alone.",
+          "bullets": [],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "5c29840d-a666-443e-ab84-4f4399b0ca1f",
+          "kind": "problem",
+          "title": "Embeddings Smear Rare Tokens Into a Similarity Space",
+          "body": "A dense retriever encodes text into a vector and ranks documents by cosine similarity. That works great for paraphrase, but rare tokens (codes, SKUs, acronyms, numbers) get compressed into the same neighborhood as semantically related — but textually wrong — content.",
+          "bullets": [
+            "Query \"error E0442\" can retrieve semantically-similar troubleshooting docs while missing the one doc that literally contains \"E0442.\"",
+            "The failure is silent: there's no error, no exception — just a wrong-but-plausible-looking top result.",
+            "This gets worse for domain-specific jargon the embedding model never saw much of during training."
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "table": null
+        },
+        {
+          "id": "19ca5c4c-23d1-44ea-9576-cc294db6a905",
+          "kind": "solution",
+          "title": "Run a Lexical Retriever Alongside the Dense One",
+          "body": "Hybrid search adds BM25 — a sparse, TF-IDF-style lexical scorer with no training required — as a second retrieval path that runs in parallel with dense vector search, then merges both ranked lists.",
+          "bullets": [
+            "BM25 scores documents on exact term overlap and term rarity — it will always surface the doc containing \"E0442\" verbatim.",
+            "Dense retrieval still handles paraphrase and semantic queries the lexical side can't touch.",
+            "Both retrievers query the same document set independently; nothing is chosen upfront, both always run."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "7efa0db9-b2f3-4099-b909-48e02c48fb68",
+          "kind": "architecture",
+          "title": "Fusing Two Rankings Without Comparable Scores",
+          "body": "BM25 scores and cosine similarities live on different, incomparable scales — you can't just average them. Reciprocal Rank Fusion (RRF) sidesteps that by using rank position instead of raw score.",
+          "bullets": [
+            "RRF score for a document d: sum over each retriever of 1 / (k + rank_d), with k typically set to 60.",
+            "A document ranked #1 by BM25 and #3 by dense search scores higher than one ranked #50 by both — no score normalization needed.",
+            "Cheap to compute and doesn't require retraining anything when you swap the embedding model or the lexical index."
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "403d0cf6-7111-4a91-a803-9f610c6c3176",
+          "kind": "comparison",
+          "title": "What Each Retriever Is Actually Good At",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Retriever",
+              "Strong at",
+              "Weak at"
+            ],
+            "rows": [
+              [
+                "BM25 (sparse)",
+                "Exact terms, codes, rare words, zero training needed",
+                "Synonyms, paraphrase, no semantic understanding"
+              ],
+              [
+                "Dense (embeddings)",
+                "Paraphrase, semantic/cross-lingual matches",
+                "Exact strings, sensitive to domain shift from training data"
+              ],
+              [
+                "Hybrid (RRF fusion)",
+                "Both of the above",
+                "Two indexes to maintain, extra retrieval pass, fusion tuning"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "dc9229af-99cd-4f6b-84ef-e9609f3194d6",
+          "kind": "example",
+          "title": "One Search Box, Two Very Different Queries",
+          "body": "An internal support-ticket search has to handle both \"how do I reset MFA\" (paraphrase-heavy, no exact terms) and \"TOTP-6821\" (an exact ticket code) in the same search box.",
+          "bullets": [
+            "Dense-only retrieval nails the first query and can completely miss the second — the code is just a token to the embedding model.",
+            "BM25-only nails the second query but returns nothing useful for the paraphrased first one if the ticket never uses the words \"reset\" or \"MFA\" verbatim.",
+            "Hybrid retrieval handles both classes of query in the same pipeline, because both retrievers always run."
+          ],
+          "symbol": "text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "d2a61bca-699c-482a-8e3e-ba1fdcef3fcf",
+          "kind": "takeaways",
+          "title": "When Hybrid Search Is Worth the Extra Infrastructure",
+          "body": "Hybrid search is a real cost — two indexes, two retrieval passes, a fusion step to tune — not a free upgrade.",
+          "bullets": [
+            "Worth it when your queries mix exact identifiers (codes, SKUs, error strings) with natural-language paraphrase — support search, code search, e-commerce, legal/medical retrieval.",
+            "Skip it if your corpus and queries are pure natural language with no exact-match requirement — dense-only is simpler and cheaper to run.",
+            "RRF's k parameter and any per-retriever weighting still need tuning against your real query distribution — hybrid isn't fire-and-forget.",
+            "Reranking (a cross-encoder pass on the fused top-K) is the natural next layer on top of hybrid retrieval, not a replacement for it."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2ea4fea1-068d-4f5a-825c-eabe186ff0c8",
+            "prompt": "Why can pure dense (embedding) retrieval fail on a query like an exact error code?",
+            "options": [
+              "Dense retrieval only works on English text",
+              "Embedding models compress rare/exact tokens into a similarity space where textual exactness gets lost, so a semantically-similar-but-wrong doc can outrank the exact match",
+              "Dense retrieval is always slower than BM25",
+              "Error codes are filtered out of vector indexes by default"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cosine similarity over embeddings rewards semantic closeness, not exact string match — so a document that never contains the exact code can still rank above the one that does, silently."
+          },
+          {
+            "id": "fe2a70ef-2519-47b8-a484-f7d3471545cc",
+            "prompt": "Why does Reciprocal Rank Fusion (RRF) use rank position instead of raw retriever scores?",
+            "options": [
+              "Rank is faster to compute than any score",
+              "BM25 scores and cosine similarities are on incomparable scales, so combining raw scores would require normalization; rank position sidesteps that entirely",
+              "RRF only works with two retrievers, never more",
+              "Raw scores are not available from BM25 implementations"
+            ],
+            "correctIndex": 1,
+            "explanation": "You can't directly average a BM25 score and a cosine similarity — they're not on the same scale. RRF avoids the normalization problem by scoring purely on each document's rank position in each list."
+          },
+          {
+            "id": "776de4ce-a1e1-4c82-aa25-9f6291cc6fd4",
+            "prompt": "When is hybrid search NOT worth the added infrastructure?",
+            "options": [
+              "When your corpus has no exact-match identifiers and queries are pure natural-language paraphrase",
+              "Whenever you have more than 1000 documents",
+              "Whenever latency matters at all",
+              "Hybrid search is always worth it regardless of query patterns"
+            ],
+            "correctIndex": 0,
+            "explanation": "If nothing in your query distribution needs exact-string matching, a dense-only pipeline is simpler and cheaper — hybrid search earns its cost specifically when exact identifiers and paraphrase both show up in real queries."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "MCP Tools: The Primitive Everything Else Wraps",
       "subtitle": "Discovery, invocation, and the annotations that tell an agent when to ask first.",
       "category": "MCP",
@@ -10841,586 +11329,6 @@
       "publishedDate": "2026-08-11T00:43:53Z",
       "heroImageURL": null,
       "body": null
-    },
-    {
-      "title": "Bloom Filters: Checking Membership Without the Set",
-      "subtitle": "A structure that answers 'maybe' or 'definitely not' — and never 'yes' for certain",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "bloom-filter",
-        "probabilistic-data-structures",
-        "caching",
-        "system-design",
-        "hashing"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "checkmark.seal.fill",
-      "summary": "A Bloom filter is a fixed-size bit array plus a handful of hash functions that lets you test set membership in O(k) time using a fraction of the memory a hash set needs. It never produces a false negative, but it can produce false positives — which is exactly the tradeoff that makes it useful as a cheap pre-filter in front of an expensive lookup.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Answer 'have I seen this before?' without storing what you've seen",
-          "body": "Bloom filters trade a small, tunable false-positive rate for a massive reduction in memory versus storing every key.",
-          "bullets": [],
-          "symbol": "checkmark.seal.fill",
-          "id": "670252cf-d980-42e9-b351-fc547ef0a055",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "A hash set doesn't scale to billions of keys",
-          "body": "Checking 'is this URL malicious?' or 'does this key already exist?' against millions or billions of items with a real hash set means storing every key (or its hash) plus per-entry overhead — tens of gigabytes at scale, and most of that memory is spent on entries you'll never actually need to retrieve.",
-          "bullets": [
-            "A hash set entry typically costs 40-100+ bytes once you include object overhead and load-factor headroom",
-            "At 1 billion keys that's 40-100+ GB just to answer yes/no questions",
-            "You often don't need the key back — you only need to know if it's probably there"
-          ],
-          "id": "3aa9b404-2710-4af7-8d1c-2b8da147872e",
-          "symbol": null,
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "The mechanism: a bit array and k hash functions",
-          "body": "A Bloom filter is an array of m bits, all initially 0, plus k independent hash functions.",
-          "bullets": [
-            "Insert(x): compute k hashes of x, set those k bit positions to 1",
-            "Query(x): compute the same k hashes; if ALL k bits are 1 → 'maybe present'; if ANY bit is 0 → 'definitely absent'",
-            "No false negatives are possible: if x was inserted, all its bits are guaranteed set",
-            "False positives are possible: another combination of inserted items can happen to set all of x's bits even though x was never inserted"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "id": "e5b72be3-4136-4836-9479-96164061748e",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: a tiny 16-bit filter",
-          "body": "m = 16 bits, k = 2 hash functions. Insert 'cat' → sets bits 3 and 9. Insert 'dog' → sets bits 5 and 9.",
-          "bullets": [
-            "Query 'cat': bits 3 and 9 are both 1 → correctly reports 'maybe present'",
-            "Query 'fish': happens to hash to bits 3 and 5 — both already set by 'cat' and 'dog' → reports 'maybe present' even though 'fish' was never inserted (a false positive)",
-            "Query 'bird': hashes to bit 12, which is 0 → correctly reports 'definitely absent', no disk or database lookup needed",
-            "Real system example: Cassandra checks a Bloom filter per SSTable before touching disk, skipping reads for keys that definitely aren't in that file"
-          ],
-          "id": "2a46dc9b-6d31-448d-9943-2cf8eaafdcef",
-          "symbol": null,
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Bloom filter vs. hash set",
-          "table": {
-            "headers": [
-              "Property",
-              "Bloom filter",
-              "Hash set"
-            ],
-            "rows": [
-              [
-                "Memory for 1% false-positive rate",
-                "~9.6 bits/element",
-                "~40-100+ bytes/element"
-              ],
-              [
-                "False positives",
-                "Possible (tunable rate)",
-                "None"
-              ],
-              [
-                "False negatives",
-                "Never",
-                "Never"
-              ],
-              [
-                "Deletion",
-                "Not supported (needs counting variant)",
-                "Supported"
-              ],
-              [
-                "Can enumerate members?",
-                "No",
-                "Yes"
-              ]
-            ]
-          },
-          "id": "171f733e-00f1-462e-9305-bf000ebc5e32",
-          "bullets": [],
-          "body": null,
-          "symbol": null
-        },
-        {
-          "kind": "concept",
-          "title": "Sizing it: the formulas that matter",
-          "body": "The false-positive rate depends on bit-array size m, number of hashes k, and number of inserted elements n: p ≈ (1 − e^(−kn/m))^k. The optimal number of hash functions is k = (m/n) · ln(2).",
-          "bullets": [
-            "To hit a 1% target false-positive rate, you need roughly 9.6 bits per element and about 7 hash functions",
-            "Undersizing m for the actual n is the most common real-world mistake — as the filter fills up, the false-positive rate climbs sharply, not linearly",
-            "Because m must be fixed upfront, you need a reasonable estimate of n before deploying"
-          ],
-          "id": "1ae198cc-9475-4ded-9ae1-050d3f3d49ea",
-          "symbol": null,
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "When not to reach for one",
-          "body": "A Bloom filter is a pre-filter, not a source of truth — treat it as an optimization, not the final answer.",
-          "bullets": [
-            "You can't delete an item without a counting Bloom filter (extra memory per slot to track reference counts)",
-            "You can't list what's actually in the set — only test individual membership",
-            "A 'maybe present' answer still requires a real lookup to confirm — it only saves you the lookups for items that are 'definitely absent'",
-            "If your expected element count is unknown or highly variable, a fixed-size filter will either waste memory or blow past its target false-positive rate"
-          ],
-          "id": "7f8f342f-20d6-43f4-8fc6-141a9289854f",
-          "symbol": null,
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Bloom filters trade a small, tunable false-positive rate for large memory savings versus a hash set",
-            "They never produce false negatives — 'definitely absent' can be trusted outright, skipping an expensive lookup",
-            "'Maybe present' still needs a real check — the filter is a cheap gate in front of expensive work, not a replacement for it",
-            "Size m and k for your expected n up front: ~9.6 bits/element and k≈7 gets you a 1% false-positive rate"
-          ],
-          "id": "9615bcc4-4ef6-4ce7-b723-56862f29acbc",
-          "body": null,
-          "symbol": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "If a Bloom filter query returns 'definitely absent' for an item, what can you conclude?",
-            "options": [
-              "The item might still be in the set",
-              "The item is guaranteed not to be in the set",
-              "The filter is misconfigured",
-              "You need to run the query again with different hash functions"
-            ],
-            "correctIndex": 1,
-            "explanation": "Bloom filters never produce false negatives. If any of the item's k bits is 0, it's mathematically guaranteed that item was never inserted — you can skip the expensive lookup entirely.",
-            "id": "b7ef4731-7d88-46fe-bc05-08e2f4313cd9"
-          },
-          {
-            "prompt": "Why can a Bloom filter report a false positive?",
-            "options": [
-              "Because hash functions occasionally return wrong values",
-              "Because bits set by other inserted items can coincidentally cover all of a queried item's positions, even though it was never inserted",
-              "Because the bit array resets randomly",
-              "Because k is always set to 1"
-            ],
-            "correctIndex": 1,
-            "explanation": "Multiple items share the same bit array. If enough other insertions happen to set exactly the bits a never-inserted item would hash to, the filter can't tell the difference — it reports 'maybe present' when the true answer is 'no.'",
-            "id": "d2429575-99eb-4c19-aaa8-3f8a606cc5de"
-          },
-          {
-            "prompt": "What's a real limitation that should stop you from using a plain Bloom filter?",
-            "options": [
-              "Needing to delete individual items from the set later",
-              "Needing to check if an item exists quickly",
-              "Having a rough upfront estimate of how many elements you'll store",
-              "Wanting to reduce memory versus a hash set"
-            ],
-            "correctIndex": 0,
-            "explanation": "A standard Bloom filter has no delete operation — clearing a bit could break lookups for other items that also hash to it. Deletion requires a counting Bloom filter variant with extra per-slot memory.",
-            "id": "7610f422-bf1b-4ccb-bf80-745af2ae08b0"
-          }
-        ]
-      },
-      "references": [],
-      "id": "3cbe078c-1466-4dc3-8439-8a38f5b99fec",
-      "publishedDate": "2026-08-11T00:43:53Z",
-      "heroImageURL": null,
-      "body": null
-    },
-    {
-      "title": "Tokenization: The Boundary Between Text and the Model",
-      "subtitle": "One merge-the-most-frequent-pair algorithm decides how text becomes tokens — and that quietly sets your cost, your context budget, and why the model can't count letters.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "tokenization",
-        "bpe",
-        "llm-internals",
-        "vocabulary",
-        "subword"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "textformat.abc",
-      "summary": "Byte-pair encoding builds a subword vocabulary bottom-up: start from raw bytes, repeatedly merge the most frequent adjacent pair, and stop once you hit a target vocab size — that's how every modern LLM turns text into the token IDs it actually processes. The vocab-size choice is a real tradeoff between sequence length and embedding-table size, and it explains three practical realities: why token costs vary by language, why models struggle to count letters inside words, and why swapping a tokenizer means retraining the embedding table from scratch.",
-      "body": null,
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Tokenization: The Boundary Between Text and the Model",
-          "body": "Before a single weight multiplies anything, raw text has to become a sequence of integers. The algorithm that does that — byte-pair encoding — quietly shapes cost, context budget, and even which languages a model is good at.",
-          "bullets": [],
-          "symbol": "textformat.abc",
-          "table": null,
-          "id": "06fbe785-02d2-4d52-97da-550896591a89"
-        },
-        {
-          "kind": "problem",
-          "title": "Why Not Just Use Characters or Words?",
-          "body": "Both extremes fail for practical LLMs.",
-          "bullets": [
-            "Character-level vocab is tiny (~256 bytes) but turns every sentence into a very long sequence — and attention cost grows with sequence length, so long character sequences are expensive to process",
-            "Word-level vocab keeps sequences short but is unbounded: new words, typos, and rare compounds constantly appear, forcing an <unk> token for anything unseen during training",
-            "Neither extreme handles the boundary between languages, code identifiers, or made-up words gracefully — subword tokenization is the compromise that ships in every modern LLM"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "0ee605f0-ca42-4a11-ba07-3872faa8fb31"
-        },
-        {
-          "kind": "solution",
-          "title": "Byte-Pair Encoding: Merge the Most Frequent Pair, Repeat",
-          "body": "BPE started as a 1994 compression algorithm; Sennrich et al. adapted it for NLP subword vocabularies in 2015, and GPT-2 made byte-level BPE the modern default.",
-          "bullets": [
-            "Start with a base vocabulary of individual bytes/characters — every possible input is representable from the start, so there's no <unk> token",
-            "Scan the training corpus, count how often every adjacent pair of symbols co-occurs, and merge the single most frequent pair into one new symbol",
-            "Repeat: each merge adds one entry to the vocabulary and shortens the corpus, stopping once the vocab hits its target size — a hyperparameter chosen before training, e.g. 50k or 100k",
-            "Encoding new text re-applies the learned merges in the order they were discovered — common words collapse to one token, rare or unseen words fall back to smaller, more numerous pieces"
-          ],
-          "symbol": "puzzlepiece.fill",
-          "table": null,
-          "id": "a4f0019e-0002-4491-b87d-f3fb35f53eb6"
-        },
-        {
-          "kind": "example",
-          "title": "A Toy Merge, Step by Step",
-          "body": "Run BPE on a tiny corpus of {low, lower, lowest, newer, wider} (each split into characters plus an end-of-word marker), and the first few merges look like this:",
-          "bullets": [
-            "Pair 'e'+'r' is the most frequent adjacent pair (it appears in lower, newer, wider) → merge into a new symbol 'er'",
-            "Next most frequent: 'er'+ end-of-word → merge into 'er</w>', so 'newer' and 'wider' now end in one token instead of two",
-            "Next: 'l'+'o' → 'lo', then 'lo'+'w' → 'low' — 'low', 'lower', and 'lowest' now all start from the shared token 'low' instead of four separate letters",
-            "After a handful of merges, frequent words compress to 1-2 tokens while rare strings stay as longer chains of smaller pieces — exactly the tradeoff a real tokenizer makes at scale"
-          ],
-          "symbol": "list.number",
-          "table": null,
-          "id": "984961eb-45ea-411d-91ef-db364e410ba5"
-        },
-        {
-          "kind": "comparison",
-          "title": "Vocab Size Is a Real Design Choice, Not a Detail",
-          "body": "Bigger vocab means fewer tokens per sentence (shorter sequences, more text fits in a fixed context window) but a bigger embedding and output-projection matrix, and more rarely-seen tokens that get little gradient signal during training.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Tokenizer",
-              "Vocab size",
-              "Used by"
-            ],
-            "rows": [
-              [
-                "GPT-2 BPE",
-                "50,257",
-                "GPT-2"
-              ],
-              [
-                "cl100k_base",
-                "100,256",
-                "GPT-3.5-turbo, GPT-4, text-embedding-ada-002"
-              ],
-              [
-                "Llama 2 (SentencePiece BPE)",
-                "32,000",
-                "Llama 2 family"
-              ],
-              [
-                "Llama 3 (tiktoken-based)",
-                "128,256",
-                "Llama 3 family"
-              ]
-            ]
-          },
-          "id": "7ae63d82-4209-4bf6-a4b3-0f99ac75834f"
-        },
-        {
-          "kind": "example",
-          "title": "The Same Sentence Isn't the Same Number of Tokens",
-          "body": "Tokenizers are trained on corpora dominated by English web text, so the compression they learn is lopsided.",
-          "bullets": [
-            "OpenAI's own rule of thumb for English: roughly 4 characters, or about 0.75 words, per token — so 75 English words costs around 100 tokens",
-            "The same sentence translated into a script the tokenizer saw far less of during training (Hindi, Burmese, Amharic, etc.) can take several times as many tokens to encode the identical meaning",
-            "Since API pricing and context-window limits are both counted in tokens, that inflation directly means higher cost and less usable context for speakers of underrepresented languages — a measurable effect, not a hypothetical one",
-            "The fix isn't free either: a wider, more multilingual vocabulary costs more embedding parameters and dilutes how often any single token is seen during training"
-          ],
-          "symbol": "globe",
-          "table": null,
-          "id": "44f02012-9e50-4860-bcf2-5fca66925911"
-        },
-        {
-          "kind": "problem",
-          "title": "Where Tokenization Bites You",
-          "body": "Most 'why did the model get this obviously simple thing wrong' moments trace back to tokenization, not reasoning.",
-          "bullets": [
-            "Letter-counting and spelling tasks ('how many r's in strawberry') are hard because the model never sees individual letters — it sees whatever subword pieces the tokenizer happened to split the word into",
-            "Multi-digit arithmetic used to be unreliable partly because digits didn't tokenize consistently — numbers like '380' and '381' could split at different boundaries, breaking the positional pattern the model needed to learn",
-            "Rare vocabulary entries that exist in the trained vocab but almost never appear in the training data can produce erratic output when prompted directly — a known failure mode sometimes called a 'glitch token'",
-            "Fine-tuning a base model onto a domain its tokenizer rarely saw (a new programming language, heavy code-switching, dense math notation) inflates token counts and degrades quality — swapping tokenizers means retraining the embedding table from scratch"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "bfe27d1e-4335-4ded-b1b0-e96c6fd3f36b"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "BPE builds a vocabulary bottom-up: start from bytes/characters, repeatedly merge the most frequent adjacent pair, stop at a target vocab size",
-            "Byte-level BPE (GPT-2 onward) guarantees every input is representable — there's no out-of-vocabulary token, just longer chains of smaller pieces",
-            "Vocab size is a real tradeoff: a bigger vocab means shorter sequences and more usable context per token budget, at the cost of a larger embedding table and more undertrained rare tokens",
-            "Pricing, context limits, and even letter-counting ability are all downstream of how text gets chopped into tokens — tokenization isn't plumbing you can ignore, it's a first-order design choice"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "52546f3d-918c-44af-993a-80dfe3f56c33"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What problem does byte-level BPE solve that plain word-level tokenization can't?",
-            "options": [
-              "It makes the vocabulary smaller than character-level tokenization",
-              "It guarantees every possible input string is representable, eliminating the need for an <unk> token",
-              "It removes the need for an embedding table entirely",
-              "It ensures every word maps to exactly one token regardless of language"
-            ],
-            "correctIndex": 1,
-            "explanation": "Word-level vocabularies are unbounded — new words, typos, and rare compounds constantly appear, forcing an <unk> token for anything unseen. Because byte-level BPE's base vocabulary is every possible byte, any input string can always be represented, worst case as a long chain of single-byte tokens.",
-            "id": "5aa5d77a-7bb6-4b10-bef2-18d3d1966001"
-          },
-          {
-            "prompt": "In the toy BPE walkthrough, why does 'e'+'r' get merged before 'l'+'o'?",
-            "options": [
-              "'er' appears alphabetically first",
-              "BPE always merges vowel-consonant pairs first",
-              "'e'+'r' is the most frequent adjacent pair in the training corpus at that step",
-              "'er' is a complete English word, so it's prioritized"
-            ],
-            "correctIndex": 2,
-            "explanation": "BPE has no notion of grammar or alphabetization — at every step it counts adjacent-pair frequency across the whole training corpus and merges whichever pair occurs most often. 'e'+'r' shows up in 'lower', 'newer', and 'wider', making it the top count in that toy corpus.",
-            "id": "854ad171-fcb0-4d38-847b-2bb278f4b5d4"
-          },
-          {
-            "prompt": "Why can the same sentence cost noticeably more tokens in one language than another, using the same tokenizer?",
-            "options": [
-              "Some languages have more letters in their alphabet",
-              "The tokenizer was trained on a corpus dominated by one language/script, so it learned fewer efficient merges for underrepresented scripts",
-              "Non-English text is always converted to English before tokenization",
-              "Tokenizers assign a fixed token budget per language"
-            ],
-            "correctIndex": 1,
-            "explanation": "BPE's merges are learned from training-corpus frequency. A tokenizer trained mostly on English web text spends most of its merge budget on English subwords, so a script it saw far less of falls back to longer chains of smaller pieces for the same meaning — directly increasing token count, cost, and effective context usage for that language.",
-            "id": "ab97e1f8-a074-4806-a0a6-55da0ba3778a"
-          }
-        ]
-      },
-      "references": [],
-      "id": "f63723f5-e1a7-42b4-aeb6-90b361306783",
-      "publishedDate": "2026-08-10T18:41:21Z"
-    },
-    {
-      "title": "Write-Ahead Logging: Surviving a Crash Mid-Write",
-      "subtitle": "One rule — write the log record before the data page — is what lets a database recover a torn write instead of losing it.",
-      "category": "Databases",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "write-ahead-log",
-        "wal",
-        "aries",
-        "crash-recovery",
-        "durability"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.text.fill",
-      "summary": "Write-ahead logging enforces one invariant: a log record describing a change must be durable on disk before the data page it describes is allowed to be. That single rule turns crash recovery from guesswork into a deterministic replay, and it's why Postgres, MySQL's InnoDB, SQLite, and most production databases are all built around a WAL rather than writing data pages in place and hoping.",
-      "body": null,
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Write-Ahead Logging: Surviving a Crash Mid-Write",
-          "body": "Update a data page in place, crash halfway through the write, and you're left with a torn page — half old bytes, half new, and no way to tell which. WAL exists to make that scenario recoverable.",
-          "bullets": [],
-          "symbol": "doc.text.fill",
-          "table": null,
-          "id": "62a8ac5b-245e-4387-8281-6dc3b0b437ac"
-        },
-        {
-          "kind": "problem",
-          "title": "In-Place Writes Have No Way Back",
-          "body": "Disk pages are usually several kilobytes; a power loss or crash can interrupt a write partway through, and a naive in-place update leaves no record of what the page looked like before.",
-          "bullets": [
-            "A torn page mixes bytes from the old and new versions — the page is neither the pre-transaction nor post-transaction state, just corrupt",
-            "Fsyncing every data page write for safety is slow: data pages are scattered across the disk, so durable writes mean random I/O",
-            "Without a separate record of intent, recovery after a crash has nothing to replay or roll back — the on-disk state is just whatever the crash left behind"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "013c9bac-66b3-4703-9833-e0e6a982e6bf"
-        },
-        {
-          "kind": "solution",
-          "title": "The WAL Invariant",
-          "body": "Write-ahead logging enforces one rule, and everything else follows from it.",
-          "bullets": [
-            "Rule: the log record describing a change must be flushed to durable storage before the data page it describes is allowed to be flushed",
-            "The log is append-only — writes are always sequential, so a single fsync can durably commit many log records at once instead of one random write per page",
-            "Because the log is the durable source of truth, the actual data pages can be updated in memory and flushed to disk lazily, whenever it's convenient (a 'steal, no-force' buffer policy) — the log guarantees nothing is lost if a crash happens before that lazy flush"
-          ],
-          "symbol": "arrow.up.arrow.down.circle",
-          "table": null,
-          "id": "b7142b01-488f-4d53-a644-3084fe9e01ad"
-        },
-        {
-          "kind": "concept",
-          "title": "LSNs Tie Every Page Back to the Log",
-          "body": "ARIES (Mohan et al., 1992), the recovery algorithm most production databases descend from, ties pages to the log with a single number.",
-          "bullets": [
-            "Every log record gets a monotonically increasing Log Sequence Number (LSN) marking its position in the log",
-            "Every data page stores the LSN of the last log record that modified it (its pageLSN)",
-            "On recovery, comparing a page's pageLSN to the log tells you exactly which log records still need to be replayed onto that page — no guessing",
-            "Checkpoints periodically record the oldest LSN that might still need replaying, so recovery doesn't have to scan the entire log history back to the beginning of time"
-          ],
-          "symbol": "number",
-          "table": null,
-          "id": "3cb934ef-15b0-4bf0-ac11-5fe44c637ba0"
-        },
-        {
-          "kind": "comparison",
-          "title": "Recovery: In-Place Writes vs. WAL",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "",
-              "Naive in-place writes",
-              "Write-ahead logging"
-            ],
-            "rows": [
-              [
-                "Crash mid-write",
-                "Torn page — undefined, unrecoverable state",
-                "Log record is either fully durable or not written at all; page state is always reconstructable"
-              ],
-              [
-                "Write pattern for durability",
-                "Random I/O — fsync scattered across data pages",
-                "Sequential append to the log — one fsync can durably cover many changes"
-              ],
-              [
-                "Recovery process",
-                "None — no record of prior state to replay",
-                "Deterministic: redo committed changes from the log, undo uncommitted ones"
-              ],
-              [
-                "Data page flush timing",
-                "Must be synchronous to be safe",
-                "Can be lazy/asynchronous — the log already guarantees durability"
-              ]
-            ]
-          },
-          "id": "f041ce8a-7379-4394-bf03-b14ce7e3ac23"
-        },
-        {
-          "kind": "example",
-          "title": "A Transaction, Two Crash Points",
-          "body": "Same transaction — transfer $50 — crashing at two different moments shows what the log rule actually buys you.",
-          "bullets": [
-            "Transaction writes a log record ('debit account A $50, credit account B $50') and calls fsync on the log, then updates the in-memory data pages",
-            "Crash AFTER the log fsync but BEFORE the data pages are flushed: on restart, recovery reads the durable log record and redoes the update — no data lost",
-            "Crash BEFORE the log fsync completes: the log record never became durable, so on restart there's nothing to redo — the transaction simply never happened, and account balances stay consistent",
-            "The one crash point WAL rules out entirely: log record durable, but the transaction only half-applied with no way to know what's missing — that's exactly the invariant it enforces"
-          ],
-          "symbol": "arrow.left.arrow.right",
-          "table": null,
-          "id": "8c18cfd9-e9f2-4cd4-80bd-a06a3da77d18"
-        },
-        {
-          "kind": "problem",
-          "title": "What WAL Doesn't Solve",
-          "body": "WAL protects physical consistency across a crash — it isn't a general-purpose safety net.",
-          "bullets": [
-            "An unbounded WAL fills the disk — it must be checkpointed and archived/recycled once its records are no longer needed for recovery or replication",
-            "Checkpointing itself briefly increases write latency, since dirty pages up to the checkpoint LSN must be flushed",
-            "WAL doesn't protect against logical errors — an UPDATE with the wrong WHERE clause gets faithfully logged and replayed too",
-            "If the log storage itself is corrupted or the fsync guarantee is broken (e.g. a disk write cache lying about durability), the entire recovery guarantee collapses — WAL is only as durable as the fsync beneath it"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "060aecd4-cdc3-4260-96ae-3e1f0a0cae4d"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "The core invariant is simple: log the change durably before the data page it describes is allowed to be durable",
-            "Sequential log writes turn expensive random-I/O durability into cheap append-only durability, letting data pages flush lazily",
-            "LSNs on both log records and data pages are what make recovery deterministic instead of a guessing game — ARIES's analysis/redo/undo phases are built entirely on comparing them",
-            "WAL guarantees physical crash consistency, not correctness — it will faithfully replay a logically wrong write just as reliably as a correct one"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "857df847-07bd-4682-9751-742069f5b543"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the core invariant that write-ahead logging enforces?",
-            "options": [
-              "Data pages must be written before their corresponding log record",
-              "The log record describing a change must be durable on disk before the data page it describes is allowed to be durable",
-              "Every write must be synchronous and fsynced individually, whether logged or not",
-              "Log records and data pages must always be written to the same physical disk sector"
-            ],
-            "correctIndex": 1,
-            "explanation": "The name says it: write-AHEAD logging means the log entry hits durable storage first. That ordering is what makes a crash recoverable — the log always has an accurate record of what should have happened, even if the data page update never made it to disk.",
-            "id": "cadf1f7e-0e66-4526-9a33-48adb7bda68e"
-          },
-          {
-            "prompt": "Why does WAL improve write throughput compared to fsyncing every data page update in place?",
-            "options": [
-              "It eliminates the need for durability entirely, since data pages are treated as disposable",
-              "It skips writing to disk and keeps everything in memory permanently",
-              "The log is append-only and sequential, so many changes can be made durable with a single sequential fsync, while data pages flush lazily and asynchronously afterward",
-              "It compresses data pages before writing them, reducing I/O volume"
-            ],
-            "correctIndex": 2,
-            "explanation": "Data pages are scattered across disk, so fsyncing each one is random I/O. The log is append-only, so a single sequential fsync can durably commit a batch of log records at once — and because the log already guarantees durability, the actual data pages can be flushed later, in memory-efficient batches, without any durability risk.",
-            "id": "cc4ed881-0dfa-4663-ba73-e3c85cbf90a2"
-          },
-          {
-            "prompt": "In ARIES-style recovery, what is a pageLSN used for?",
-            "options": [
-              "It encrypts the page contents for security",
-              "It records the LSN of the last log record that modified that page, letting recovery know exactly which log records still need to be replayed onto it",
-              "It tracks which user session most recently read the page",
-              "It sets an expiration time after which the page is automatically deleted"
-            ],
-            "correctIndex": 1,
-            "explanation": "Comparing a page's stored pageLSN against the log tells recovery precisely which updates are already reflected on that page and which still need to be redone — eliminating any guesswork about what state the page was left in when the crash happened.",
-            "id": "b0642881-74fe-4c99-9c68-5f4a885ff366"
-          }
-        ]
-      },
-      "references": [],
-      "id": "004fe5eb-7af0-4f76-9e73-314da4ebf1f7",
-      "publishedDate": "2026-08-10T12:54:26Z"
     }
   ]
 }
