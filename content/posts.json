@@ -1,6 +1,199 @@
 {
   "posts": [
     {
+      "id": "fa116171-2445-427c-b368-a14040ed1993",
+      "title": "Event-Driven Architecture: Systems That React Instead of Ask",
+      "subtitle": "Why Kafka, SQS, and EventBridge exist, and what they cost you.",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "event-driven",
+        "distributed-systems",
+        "message-queues",
+        "system-design",
+        "kafka"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.horizontal.circle.fill",
+      "summary": "Request/response chains couple every service's uptime to the slowest link and force producers to know every future consumer. Event-driven architecture routes events through a broker instead, decoupling services at the cost of immediate consistency and a single call stack to debug.",
+      "slides": [
+        {
+          "id": "af67395e-7a67-4025-ac32-c890f333e12e",
+          "kind": "cover",
+          "title": "Producers Emit, Consumers React — Nobody Calls Anybody",
+          "body": "Event-driven architecture replaces direct service-to-service calls with asynchronous events flowing through a broker, trading immediate consistency for independence and resilience.",
+          "bullets": [],
+          "symbol": "bolt.horizontal.circle.fill",
+          "table": null
+        },
+        {
+          "id": "028a470a-47c8-46f5-a7f8-434e6e95eedb",
+          "kind": "problem",
+          "title": "Synchronous Call Chains Couple Every Service's Uptime Together",
+          "body": "In a request/response architecture, Service A calling B calling C means A is only as available and as fast as the slowest link in that chain.",
+          "bullets": [
+            "If C is down or slow, B's request blocks or times out, and A's request blocks behind it — one failure cascades backward through the whole chain.",
+            "Adding a new consumer of A's data (say, a fraud-check service) means changing A's code to call it directly, coupling A to every future subscriber.",
+            "Scaling requires every service in the chain to scale together, even when only one of them is the actual bottleneck."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "fb484283-5886-4490-bca0-68f3b0eeddc7",
+          "kind": "solution",
+          "title": "A Broker Sits Between Producers and Consumers",
+          "body": "Instead of calling other services directly, a service publishes an event (e.g. OrderPlaced) to a broker — Kafka, SQS, EventBridge, RabbitMQ. Any number of consumers subscribe independently.",
+          "bullets": [
+            "The producer doesn't know or care who — or how many — consumers exist; it writes the event and moves on.",
+            "Consumers process events at their own pace, so a slow or down consumer doesn't block the producer or any other consumer.",
+            "Most brokers guarantee at-least-once delivery, not exactly-once, so a message can arrive more than once during retries."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "3a14be1d-cdea-48b8-a7de-35eaa814646d",
+          "kind": "architecture",
+          "title": "Choreography vs Orchestration: Who Decides What Happens Next",
+          "body": "There are two ways to coordinate a multi-step workflow across services that communicate through events.",
+          "bullets": [
+            "Choreography: each service reacts to events and emits its own — OrderPlaced triggers Inventory to reserve stock and emit StockReserved, which triggers Payment. No single service knows the whole flow.",
+            "Orchestration: a central coordinator (e.g. Temporal, AWS Step Functions) calls each step explicitly and tracks the overall workflow state.",
+            "Choreography scales better and has no single point of control; orchestration keeps 'why did this order fail' answerable in one place instead of scattered across every consumer's logs."
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "05ca779d-da8c-4c62-8a30-fb39d5cd2fb3",
+          "kind": "comparison",
+          "title": "Request/Response vs Event-Driven, by the Property That Matters",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Property",
+              "Request/Response (REST/RPC)",
+              "Event-Driven"
+            ],
+            "rows": [
+              [
+                "Coupling",
+                "Caller must know callee's address & API",
+                "Producer knows only the event schema"
+              ],
+              [
+                "Failure isolation",
+                "Callee down means caller blocks or fails",
+                "Callee down means events queue until it recovers"
+              ],
+              [
+                "Consistency",
+                "Immediate (synchronous)",
+                "Eventual — consumers lag behind producers"
+              ],
+              [
+                "Adding a consumer",
+                "Requires changing the producer's code",
+                "Subscribe to the topic; zero producer changes"
+              ],
+              [
+                "Debugging a flow",
+                "One call stack to trace",
+                "Spread across every consumer's own logs"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7378229e-ee70-45d4-9a9a-06a00815707a",
+          "kind": "example",
+          "title": "One Order, Three Independent Consumers",
+          "body": "An e-commerce checkout service publishes a single OrderPlaced event carrying order ID, items, and total.",
+          "bullets": [
+            "The Inventory service consumes it to decrement stock and, if a SKU is out, emits an OutOfStock event — checkout never needed to know Inventory exists.",
+            "The Notification service consumes the same event to send a confirmation email, added six months after launch by subscribing to the existing topic with zero changes to checkout's code.",
+            "The Analytics pipeline consumes it into a warehouse for revenue dashboards — a third consumer, again with no coordination required between teams."
+          ],
+          "symbol": "cart.fill",
+          "table": null
+        },
+        {
+          "id": "a0038154-cbef-4910-8b77-a6fa909bcd99",
+          "kind": "problem",
+          "title": "Pitfalls: Duplicates, Ordering, and the Poison Message",
+          "body": "Decoupling doesn't remove the hard problems — it relocates them to the consumer.",
+          "bullets": [
+            "At-least-once delivery means consumers MUST be idempotent — processing the same OrderPlaced event twice must not charge the customer twice.",
+            "Ordering is only guaranteed within a partition (Kafka) or not at all (SQS standard queues); cross-service ordering needs a shared partition key like order ID.",
+            "A malformed 'poison' message a consumer can't process will loop on retries and block that consumer's queue unless routed to a dead-letter queue after a max-retry count.",
+            "When NOT to use it: a workflow needing an immediate synchronous answer — 'is this credit card valid right now' — is a poor fit; event-driven trades away that immediacy for decoupling."
+          ],
+          "symbol": "exclamationmark.arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "e4c59f60-a946-4cb8-b14b-64dd36611316",
+          "kind": "takeaways",
+          "title": "Decoupling Is the Point, Eventual Consistency Is the Cost",
+          "body": "Event-driven architecture isn't free — it's a trade.",
+          "bullets": [
+            "Producers and consumers no longer share deployment schedules, uptime, or scaling needs — new consumers subscribe without touching producer code.",
+            "In exchange, you give up immediate consistency and a single call stack to debug, and take on idempotency, ordering, and dead-letter handling as first-class design problems.",
+            "Reach for it when consumers are numerous, independent, or unknown at design time; reach for direct calls when you need an answer right now."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "60e46016-3397-4103-b056-166c7e2fd39b",
+            "prompt": "Why must consumers in most event-driven systems be idempotent?",
+            "options": [
+              "Because brokers process events in random order",
+              "Because most brokers guarantee at-least-once delivery, so a consumer can receive the same event more than once",
+              "Because events are always broadcast to every consumer",
+              "Because idempotency is required by the HTTP spec"
+            ],
+            "correctIndex": 1,
+            "explanation": "At-least-once delivery (the default in systems like Kafka and SQS) means retries can redeliver a message that was already processed, so handling it twice must be safe — e.g. checking an order ID before charging again."
+          },
+          {
+            "id": "778f4628-76e6-4ffe-8bb6-41a2c103bd29",
+            "prompt": "What's the key difference between choreography and orchestration in event-driven workflows?",
+            "options": [
+              "Choreography is synchronous, orchestration is asynchronous",
+              "Choreography has each service react to events independently; orchestration uses a central coordinator that explicitly calls each step",
+              "Orchestration doesn't use a message broker",
+              "They are two names for the same pattern"
+            ],
+            "correctIndex": 1,
+            "explanation": "In choreography, no single service knows the full workflow — each just reacts to events and emits its own. Orchestration centralizes that knowledge in a coordinator, trading a single point of control for easier tracing."
+          },
+          {
+            "id": "c2361146-19d7-41e9-8ce9-0339e6e71b37",
+            "prompt": "A consumer keeps crashing on one malformed event, retrying forever and blocking the rest of its queue. What's the standard fix?",
+            "options": [
+              "Delete the broker and restart",
+              "Route the message to a dead-letter queue after a maximum retry count, so it stops blocking healthy messages",
+              "Have the producer stop sending any events",
+              "Increase the retry count to infinity"
+            ],
+            "correctIndex": 1,
+            "explanation": "A dead-letter queue isolates messages that repeatedly fail processing (a 'poison message') after N retries, letting the rest of the queue keep flowing while the bad message is inspected separately."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-21T18:39:21Z",
+      "heroImageURL": null
+    },
+    {
       "id": "4f27f9b8-adf8-4407-a205-baa9fd41d9b3",
       "title": "ToolHazard: Scaling Adversarial Environments for Agent Security",
       "subtitle": "Hand-built red-team environments don't scale. ToolHazard synthesizes stateful ones automatically — and shows agents are still very easy to hijack.",
@@ -11055,201 +11248,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-12T00:41:32Z"
-    },
-    {
-      "id": "7381ec25-f539-4726-936e-80c7e9fdb112",
-      "title": "HNSW: How Vector Search Avoids Comparing Everything",
-      "subtitle": "A layered graph that turns a billion-vector search into a few dozen hops.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "vector-search",
-        "hnsw",
-        "embeddings",
-        "ann",
-        "rag",
-        "indexing"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "HNSW (Hierarchical Navigable Small World) is the graph structure behind most production vector databases' default index. It trades a small, tunable amount of recall for roughly logarithmic query time by searching a layered proximity graph instead of scanning every vector.",
-      "body": null,
-      "slides": [
-        {
-          "id": "ff20ec99-47be-4052-bd57-881c386842d6",
-          "kind": "cover",
-          "title": "Vector Search Doesn't Scan Every Vector",
-          "body": "At a billion embeddings, comparing a query to every vector turns milliseconds into seconds. HNSW is the graph structure behind almost every production vector database's default index.",
-          "bullets": [],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "055e063a-6ea4-43bc-91c1-0815f1d0f79c",
-          "kind": "problem",
-          "title": "Brute-Force kNN Doesn't Scale",
-          "body": null,
-          "bullets": [
-            "Exact k-nearest-neighbors is O(N) per query — with 100M 768-dim vectors, that's billions of float comparisons per search.",
-            "RAG retrieval latency budgets are usually under 50ms; brute force blows past that once N reaches a few million.",
-            "Sharding buys parallelism but doesn't fix the underlying linear scan per shard."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "5ff5c9f7-1c59-48e1-afd4-43fb9f160323",
-          "kind": "concept",
-          "title": "A Graph Where Nearby Points Are Neighbors",
-          "body": null,
-          "bullets": [
-            "HNSW builds a proximity graph: each vector is a node linked to its approximate nearest neighbors.",
-            "The graph is layered like a skip list — top layers are sparse 'highways' with few nodes, the bottom layer holds every point.",
-            "Search starts at the top layer's single entry point and greedily walks toward the query, dropping a layer each time no neighbor gets closer."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "4919c56d-e7fe-4dfa-887d-7c02af40a754",
-          "kind": "architecture",
-          "title": "Two Knobs Control the Speed/Recall Tradeoff",
-          "body": null,
-          "bullets": [
-            "M: max neighbors per node (commonly 16-64). Higher M means better recall but more memory.",
-            "efConstruction: candidate list size while building the graph — higher gives a better-connected graph but slower indexing.",
-            "efSearch: candidate list size at query time — the one knob you can tune live to trade latency for recall, no rebuild needed."
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "458c38b2-5f1d-4813-9157-b891f8dbfdad",
-          "kind": "comparison",
-          "title": "HNSW vs. the Alternatives",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Approach",
-              "Query cost",
-              "Typical recall@10",
-              "Build cost"
-            ],
-            "rows": [
-              [
-                "Brute-force scan",
-                "O(N) — seconds at 100M+ vectors",
-                "100% (exact)",
-                "None"
-              ],
-              [
-                "IVF (inverted file)",
-                "O(N/nlist) — fast, tunable",
-                "~90-97%",
-                "Low — just clustering"
-              ],
-              [
-                "HNSW",
-                "~O(log N) — sub-ms to low-ms",
-                "~95-99%",
-                "Higher — build the graph upfront"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "8d19bb18-7ffc-4e4e-b721-34c425f1b1e0",
-          "kind": "example",
-          "title": "Example: Finding Similar Docs Among 50M Embeddings",
-          "body": null,
-          "bullets": [
-            "Query embedding enters at the top layer's single entry point.",
-            "At each layer, search greedily moves to whichever neighbor is closest to the query, stopping when nothing improves — then drops a layer.",
-            "By the bottom layer, the search is already near the true neighborhood; a wider local search (sized by efSearch) finds the final top-k.",
-            "Total comparisons: often just tens to hundreds, not 50 million."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "e8230499-c9a0-401c-90f9-d715019fdd77",
-          "kind": "problem",
-          "title": "When HNSW Is the Wrong Choice",
-          "body": null,
-          "bullets": [
-            "Memory-hungry: graph edges plus vectors often need 1.5-2x the raw vector data in RAM — expensive at billion-scale.",
-            "Deletes are awkward — HNSW graphs are built incrementally, so cleanly removing a node usually means tombstoning or a partial rebuild.",
-            "For small collections (roughly under 10K vectors), brute force is often just as fast with none of the graph-traversal overhead.",
-            "Filtered search ('nearest neighbors where category=X') can break the graph's locality assumptions and hurt recall."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "d91042f5-0418-405c-ab8b-49edeec6513c",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "HNSW trades a small, tunable accuracy loss for roughly logarithmic query time — the default index in Pinecone, Weaviate, Qdrant, and pgvector's HNSW mode.",
-            "Tune efSearch first — it's the one knob you can change per-query without rebuilding the index.",
-            "At small scale, or when you need guaranteed exact recall, skip the graph and brute-force it instead."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4e18c082-b484-45eb-979d-312456bc035c",
-            "prompt": "Why does HNSW avoid comparing a query to every vector in the collection?",
-            "options": [
-              "It only checks the first N vectors alphabetically",
-              "It walks a layered proximity graph, greedily hopping toward the query",
-              "It stores vectors in a hash table that needs no comparisons",
-              "It reduces every vector to a single bit before comparing"
-            ],
-            "correctIndex": 1,
-            "explanation": "HNSW's search greedily traverses graph edges toward the query, stopping when no neighbor is closer — that yields roughly logarithmic, not linear, query cost."
-          },
-          {
-            "id": "6ea3f5df-2f52-4844-a203-a819d7bf817b",
-            "prompt": "Which parameter can you increase at query time, without rebuilding the index, to trade latency for higher recall?",
-            "options": [
-              "M",
-              "efConstruction",
-              "efSearch",
-              "nlist"
-            ],
-            "correctIndex": 2,
-            "explanation": "efSearch controls how many candidates the search keeps and is read at query time, so it can be tuned per-query. M and efConstruction are baked in when the graph is built."
-          },
-          {
-            "id": "3ee2ad76-f32a-42f8-a638-0129df1f4543",
-            "prompt": "When is brute-force nearest-neighbor search often the better choice over HNSW?",
-            "options": [
-              "Never — HNSW always wins",
-              "On very small collections, or when exact recall is required",
-              "When vectors are high-dimensional",
-              "When queries arrive one at a time"
-            ],
-            "correctIndex": 1,
-            "explanation": "At small N, graph-traversal overhead doesn't pay for itself, and HNSW is inherently approximate — if guaranteed exact results are required, brute force (or an exact index) is the only correct option."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "def7fb59-1a9c-49eb-82ec-c8129d0fb804",
-          "title": "Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs",
-          "url": "https://arxiv.org/abs/1603.09320"
-        }
-      ],
-      "publishedDate": "2026-08-11T18:41:10Z"
     }
   ]
 }
