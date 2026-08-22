@@ -1,6 +1,200 @@
 {
   "posts": [
     {
+      "id": "a146d08a-0b2e-4a14-83c4-ca6d0fca4aca",
+      "title": "Agent Memory: What Survives the Session, What Doesn't",
+      "subtitle": "The context window forgets everything on the next call. Memory is the system you bolt on so it doesn't.",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "agent-memory",
+        "ai-agents",
+        "vector-store",
+        "context-window",
+        "long-term-memory"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "brain.head.profile",
+      "summary": "LLMs are stateless — every call starts from zero unless you feed prior context back in. Agent memory is the engineering layer that decides what gets kept, how it's stored, and how it's found again, trading cost and staleness risk for continuity across sessions.",
+      "slides": [
+        {
+          "id": "1d622b2e-e743-4031-a822-a83ba7a016b9",
+          "kind": "cover",
+          "title": "The Model Never Remembers — Something Else Has To",
+          "body": "Every LLM call is stateless: swap in a fresh context window and the model has no idea a previous conversation ever happened. Agent memory is the layer that captures, stores, and re-injects what matters.",
+          "bullets": [],
+          "symbol": "brain.head.profile",
+          "table": null
+        },
+        {
+          "id": "1bf5199a-818b-49ac-a5a9-cfdb2752c24e",
+          "kind": "problem",
+          "title": "Stuffing the Whole Transcript Back In Doesn't Scale",
+          "body": "The naive fix — replay the full conversation history every call — works until it doesn't.",
+          "bullets": [
+            "A context window is finite (even a 200K-token one); a long-running agent with weeks of history will eventually overflow it.",
+            "Cost scales with every token you re-send: a 50K-token history replayed on every turn means paying to re-read it 50K times over a long session.",
+            "Attention dilutes across a long, mostly-irrelevant transcript — the one fact that matters ('user's API key is stored in vault X') gets buried under thousands of tokens of small talk."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "a8fb7067-1bf4-4d5d-b0a2-2bca88e0bb99",
+          "kind": "concept",
+          "title": "Three Layers, Borrowed From How People Remember",
+          "body": "Agent memory systems typically separate what's needed right now from what's worth keeping forever.",
+          "bullets": [
+            "Working memory: the current context window — the live scratchpad for this task, gone once the call ends unless captured elsewhere.",
+            "Episodic memory: a log of past interactions or sessions ('on Tuesday, the user asked to refactor the auth module') — useful for continuity, not for facts.",
+            "Semantic memory: durable facts extracted out of episodes ('user prefers tabs, not spaces'; 'user's default cloud is AWS') — small, stable, and cheap to re-inject every turn."
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "238c4f5d-2334-4091-884a-fca866b9b86c",
+          "kind": "architecture",
+          "title": "Four Ways to Implement It, in Increasing Complexity",
+          "body": "Each approach makes a different tradeoff between simplicity, cost, and how much history it can hold.",
+          "bullets": [
+            "Full transcript in context: simplest, zero infra, but hits the context ceiling and gets expensive fast — fine for short-lived agents only.",
+            "Periodic summarization/compaction: an LLM call condenses old turns into a shorter summary before they fall out of the window — bounded cost, but detail is lossy and irreversible.",
+            "Vector store + retrieval: embed past interactions or facts, retrieve the top-k most relevant to the current turn — scales to unbounded history, adds embedding + search latency and a new failure mode (retrieving the wrong thing).",
+            "Structured key-value facts: extract discrete facts into a small structured store (a user-preferences table, not free text) — the cheapest to re-inject and the easiest to audit or correct, but only captures what you explicitly designed a field for."
+          ],
+          "symbol": "externaldrive.fill",
+          "table": null
+        },
+        {
+          "id": "9d3104ec-9965-43c1-b5a8-e78436e86c54",
+          "kind": "example",
+          "title": "A Coding Assistant Across Three Sessions",
+          "body": "Session 1: the user tells the agent 'I use 2-space indentation, and never touch the migrations folder.' Session 2, a week later, opens with a blank context window.",
+          "bullets": [
+            "With no memory: the agent reformats the user's next file with 4 spaces and happily edits a migration — both facts are gone.",
+            "With semantic memory: at session start, the agent retrieves two structured facts ('indent: 2-space', 'do-not-touch: /migrations') and injects them into the fresh context — about 20 tokens, not 20,000.",
+            "With vector-store episodic memory: the agent instead retrieves the top-3 most similar past turns to the current request, which works for fuzzier context but can surface an outdated or half-relevant snippet instead of the clean fact."
+          ],
+          "symbol": "clock.arrow.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "b05c70c3-f368-4acc-b25c-fa4d5aee2214",
+          "kind": "comparison",
+          "title": "Picking a Strategy by What You're Optimizing For",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Strategy",
+              "Cost per turn",
+              "Scales to long history?",
+              "Precision"
+            ],
+            "rows": [
+              [
+                "Full transcript replay",
+                "High, grows every turn",
+                "No — hits context limit",
+                "Perfect (nothing lost)"
+              ],
+              [
+                "Summarization/compaction",
+                "Low, bounded",
+                "Yes, but lossy",
+                "Degrades over time"
+              ],
+              [
+                "Vector-store retrieval",
+                "Medium (embed + search)",
+                "Yes",
+                "Depends on retrieval quality"
+              ],
+              [
+                "Structured key-value facts",
+                "Very low",
+                "Yes",
+                "High, but only for modeled fields"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "0a3250f3-7836-4db4-b2db-0e57f3b29337",
+          "kind": "problem",
+          "title": "Pitfalls: Stale Facts, Hallucinated Memory, and Leakage",
+          "body": "Memory doesn't remove failure modes — it introduces new ones on top of whatever the base agent already has.",
+          "bullets": [
+            "Stale contradiction: the user says 'actually, switch to 4-space indentation' in session 3 — if the old fact isn't overwritten, the agent now has two conflicting 'truths' and no way to know which is current.",
+            "Hallucinated memory: a summarization step can compress two unrelated facts into one plausible-sounding but false statement, which then gets treated as ground truth on every future turn.",
+            "Cross-session leakage: a shared vector store across users/tenants without strict namespacing can retrieve one user's private facts into another user's context — a correctness bug that's also a security incident.",
+            "When NOT to bother: single-shot tasks with no follow-up ('summarize this PDF') gain nothing from persistent memory and just add latency and attack surface for no benefit."
+          ],
+          "symbol": "exclamationmark.arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "e29da459-3676-407b-8184-4e2bd1780ae7",
+          "kind": "takeaways",
+          "title": "Memory Is a Storage Decision, Not a Model Feature",
+          "body": "The LLM itself never remembers anything — every strategy above is plumbing you build around it.",
+          "bullets": [
+            "Default to structured facts for anything you can name in advance (preferences, constraints); reach for vector retrieval only for the fuzzier, unstructured long-tail.",
+            "Every memory write needs an update/overwrite path, or contradictions silently accumulate until the agent is confidently wrong.",
+            "Treat memory retrieval as untrusted input, same as any RAG chunk — a bad or leaked retrieval can steer the agent as badly as a bad prompt."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "875539a7-5ac0-4792-b1dd-0fb60811f00e",
+            "prompt": "Why can't an agent just replay the full conversation transcript on every call to 'remember' everything?",
+            "options": [
+              "LLMs reject any input longer than one sentence",
+              "The context window is finite and cost scales with every token re-sent, so a long-running history eventually overflows or becomes too expensive",
+              "Transcripts are encrypted and can't be re-read",
+              "It works fine and is the recommended approach for any agent"
+            ],
+            "correctIndex": 1,
+            "explanation": "Context windows are large but finite, and every re-sent token is paid for again — a week-long agent session can't just keep appending its full history forever without hitting a wall on both length and cost."
+          },
+          {
+            "id": "a5d01dcf-39e4-4065-ab94-18a717bdccb4",
+            "prompt": "A user tells an agent 'switch to 4-space indentation' after previously saying 'use 2-space.' What failure mode does this risk if memory isn't handled carefully?",
+            "options": [
+              "The agent will refuse to respond at all",
+              "A stale contradiction — the old fact isn't overwritten, so the agent has two conflicting 'truths' with no signal for which is current",
+              "The context window will physically corrupt",
+              "This has no effect on agent behavior"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without an explicit update/overwrite path, a memory store just accumulates facts. When two entries conflict, the agent has no principled way to know the newer one should win."
+          },
+          {
+            "id": "9b507924-ceb0-4e42-a8ae-8ae9c380f392",
+            "prompt": "Why should retrieved memories be treated as untrusted input, similar to a RAG chunk?",
+            "options": [
+              "Because memory retrieval is always slower than a fresh LLM call",
+              "Because a bad, stale, or cross-tenant-leaked retrieval can steer the agent just as badly as a bad prompt, so it needs the same scrutiny",
+              "Because vector stores cannot store text, only numbers",
+              "Because memories are never actually used by the model"
+            ],
+            "correctIndex": 1,
+            "explanation": "A retrieved memory is injected straight into the context the model reasons over — if it's wrong, stale, or belongs to a different user, it influences the agent's output exactly like any other untrusted context, including RAG chunks."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-22T06:38:37Z",
+      "heroImageURL": null
+    },
+    {
       "id": "b9039b26-732a-4c18-a3de-e5e2625099a6",
       "title": "HNSW: The Graph That Makes Vector Search Fast",
       "subtitle": "Skip lists for vectors: finding your nearest neighbor in log-time, not linear time.",
@@ -11078,185 +11272,6 @@
           "id": "fecc11af-1204-48fc-a422-dc2a28af50d9",
           "title": "SWE-Bench ProMax: Benchmarking Agents on Large-Scale Multilingual Code Refactoring (arXiv:2608.09802)",
           "url": "https://arxiv.org/abs/2608.09802"
-        }
-      ],
-      "publishedDate": "2026-08-12T00:41:32Z"
-    },
-    {
-      "id": "aa79f568-1c94-4a5f-9563-520624717de9",
-      "title": "DeepSeek V4-Flash-0731: MIT-Licensed, Beats Its Own Pro",
-      "subtitle": "A retrained cheap model just outscored DeepSeek's bigger flagship on nine agent benchmarks",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "deepseek",
-        "model-release",
-        "open-weights",
-        "moe",
-        "agentic-coding"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "bolt.fill",
-      "summary": "On July 31, 2026, DeepSeek shipped the official, MIT-licensed release of V4-Flash-0731 — the same 284B-parameter MoE architecture as its April preview, but retrained on coding, agents, and tool use. The retrained Flash model now beats DeepSeek's own bigger V4-Pro-Preview on all nine published agent benchmarks, at Flash-tier pricing.",
-      "slides": [
-        {
-          "id": "8da5a657-3166-464c-8e78-9d634041fb77",
-          "kind": "cover",
-          "title": "The Cheap Model Just Beat the Expensive One",
-          "body": "DeepSeek's April 'Flash' preview was the fast, cheap tier of its V4 family — and it lagged behind the company's own bigger V4-Pro-Preview on agentic work. The July 31, 2026 official release flips that: same size, same price, but retrained to win.",
-          "bullets": [],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "f2307867-cdb5-4e65-9243-03fff61bac4e",
-          "kind": "problem",
-          "title": "Flash Was Fast, But Pro Was Smarter on Agent Work",
-          "body": null,
-          "bullets": [
-            "DeepSeek's V4 family ships a big 'Pro' tier and a smaller, cheaper 'Flash' tier meant for high-volume use",
-            "The April Flash preview was noticeably weaker than V4-Pro-Preview specifically on coding, agentic, and tool-use tasks — the workloads companies actually run at scale",
-            "That forced teams to pay Pro-tier prices even for tasks a cheap model should have been able to handle"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "c1aae3fb-1b99-4bf9-8ac6-802bf2155e58",
-          "kind": "solution",
-          "title": "Same Architecture, Rebuilt Post-Training",
-          "body": null,
-          "bullets": [
-            "V4-Flash-0731 keeps the same 284B-total / 13B-active-per-token Mixture-of-Experts architecture and 1M-token context window as the preview",
-            "The change is an all-new post-training pipeline focused specifically on coding, AI agents, reasoning, and tool use",
-            "Released July 31, 2026 as an official GA build, open-sourced under the MIT license — weights are ungated and usable for on-prem or commercial deployment",
-            "The API now natively supports the Responses API format and has been adapted for Codex, so existing integrations pick up the new model without code changes"
-          ],
-          "symbol": "arrow.triangle.2.circlepath.circle.fill",
-          "table": null
-        },
-        {
-          "id": "4fe61ac8-4519-48b9-8228-2aaa35820a6b",
-          "kind": "comparison",
-          "title": "Flash-0731 vs. Its Own Bigger Sibling",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Flash Preview (April)",
-              "V4-Pro-Preview",
-              "V4-Flash-0731"
-            ],
-            "rows": [
-              [
-                "Terminal-Bench 2.1",
-                "61.8",
-                "72.1",
-                "82.7"
-              ],
-              [
-                "Published agent benchmarks won vs. Pro-Preview",
-                "—",
-                "—",
-                "9 of 9 (by 8.7–41.6 points each)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "3bc983ee-779c-42a4-b978-be5de7ae221f",
-          "kind": "example",
-          "title": "Worked Example: A Long Agentic Coding Session",
-          "body": "An agent runs an autonomous edit-build-test loop against a large repo — dozens of tool calls, long-running terminal output, and a big diff history to keep in context.",
-          "bullets": [
-            "The 1M-token context window lets the agent hold the whole session's tool output and diff history without truncating early turns",
-            "Native Responses API and Codex support mean the session's tool-calling format matches what agent frameworks already expect, with no adapter layer",
-            "Because Flash-0731 now matches or beats Pro-Preview on this exact workload, teams can run the loop at Flash pricing instead of paying Pro rates for the same result"
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "6a52d67c-33a9-4c8c-8327-a2f131228254",
-          "kind": "problem",
-          "title": "The Caveats Worth Knowing",
-          "body": null,
-          "bullets": [
-            "The headline agentic-coding score (54.4 on DeepSeek's DeepSWE eval) is self-reported using DeepSeek's own harness, which the company says will be released 'soon' — independent replication isn't possible yet",
-            "Pricing is tiered by cache state: DeepSeek's direct API charges $0.14/M input tokens on a cache miss but just $0.0028/M on a cache hit, and $0.28/M output — real cost depends heavily on how much of your prompt gets cached",
-            "It's still a 13B-active-parameter model; for tasks outside coding/agents/tool-use it may not have gained the same ground over Pro-Preview"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "1864219f-a72c-4b09-8ee7-13ba12baba4d",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "DeepSeek retrained its cheap Flash tier on coding/agent/tool-use data and it now beats the company's own bigger Pro-Preview on all nine published agent benchmarks",
-            "Same 284B/13B MoE architecture and 1M context, but MIT-licensed and open-weight as of July 31, 2026",
-            "Native Responses API and Codex support make it a drop-in upgrade for existing agent integrations",
-            "Treat the self-reported DeepSWE score as provisional until the harness DeepSeek used is public and others can re-run it"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "c81546f2-8778-4d02-a445-c55d301286ae",
-            "prompt": "How does V4-Flash-0731 compare to DeepSeek's own V4-Pro-Preview on published agent benchmarks?",
-            "options": [
-              "It loses on all nine",
-              "It beats V4-Pro-Preview on all nine published benchmarks",
-              "It ties on most of them",
-              "It only wins on non-coding tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "Despite being the smaller, cheaper tier, the retrained Flash-0731 beat DeepSeek's bigger V4-Pro-Preview on all nine published agent benchmarks, by margins of 8.7 to 41.6 points."
-          },
-          {
-            "id": "f0943c6e-37e0-49d1-b884-7f2dd477a2fa",
-            "prompt": "What license did DeepSeek release V4-Flash-0731 under?",
-            "options": [
-              "Closed, API-only",
-              "Apache 2.0 with a commercial add-on",
-              "MIT, with open weights",
-              "CC-BY-NC (non-commercial only)"
-            ],
-            "correctIndex": 2,
-            "explanation": "DeepSeek open-sourced the official V4-Flash-0731 weights under the MIT license, making them ungated and usable for commercial, on-prem deployment."
-          },
-          {
-            "id": "80fba8ac-0815-4099-8f4a-c193b456ae25",
-            "prompt": "What's the key caveat on the model's headline DeepSWE agentic-coding score of 54.4?",
-            "options": [
-              "It was independently verified by three separate labs",
-              "It's self-reported using DeepSeek's own harness, which isn't public yet, so it can't be independently replicated",
-              "It only applies to the Pro-Preview model, not Flash-0731",
-              "It was measured on a benchmark from 2023"
-            ],
-            "correctIndex": 1,
-            "explanation": "DeepSeek acknowledged the DeepSWE score came from its own harness, which it said would be released 'soon' — until then, the figure is vendor-reported and not independently confirmable."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "96cb4ef3-1378-43bf-9466-f36b113b83e8",
-          "title": "DeepSeek-V4-Flash GA: Agent Scores Beat V4-Pro-Preview — DeepSeek",
-          "url": "https://deepseek.ai/blog/deepseek-v4-flash-ga-agent-benchmarks"
-        },
-        {
-          "id": "22c19b31-78da-4e2e-9684-47982b30f0cf",
-          "title": "deepseek-ai/DeepSeek-V4-Flash-0731 — Hugging Face model card",
-          "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731"
         }
       ],
       "publishedDate": "2026-08-12T00:41:32Z"
