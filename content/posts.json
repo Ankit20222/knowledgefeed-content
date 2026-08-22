@@ -1,6 +1,210 @@
 {
   "posts": [
     {
+      "id": "ea452ca6-b7f0-41c2-9372-9ef1ded9db90",
+      "title": "FlashAttention: Rewriting Attention Around the Memory Wall",
+      "subtitle": "The bottleneck was never the math — it was moving data between GPU memory tiers",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "flashattention",
+        "attention",
+        "gpu-memory",
+        "kernel-fusion",
+        "inference-optimization",
+        "transformers"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "bolt.fill",
+      "publishedDate": "2026-08-22T18:40:05Z",
+      "summary": "Standard self-attention is compute-quadratic, but on modern GPUs the real bottleneck is memory bandwidth: the naive kernel repeatedly writes and reads the full N×N attention matrix to slow HBM. FlashAttention fuses the matmul-softmax-matmul sequence into one kernel that tiles Q/K/V into fast on-chip SRAM and uses an online softmax trick, so it computes mathematically exact attention while never materializing that full matrix — turning quadratic memory into linear memory and delivering roughly a 2-4x training speedup in the original paper. It's an IO-aware systems rewrite, not an approximation, which is why it composes with quantization, GQA, and paged KV caches rather than replacing them.",
+      "body": null,
+      "slides": [
+        {
+          "id": "ee8c3f59-f624-45e6-a476-fcc171fe53d1",
+          "kind": "cover",
+          "title": "Attention's Bottleneck Was Never the Math",
+          "body": "Standard self-attention is O(N²) in compute, but on modern GPUs the multiply-adds finish long before the data does. FlashAttention noticed that attention is memory-bandwidth bound, not compute bound — and got 2-4x faster by rewriting the same math to move less data, not do less of it.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "2cd58a44-85ec-49ab-a178-b1edb989fc91",
+          "kind": "problem",
+          "title": "Materializing the Full Attention Matrix Is the Real Cost",
+          "body": null,
+          "bullets": [
+            "Standard attention computes Q·Kᵀ, applies softmax, then multiplies by V — but the naive implementation writes the full N×N attention matrix (scores and post-softmax probabilities) out to GPU high-bandwidth memory (HBM) at every step, then reads it back for the next op.",
+            "Modern GPUs have vastly more FLOPs available than memory bandwidth to feed them — for the small, repeated matrix operations in attention, the kernel spends most of its wall-clock time waiting on memory reads/writes, not doing arithmetic.",
+            "That N×N matrix also means quadratic memory: attention over a long sequence needs to hold a full sequence-length-squared matrix per head, per layer, which is what caps how long a context window standard attention can afford to train on.",
+            "This is a classic 'memory wall' problem — GPU compute has scaled much faster than memory bandwidth over the past decade, so kernels that were compute-bound in the past have quietly become bandwidth-bound."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "f0657a46-2dfc-44cf-a2e7-05192aed30a1",
+          "kind": "solution",
+          "title": "Tile the Computation, Never Materialize the Full Matrix",
+          "body": null,
+          "bullets": [
+            "FlashAttention (Dao et al.) splits Q, K, V into small blocks that fit in the GPU's fast on-chip SRAM — orders of magnitude smaller but far faster than HBM — and fuses the matmul + softmax + matmul into a single kernel.",
+            "For each block, it computes partial attention scores and partial output entirely inside SRAM, then updates a running (unnormalized) output and running softmax statistics — never writing the full N×N score matrix to HBM at all.",
+            "This uses an 'online softmax' trick: because softmax needs a normalization constant over the whole row, FlashAttention keeps a running max and running sum per row and rescales previously-computed partial outputs as new blocks arrive, producing the mathematically exact same softmax as the standard two-pass version.",
+            "The result is exact attention — not an approximation like sparse or low-rank attention variants — with memory that scales linearly in sequence length instead of quadratically, because the full matrix is never stored."
+          ],
+          "symbol": "square.grid.3x2.fill",
+          "table": null
+        },
+        {
+          "id": "247368fa-dfe4-484c-8abd-be489368417f",
+          "kind": "concept",
+          "title": "The Backward Pass Trades More FLOPs for Less I/O",
+          "body": null,
+          "bullets": [
+            "Backpropagation normally needs the attention matrix computed in the forward pass — the naive approach is to store it, which is exactly the quadratic-memory cost FlashAttention just avoided.",
+            "Instead, FlashAttention recomputes the attention matrix on the fly during the backward pass, using the small saved softmax normalization statistics (the running max/sum from the forward pass) rather than reading a stored N×N matrix back from HBM.",
+            "This sounds like it should be slower — recomputation means strictly more floating-point operations than reusing a stored result. But because the kernel is bandwidth-bound, not compute-bound, avoiding the HBM read/write more than pays for the extra arithmetic.",
+            "This is the core IO-awareness idea: count HBM accesses, not just FLOPs, as the cost model — the standard implementation makes far more HBM accesses than FlashAttention for typical sequence lengths, and that gap is what drives the wall-clock speedup."
+          ],
+          "symbol": "arrow.up.arrow.down.circle.fill",
+          "table": null
+        },
+        {
+          "id": "93f81110-87bb-47b9-9393-e2a5fec4c896",
+          "kind": "example",
+          "title": "Worked Example: Affording a Longer Context Window",
+          "body": "Say a training run needs to go from a 1K-token context to a 4K-token context — a 4x increase — on the same fixed GPU memory budget.",
+          "bullets": [
+            "With standard attention, memory for the attention matrix grows with the square of sequence length, so a 4x longer context needs roughly 16x the attention memory per layer — on fixed GPU memory, that forces a much smaller batch size, or makes the run infeasible outright.",
+            "With FlashAttention's linear memory scaling, the same 4x context increase costs roughly 4x the memory, not 16x — leaving enough headroom to keep batch sizes practical instead of collapsing them to fit.",
+            "The original paper used exactly this kind of setup to train GPT-2 with a longer context than prior recipes on the same hardware, and reported the longer-context run reaching better quality — purely because the longer context became affordable to train on at all.",
+            "The same underlying fix produced two separate wins in that experiment: a roughly 2-4x wall-clock training speedup, and a context window that was out of reach for standard attention on the same hardware."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "4eaa9389-ae11-4f48-815b-78d0f3c47d6c",
+          "kind": "comparison",
+          "title": "Standard Attention vs. FlashAttention",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Property",
+              "Standard attention",
+              "FlashAttention"
+            ],
+            "rows": [
+              [
+                "Attention matrix",
+                "Fully materialized in HBM (N×N)",
+                "Never materialized — computed in tiles inside SRAM"
+              ],
+              [
+                "Memory scaling with sequence length",
+                "Quadratic",
+                "Linear"
+              ],
+              [
+                "Numerical result",
+                "Exact softmax attention",
+                "Exact softmax attention (same math)"
+              ],
+              [
+                "Backward pass",
+                "Reads the stored attention matrix",
+                "Recomputes it from small saved statistics"
+              ],
+              [
+                "Bottleneck",
+                "HBM read/write bandwidth",
+                "On-chip SRAM compute (much faster)"
+              ],
+              [
+                "Reported training speedup",
+                "baseline",
+                "~2-4x on GPT-2 / BERT-large (original paper)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "31b8994e-380a-4c2e-847d-3dd47b5ba035",
+          "kind": "concept",
+          "title": "What It Doesn't Change, and Where It Gets Complicated",
+          "body": null,
+          "bullets": [
+            "FlashAttention changes how attention is computed, not what it computes — it doesn't reduce the underlying quadratic FLOP count of full attention, so for extremely long sequences it's still doing quadratic work, just with far less wasted memory movement.",
+            "It's a hand-written, hardware-specific kernel — later versions (FlashAttention-2, FlashAttention-3) exist specifically because each new GPU generation has a different SRAM size, warp structure, and instruction set that needs re-tuning the tiling and scheduling to keep hitting close to peak throughput.",
+            "It doesn't help as much when a workload is already compute-bound rather than memory-bound — for very short sequences or unusual shapes where the N×N matrix was never the real bottleneck, the gain from avoiding HBM traffic shrinks.",
+            "For genuinely sub-quadratic scaling — not just less wasted memory within quadratic compute — you need a different algorithm entirely, such as state-space models like Mamba. FlashAttention makes exact quadratic attention efficient; it doesn't make attention linear-compute."
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "72319af1-d3de-4c60-8bab-59c1e5a78a27",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "FlashAttention is exact attention rewritten around the GPU memory hierarchy: tile Q/K/V into SRAM-sized blocks, fuse matmul+softmax+matmul into one kernel, and use online softmax so the full N×N matrix is never written to HBM.",
+            "That single change turns quadratic memory into linear memory, and — because attention on modern GPUs is bandwidth-bound, not compute-bound — trading extra backward-pass recomputation for less data movement makes the whole thing faster, not slower.",
+            "The reported system-level win was roughly a 2-4x training speedup plus the ability to train with meaningfully longer context on the same hardware, without changing the model's outputs at all.",
+            "It's an IO-aware systems optimization, not an approximation or a new architecture — which is why it composes with almost everything else (quantization, GQA, paged KV caches) rather than replacing them."
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6c45cc07-972b-4eb6-a2dd-d98f98c05722",
+            "prompt": "What makes standard attention memory-bandwidth bound rather than compute bound on modern GPUs?",
+            "options": [
+              "GPUs have too little compute to keep up with attention's FLOP count",
+              "The naive implementation writes/reads the full N×N attention matrix to/from HBM, and GPU memory bandwidth has grown much slower than compute",
+              "Softmax cannot be computed in parallel on a GPU",
+              "Attention requires more registers than a GPU streaming multiprocessor has available"
+            ],
+            "correctIndex": 1,
+            "explanation": "GPU compute (FLOPs) has scaled far faster than memory bandwidth over the past decade. The naive attention kernel repeatedly writes and reads the full N×N score/probability matrix to slow HBM, so it spends most of its time waiting on data movement rather than doing arithmetic — that's what 'memory-bandwidth bound' means."
+          },
+          {
+            "id": "6ae8602b-c52f-4562-aaa5-ef24d587a548",
+            "prompt": "How does FlashAttention avoid quadratic memory growth while still computing exact softmax attention?",
+            "options": [
+              "It approximates softmax with a cheaper linear function",
+              "It drops the lowest attention scores before computing softmax",
+              "It tiles Q/K/V into SRAM-sized blocks and uses a running max/sum (online softmax) to compute the exact result without ever storing the full N×N matrix",
+              "It caches the attention matrix from the previous layer and reuses it"
+            ],
+            "correctIndex": 2,
+            "explanation": "Online softmax lets FlashAttention process the sequence in tiles, keeping a running normalization statistic and rescaling partial outputs as new blocks arrive — mathematically identical to standard softmax, computed without ever materializing the full matrix."
+          },
+          {
+            "id": "16b4612b-4f1d-4301-8936-45325801d21a",
+            "prompt": "Why does recomputing the attention matrix during the backward pass make FlashAttention faster, not slower, despite doing more FLOPs?",
+            "options": [
+              "Recomputation runs on a separate, otherwise-idle GPU",
+              "GPUs have compute capacity to spare relative to memory bandwidth, so avoiding a large HBM read/write more than offsets the extra arithmetic",
+              "The backward pass doesn't actually need the attention matrix at all",
+              "Recomputation only happens during inference, not training"
+            ],
+            "correctIndex": 1,
+            "explanation": "This is the IO-awareness core idea: on a bandwidth-bound kernel, the real cost is HBM traffic, not FLOP count. Recomputing from small saved statistics avoids a large HBM read of the stored matrix, and since GPUs have compute to spare relative to bandwidth, that trade comes out ahead in wall-clock time."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "e20c5a9b-649a-4ddd-8041-cb15ea723477",
       "title": "Speculative Decoding: Guessing Ahead, Verifying in Parallel",
       "subtitle": "How a small draft model lets a big model check several tokens at once",
@@ -11076,202 +11280,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-12T12:47:28Z"
-    },
-    {
-      "id": "78668c41-8773-4d9d-91dd-555af48a640c",
-      "title": "Continuous Batching: Stop Waiting for the Slowest Request",
-      "subtitle": "Why LLM servers reschedule the batch every single token, not every request",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "llm-serving",
-        "inference",
-        "batching",
-        "throughput",
-        "vllm"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Batching multiple requests together is how LLM servers keep GPUs busy, but batching at the request level forces short answers to wait for the longest one in the batch to finish. Continuous batching reschedules the running batch after every decoded token instead of every full request, evicting finished sequences and admitting new ones mid-flight so GPU slots almost never sit idle.",
-      "slides": [
-        {
-          "id": "842d8648-b66e-4ae0-a636-ae679a778d58",
-          "kind": "cover",
-          "title": "A Finished Reply Still Held Its GPU Slot Hostage",
-          "body": "Naive batching treats a batch of requests as one atomic unit: if one reply needs 500 tokens and the rest need 20, everyone waits for the 500-token reply — the GPU keeps computing on slots that are done in every way that matters, just not officially closed.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "2d33f0f1-acac-4136-90ef-b10888b582dd",
-          "kind": "problem",
-          "title": "Request-Level Batching Waits for the Slowest Sequence",
-          "body": null,
-          "bullets": [
-            "Classic batching groups N requests into one fixed batch and runs the model forward, one decoding step at a time, until every sequence in that batch hits its stop token or max length",
-            "A sequence that finishes early can't leave — its slot either sits idle or gets padded, but a new waiting request can't take that slot until the whole batch drains",
-            "The result is a convoy effect: one long-running request (a big summarization, a long chain-of-thought answer) drags down throughput for every short request unlucky enough to share its batch",
-            "Queued requests outside the batch keep waiting even though the GPU has computationally free slots right now — the batch boundary is what's blocking them, not the hardware"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "c6719cdb-9b3d-4914-8095-6a23d7858da4",
-          "kind": "solution",
-          "title": "Reschedule at the Token Level, Not the Batch Level",
-          "body": null,
-          "bullets": [
-            "Continuous batching (also called iteration-level scheduling or in-flight batching) runs the scheduler after every single decoding step — every generated token — instead of after the whole batch finishes",
-            "The moment a sequence emits its stop token or hits max length, it's evicted immediately, freeing its slot for the very next iteration",
-            "A waiting request in the queue gets inserted into that freed slot right away — it doesn't wait for anyone else in the batch to finish, only for the next forward pass",
-            "Batch composition is fluid: the set of sequences being computed together can be completely different from one iteration to the next"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "ff127f93-acea-446f-9304-15d224e241e8",
-          "kind": "architecture",
-          "title": "It Needs a Memory Manager That Can Keep Up",
-          "body": null,
-          "bullets": [
-            "Sequences entering and leaving the batch every iteration means the KV cache can't live in one fixed-size contiguous tensor sized for a static batch — allocations and frees happen constantly, at unpredictable moments",
-            "This is why continuous batching is almost always paired with a per-sequence, block-based KV cache allocator (the same idea behind paged attention) rather than one big preallocated buffer",
-            "New requests bring a prompt that must be 'prefilled' — processed all at once, which is compute-heavy — while ongoing sequences are in 'decode', generating one token at a time, which is memory-bandwidth-heavy",
-            "Mixing a large prefill into the same iteration as many decode steps spikes that iteration's latency for every decode sequence sharing it, which is why production schedulers often chunk large prefills across several iterations instead of running them in one shot"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "6c416b8d-55f7-4cda-b865-a446325e88d2",
-          "kind": "example",
-          "title": "Worked Example: Four Requests, Wildly Different Lengths",
-          "body": "Say four requests join a batch needing 20, 20, 200, and 20 output tokens respectively.",
-          "bullets": [
-            "Static batching: the server runs all 200 steps for all four slots. Three slots finish real work at step 20 and then just occupy GPU memory — doing nothing useful — for the remaining 180 steps. Any request that arrived at step 21 waits until step 200",
-            "Continuous batching: at step 20, the three short sequences are evicted the instant they finish. If three new requests are waiting, they take those slots at step 21 — they don't wait 180 extra steps for an unrelated request to finish",
-            "The long 200-token request is unaffected either way — continuous batching doesn't speed up any single sequence, it stops other sequences from being blocked by it"
-          ],
-          "symbol": "list.bullet.rectangle",
-          "table": null
-        },
-        {
-          "id": "89d3c6a0-474d-43eb-a518-0e45f74403d5",
-          "kind": "comparison",
-          "title": "Static Batching vs. Continuous Batching",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "",
-              "Static / Request-Level Batching",
-              "Continuous Batching"
-            ],
-            "rows": [
-              [
-                "Rescheduling granularity",
-                "Once per full batch (waits for the slowest sequence)",
-                "Once per decoding iteration (per generated token)"
-              ],
-              [
-                "GPU utilization on mixed lengths",
-                "Drops as short sequences finish but can't leave",
-                "Stays high — freed slots refill on the next step"
-              ],
-              [
-                "New request wait time",
-                "Until the current batch fully drains",
-                "Until the next iteration, regardless of batch state"
-              ],
-              [
-                "KV cache memory layout",
-                "One fixed-size buffer sized for the batch",
-                "Per-sequence, block-based allocator (paged KV cache)"
-              ],
-              [
-                "Used by",
-                "Simple early inference servers",
-                "vLLM, TensorRT-LLM ('in-flight batching'), TGI, Orca"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "c657f8d1-5707-4aa3-9d65-64f55aa94ad1",
-          "kind": "concept",
-          "title": "Where It Gets Hard — and Where It Doesn't Help",
-          "body": null,
-          "bullets": [
-            "It adds real scheduler complexity: per-iteration admission decisions, prefill/decode interleaving, and eviction all have to happen every single step without becoming the bottleneck themselves",
-            "Admitting too many concurrent sequences too eagerly can exhaust KV cache memory — the scheduler has to reserve headroom or evict/preempt lower-priority sequences under pressure",
-            "It doesn't shrink the work for any individual request — a 500-token reply still takes roughly 500 steps to generate; continuous batching only prevents that request from stalling everyone else",
-            "For a server that only ever handles one request at a time, or where all requests are near-identical length (e.g. fixed-length classification-style outputs), the benefit shrinks — there's little convoy effect to fix"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "e57f24d9-3ef5-4a0b-83c0-cc1cae78a643",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "Naive batching is atomic at the request level — one long sequence in a batch drags every other slot down with it until the whole batch finishes",
-            "Continuous batching reschedules at the granularity of a single decoding step, evicting finished sequences and admitting queued ones on the very next iteration",
-            "It typically requires a per-sequence, block-based KV cache manager, since batch membership changes unpredictably every step rather than at fixed boundaries",
-            "It's a throughput and utilization fix, not a latency fix for any one request — mixing prefill and decode work still needs care, usually via chunked prefill"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "aefcb829-7330-4bf2-9331-e91281d6d4f6",
-            "prompt": "Under naive request-level batching, what specifically causes GPU slots to sit idle?",
-            "options": [
-              "The model weights don't fit in GPU memory",
-              "A slot freed by an early-finishing sequence can't be reused until every sequence in that same batch also finishes",
-              "The scheduler prioritizes requests by billing tier",
-              "Attention computation scales quadratically with sequence length"
-            ],
-            "correctIndex": 1,
-            "explanation": "Request-level batching treats the whole batch as one atomic unit. A short sequence that finishes early has nowhere to go — its slot stays occupied (idle or padded) until the batch's longest sequence also finishes, since new requests can only join at a batch boundary."
-          },
-          {
-            "id": "fbd09de7-7d7b-434d-b52c-833289a42ab1",
-            "prompt": "At what granularity does continuous batching re-evaluate which sequences are running?",
-            "options": [
-              "Once per request, at admission time only",
-              "Once per full batch, after every sequence completes",
-              "Every single decoding iteration — one generated token per active sequence",
-              "On a fixed timer, independent of generation progress"
-            ],
-            "correctIndex": 2,
-            "explanation": "Continuous batching (iteration-level scheduling) checks batch membership after every forward pass. A sequence that just finished is evicted immediately, and a queued request can take its slot on the very next step."
-          },
-          {
-            "id": "3525c52c-589b-4d59-8fdb-5652450dbace",
-            "prompt": "Why is admitting a new request's full prompt (prefill) into a busy decode-heavy iteration risky?",
-            "options": [
-              "Prefill requires different model weights than decode",
-              "Prefill processes the whole prompt at once and is compute-heavy, which can spike that iteration's latency for every decode-phase sequence sharing the step",
-              "Prefill can only run on CPU, not GPU",
-              "Decode-phase sequences must be fully paused and restarted afterward"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prefill and decode have very different compute profiles — prefill is compute-bound (processing many prompt tokens at once), decode is memory-bandwidth-bound (one token at a time). Mixing a large prefill into a decode-heavy step slows down every sequence in that step, which is why servers often chunk large prefills across several iterations instead."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-12T06:43:34Z"
     }
   ]
 }
