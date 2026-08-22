@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "id": "b9039b26-732a-4c18-a3de-e5e2625099a6",
+      "title": "HNSW: The Graph That Makes Vector Search Fast",
+      "subtitle": "Skip lists for vectors: finding your nearest neighbor in log-time, not linear time.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "vector-search",
+        "hnsw",
+        "embeddings",
+        "ann",
+        "rag",
+        "indexing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "Exact nearest-neighbor search means comparing a query against every stored vector — fine for thousands, unusable for millions. HNSW builds a multi-layer proximity graph that turns that linear scan into a logarithmic graph walk, trading a small, tunable amount of recall for the speedup that makes real-time RAG retrieval possible.",
+      "slides": [
+        {
+          "id": "efc51248-4b03-4f17-8141-e8a06b948c6d",
+          "kind": "cover",
+          "title": "Nearest-Neighbor Search Doesn't Have to Touch Every Vector",
+          "body": "HNSW (Hierarchical Navigable Small World) is the graph-based index behind most production vector databases — Pinecone, Weaviate, Qdrant, Milvus, and FAISS all ship it. It turns a linear scan into a logarithmic graph walk.",
+          "bullets": [],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "9799c4e5-bdd9-45c8-b9a6-84d2eda21b84",
+          "kind": "problem",
+          "title": "Brute-Force kNN Is Linear — and RAG Can't Afford That",
+          "body": "The exact way to find a query's nearest neighbors is to compute its distance to every stored vector and sort. That's O(n·d) per query — n vectors, d dimensions.",
+          "bullets": [
+            "At 100K embeddings this is a few milliseconds; at 50M it's seconds per query — too slow for a retrieval step inside an interactive chat response.",
+            "Every added document makes every future query proportionally slower, since there's nothing to skip — you always compare against everything.",
+            "The fix has to be approximate: give up the guarantee of finding the exact top-k in exchange for sub-linear search time."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "28f6c4b7-9218-4db3-ae9a-e3a1d9415b6c",
+          "kind": "solution",
+          "title": "HNSW Stacks Sparse-to-Dense Graph Layers Like a Skip List",
+          "body": "Each vector is inserted into a multi-layer graph — always on layer 0, and on each layer above with exponentially decaying probability, so the top layer has only a handful of points.",
+          "bullets": [
+            "Search starts at a single entry point on the sparsest top layer and greedily hops to whichever neighbor is closest to the query.",
+            "When no neighbor at the current layer is closer, the walk drops down one layer and keeps hopping — sparse top layers cover long distances fast, lower layers refine locally.",
+            "By layer 0, the walk has narrowed to a small neighborhood of true near-neighbors, checked in roughly O(log n) hops instead of comparing against all n."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "bebab1cd-227e-47ed-a01b-27c366d442ef",
+          "kind": "architecture",
+          "title": "Three Knobs Trade Recall Against Speed and Memory",
+          "body": null,
+          "bullets": [
+            "M — max connections per node per layer (typically 16-64). Higher M means a denser, more accurate graph but more memory and slower inserts.",
+            "efConstruction — candidate list size while building the graph. Higher values build a better-connected graph at the cost of slower indexing, a one-time cost paid at insert.",
+            "efSearch — candidate list size at query time. This is the one knob you can turn per request without rebuilding the index: higher efSearch trades latency for recall.",
+            "A typical starting point is M=16, efConstruction=200, with efSearch tuned per workload somewhere between 50 and 200."
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "75a78984-26e9-4c80-9838-8bde4339be73",
+          "kind": "comparison",
+          "title": "HNSW vs Flat vs IVF, by the Property That Matters",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Property",
+              "Flat (brute-force)",
+              "IVF (clustered)",
+              "HNSW (graph)"
+            ],
+            "rows": [
+              [
+                "Query cost",
+                "O(n) — exact",
+                "O(n/nlist) after coarse quantization — approx",
+                "O(log n) graph hops — approx"
+              ],
+              [
+                "Recall",
+                "100% (exact)",
+                "Depends on nprobe; drops if clusters are lopsided",
+                "Typically 95-99% with efSearch tuned"
+              ],
+              [
+                "Build cost",
+                "None — just insert",
+                "Needs a training pass to fit cluster centroids",
+                "Needs graph construction (efConstruction) per insert"
+              ],
+              [
+                "Memory overhead",
+                "Just the raw vectors",
+                "Vectors + centroid list, modest overhead",
+                "Vectors + M links per layer per node — often 1.5-2x raw vector size"
+              ],
+              [
+                "Best fit",
+                "Small collections, exact-match needs",
+                "Very large, mostly-static datasets",
+                "Latency-sensitive search with frequent updates"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "01643476-21c3-4098-b339-27d1aabba778",
+          "kind": "example",
+          "title": "5M Document Chunks, One Query, Two Very Different Costs",
+          "body": "A RAG system embeds 5 million 768-dimension chunks from a document corpus. A user question arrives as a single query vector.",
+          "bullets": [
+            "Brute-force: the query is compared against all 5,000,000 vectors, computing 5M similarity ops before returning the top-5.",
+            "HNSW: the walk touches a few thousand candidate nodes total across all layers — a handful of long jumps at the top, then a bounded local search at layer 0 — before returning a near-identical top-5.",
+            "Both approaches typically return the same or near-same top-5 chunks — the difference is the number of comparisons needed to find them, which is what separates a retrieval step that fits inside a tight latency budget from one that doesn't."
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "42250279-f7ae-43d9-bbcd-3e2efb43bf34",
+          "kind": "problem",
+          "title": "Where HNSW Costs You: Memory, Deletes, and Guarantees",
+          "body": "The speed isn't free — three real tradeoffs show up in production.",
+          "bullets": [
+            "No recall guarantee: HNSW is approximate by construction — a badly tuned efSearch can silently miss true nearest neighbors with no error thrown.",
+            "Deletes are expensive: most implementations don't support true node removal — they tombstone the entry and still traverse through it, so delete-heavy workloads need periodic full rebuilds.",
+            "Memory scales with M: storing graph edges, not just vectors, means an HNSW index can use noticeably more RAM than a flat index of the same vectors — a real constraint at hundreds of millions of vectors.",
+            "When NOT to use it: small collections (under roughly 10-50K vectors) where a flat scan is already fast enough and simpler to reason about, or use cases requiring guaranteed exact recall — like legal or compliance search — where approximate results aren't acceptable."
+          ],
+          "symbol": "exclamationmark.arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "34c2469b-10f0-4941-8dbf-b2d76aa37645",
+          "kind": "takeaways",
+          "title": "Approximate, Tunable, and the Default for a Reason",
+          "body": "HNSW trades a small, controllable amount of recall for a massive drop in query cost — exactly the trade most RAG systems want.",
+          "bullets": [
+            "The core idea is a multi-layer graph: sparse layers for long jumps, dense layers for local refinement — the same trick a skip list uses for sorted lists, applied to vector space.",
+            "M and efConstruction are build-time decisions; efSearch is the dial you turn per query to trade latency for recall without touching the index.",
+            "Reach for HNSW when queries are frequent and latency-sensitive; reach for a flat index when the collection is small or exact results are non-negotiable."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "e35a27f1-cf87-428e-a0f6-99802bbad013",
+            "prompt": "Why is brute-force k-nearest-neighbor search a poor fit for RAG retrieval over millions of embeddings?",
+            "options": [
+              "It requires a GPU to compute cosine similarity",
+              "It compares the query against every stored vector, so query time grows linearly with the collection size",
+              "It can only be used with normalized vectors",
+              "It doesn't support cosine similarity, only Euclidean distance"
+            ],
+            "correctIndex": 1,
+            "explanation": "Brute-force kNN is O(n·d) per query — every stored vector must be compared. That's fine at 100K vectors but becomes seconds-per-query at tens of millions, too slow for an interactive retrieval step."
+          },
+          {
+            "id": "df101821-b435-4c48-91d8-99b9f3269f38",
+            "prompt": "In HNSW, what does raising efSearch at query time actually trade off?",
+            "options": [
+              "It rebuilds the graph with more connections per node",
+              "It widens the candidate list explored during search, trading latency for higher recall",
+              "It reduces the number of layers in the graph",
+              "It changes the distance metric used for comparison"
+            ],
+            "correctIndex": 1,
+            "explanation": "efSearch controls how many candidates are kept in the search frontier at query time — no index rebuild required. A higher value explores more of the graph, catching more true nearest neighbors at the cost of a slower query."
+          },
+          {
+            "id": "ed0b411d-79b7-48da-87e1-4f8698a3b71f",
+            "prompt": "Why is deleting a vector from an HNSW index harder than deleting a row from a flat array?",
+            "options": [
+              "HNSW vectors are stored in a read-only format",
+              "Other nodes' edges may route through the deleted node during traversal, so most implementations tombstone it and reclaim space via periodic rebuilds rather than removing it immediately",
+              "Deletes are actually just as cheap as with a flat index",
+              "HNSW doesn't allow inserts either, so it's built once and never changes"
+            ],
+            "correctIndex": 1,
+            "explanation": "The graph's connectivity depends on every node's links, so cleanly removing one requires re-routing its neighbors' edges. Most implementations avoid that cost per-delete by marking it deleted (skipped in results, still traversed) and periodically rebuilding."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-22T00:38:54Z",
+      "heroImageURL": null
+    },
+    {
       "id": "fa116171-2445-427c-b368-a14040ed1993",
       "title": "Event-Driven Architecture: Systems That React Instead of Ask",
       "subtitle": "Why Kafka, SQS, and EventBridge exist, and what they cost you.",
@@ -11058,195 +11259,6 @@
           "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731"
         }
       ],
-      "publishedDate": "2026-08-12T00:41:32Z"
-    },
-    {
-      "id": "89975fa5-7059-4efc-9ea6-3fde566db446",
-      "title": "FlashAttention: Attention Was Never Compute-Bound",
-      "subtitle": "The bottleneck was never FLOPs — it was reading and writing GPU memory",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "flashattention",
-        "gpu-kernels",
-        "attention",
-        "training-efficiency",
-        "transformers"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "memorychip.fill",
-      "summary": "Standard attention materializes a full N×N score matrix in slow GPU memory (HBM), making it memory-bandwidth-bound rather than compute-bound. FlashAttention fuses the whole computation into tiled blocks kept in fast on-chip SRAM using an online softmax trick, computing mathematically exact attention while cutting HBM traffic and turning quadratic memory into linear.",
-      "slides": [
-        {
-          "id": "8282eb55-5185-4c2d-ac45-e2a200f051f9",
-          "kind": "cover",
-          "title": "GPUs Are Compute-Rich But Memory-Bandwidth-Poor",
-          "body": "A modern GPU can do far more math per second than it can move bytes between its slow high-bandwidth memory (HBM) and its fast on-chip SRAM. Standard attention ignores this and pays for it — FlashAttention was built specifically to stop paying it.",
-          "bullets": [],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "12c84e49-63f5-499f-8abd-7a6e82c43940",
-          "kind": "problem",
-          "title": "Standard Attention Materializes an N×N Matrix in Slow Memory",
-          "body": null,
-          "bullets": [
-            "Computing attention naively builds the full query-key score matrix (N tokens × N tokens) and writes it out to HBM before softmax, then reads it back for the weighted sum with values",
-            "That matrix grows quadratically with sequence length — double the context, quadruple the memory traffic",
-            "GPU on-chip SRAM is tiny compared to HBM but roughly an order of magnitude faster to read/write — naive attention barely uses it, spending most of its time waiting on HBM round-trips rather than doing math",
-            "This makes standard attention memory-bandwidth-bound, not compute-bound — the GPU's math units sit idle waiting for data"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "23c1379b-0483-42c2-b4cf-fdbbeb7078aa",
-          "kind": "solution",
-          "title": "Tile the Computation, Never Materialize the Full Matrix",
-          "body": null,
-          "bullets": [
-            "FlashAttention splits queries, keys, and values into small blocks that fit in fast on-chip SRAM",
-            "It computes attention block-by-block, fusing the score, softmax, and weighted-sum steps into one kernel so intermediate results never get written back out to HBM",
-            "An online softmax trick keeps a running max and running sum as blocks are processed, so the full row of scores never needs to exist in memory at once — the math still comes out exact",
-            "Because it's a kernel-fusion and I/O-scheduling technique, not an approximation, FlashAttention returns bit-for-bit the same result as standard attention — just computed with far less memory traffic"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "4d432d69-92ad-4c4a-ba05-c6277e41ae5e",
-          "kind": "concept",
-          "title": "The Real Bottleneck Was I/O, Not FLOPs",
-          "body": null,
-          "bullets": [
-            "The paper's core insight: at the sequence lengths modern transformers use, attention's runtime is dominated by memory accesses, not arithmetic — an I/O complexity analysis, not just a speed hack",
-            "Standard attention does roughly O(N²) reads and writes to slow HBM; FlashAttention's tiling reduces that traffic by keeping working blocks resident in SRAM as long as possible",
-            "Total FLOPs computed doesn't go down — FlashAttention doesn't reduce the math, it stops paying for unnecessary trips to slow memory to do that same math"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "b74878f1-ee02-4d5e-821a-da9b6ab0052c",
-          "kind": "example",
-          "title": "Worked Example: Training on 16K-Token Sequences",
-          "body": "Training a model with 16K-token context, standard attention per layer per head needs a 16K × 16K score matrix — over 256 million entries — written to and read from HBM.",
-          "bullets": [
-            "That matrix alone can exceed available memory well before the model weights do, forcing shorter sequences or smaller batches just to fit",
-            "FlashAttention never forms that full matrix — it processes tiles small enough for SRAM, so peak memory for attention grows linearly with sequence length instead of quadratically",
-            "This is what let longer-context training and inference become practical without needing proportionally more GPU memory just for attention itself"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "2e042bd0-45da-4937-bdd1-79f6a2e87556",
-          "kind": "comparison",
-          "title": "Standard Attention vs. FlashAttention",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Property",
-              "Standard Attention",
-              "FlashAttention"
-            ],
-            "rows": [
-              [
-                "Result",
-                "Exact softmax attention",
-                "Exact — bit-identical math, not an approximation"
-              ],
-              [
-                "Memory vs. sequence length N",
-                "Quadratic, O(N²)",
-                "Linear, O(N)"
-              ],
-              [
-                "Bottleneck",
-                "HBM read/write bandwidth",
-                "Compute (SRAM keeps data close to the math units)"
-              ],
-              [
-                "Full score matrix ever materialized in HBM?",
-                "Yes",
-                "No — computed and consumed tile-by-tile"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "82bf317c-014c-4d3e-a9eb-6d71b6458786",
-          "kind": "problem",
-          "title": "Where It Doesn't Help",
-          "body": null,
-          "bullets": [
-            "It doesn't reduce total FLOPs — attention is still O(N²) compute, so extremely long sequences eventually hit a compute wall FlashAttention alone can't remove",
-            "The speedup comes from hand-tuned CUDA kernels matched to specific GPU generations — a naive PyTorch reimplementation of the algorithm on paper won't get the same win without that kernel engineering",
-            "It has to be wired into the model's attention layer explicitly; frameworks and hardware need to support the fused kernel (FlashAttention-2 and -3 exist specifically because each new GPU generation needed re-tuned kernels)"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "c34cf1a9-abf5-4df4-944d-3eb99be3954c",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "Attention's real bottleneck at typical sequence lengths is GPU memory bandwidth, not raw compute",
-            "FlashAttention fuses score, softmax, and weighted-sum into tiled kernels that never materialize the full N×N matrix in slow HBM, using an online softmax to stay exact",
-            "Memory scales linearly instead of quadratically with sequence length — a structural enabler for longer context, not just a constant-factor speedup",
-            "It's exact, not approximate — the output matches standard attention bit-for-bit, so there's no accuracy tradeoff to weigh against the speed"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "30f7cdd8-1d05-450b-b310-801bdcf71399",
-            "prompt": "What is FlashAttention's core technique?",
-            "options": [
-              "Approximating attention with a sparse pattern",
-              "Tiling the computation and fusing it into one kernel so the full N×N score matrix is never written to slow GPU memory",
-              "Distilling attention into a smaller learned function",
-              "Reducing precision to 4-bit for all attention weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "FlashAttention processes attention in small tiles kept in fast on-chip SRAM, using an online softmax so the full score matrix never needs to be materialized in slow HBM."
-          },
-          {
-            "id": "f1f44ea9-aad1-4f68-a518-417aea6b79ef",
-            "prompt": "Is FlashAttention's output an approximation of standard attention?",
-            "options": [
-              "Yes, it trades a small accuracy loss for speed",
-              "No — it computes mathematically exact attention, just with far less memory traffic",
-              "Yes, but only for sequences longer than 8K tokens",
-              "It depends on the GPU generation"
-            ],
-            "correctIndex": 1,
-            "explanation": "FlashAttention is a kernel-fusion and I/O-scheduling technique, not an approximation — the online softmax trick lets it produce the exact same result as standard attention."
-          },
-          {
-            "id": "4caf7e19-f65b-46c7-8afe-003ce6aeb7cf",
-            "prompt": "What bottleneck does FlashAttention primarily target?",
-            "options": [
-              "Network bandwidth between GPUs in a cluster",
-              "Disk I/O when loading model checkpoints",
-              "GPU memory bandwidth — the cost of moving data between HBM and on-chip SRAM",
-              "CPU-side tokenization speed"
-            ],
-            "correctIndex": 2,
-            "explanation": "At the sequence lengths transformers use, standard attention is bound by how much data it moves in and out of slow HBM, not by how much arithmetic the GPU can do — that's the bottleneck FlashAttention removes."
-          }
-        ]
-      },
-      "references": [],
       "publishedDate": "2026-08-12T00:41:32Z"
     }
   ]
