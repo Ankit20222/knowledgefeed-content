@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "id": "e20c5a9b-649a-4ddd-8041-cb15ea723477",
+      "title": "Speculative Decoding: Guessing Ahead, Verifying in Parallel",
+      "subtitle": "How a small draft model lets a big model check several tokens at once",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "speculative-decoding",
+        "inference",
+        "llm-serving",
+        "draft-model",
+        "latency"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "Autoregressive decoding generates one token per full forward pass through the model, which wastes the GPU's compute because each pass is bottlenecked on moving weights from memory, not on the math itself. Speculative decoding fixes this by having a small, fast draft model guess several tokens ahead, then having the big model verify that whole guess in a single parallel pass — accepting whatever the draft got right and only paying the big model's full cost once per batch of guesses, without changing a single output token.",
+      "slides": [
+        {
+          "id": "a1a00cd9-8423-43d4-b344-1dad09e120bb",
+          "kind": "cover",
+          "title": "The GPU Is Waiting, Not Computing",
+          "body": "Generating a reply token by token means running a full forward pass through every layer of the model for each token. On modern GPUs, that pass is bottlenecked by moving billions of weight values out of memory, not by the arithmetic — so most of the GPU's compute capacity sits idle during ordinary decoding.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "e1d62d73-e778-41d7-91eb-00697acfe668",
+          "kind": "problem",
+          "title": "Decoding Is Memory-Bound, Not Compute-Bound",
+          "body": null,
+          "bullets": [
+            "Each decode step reads the entire model's weights from GPU memory to produce exactly one token — for a large model that's tens of gigabytes moved per token, every token",
+            "The actual matrix multiplications for a single new token are cheap; the GPU's compute units finish almost instantly and then sit idle waiting on memory bandwidth",
+            "This means decoding one token or verifying several tokens in parallel costs roughly the same wall-clock time — the bottleneck is the weight transfer, which happens once either way",
+            "That gap between 'compute available' and 'compute used' is exactly what speculative decoding spends"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "b9823c23-3d6e-4143-9a4c-a295efd0cf4e",
+          "kind": "solution",
+          "title": "A Cheap Model Guesses, the Big Model Checks the Whole Guess at Once",
+          "body": null,
+          "bullets": [
+            "A small, fast 'draft' model — often a distilled or much smaller version of the target model — generates K candidate tokens autoregressively, one at a time, which is cheap because it's a small model",
+            "The large 'target' model then runs a single forward pass over all K draft tokens simultaneously, since verifying K positions in parallel costs about the same as generating one token alone (the process is memory-bound, not compute-bound)",
+            "The target model compares its own predicted distribution at each position against the draft's chosen token: it accepts tokens left-to-right as long as they'd plausibly be sampled by the target model too",
+            "At the first position where they diverge, the draft token is rejected and replaced with a token resampled from a corrected distribution — everything after that point is thrown away and re-guessed next round"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "fcdfe2cf-2d35-42b1-b9af-4d365ab4e059",
+          "kind": "example",
+          "title": "Worked Example: Four Guesses, Three Survive",
+          "body": "The draft model proposes the continuation \"the cat sat down\" as four tokens: \"the\", \"cat\", \"sat\", \"down\".",
+          "bullets": [
+            "The target model verifies all four in one parallel pass and agrees with 'the', 'cat', and 'sat' — those tokens are accepted exactly as the draft wrote them, no extra cost",
+            "At 'down', the target model's own distribution favors 'quietly' instead — the draft is rejected here, and a replacement token is sampled from the target's corrected distribution at that position",
+            "Net result: 4 tokens produced (3 accepted + 1 resampled) for the price of one target-model forward pass plus four cheap draft-model steps — versus 4 full target-model passes under ordinary decoding",
+            "If the draft had matched all four, the round would produce 4 tokens for the same one-pass cost — the speedup scales directly with how often the draft agrees with the target"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        },
+        {
+          "id": "0b49dd2c-c9c3-4e38-8fe9-f59a98bd7e84",
+          "kind": "concept",
+          "title": "Why the Output Is Provably Identical",
+          "body": null,
+          "bullets": [
+            "The acceptance rule isn't a heuristic filter — it's a form of rejection sampling constructed so the accepted-or-resampled token has exactly the same probability distribution as sampling directly from the target model alone",
+            "This makes speculative decoding lossless: the final text you get has the same distribution as running the expensive target model by itself, token by token, with no draft model at all",
+            "That guarantee is the whole reason labs are comfortable shipping it in production — it's a pure latency optimization, not a quality tradeoff or an approximation",
+            "It only speeds up generation; it does nothing for the model's reasoning, knowledge, or accuracy — a wrong answer decoded speculatively is still exactly as wrong as decoded normally"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        },
+        {
+          "id": "06b1df21-2710-4cd0-b40a-29acfd3b6b4f",
+          "kind": "comparison",
+          "title": "Where the 'Draft' Comes From",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Approach",
+              "Draft source",
+              "Tradeoff"
+            ],
+            "rows": [
+              [
+                "Separate draft model",
+                "A smaller model from the same family (e.g. a distilled variant)",
+                "Best acceptance rates, but needs a second model loaded and maintained"
+              ],
+              [
+                "Self-speculative / early-exit",
+                "The target model itself, exited early at a middle layer",
+                "No second model to manage, but drafts are lower quality than a purpose-trained one"
+              ],
+              [
+                "Extra prediction heads (e.g. Medusa-style)",
+                "Additional lightweight heads attached to the target model's last layer",
+                "One model to deploy, but requires extra training of the heads"
+              ],
+              [
+                "Retrieval / n-gram lookup",
+                "Matches from the prompt or a static corpus, no model at all",
+                "Nearly free to run, but only helps when the continuation echoes existing text"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e13ca67d-30d5-4e16-b0b3-59d38241e5d4",
+          "kind": "problem",
+          "title": "When It Barely Helps — or Isn't Worth the Complexity",
+          "body": null,
+          "bullets": [
+            "The speedup is capped by how often the draft agrees with the target — highly creative, open-ended, or unpredictable text gives the draft little to correctly guess, so acceptance rates (and the payoff) drop",
+            "Gains shrink as batch size grows: decoding many sequences at once is already closer to compute-bound, so there's less idle GPU capacity left for speculative verification to soak up",
+            "It adds real operational cost — a second model (or extra heads) to host, tune the guess length K for, and keep in sync with the target model as it's updated",
+            "Picking K too high wastes draft-model compute on tokens that will likely be rejected anyway; picking it too low leaves speedup on the table — it typically needs tuning per workload"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3fe3cdfb-1ef1-4632-91ab-d5ec780bdefc",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Ordinary decoding wastes GPU compute because moving weights from memory, not arithmetic, is the bottleneck — verifying several tokens costs about the same as generating one",
+            "A cheap draft model proposes several tokens ahead; the expensive target model verifies them all in a single parallel pass and accepts whatever a correctly-constructed rejection-sampling rule would have produced anyway",
+            "The technique is lossless — output distribution matches running the target model alone — so it's a pure latency win, not a quality tradeoff",
+            "It pays off most on predictable text and small batches, and pays off least on highly creative generation or already-compute-bound, high-batch serving"
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "8c12009a-6b9f-4bfd-bd3e-0ed3236389a7",
+            "prompt": "Why does verifying 4 draft tokens in one target-model pass cost about the same as generating 1 token normally?",
+            "options": [
+              "The target model skips most of its layers during verification",
+              "Decoding is bottlenecked by moving weights from memory, which happens once per pass regardless of how many token positions are processed in that pass",
+              "Draft tokens don't need to go through the target model's attention layers",
+              "GPUs can only process one model at a time, so the draft model pauses while verification runs"
+            ],
+            "correctIndex": 1,
+            "explanation": "Ordinary decoding is memory-bandwidth bound: the cost is dominated by streaming the model's weights out of memory, not by the matrix math for one extra token. Processing several token positions in one forward pass reuses that same memory transfer, so the marginal compute cost is small."
+          },
+          {
+            "id": "5e8f879b-ff11-4f2e-96cd-694df0a55d91",
+            "prompt": "What guarantees that speculative decoding doesn't change the quality or content of the output compared to normal decoding?",
+            "options": [
+              "The draft model is fine-tuned to always match the target model exactly",
+              "Rejected tokens are simply skipped, shortening the response slightly",
+              "The accept/resample rule is constructed as rejection sampling so the resulting token distribution exactly matches sampling from the target model alone",
+              "Only draft tokens with high confidence scores above a fixed threshold are ever proposed"
+            ],
+            "correctIndex": 2,
+            "explanation": "Speculative decoding's acceptance test is a rejection-sampling scheme, not a heuristic: it's mathematically constructed so that the final sampled token — whether accepted from the draft or resampled at a mismatch — has the same probability distribution as decoding directly from the target model. That's what makes it lossless."
+          },
+          {
+            "id": "be4dffe5-6f62-4f0d-bb72-a126e25c06fc",
+            "prompt": "In which scenario does speculative decoding provide the LEAST speedup?",
+            "options": [
+              "Serving a single request with a highly predictable continuation, like completing a common phrase",
+              "Generating highly creative, unpredictable text at a large batch size where GPUs are already compute-bound",
+              "Autocompleting boilerplate code with a strong draft model",
+              "Any workload, since speculative decoding always gives the same fixed speedup"
+            ],
+            "correctIndex": 1,
+            "explanation": "Two effects compound against speculative decoding here: unpredictable text makes the draft model guess wrong more often, and large batches push decoding toward being compute-bound rather than memory-bound — the idle GPU capacity that speculative verification exploits is exactly what shrinks at high batch sizes."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-22T12:40:03Z"
+    },
+    {
       "id": "a146d08a-0b2e-4a14-83c4-ca6d0fca4aca",
       "title": "Agent Memory: What Survives the Session, What Doesn't",
       "subtitle": "The context window forgets everything on the next call. Memory is the system you bolt on so it doesn't.",
@@ -11080,201 +11272,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-12T06:43:34Z"
-    },
-    {
-      "id": "7b879d20-c4e6-490b-a758-e41f20d9e194",
-      "title": "SWE-Bench ProMax: Refactoring Breaks Coding Agents",
-      "subtitle": "170 real multilingual refactors, and the best agent still fails 6 in 10",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "swe-bench",
-        "coding-agents",
-        "benchmarks",
-        "refactoring",
-        "evaluation"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "wrench.and.screwdriver.fill",
-      "summary": "SWE-Bench ProMax is a new 170-instance, seven-language refactoring benchmark built because SWE-bench Verified was showing cracks — nearly 60% of its unsolved instances turned out to have flawed tests. Under two agent scaffolds, the best frontier model resolved only 41.2% of ProMax's tasks, showing refactoring is a harder, less contaminated test of coding agents than bug-fixing.",
-      "slides": [
-        {
-          "id": "9ec82292-2ce6-4f53-bab8-51b59f301a0a",
-          "kind": "cover",
-          "title": "The Benchmark Coding Agents Were Acing Had a Crack in It",
-          "body": "SWE-bench Verified became the industry's go-to yardstick for coding agents. A new audit found nearly 60% of its still-unsolved instances have broken tests — and researchers from Shanghai Jiao Tong University and HKUST built a harder, cleaner replacement out of real-world refactors.",
-          "bullets": [],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "2183f55a-9d6b-4f08-bd44-05dfdd007483",
-          "kind": "problem",
-          "title": "Old Benchmarks Were Saturating and Leaking",
-          "body": null,
-          "bullets": [
-            "An audit of SWE-bench Verified found close to 60% of its unsolved instances have flawed tests — either too narrow (rejecting genuinely correct fixes) or too broad (silently demanding unstated behavior)",
-            "Frontier models can reproduce gold patches near-verbatim on some instances, a sign of training-data contamination rather than genuine problem-solving",
-            "Most prior benchmarks are single-file, Python-only bug fixes — a narrow slice of what real engineering work looks like",
-            "As leaderboard scores climbed past 70-80%, it got hard to tell whether agents were actually improving or the benchmark was just leaking answers"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "2bc43785-421a-4636-9423-eb66fe3012d6",
-          "kind": "solution",
-          "title": "170 Real Refactors Across Seven Languages",
-          "body": null,
-          "bullets": [
-            "SWE-Bench ProMax draws 170 expert-curated instances from real commits across Python, Java, TypeScript, Go, C, C++, and Rust",
-            "Every task is a refactor — a behavior-preserving change spanning multiple files — not a single localized bug fix",
-            "Authored by a 15-person team led by Yuling Shi (Shanghai Jiao Tong University) with Shing-Chi Cheung (HKUST) and collaborators, published on arXiv this week",
-            "Agents are evaluated under two different agent scaffolds, so the score reflects the task's difficulty rather than one harness's quirks"
-          ],
-          "symbol": "hammer.fill",
-          "table": null
-        },
-        {
-          "id": "e65945bf-24e9-472e-8f6c-11d19fda532d",
-          "kind": "example",
-          "title": "Worked Example: Renaming an API Across a Codebase",
-          "body": "A typical ProMax instance: rename a widely-used function signature in a Go service, then update every call site, every mock, and every test that depends on the old shape — without changing observable behavior anywhere.",
-          "bullets": [
-            "A single-file bug fix lets an agent patch one function and move on; this task requires tracking every downstream consumer across the repo",
-            "Miss one call site and the build breaks; over-edit an unrelated function and you've silently changed behavior the tests never checked for",
-            "There's no single 'diff' that obviously encodes the fix the way a bug-fix patch does — the agent has to hold the whole change's intent in mind across many edits"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "9fff708e-c70c-478f-8ddb-51b205e04a28",
-          "kind": "comparison",
-          "title": "How ProMax Differs From SWE-bench Verified",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Dimension",
-              "SWE-bench Verified",
-              "SWE-Bench ProMax"
-            ],
-            "rows": [
-              [
-                "Task type",
-                "Single-file bug fix",
-                "Multi-file, behavior-preserving refactor"
-              ],
-              [
-                "Languages",
-                "Python only",
-                "Python, Java, TypeScript, Go, C, C++, Rust"
-              ],
-              [
-                "Known issue",
-                "~60% of unsolved instances have flawed tests",
-                "Newly built, expert-curated to avoid the same trap"
-              ],
-              [
-                "Best reported resolve rate",
-                "Reported near-saturated on leaderboards",
-                "41.2% (best model, two scaffolds)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "0c8a8c9b-07c0-4574-bdfd-a94efd97a5e9",
-          "kind": "concept",
-          "title": "Why Refactoring Is a Harder Mechanism to Get Right",
-          "body": null,
-          "bullets": [
-            "Bug fixes are usually local: find the broken line, change it, done. Refactors are global: an edit in one file implies required edits in N others",
-            "The agent must maintain a consistent invariant (the old and new versions must behave identically) across every touched file, not just make tests pass",
-            "Grading is harder too — a passing test suite doesn't prove behavior preservation if the suite doesn't cover every changed path, which is exactly the gap ProMax's expert curation targets"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "41b131ba-27a2-40df-9c74-1d103cdf14c2",
-          "kind": "problem",
-          "title": "What ProMax Doesn't Solve",
-          "body": null,
-          "bullets": [
-            "170 instances is small next to SWE-bench's thousands — enough for a stress test, not yet a broad leaderboard",
-            "It's brand new (posted this week), so there's no independent, cross-lab leaderboard yet to confirm the 41.2% figure holds up under different harnesses",
-            "Only two agent scaffolds were tested; a differently engineered agent harness could plausibly score higher or lower on the same models"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "4423a8c8-9f91-491f-8250-a2555109f2c1",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "SWE-bench Verified was showing saturation and contamination signs — nearly 60% of its unsolved instances have flawed tests",
-            "SWE-Bench ProMax replaces single-file bug fixes with multi-file, behavior-preserving refactors across seven languages",
-            "Even the best frontier model under the best of two scaffolds resolved only 41.2% of tasks — refactoring is unsaturated and genuinely hard",
-            "Expect refactoring-style benchmarks to matter more as bug-fixing benchmarks get contaminated or memorized"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6b09b094-742f-4e56-8788-dede776331d9",
-            "prompt": "What resolve rate did the best-performing model achieve on SWE-Bench ProMax?",
-            "options": [
-              "41.2%",
-              "71.5%",
-              "85.0%",
-              "22.0%"
-            ],
-            "correctIndex": 0,
-            "explanation": "Under the best of two agent scaffolds, the top model resolved only 41.2% of ProMax's 170 refactoring tasks — showing the benchmark is far from saturated."
-          },
-          {
-            "id": "48f6162c-830d-4d9f-87d3-61d0e7164bbd",
-            "prompt": "What problem with SWE-bench Verified motivated building ProMax?",
-            "options": [
-              "It only supports closed-source models",
-              "An audit found nearly 60% of its unsolved instances have flawed tests, and some gold patches can be reproduced near-verbatim from training data",
-              "It has no public leaderboard",
-              "It only tests documentation generation"
-            ],
-            "correctIndex": 1,
-            "explanation": "The flawed-test finding (tests too narrow or too broad) plus signs of verbatim patch reproduction meant high scores on Verified didn't reliably mean genuine problem-solving anymore."
-          },
-          {
-            "id": "a13c5bb8-4a7b-494f-a723-08f95887d0de",
-            "prompt": "Why is a multi-file refactor mechanically harder for an agent than a single-file bug fix?",
-            "options": [
-              "Refactors always require more tokens of output",
-              "The agent must keep a consistent behavior-preserving invariant across every file it touches, not just make one local edit pass a test",
-              "Refactors don't involve any test suite at all",
-              "Refactors are always shorter, so agents get less context to work with"
-            ],
-            "correctIndex": 1,
-            "explanation": "A bug fix is usually local — find and change one broken spot. A refactor implies coordinated edits across many files that must all stay behaviorally consistent, which is much easier to get subtly wrong."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "fecc11af-1204-48fc-a422-dc2a28af50d9",
-          "title": "SWE-Bench ProMax: Benchmarking Agents on Large-Scale Multilingual Code Refactoring (arXiv:2608.09802)",
-          "url": "https://arxiv.org/abs/2608.09802"
-        }
-      ],
-      "publishedDate": "2026-08-12T00:41:32Z"
     }
   ]
 }
