@@ -1,6 +1,200 @@
 {
   "posts": [
     {
+      "title": "Prompt Caching: Skipping the Prefill You've Already Paid For",
+      "subtitle": "Same system prompt, same tools, same 5,000 tokens — why recompute it on every call?",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "prompt-caching",
+        "kv-cache",
+        "inference-optimization",
+        "llm-apis",
+        "cost-optimization",
+        "latency"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "clock.arrow.circlepath",
+      "summary": "Prompt caching lets an LLM API skip re-running the expensive prefill pass over a prompt prefix it has already processed, by persisting that prefix's KV cache between calls instead of just within one generation. It only works on an exact, token-for-token prefix match, so cache hit rate depends entirely on putting static content (system prompt, tool definitions, few-shot examples) before anything that varies from call to call. It's a huge win for agents and chat apps that reuse a large shared prefix across many requests, but a single early-token change — even a timestamp — silently blows the whole cache away.",
+      "body": null,
+      "slides": [
+        {
+          "id": "14e6b775-7469-4a4b-b44a-c421c4e1c74c",
+          "kind": "cover",
+          "title": "Stop Re-Reading the Same Prefix Every Call",
+          "body": "Prompt caching persists the KV cache for a shared prompt prefix across separate API calls, so a long system prompt or tool schema gets prefilled once and reused, not recomputed on every request.",
+          "bullets": [],
+          "symbol": "clock.arrow.circlepath",
+          "table": null
+        },
+        {
+          "id": "1b638f4c-6c82-45ee-b229-c95eb57f321a",
+          "kind": "problem",
+          "title": "Every Call Re-Prefills the Same Tokens",
+          "body": "An LLM has to run a full forward pass over every input token before it can generate the first output token — that's prefill, and it happens fresh on each API call unless something intervenes.",
+          "bullets": [
+            "An agent with a 5,000-token system prompt plus tool definitions pays that same prefill cost on call 1, call 2, ... call 50 of a session, even though the prefix never changed",
+            "Prefill scales with input length, so a long shared prefix dominates both latency (time-to-first-token) and cost on short-answer workloads",
+            "The regular KV cache only helps within a single generation — it's discarded the moment the response finishes and the connection closes",
+            "For RAG and agent apps, the shared prefix (instructions, tool schemas, retrieved docs) is often far longer than the part that actually changes per call"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "dbd64d59-f887-46b4-b6d3-d9e27ee6b302",
+          "kind": "concept",
+          "title": "Cache the Prefix's KV State, Not Just the Request",
+          "body": "Prompt caching persists the attention keys and values computed for a prompt prefix in provider-side memory for a short window, keyed off an exact match of the token sequence.",
+          "bullets": [
+            "On a cache hit, the model skips recomputing attention for every cached token and starts decoding from where the cached prefix ends — only the new suffix tokens get prefilled",
+            "Matching is exact and positional: token 1 through token N of the new request must be byte-identical to the cached prefix, or the match breaks at the first divergence",
+            "Cached entries typically live for a short TTL (minutes, sometimes extendable to an hour) since providers can't hold every customer's KV state indefinitely",
+            "This is a provider-side optimization, not a model behavior change — the output is identical to running without caching, only the compute path differs"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "acac0f4a-2cc0-4579-ac18-3edcc553aa98",
+          "kind": "architecture",
+          "title": "Prefix Order Decides the Hit Rate",
+          "body": "Because the match is positional, everything that stays constant across calls has to come first in the prompt, and everything that varies has to come last.",
+          "bullets": [
+            "Correct order: system prompt -> tool/function definitions -> few-shot examples -> (cache boundary) -> retrieved context or conversation history that changes per call -> the new user turn",
+            "Put a timestamp, a random request id, or even reordered JSON keys anywhere before the cache boundary and every later request misses the cache, since the prefix no longer matches token-for-token",
+            "Some APIs require an explicit cache breakpoint marker in the request; others cache automatically once a prefix crosses a minimum token threshold",
+            "Multi-turn chat naturally grows a cacheable prefix: turn 3's prompt is turn 2's prompt plus new tokens, so each turn can hit the cache built by the previous one"
+          ],
+          "symbol": "list.bullet.rectangle",
+          "table": null
+        },
+        {
+          "id": "ca94da27-29e0-4a03-8282-ced887af01ba",
+          "kind": "example",
+          "title": "A Support Agent Across 40 Turns",
+          "body": "A customer-support agent ships a 3,000-token system prompt plus 2,000 tokens of tool schemas — a 5,000-token fixed prefix — in front of every call in a session.",
+          "bullets": [
+            "Call 1: no cache exists yet, so all 5,000 prefix tokens plus the user's question get prefilled at full cost — this is the cache write",
+            "Calls 2 through 40: the 5,000-token prefix hits the cache and is skipped entirely; only the growing conversation tail and new user turn get prefilled fresh",
+            "Net effect over the session: roughly 200,000 prefix tokens worth of redundant computation across 40 calls collapses down to being paid for essentially once",
+            "If the app instead prepended a per-call random session id before the system prompt, every single one of those 40 calls would miss and re-pay full prefill cost"
+          ],
+          "symbol": "person.2.wave.2.fill",
+          "table": null
+        },
+        {
+          "id": "9b8bfddb-2c9f-496f-9982-8d8d744b51bb",
+          "kind": "comparison",
+          "title": "Prompt Caching vs. Semantic Caching vs. In-Request KV Cache",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Prompt (prefix) caching",
+              "Semantic caching",
+              "In-request KV cache"
+            ],
+            "rows": [
+              [
+                "Exact token-for-token prefix match",
+                "Embedding-similarity match on the whole query",
+                "Not really a 'cache' — reused only within one generation"
+              ],
+              [
+                "Persists across separate API calls (minutes-scale TTL)",
+                "Persists across calls, often much longer TTL",
+                "Discarded the instant the response completes"
+              ],
+              [
+                "Saves prefill compute; output is unchanged",
+                "Skips the LLM call entirely and returns a stored answer",
+                "Avoids recomputing attention for already-generated tokens"
+              ],
+              [
+                "Provider-side infrastructure feature",
+                "Application-level (embeddings + vector store)",
+                "Built into every inference engine by default"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "f64d1b3d-fee7-4e47-9618-66c273f6e336",
+          "kind": "problem",
+          "title": "Where It Breaks: Ordering, TTL, and One-Off Calls",
+          "body": "Prompt caching is close to free to adopt, but it fails silently rather than throwing an error, which makes the failure mode easy to miss.",
+          "bullets": [
+            "Dynamic content before the cache boundary (a date, a request id, reordered fields) invalidates the cache with no warning — you just quietly stop getting the discount and speed-up",
+            "Short TTLs mean a session that goes idle for too long between calls loses its cached prefix and pays full prefill again on the next request",
+            "One-off, single-call use cases get zero benefit: the very first call on any prefix is always a full-cost cache write, so caching only pays off when a prefix is reused multiple times",
+            "Very short prefixes usually fall below the minimum token threshold providers require before caching kicks in at all, so caching a tiny system prompt is often not worth the added complexity"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "bffd18bd-8f18-4610-99b4-a4bef61e736a",
+          "kind": "takeaways",
+          "title": "Key Takeaways",
+          "body": null,
+          "bullets": [
+            "Prompt caching reuses the KV state of an exact-match prompt prefix across separate API calls, cutting prefill cost and time-to-first-token on repeated requests",
+            "Ordering is the whole game: static content (system prompt, tools, few-shot examples) first, variable content last, right up against the cache boundary",
+            "It only pays off when the same prefix is reused multiple times before its TTL expires — one-off calls always eat the full cache-write cost",
+            "A single token changed early in the prompt breaks the match silently — no error, just a quiet loss of the speed and cost benefit"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "8d08a769-50b5-40cf-9bbb-7ee3c1d60f93",
+            "prompt": "What has to be true for a new request to hit an existing prompt cache?",
+            "options": [
+              "The new request must be semantically similar to a past request",
+              "The new request's prefix must be an exact, token-for-token match to the cached prefix",
+              "The new request must use a shorter system prompt than before",
+              "The model must be running on the same GPU as the original request"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prompt caching matching is positional and exact — token 1 through N must be identical to what's cached. Unlike semantic caching, similarity doesn't count; any divergence at or before a given token breaks the match from that point on."
+          },
+          {
+            "id": "747d8703-85cc-41e7-adf0-2a9a9bd8ef53",
+            "prompt": "An agent puts a fresh request-id string right after the system prompt but before the tool definitions. What happens to its prompt cache hit rate?",
+            "options": [
+              "No effect, since request ids are ignored by the cache",
+              "It improves, because unique ids help the provider distinguish sessions",
+              "It collapses toward zero, because every call now has a different token sequence at that position, breaking the match for everything after it",
+              "The cache TTL automatically extends to compensate"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because matching is positional, inserting anything variable before the tool definitions means the tool definitions (and everything after them) no longer sit at a matching prefix position across calls — the cache effectively never hits past that point."
+          },
+          {
+            "id": "9a14554f-012a-45b5-bccf-040df6155b18",
+            "prompt": "Why does prompt caching provide no benefit on a true one-off API call?",
+            "options": [
+              "One-off calls are billed at a flat rate regardless of caching",
+              "The very first call on any prefix is always a full-price cache write — the savings only appear on later calls that reuse that same prefix",
+              "Prompt caching is disabled for calls without conversation history",
+              "One-off calls never contain a long enough prefix to qualify"
+            ],
+            "correctIndex": 1,
+            "explanation": "Caching has no history to reuse on the first call — that call pays full prefill cost while writing the cache. The discount and latency win only show up on subsequent calls that hit the prefix that was just written, so reuse is what makes it worthwhile."
+          }
+        ]
+      },
+      "references": [],
+      "id": "377d2d92-f438-4bcb-99bc-c0fe1b8599e6",
+      "publishedDate": "2026-08-23T12:40:07Z"
+    },
+    {
       "id": "06d9056a-e19c-4d9a-b1e9-166a68330e8b",
       "title": "Continuous Batching: How LLM Servers Pack GPUs Full",
       "subtitle": "The GPU slot doesn't wait for the slowest sequence in the batch to finish",
@@ -11094,197 +11288,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "title": "MCP Roots: A Boundary the Server Isn't Forced to Respect",
-      "subtitle": "The third MCP primitive — and the one everyone assumes is a sandbox.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "roots",
-        "protocol",
-        "filesystem",
-        "scoping"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "folder.fill",
-      "summary": "MCP roots let a client tell a server which directories matter for the current session — a list of {uri, name} pairs kept current via list_changed notifications. It's the third primitive alongside Sampling and Elicitation, and the spec is explicit that it's a scoping hint, not an enforced security boundary.",
-      "slides": [
-        {
-          "id": "31c33396-c824-4797-bb9c-7dd381608853",
-          "kind": "cover",
-          "title": "A Client Draws the Map, a Server Reads It",
-          "body": "MCP roots let a client tell a server which directories are relevant to the current session — a scoping hint, not a security wall.",
-          "bullets": [],
-          "symbol": "folder.fill",
-          "table": null
-        },
-        {
-          "id": "1c7b37cc-ccaf-478d-a1e0-027cfd440dcc",
-          "kind": "problem",
-          "title": "A Filesystem Server Given the Whole Disk",
-          "body": null,
-          "bullets": [
-            "Point a generic filesystem MCP server at a machine and it has no idea whether the user's actual workspace is one repo, three open projects, or a single config file — everything is technically reachable.",
-            "Before roots, a server either hardcoded a path, made the developer configure one per deployment, or exposed tools broad enough to touch anything the process account could see."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "c631bd6a-ee32-420a-bda2-4a2db9a0d9a8",
-          "kind": "solution",
-          "title": "The Client Advertises roots, the Server Calls roots/list",
-          "body": null,
-          "bullets": [
-            "At initialization, a client that supports the feature declares a `roots` capability; a server that cares can then send a `roots/list` request.",
-            "The client responds with an array of roots, each a `{ uri, name }` pair — uri is almost always a `file://` URI, name is a human-readable label like 'project-a'.",
-            "The server treats the returned URIs as its working set: it scopes tool descriptions, resource listings, and default search paths to stay inside them."
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "492958bd-a150-4110-a380-e5d0c700c54d",
-          "kind": "architecture",
-          "title": "Roots Change — list_changed Keeps the Server Current",
-          "body": null,
-          "bullets": [
-            "A user opening or closing a workspace folder mid-session changes what's actually relevant — MCP doesn't require the server to poll to catch that.",
-            "The client sends `notifications/roots/list_changed` whenever the set changes; a well-behaved server re-issues `roots/list` and updates its own scoping instead of working from a stale snapshot.",
-            "This is push-based and asynchronous — the server doesn't block waiting on it, it just knows a refresh is available."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "c19fbf25-38b1-4781-970a-611d9f7754e0",
-          "kind": "example",
-          "title": "Two Projects Open, One Folder Deliberately Excluded",
-          "body": null,
-          "bullets": [
-            "A developer has `~/project-a` and `~/project-b` open in their editor, plus an unrelated `~/secrets` folder elsewhere on disk that was never added to the workspace.",
-            "The client's roots list contains only project-a and project-b. A filesystem MCP server built to respect roots scopes its `list_files` and `read_file` tools — and the model's own tool-call suggestions — to those two trees.",
-            "Nothing in the protocol stops the server process from opening a path under `~/secrets` anyway — it simply was never told that folder was in scope, so a cooperative server has no reason to look there."
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "fa8a30e9-3ff3-4159-94cf-887620a4a6bc",
-          "kind": "comparison",
-          "title": "Roots vs. the Other MCP Primitives",
-          "body": null,
-          "bullets": [
-            "Roots is the only primitive that flows client -> server as pure scope, with no model or human directly in the loop."
-          ],
-          "symbol": "square.grid.2x2",
-          "table": {
-            "headers": [
-              "Primitive",
-              "What crosses the wire"
-            ],
-            "rows": [
-              [
-                "Roots",
-                "Client tells server which directories are in scope"
-              ],
-              [
-                "Sampling",
-                "Server borrows the client's LLM to reason"
-              ],
-              [
-                "Elicitation",
-                "Server asks the human a direct question mid-call"
-              ],
-              [
-                "Authorization",
-                "Client and server establish trust (OAuth-style)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "ecf10db1-eacf-4b28-bf36-ab52fe5b855d",
-          "kind": "concept",
-          "title": "Advisory, Not a Sandbox — Don't Confuse the Two",
-          "body": null,
-          "bullets": [
-            "The spec is explicit that roots are informational: nothing in MCP mechanically prevents a server from requesting a path outside the declared roots, and nothing forces the client to reject such a request either.",
-            "Real access control has to come from somewhere else — OS file permissions, a sandboxed process, or the server implementation choosing to validate paths against the roots it was given.",
-            "Skip roots for single-purpose servers with an already-narrow, fixed scope — a server that only ever touches one config file gains nothing from asking. Reach for it when a general-purpose tool needs to infer 'relevant' from a workspace that changes session to session."
-          ],
-          "symbol": "shield.slash.fill",
-          "table": null
-        },
-        {
-          "id": "5f749932-899f-482d-8551-1272fe03130c",
-          "kind": "takeaways",
-          "title": "A Scoping Hint, Not a Permission System",
-          "body": null,
-          "bullets": [
-            "Roots exist so a general-purpose server can infer what 'the project' means without hardcoding a path or being configured once at deploy time.",
-            "list_changed keeps that scope current as the user opens and closes workspace folders, without the server polling for it.",
-            "Treat it as intent, not enforcement — pair roots with real sandboxing or path validation on the server side if the data actually needs protecting."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "430a03f7-ffe5-4f85-a2af-c086ce14ddb1",
-            "prompt": "What does an MCP client send when a server calls roots/list?",
-            "options": [
-              "An OAuth access token",
-              "An array of {uri, name} pairs describing relevant directories",
-              "The full contents of every open file",
-              "A JSON Schema for form input"
-            ],
-            "correctIndex": 1,
-            "explanation": "roots/list returns a list of URI/name pairs — almost always file:// paths — describing which directories are currently relevant to the session, not file contents or credentials."
-          },
-          {
-            "id": "ff5687a1-1b1b-4fc8-aa70-aa4d5edb643b",
-            "prompt": "What triggers a notifications/roots/list_changed message?",
-            "options": [
-              "Every tool call the server makes",
-              "The set of relevant directories changing, e.g. the user opening or closing a workspace folder",
-              "The server requesting more permissions",
-              "A scheduled polling interval"
-            ],
-            "correctIndex": 1,
-            "explanation": "list_changed is push-based: the client sends it whenever the actual set of roots changes, so the server can refresh instead of polling or working from a stale list."
-          },
-          {
-            "id": "93489753-0264-4d6e-ab5d-c790a8b4e6b7",
-            "prompt": "Why can't roots be relied on as a security boundary by themselves?",
-            "options": [
-              "Because they use JSON Schema, which is inherently insecure",
-              "Because nothing in the protocol stops a server from requesting or accessing paths outside the declared roots",
-              "Because roots require OAuth to function",
-              "Because only Advanced-difficulty servers support them"
-            ],
-            "correctIndex": 1,
-            "explanation": "Roots are advisory — they communicate scope, not enforce it. Real protection still needs OS permissions, sandboxing, or server-side path validation on top."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "9c3232ec-7f6b-4547-b0d3-7ac2a182a2bd",
-          "title": "Roots - Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/roots"
-        }
-      ],
-      "id": "2cbd3ebf-cad6-4e4a-a5e0-3e8d335cc1a5",
-      "publishedDate": "2026-08-13T00:40:50Z",
-      "body": null,
-      "table": null,
-      "explanation": null
     }
   ]
 }
