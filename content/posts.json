@@ -1,6 +1,507 @@
 {
   "posts": [
     {
+      "title": "IdleSpec: Making Agents Think While They Wait",
+      "subtitle": "Speculating on the next move during every tool call, instead of sitting idle",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "llm-agents",
+        "inference-optimization",
+        "speculative-execution",
+        "latency",
+        "tool-use"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hourglass",
+      "summary": "IdleSpec exploits the dead time an LLM agent spends waiting on tool calls by speculatively drafting candidate next-step plans during that window, then verifying/aggregating them once the real observation lands — improving GAIA+FRAMES accuracy by 5.1 points with Gemini-2.5-Flash without added latency.",
+      "slides": [
+        {
+          "id": "98232645-6bae-41bb-94f9-a465884955a1",
+          "kind": "cover",
+          "title": "Every Tool Call Leaves the Agent Idle",
+          "body": "While a web search, code execution, or API call is in flight, a typical LLM agent does nothing but wait for the result before it starts thinking about what to do next.",
+          "bullets": [],
+          "symbol": "hourglass"
+        },
+        {
+          "id": "56dba1d3-0485-44c6-bc9e-065c8561ba9a",
+          "kind": "problem",
+          "title": "Wall-Clock Time, Wasted",
+          "body": "Multi-step agent tasks (GAIA, FRAMES, MLE-Bench) chain many tool calls. Each round-trip has real latency, and the agent's own compute sits unused until the observation returns — then it starts planning the next step from scratch.",
+          "bullets": [
+            "Tool latency (search, code exec, browsing) is often seconds — much longer than a single LLM forward pass",
+            "The planning step for 'what to do next' only starts AFTER the observation arrives, serializing latency and compute",
+            "No mechanism previously reused that dead time for useful work"
+          ],
+          "symbol": "clock.badge.exclamationmark"
+        },
+        {
+          "id": "2d4f8a72-b045-4056-959f-6215b39b319c",
+          "kind": "solution",
+          "title": "Speculate During the Wait, Verify on Arrival",
+          "body": "IdleSpec drafts multiple candidate next-step plans WHILE the tool call is still pending, sampling from a mix of drafting strategies to hedge against not knowing the real observation yet. When the observation finally arrives, it aggregates/selects among the pre-computed candidates instead of starting cold.",
+          "bullets": [
+            "Idle-time compute is spent generating plan candidates conditioned on plausible observation outcomes",
+            "A learned strategy distribution balances diverse guesses against convergent, high-probability ones",
+            "Once the real observation lands, the matching (or closest) candidate is reused or lightly repaired"
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "918bee71-0e76-440d-891a-9309d48b31ad",
+          "kind": "comparison",
+          "title": "Consistent Gains Across Models and Benchmarks",
+          "body": "Evaluated on GAIA, FRAMES, and MLE-Bench — tool-augmented reasoning, multi-hop search, and long-horizon interactive tasks.",
+          "bullets": [
+            "With Gemini-2.5-Flash: 55.6% average accuracy on GAIA+FRAMES, +5.1 points over the vanilla no-idle-time baseline",
+            "Gains hold across smaller open models too, not just one flagship"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Model",
+              "Accuracy gain from IdleSpec"
+            ],
+            "rows": [
+              [
+                "Gemini-2.5-Flash",
+                "+5.1 pts (55.6% avg, GAIA+FRAMES)"
+              ],
+              [
+                "Gemma4-E4B",
+                "+4.6 pts"
+              ],
+              [
+                "Qwen3.5-4B",
+                "+6.8 pts"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "5a60c3cd-5270-4c5a-9d56-c68b828969b9",
+          "kind": "example",
+          "title": "Worked Example: A Research Agent Mid-Search",
+          "body": "The agent fires a web search for 'quarterly revenue of Company X.' While the search API is still returning results, IdleSpec doesn't idle — it drafts several plausible next steps in parallel.",
+          "bullets": [
+            "Candidate A: 'if results show a press release, extract the number and cite it'",
+            "Candidate B: 'if results are ambiguous, issue a follow-up search narrowing the date range'",
+            "Candidate C: 'if no revenue figure appears, fall back to the company's investor relations page'",
+            "When results return, the agent picks the matching candidate instantly — no fresh planning call needed"
+          ],
+          "symbol": "magnifyingglass"
+        },
+        {
+          "id": "2210028d-3785-4bab-af6f-d9321a9dd127",
+          "kind": "problem",
+          "title": "When It Doesn't Pay Off",
+          "body": "IdleSpec is a bet on idle time being worth exploiting — that bet doesn't always pay off.",
+          "bullets": [
+            "Near-instant tool calls leave almost no idle window to speculate into — overhead can outweigh benefit",
+            "Highly unpredictable next steps waste speculative compute on candidates that don't match the real observation",
+            "Aggregating/verifying multiple candidates adds implementation complexity over a plain sequential agent loop"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "70200c87-ec57-4821-8df3-93bc5dfe512e",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Agent latency isn't just LLM decoding time — tool round-trips are a huge, previously wasted chunk of it",
+            "IdleSpec turns that dead time into speculative planning compute, verified once ground truth arrives",
+            "+5.1 to +6.8 points of accuracy across models on GAIA/FRAMES-style benchmarks, at no added wall-clock cost",
+            "Most valuable for agents with slow, high-latency tools (search, browsing, code execution) — least valuable for near-instant ones"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "47b31a87-aba9-47c8-a347-ca7c25860a4a",
+            "prompt": "What idle window does IdleSpec exploit?",
+            "options": [
+              "The time between user messages",
+              "The time an agent spends waiting for a tool call's result to return",
+              "GPU idle cycles during model loading",
+              "The delay before a user reads the agent's response"
+            ],
+            "correctIndex": 1,
+            "explanation": "IdleSpec targets the latency of tool calls (search, code execution, API requests) — time the agent would otherwise spend doing nothing before it can plan its next step."
+          },
+          {
+            "id": "b1c58569-7b08-4552-b6ac-9fb3dbd8f3c3",
+            "prompt": "How does IdleSpec use that idle time?",
+            "options": [
+              "It caches the previous turn's KV cache to disk",
+              "It speculatively drafts multiple candidate next-step plans before the real observation arrives",
+              "It retrains the policy model in the background",
+              "It pre-fetches the next likely tool call's API documentation"
+            ],
+            "correctIndex": 1,
+            "explanation": "It generates several candidate plans conditioned on plausible outcomes, sampling from a strategy distribution, then verifies/aggregates against the real observation once it lands."
+          },
+          {
+            "id": "b6ededa6-cb4d-4848-851e-63dc4b9bbd87",
+            "prompt": "On GAIA+FRAMES with Gemini-2.5-Flash, what was IdleSpec's reported improvement over the vanilla baseline?",
+            "options": [
+              "+0.5 points",
+              "+5.1 points (to 55.6% average accuracy)",
+              "+25 points",
+              "No measurable improvement"
+            ],
+            "correctIndex": 1,
+            "explanation": "IdleSpec reached 55.6% average accuracy on GAIA+FRAMES with Gemini-2.5-Flash, a 5.1-point gain over the same agent without idle-time speculation."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "IdleSpec: Exploiting Idle Time via Speculative Planning for LLM Agents (arXiv 2605.22154)",
+          "url": "https://arxiv.org/abs/2605.22154"
+        }
+      ],
+      "id": "b9b084f4-3c08-4eca-b185-c67a3ef341ea",
+      "publishedDate": "2026-08-24T06:39:47Z"
+    },
+    {
+      "title": "Muse Code: Meta's First Terminal Coding Agent",
+      "subtitle": "A one-command-install agent built to challenge Claude Code and Codex",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "meta",
+        "coding-agent",
+        "muse",
+        "terminal",
+        "ai-agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "terminal.fill",
+      "summary": "Meta Superintelligence Labs shipped Muse Code, a terminal-based coding agent for macOS/Linux powered by the new Muse Spark 1.2 model, entering the space Claude Code and OpenAI Codex have owned — with a pricing twist: opt in to let Meta train on your code and pay up to ~20x less.",
+      "slides": [
+        {
+          "id": "b2c5fdf3-162d-45ef-a287-1ce0f44a2a0d",
+          "kind": "cover",
+          "title": "Meta Finally Ships a Coding Agent",
+          "body": "Anthropic's Claude Code and OpenAI's Codex have defined the terminal coding-agent category for over a year. Meta Superintelligence Labs' answer arrived in early August 2026: Muse Code.",
+          "bullets": [],
+          "symbol": "terminal.fill"
+        },
+        {
+          "id": "a6fa3c82-3d32-4287-bee6-a24b8e8e2abb",
+          "kind": "problem",
+          "title": "Late to a Category Others Defined",
+          "body": "Meta had shipped chat-focused Muse Spark models for its consumer apps, but no agentic coding tool — leaving developers with no first-party option from the company while competitors iterated on theirs.",
+          "bullets": [
+            "Claude Code and Codex already had large developer mindshare in the terminal-agent space",
+            "Meta's prior Muse Spark releases targeted WhatsApp/Instagram/Messenger assistants, not developer workflows",
+            "Muse Code, paired with a new coding-specialized model, is Meta's first direct entry"
+          ],
+          "symbol": "flag.checkered"
+        },
+        {
+          "id": "781cddda-652a-4c90-bc01-4aa79cdfdf40",
+          "kind": "solution",
+          "title": "A Terminal Agent Co-Trained With Its Model",
+          "body": "Muse Code installs with a single shell command on macOS and Linux. It's powered by Muse Spark 1.2 — a coding-focused model with a 1M-token context window that Meta co-trained alongside the agent itself.",
+          "bullets": [
+            "Plans multi-step code changes, writes the code, and validates the result end-to-end",
+            "Coordinates multiple persistent subagents to split work across a task",
+            "Muse Spark 1.2 targets code generation, complex debugging, and large-codebase understanding specifically"
+          ],
+          "symbol": "cpu.fill"
+        },
+        {
+          "id": "ee8a1cc9-5438-4e72-a859-3035dd4a6e32",
+          "kind": "example",
+          "title": "Worked Example: Refactoring Across a Large Repo",
+          "body": "Point Muse Code at a repository and describe a change — e.g. 'migrate this service's config loading to the new schema.'",
+          "bullets": [
+            "The agent plans which files need to change before writing anything",
+            "It delegates a subagent to update the config loader, another to update call sites",
+            "It runs the test suite to validate the change and iterates on failures — all from one terminal session"
+          ],
+          "symbol": "hammer.fill"
+        },
+        {
+          "id": "c97849d9-69a6-442b-bd6a-3dab23a6ab2e",
+          "kind": "comparison",
+          "title": "Two Prices, One Catch",
+          "body": "Muse Code has a standard tier and a steeply discounted 'Contributor' tier — the discount comes at the cost of your code training Meta's models.",
+          "bullets": [
+            "The Contributor tier is roughly 12x cheaper on input tokens, ~21x cheaper on output tokens",
+            "Same pricing structure as the earlier Muse Spark 1.1 API release"
+          ],
+          "symbol": "dollarsign.circle.fill",
+          "table": {
+            "headers": [
+              "Tier",
+              "Input / Output (per 1M tokens)",
+              "Catch"
+            ],
+            "rows": [
+              [
+                "Standard",
+                "$1.25 / $4.25",
+                "None — your code stays private"
+              ],
+              [
+                "Contributor",
+                "$0.10 / $0.20",
+                "Meta may train on your prompts and code"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "088a89a3-5443-4d6f-86f5-28aecd1e6a0b",
+          "kind": "problem",
+          "title": "Tradeoffs to Weigh",
+          "body": "Muse Code is a beta, and its cheapest tier isn't free of cost — just a different kind of cost.",
+          "bullets": [
+            "The Contributor discount requires opting in to Meta training on your code — a real IP/privacy tradeoff for teams with proprietary codebases",
+            "Terminal-only, macOS/Linux — no GUI app and no Windows support at launch",
+            "As a beta against tools that have iterated for a year-plus, expect rougher edges on long-horizon tasks"
+          ],
+          "symbol": "exclamationmark.shield.fill"
+        },
+        {
+          "id": "b8d75b90-b798-43ab-ab71-d1f7c119bb3b",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Muse Code is Meta Superintelligence Labs' first terminal coding agent, built on the new Muse Spark 1.2 model (1M-token context)",
+            "It plans, writes, and validates code changes via coordinated persistent subagents",
+            "Pricing undercuts rivals sharply IF you accept Meta training on your code — the private tier is priced closer to competitors",
+            "Zuckerberg has said Meta plans to open-source Muse Spark 1.2's weights, though no date is set yet"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ba4e44ae-d0a3-449d-bb61-9f61a0c3ef95",
+            "prompt": "What model powers Muse Code?",
+            "options": [
+              "Llama 4",
+              "Muse Spark 1.2, co-trained with the agent",
+              "A fine-tuned version of Claude",
+              "GPT-5.6"
+            ],
+            "correctIndex": 1,
+            "explanation": "Muse Code is paired with Muse Spark 1.2, a coding-focused model with a 1M-token context window that Meta trained specifically to work with the agent."
+          },
+          {
+            "id": "87b6178c-ad9d-401c-a47a-63f6beb3ece8",
+            "prompt": "How does the 'Contributor' pricing tier get so much cheaper?",
+            "options": [
+              "It runs on slower hardware",
+              "It's a limited-time promotional discount",
+              "You opt in to letting Meta train on your prompts and code",
+              "It only supports smaller repositories"
+            ],
+            "correctIndex": 2,
+            "explanation": "The Contributor tier drops price by roughly 12-21x, but the discount is the price of letting Meta use your prompts and code as training data — a real IP/privacy tradeoff."
+          },
+          {
+            "id": "31b4b684-4bca-4ec5-8fdc-c059fa34253d",
+            "prompt": "What platforms does Muse Code support at launch?",
+            "options": [
+              "Windows only",
+              "macOS and Linux, terminal only",
+              "iOS and Android apps",
+              "Browser-only, no local install"
+            ],
+            "correctIndex": 1,
+            "explanation": "Muse Code installs via a single shell command on macOS and Linux. There's no GUI app and no Windows support at launch."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Introducing Muse Code and Muse Spark 1.2",
+          "url": "https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2"
+        }
+      ],
+      "id": "a2d37e95-f2c7-4005-b182-8035aee40f3d",
+      "publishedDate": "2026-08-24T06:39:47Z"
+    },
+    {
+      "title": "GRPO: Reinforcement Learning Without a Critic",
+      "subtitle": "How DeepSeek trains reasoning models by scoring groups, not single rollouts",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "reinforcement-learning",
+        "rlhf",
+        "grpo",
+        "alignment",
+        "reasoning-models"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "chart.bar.xaxis",
+      "summary": "GRPO (Group Relative Policy Optimization) replaces PPO's separate critic network with a simple trick: sample a group of completions per prompt, score each with the reward model, and use each one's deviation from the group's own mean as its advantage. It's the training recipe behind DeepSeek's reasoning models.",
+      "slides": [
+        {
+          "id": "c79bec97-c6f0-4d4b-9dcc-98d1f7e3d94b",
+          "kind": "cover",
+          "title": "The Critic Was Half the Bill",
+          "body": "Standard RLHF via PPO trains a value network the same size as the policy just to estimate how good a state is — doubling memory and compute before any policy learning happens.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis"
+        },
+        {
+          "id": "94f6d9e5-e8c2-4e1b-b1ed-b097277ab945",
+          "kind": "problem",
+          "title": "Why PPO Needs a Critic in the First Place",
+          "body": "PPO's policy gradient needs an ADVANTAGE — how much better a specific action was than expected. Estimating 'expected' requires a value function, which in LLM RLHF means training a second full-size model.",
+          "bullets": [
+            "The critic model roughly doubles GPU memory and compute versus the policy alone",
+            "Early in training the critic itself is inaccurate, injecting noisy gradients into the policy",
+            "For single-turn LLM responses (no intermediate states), a full value function is arguably overkill"
+          ],
+          "symbol": "square.stack.3d.up.fill"
+        },
+        {
+          "id": "172d5208-d27e-44e3-8135-4fcfa6243495",
+          "kind": "solution",
+          "title": "Score a Group, Skip the Critic",
+          "body": "GRPO samples G completions from the current policy for the SAME prompt, scores each with the reward model, then computes each completion's advantage as its reward normalized against the group's own mean and standard deviation.",
+          "bullets": [
+            "advantage_i = (reward_i − mean(rewards in group)) / std(rewards in group)",
+            "The group itself acts as the baseline — no separate value network is trained at all",
+            "A KL penalty against a reference policy still keeps updates from drifting too far, same as PPO"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "18d33227-5895-48a2-8d5b-0fa636722fbe",
+          "kind": "example",
+          "title": "Worked Example: Grading a Math Problem",
+          "body": "Prompt: 'Solve for x: 2x + 3 = 11.' The policy samples G=8 completions at temperature > 0.",
+          "bullets": [
+            "Reward model (or a rule-based checker) scores each: correct answer = 1, incorrect = 0",
+            "Say 5 of 8 completions are correct: group mean reward ≈ 0.625",
+            "Correct completions get positive advantage (push probability up), incorrect ones get negative advantage (push down) — all relative to that specific group",
+            "Each token in a completion is updated with a PPO-style clipped objective, weighted by that completion's advantage"
+          ],
+          "symbol": "function"
+        },
+        {
+          "id": "53ab444c-f466-456a-9f61-6b5ee91feadb",
+          "kind": "comparison",
+          "title": "GRPO vs. PPO",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "PPO",
+              "GRPO"
+            ],
+            "rows": [
+              [
+                "Critic network",
+                "Required, ~policy-sized",
+                "None"
+              ],
+              [
+                "Advantage estimate",
+                "Learned value function",
+                "Group-normalized reward"
+              ],
+              [
+                "Memory/compute per step",
+                "Higher (policy + critic)",
+                "Lower (policy only, but needs G samples)"
+              ],
+              [
+                "Used in",
+                "Classic RLHF (InstructGPT-style)",
+                "DeepSeekMath, DeepSeek-R1"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b07b18cd-9fde-42ae-b729-8d737114ba04",
+          "kind": "problem",
+          "title": "Where GRPO Falls Down",
+          "body": "Dropping the critic isn't free — the group itself has to carry the signal, and groups can fail to.",
+          "bullets": [
+            "Needs G full completions sampled per prompt before any update — more inference compute per gradient step, not less",
+            "If every completion in a group gets the identical reward (all correct, or all wrong), the group's std is 0 and every advantage collapses to zero — no learning signal from that prompt at all",
+            "Small group sizes (low G) give a noisy estimate of the group mean/std, adding variance back in a different form",
+            "Group-relative scoring erases information about how hard the prompt was in absolute terms"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "c6d3bfcd-f14d-4180-bded-15bebb06b4ce",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "GRPO removes PPO's critic network by using a sampled group's own mean/std as the baseline for advantage",
+            "advantage = (reward − group mean) / group std, computed per-prompt across G sampled completions",
+            "Cuts memory/compute per step at the cost of needing G completions sampled up front",
+            "A group where every completion scores identically produces zero learning signal — a real failure mode to watch for",
+            "This is the core RL recipe behind DeepSeekMath and DeepSeek-R1's reasoning gains"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "a7ffee0d-7c59-42a5-9b9b-96ef4b1b0e0f",
+            "prompt": "What does GRPO eliminate compared to standard PPO-based RLHF?",
+            "options": [
+              "The reward model",
+              "The separate critic/value network",
+              "The KL penalty term",
+              "The policy network"
+            ],
+            "correctIndex": 1,
+            "explanation": "GRPO drops the learned value function entirely, replacing it with the group's own mean/std as the advantage baseline — the policy and reward model are still both needed."
+          },
+          {
+            "id": "58a9fba3-e832-4249-9e11-bbf8e1d652e2",
+            "prompt": "How is a completion's advantage computed in GRPO?",
+            "options": [
+              "By a separately trained critic network",
+              "As its reward normalized against the mean and std of rewards within its sampled group",
+              "As the raw reward score, unmodified",
+              "By comparing it to the previous training epoch's average"
+            ],
+            "correctIndex": 1,
+            "explanation": "advantage = (reward − group mean) / group std, computed per prompt across the G completions sampled for it — the group is its own baseline."
+          },
+          {
+            "id": "94a91c87-8de6-487e-aa4c-dbb68a9ce7fc",
+            "prompt": "What happens if every completion sampled for a prompt receives the exact same reward?",
+            "options": [
+              "The model learns fastest from this group",
+              "The group's std is 0, collapsing every advantage to zero — no learning signal from that prompt",
+              "GRPO automatically increases the group size",
+              "PPO's critic takes over for that group"
+            ],
+            "correctIndex": 1,
+            "explanation": "With zero variance in the group's rewards, the normalized advantage for every completion is 0/0-like and collapses to zero, meaning that prompt contributes no gradient signal despite the compute spent sampling it."
+          }
+        ]
+      },
+      "references": [],
+      "id": "843d9c6d-9c2d-4fc7-af84-a65b65f930d8",
+      "publishedDate": "2026-08-24T06:39:47Z"
+    },
+    {
       "id": "3c44f98b-ee10-45ab-a12b-18a43987dd41",
       "title": "RoPE: How Position Gets Baked Into Attention",
       "subtitle": "No lookup table, no learned bias — just a rotation",
@@ -10630,583 +11131,6 @@
       ],
       "publishedDate": "2026-08-15T00:44:52Z",
       "heroImageURL": null
-    },
-    {
-      "id": "f1b839cc-c16e-4b68-9bce-8b3f05cd9b9a",
-      "title": "Tool Calling: How an LLM Actually Triggers a Function",
-      "subtitle": "The model never runs code — it emits structured JSON and a host process does the rest",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "tool-calling",
-        "function-calling",
-        "agents",
-        "json-schema",
-        "structured-output"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "wrench.and.screwdriver.fill",
-      "summary": "Tool calling isn't the model reaching out and running code — it's the model emitting a structured JSON object that matches a schema you declared, which a host process intercepts, executes, and feeds back as a new message. The reliability comes from constrained decoding and a strict request/response loop, not from the model being smarter about APIs.",
-      "slides": [
-        {
-          "id": "35b9edf9-71a7-4cbf-b000-dae35ac1f53f",
-          "kind": "cover",
-          "title": "The Model Never Touches a Single API",
-          "body": "Every 'agent calling a tool' is really the model predicting text that happens to look like a function call, and a separate program deciding to act on it.",
-          "bullets": [],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "a93191e9-e54d-4d46-b872-dcc967b766af",
-          "kind": "problem",
-          "title": "Free-Form Text Is a Terrible Interface for Actions",
-          "body": null,
-          "bullets": [
-            "Early 'agents' asked the model to write prose like 'I should search for the weather in Austin' and then regex-parsed it — brittle, and one phrasing drift breaks the parser.",
-            "A model has no way to actually execute anything; it only predicts the next token. Without a strict contract, arguments come back malformed, quoted inconsistently, or with invented parameter names.",
-            "Hallucinated tools are the real risk: given no explicit list, a model will confidently invoke an API that doesn't exist, because 'a function that does X' is a plausible completion."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9711befd-6adc-40c9-92b0-bb8a848099b8",
-          "kind": "solution",
-          "title": "You Declare a JSON Schema; the Model Fills It In",
-          "body": "Modern tool calling puts a machine-readable spec — name, description, and a JSON Schema for the arguments — into the request. The model is trained (and often decoding-constrained) to emit output matching that schema instead of prose whenever a tool fits.",
-          "bullets": [
-            "The runtime, not the model, executes the call: it validates the JSON against the schema, runs the real function, and appends the result as a new 'tool' message in the conversation.",
-            "Constrained/grammar decoding masks out tokens that would produce invalid JSON at each step, so malformed output becomes a token-sampling impossibility rather than a hope.",
-            "The model only ever sees text: the tool definition going in, and the tool's result coming back as another message it reads like any other context."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        },
-        {
-          "id": "d7a31f8c-6cba-4f71-9033-9150936abda5",
-          "kind": "architecture",
-          "title": "It's a Loop, Not a Single Call",
-          "body": null,
-          "bullets": [
-            "1) User message goes in with the list of available tools. 2) Model emits either a normal reply or a tool_call (name + JSON arguments). 3) Host executes it and appends a tool-result message. 4) Model resumes with that result in context — often producing another tool_call before ever answering.",
-            "Independent calls can run in parallel: if the model requests two tools with no data dependency between them, most runtimes fire both and merge the results back in before the next model turn — cutting round-trip latency roughly in half for that step.",
-            "Each round trip costs a full model inference pass, so a 4-tool-call chain isn't 'one request' — it's five: four tool turns plus the final synthesis."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "a347442d-33ed-4ee3-a8ea-1436fb3f72e3",
-          "kind": "example",
-          "title": "Worked Example: Two Independent Lookups",
-          "body": "Prompt: 'What's the weather in Austin, and what's 50 USD in EUR?' — two unrelated facts, so a well-built agent fires both tools in parallel rather than sequentially.",
-          "bullets": [
-            "Turn 1 — model output: two tool_calls in the same message: get_weather({\"city\":\"Austin\"}) and convert_currency({\"amount\":50,\"from\":\"USD\",\"to\":\"EUR\"}).",
-            "Host executes both concurrently, gets back {\"tempF\":91,\"conditions\":\"sunny\"} and {\"result\":46.10}, and appends both as tool-result messages tagged with matching call IDs.",
-            "Turn 2 — model reads both results in context and writes the final prose answer: 'It's 91°F and sunny in Austin; 50 USD is about €46.10.' No new tool calls needed."
-          ],
-          "symbol": "curlybraces",
-          "table": null
-        },
-        {
-          "id": "fdd4156f-36dd-45b9-b618-f8cc57731bd6",
-          "kind": "comparison",
-          "title": "Prompted Parsing vs. Native Tool Calling",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "",
-              "Prompted (ReAct-style text)",
-              "Native tool calling"
-            ],
-            "rows": [
-              [
-                "Contract",
-                "Ad-hoc text pattern in the prompt",
-                "Explicit JSON Schema per tool"
-              ],
-              [
-                "Parsing",
-                "Regex/string match on model output",
-                "Structured field the API returns directly"
-              ],
-              [
-                "Invalid output",
-                "Silently mis-parsed or crashes the parser",
-                "Rejected pre-decode by grammar constraints"
-              ],
-              [
-                "Parallel calls",
-                "Rare — one action per text turn",
-                "Multiple tool_calls in a single turn"
-              ],
-              [
-                "Portability",
-                "Breaks across models/prompt styles",
-                "Standardized across most major model APIs"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "0bc96ab2-1e22-4338-90ce-c63c1121a9a4",
-          "kind": "problem",
-          "title": "Where It Still Breaks",
-          "body": null,
-          "bullets": [
-            "Tool-selection accuracy degrades as the toolbox grows — past roughly a few dozen simultaneously offered tools, models start picking the wrong one or missing the right one, even with perfect schemas. Curate the set per-task instead of exposing everything at once.",
-            "A schema only constrains shape, not truth: the model can still fill valid JSON with a hallucinated argument value (a city that doesn't exist, an ID it invented), so the executing function still has to validate semantically.",
-            "Tool calling has no built-in permission model — anything declared as a tool is something the model will eventually try to call. Destructive tools (delete, send, pay) need an explicit confirmation step outside the loop, not just a well-worded description.",
-            "Don't reach for tool calling when the answer is already in the model's context or training knowledge — every call adds a full inference round trip's worth of latency and cost for something a direct answer would've solved instantly."
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "cf51a835-f0f2-4dbd-af53-68daddaff2b3",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Tool calling = a JSON contract + constrained decoding + a host loop — the model still only predicts text, it never executes anything itself.",
-            "Independent tool calls can and should run in parallel; dependent ones force sequential round trips, each costing a full inference pass.",
-            "A valid schema guarantees well-formed arguments, not correct ones — always validate values, not just shape, before executing.",
-            "More tools isn't free: curate the offered set per task rather than exposing your entire API surface at once."
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "461be9da-ce16-4cb4-a01e-ab030c410043",
-            "prompt": "What actually makes modern tool calling more reliable than the old 'parse the model's prose' approach?",
-            "options": [
-              "The model has been given direct code-execution access",
-              "A declared JSON Schema plus decoding constraints that make invalid output impossible to sample",
-              "A bigger context window so the model remembers the API docs better",
-              "The model is fine-tuned on that specific company's API"
-            ],
-            "correctIndex": 1,
-            "explanation": "Reliability comes from the contract (schema) and the decoding-time constraint that masks out tokens which would break it — not from the model becoming smarter about APIs or gaining any real execution ability."
-          },
-          {
-            "id": "97165800-40bb-426c-a780-3a6a97cd2555",
-            "prompt": "In the weather + currency example, why do both tool calls happen in the same turn instead of one after another?",
-            "options": [
-              "The model can only ever emit one tool call, so this is actually two separate turns",
-              "The two calls are independent of each other's output, so the host can execute them concurrently before the next model turn",
-              "Parallel calls are required by the JSON Schema spec",
-              "It's cheaper to always batch every tool call regardless of dependency"
-            ],
-            "correctIndex": 1,
-            "explanation": "Parallel execution is only safe when calls don't depend on each other's results. If converting currency needed the weather result first, they'd have to run sequentially across separate turns."
-          },
-          {
-            "id": "1852724e-b86c-4a0a-8b53-3c4036fb90e0",
-            "prompt": "A team keeps adding tools to their agent — it's now offered 60 tools on every request — and accuracy is dropping. What's the most likely cause?",
-            "options": [
-              "JSON Schema validation stops working above a fixed tool count",
-              "Tool-selection accuracy degrades as the offered set grows, even when every schema is well-formed",
-              "The model runs out of context space to store 60 JSON schemas",
-              "Parallel tool calling gets disabled automatically above 50 tools"
-            ],
-            "correctIndex": 1,
-            "explanation": "This is a selection problem, not a formatting one — schemas can be perfectly valid and the model still picks the wrong tool or misses the right one as the candidate list grows. The fix is curating a smaller, task-relevant tool set, not fixing the schemas."
-          }
-        ]
-      },
-      "references": [],
-      "heroImageURL": null,
-      "publishedDate": "2026-08-14T18:40:13Z"
-    },
-    {
-      "id": "afff4f8e-fd9b-45c4-b32f-2aee34c32872",
-      "title": "Grouped-Query Attention: Splitting the Difference on KV Cache",
-      "subtitle": "Why Llama 2 70B and Mistral 7B don't give every attention head its own keys and values",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "gqa",
-        "kv-cache",
-        "inference",
-        "transformers"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "heroImageURL": null,
-      "summary": "Grouped-Query Attention (GQA) shrinks the KV cache by clustering query heads into groups that each share a single key/value head, trading a small amount of representational capacity for a large cut in inference memory. It's the attention variant actually shipping in Llama 2's larger models and Mistral 7B, not just a research idea.",
-      "slides": [
-        {
-          "id": "b56f450d-5878-4fdb-ae2d-704da7188a36",
-          "kind": "cover",
-          "title": "Every Attention Head Used to Get Its Own Keys and Values",
-          "body": "Multi-head attention gives each head an independent key and value projection. That's expressive — and it's also the reason the KV cache eats so much memory during inference.",
-          "bullets": [],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "934f7b07-2e61-4f81-bb88-1019868288cf",
-          "kind": "problem",
-          "title": "The KV Cache Grows With Every Head, Every Token",
-          "body": null,
-          "bullets": [
-            "During autoregressive generation, the model caches a key and value vector per head per token so it never recomputes them. With H heads, that cache is H times bigger than a single-head model's — and it keeps growing linearly with sequence length on top of that.",
-            "A 70B-class model with 64 attention heads stores 64 separate key/value pairs per token, per layer — across 80 layers that adds up fast, especially at long context lengths.",
-            "Multi-Query Attention (MQA) is the extreme fix: collapse all heads down to ONE shared key/value head. Memory savings are dramatic, but quality can suffer because every query head is now reading from the same compressed key/value space."
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "a4d226d3-3ad5-43e9-8b89-d17a75d8425d",
-          "kind": "solution",
-          "title": "GQA Groups Heads Instead of Sharing One K/V for All of Them",
-          "body": "Grouped-Query Attention splits the query heads into G groups. Every query head keeps its own projection, but all heads inside a group share one key head and one value head. G = H recovers standard multi-head attention; G = 1 recovers MQA. GQA picks a middle value of G.",
-          "bullets": [
-            "Fewer distinct key/value projections to store means a smaller KV cache — roughly H/G times smaller than full multi-head attention.",
-            "Existing MHA checkpoints can be 'uptrained' into GQA by mean-pooling each group's original key/value heads into one shared head, then fine-tuning briefly — no need to pretrain from scratch.",
-            "Because most of the architecture is unchanged, GQA models train and behave almost like standard transformers, just with a cheaper cache to carry at inference time."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "15424367-112b-4d20-a134-7fdd91f8adaf",
-          "kind": "architecture",
-          "title": "The Query-to-KV-Head Ratio Is a Tunable Knob",
-          "body": "The group size G is a design choice made per model, usually picked so it divides evenly into the total head count.",
-          "bullets": [
-            "MHA: G = H (e.g. 64 query heads → 64 KV heads) — maximum quality, maximum cache size.",
-            "GQA: 1 < G < H (e.g. 64 query heads grouped down to 8 KV heads) — the middle ground most production models actually ship.",
-            "MQA: G = 1 (all query heads → a single shared KV head) — minimum cache, biggest quality risk."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "c8bd4443-1127-44c1-9508-6d51b9f34905",
-          "kind": "example",
-          "title": "Llama 2 70B and Mistral 7B Both Ship With GQA",
-          "body": null,
-          "bullets": [
-            "Llama 2 70B: 64 attention heads grouped down to 8 KV heads — roughly an 8x smaller KV cache than full MHA would need at that same head count.",
-            "Mistral 7B: 32 attention heads grouped down to 8 KV heads — a 4x reduction, part of what let it run efficiently on more modest hardware.",
-            "Meta kept standard MHA on the smaller Llama 2 variants (7B, 13B) — GQA's payoff is biggest where the cache is biggest: larger models and longer contexts."
-          ],
-          "symbol": "cylinder.split.1x2.fill",
-          "table": null
-        },
-        {
-          "id": "b64e8201-9acd-4ddb-9d07-dccd1b2ebd61",
-          "kind": "comparison",
-          "title": "Cache Size vs. Quality: Where Each Variant Lands",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Variant",
-              "Distinct KV heads",
-              "Relative cache size",
-              "Quality vs. MHA"
-            ],
-            "rows": [
-              [
-                "MHA",
-                "= query heads (e.g. 64)",
-                "1x (largest)",
-                "Baseline"
-              ],
-              [
-                "GQA",
-                "a chosen group count (e.g. 8)",
-                "~H/G smaller (e.g. ~8x)",
-                "Close to MHA in practice"
-              ],
-              [
-                "MQA",
-                "1 (shared by all)",
-                "~H smaller (e.g. ~64x)",
-                "Can be noticeably lower"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "33ba7df1-2717-4b0b-a0b0-bb1507ecf65c",
-          "kind": "concept",
-          "title": "GQA Isn't Free, and It Isn't Always the Right Call",
-          "body": "The savings are real, but they come with caveats worth knowing before reaching for GQA.",
-          "bullets": [
-            "Converting a pretrained MHA model to GQA needs an uptraining pass — skipping it and just deleting KV heads outright tanks quality instead of gracefully trading it off.",
-            "Very small models rarely bother: when the KV cache isn't your inference bottleneck, GQA adds architectural complexity for little practical gain.",
-            "The group count G is a fixed choice baked in at training time — unlike batch size or context length, you can't tune it per request after the model is trained.",
-            "GQA doesn't reduce weight count or FLOPs per token the way something like Mixture of Experts does — it specifically targets the inference-time KV cache, so pair it with quantization or PagedAttention for compounding savings rather than expecting it to solve everything alone."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "2aee9e4f-b468-404c-881e-2e8cf37626e9",
-          "kind": "takeaways",
-          "title": "The Core Idea in One Line",
-          "body": null,
-          "bullets": [
-            "KV cache size scales with the number of distinct key/value heads, not the number of query heads.",
-            "GQA groups query heads so they share key/value heads, landing between full MHA and single-head MQA on the memory-vs-quality spectrum.",
-            "Real models use it today: Llama 2 70B and Mistral 7B both ship GQA with 8 KV heads in production, not just as a research technique.",
-            "It's an inference-memory optimization, not a capacity optimization — combine it with other efficiency techniques rather than treating it as a complete solution."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "b8451184-0d3f-4089-9552-23d2f9c8edae",
-            "prompt": "In Grouped-Query Attention, what do the query heads within one group share?",
-            "options": [
-              "Their own separate query projections",
-              "A single key projection and a single value projection",
-              "The final output projection only",
-              "The positional embeddings for the sequence"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every query head keeps its own query projection — what's shared within a group is one key projection and one value projection. That's the whole mechanism: fewer distinct K/V projections to cache, while queries stay fully independent."
-          },
-          {
-            "id": "d3dd9e51-6912-443c-8adb-1a7596be5269",
-            "prompt": "Llama 2 70B uses GQA with 64 query heads grouped into 8 KV heads. Roughly how much smaller is its KV cache versus full multi-head attention at that same head count?",
-            "options": [
-              "About 2x smaller",
-              "About 8x smaller",
-              "About 64x smaller",
-              "No smaller — GQA doesn't change cache size"
-            ],
-            "correctIndex": 1,
-            "explanation": "Cache size scales with the number of distinct KV heads, not query heads. 64 query heads grouped into 8 shared KV heads means roughly an 8x reduction in key/value storage compared to giving all 64 heads their own KV pair."
-          },
-          {
-            "id": "b3aa985d-99d3-4580-a9e1-09dcb1a42d89",
-            "prompt": "What's the main risk of pushing all the way to Multi-Query Attention (a single shared KV head for every query head)?",
-            "options": [
-              "Training becomes numerically unstable",
-              "The model can no longer be used for autoregressive generation",
-              "Quality can degrade because too much key/value information is compressed into one shared representation",
-              "Positional encoding stops working correctly"
-            ],
-            "correctIndex": 2,
-            "explanation": "MQA gets the biggest memory win by collapsing every query head down to one shared KV head, but that squeezes all of the model's key/value representational capacity into a single space — which can hurt output quality. GQA exists specifically to interpolate between that extreme and full multi-head attention."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-14T15:02:56Z"
-    },
-    {
-      "id": "16812185-f65f-4d38-9b00-49c6dbd34ee8",
-      "title": "Late Interaction: Retrieval That Keeps Every Token's Vote",
-      "subtitle": "Bi-encoders squash a document into one vector; cross-encoders read every token pair but can't be precomputed. ColBERT's MaxSim gets both.",
-      "category": "RAG",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "colbert",
-        "late-interaction",
-        "rag",
-        "vector-search",
-        "retrieval",
-        "reranking"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.grid.3x3.fill",
-      "heroImageURL": null,
-      "summary": "Late interaction retrieval (introduced by ColBERT) encodes queries and documents into per-token embedding matrices instead of single vectors, then scores relevance with MaxSim: each query token finds its best-matching document token, and those maxes get summed. It recovers most of a cross-encoder's fine-grained matching quality while still letting document representations be computed and indexed offline — at the cost of storing many vectors per document instead of one.",
-      "slides": [
-        {
-          "id": "a0c90a5f-5390-4af6-a2bc-d15920d4260d",
-          "kind": "cover",
-          "title": "One Vector Per Document Is a Compression You're Paying For",
-          "body": "Every dense retriever squashes a document down to a single point in embedding space. Late interaction asks: what if you didn't have to?",
-          "bullets": [],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "c5341e7f-30de-4503-9750-14a01e070fbf",
-          "kind": "problem",
-          "title": "Bi-Encoders Are Fast Because They Forget",
-          "body": null,
-          "bullets": [
-            "A standard dense retriever (bi-encoder) runs the query and each document through an encoder separately, then pools all their tokens into ONE vector each — relevance is just a dot product between two points.",
-            "That single vector has to represent every entity, number, and rare term in the whole document at once. A query for an exact SKU, error code, or proper noun can get diluted into a generic semantic neighborhood and lose the match.",
-            "Cross-encoders fix this by concatenating query+document and running full self-attention so every query token can attend to every document token directly — much higher quality, but the score can't be computed until BOTH texts are known.",
-            "That makes cross-encoders unusable as a first-stage retriever over millions of documents: you can't precompute anything, so you'd need one full transformer forward pass per query-document pair. In practice they only rerank a small shortlist a cheaper retriever already produced."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "a0253dcc-8079-4267-8091-cb5b285dea73",
-          "kind": "solution",
-          "title": "Keep One Vector Per Token, Not Per Document",
-          "body": null,
-          "bullets": [
-            "Late interaction (ColBERT, Khattab & Zaharia) encodes the query and the document independently — same as a bi-encoder — but skips the pooling step. Each token keeps its own small vector, so a document becomes a MATRIX of embeddings, not a single point.",
-            "Because the document side is still encoded independently of the query, every document's token matrix can be computed once, offline, and stored in an index — the expensive transformer pass never has to wait for a query.",
-            "At query time you only run the (short) query through the encoder and then do a lightweight comparison against the precomputed document matrices — no second transformer pass over the document is needed.",
-            "This is the 'late' in late interaction: the two sides interact only at the final scoring step, after both have already been independently embedded — as opposed to a cross-encoder's 'early' interaction inside the transformer itself."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "146355fd-e200-48af-987a-3b2ac8a40c11",
-          "kind": "architecture",
-          "title": "MaxSim: Every Query Token Picks Its Best Match",
-          "body": "For each query token embedding, find its single highest-similarity token anywhere in the document, then sum those maxes across all query tokens.",
-          "bullets": [
-            "score(Q, D) = Σ over query tokens q of [ max over document tokens d of (q · d) ] — each query token independently finds whichever document token it matches best, then those per-token maxima are added up.",
-            "This gives the model soft, per-term matching: a query token for an exact identifier can still find and reward an exact match buried anywhere in the document, instead of that signal being averaged away into one pooled vector.",
-            "It's still cheap relative to a cross-encoder: MaxSim is just a matrix multiply plus a max and a sum — no additional transformer layers run at query time.",
-            "Because the operation is a similarity matrix over two small sets of vectors, it composes naturally with approximate pruning: you don't have to compare a query against every token of every document to get a good score estimate."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null
-        },
-        {
-          "id": "74147162-ab43-4a8b-a0a5-972cf8b9a925",
-          "kind": "example",
-          "title": "A Query That a Bi-Encoder Would Blur",
-          "body": null,
-          "bullets": [
-            "Query: 'rollback procedure for error E4021'. A pooled bi-encoder vector for this query mixes 'rollback', 'procedure', and the specific code E4021 into one averaged direction — a document that's strong on 'rollback procedure' but never mentions E4021 can still score high.",
-            "With late interaction, the query keeps a separate vector for the E4021 token. That vector's MaxSim term can only score high against a document token that's actually close to E4021 — a near-exact match in the index, not a generic semantic neighborhood.",
-            "Meanwhile 'rollback' and 'procedure' still get their own MaxSim terms and can match paraphrases like 'revert steps' via semantic similarity — you keep soft matching on the descriptive words and sharp matching on the identifier, in the same score.",
-            "The final score is the sum of both kinds of evidence in one pass — no separate keyword-search (BM25) system needed to catch what the dense vector missed."
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "c56386af-0818-48e0-88b3-7ef109af7d60",
-          "kind": "comparison",
-          "title": "Three Ways to Score Relevance",
-          "body": null,
-          "bullets": [
-            "The core tradeoff is exactly where interaction happens: never (bi-encoder), only at the end (late interaction), or throughout the whole forward pass (cross-encoder)."
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Approach",
-              "Doc side precomputed?",
-              "Match granularity",
-              "Typical role"
-            ],
-            "rows": [
-              [
-                "Bi-encoder (single vector)",
-                "Yes — one vector per doc",
-                "Whole-document, pooled",
-                "First-stage retrieval at large scale"
-              ],
-              [
-                "Late interaction (ColBERT)",
-                "Yes — one vector per token",
-                "Per-token, via MaxSim",
-                "First-stage retrieval when exact terms matter"
-              ],
-              [
-                "Cross-encoder",
-                "No — needs the query present",
-                "Full token-to-token attention",
-                "Reranking a small shortlist only"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "55ed25cc-17bb-4e78-a03c-a665223536c2",
-          "kind": "concept",
-          "title": "The Bill Comes Due in Storage",
-          "body": null,
-          "bullets": [
-            "Storing one vector per document token instead of one per document multiplies index size by roughly the average token count you keep embeddings for — often on the order of a hundred-plus vectors per document instead of one.",
-            "Later ColBERT work (ColBERTv2) attacks exactly this with residual compression — clustering token vectors around centroids and storing quantized offsets — shrinking the index substantially versus storing raw per-token vectors, without giving up the MaxSim mechanism.",
-            "Plain HNSW-style ANN indexes are built for single-vector nearest-neighbor search — they don't natively support 'many vectors per document, scored by MaxSim.' You need a retrieval engine or library built for multi-vector late interaction (e.g. the ColBERT/PLAID tooling, or vector databases with explicit multi-vector support).",
-            "Skip it when: your corpus is huge and storage-constrained, exact-term recall isn't your bottleneck, or a simpler bi-encoder-plus-cross-encoder-reranker pipeline already clears your quality bar — late interaction is worth its cost specifically when precision on rare terms and identifiers is what's failing today."
-          ],
-          "symbol": "externaldrive.fill",
-          "table": null
-        },
-        {
-          "id": "471c55b5-dbc9-480f-b0a9-f3bf6367a5a0",
-          "kind": "takeaways",
-          "title": "Where the Interaction Happens Is the Whole Design",
-          "body": null,
-          "bullets": [
-            "Bi-encoders interact never (fastest, coarsest); cross-encoders interact throughout (best quality, can't scale); late interaction interacts only at scoring time (most of the quality, most of the scalability).",
-            "MaxSim = for each query token, take its best document-token match, then sum — that's the entire scoring function, and it's cheap enough to run at query time against precomputed document matrices.",
-            "The tradeoff you're accepting is storage: many vectors per document instead of one, plus needing infrastructure that understands multi-vector scoring rather than plain nearest-neighbor search.",
-            "Reach for it when a bi-encoder is losing on exact terms — identifiers, codes, names — that a pooled vector keeps blurring away."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4d5c991d-2efd-49aa-80e8-4d7237329042",
-            "prompt": "Why can't a cross-encoder be used as the first-stage retriever over millions of documents?",
-            "options": [
-              "It only outputs a single pooled vector",
-              "Its score requires both the query and document present together, so nothing about the document can be precomputed offline",
-              "It doesn't use a transformer",
-              "It can only score documents shorter than the query"
-            ],
-            "correctIndex": 1,
-            "explanation": "A cross-encoder concatenates query and document and runs full cross-attention, so the relevance score only exists once both texts are known — you'd need a fresh forward pass per query-document pair, which doesn't scale to a large corpus. That's why cross-encoders are used to rerank a small shortlist, not to search the whole index."
-          },
-          {
-            "id": "a72f68d9-7ca9-4340-84a4-3c5836a2c00e",
-            "prompt": "In ColBERT's MaxSim scoring, how is the final relevance score computed?",
-            "options": [
-              "Average the dot product of every query token against every document token",
-              "Take the single highest similarity across the whole document as the score",
-              "For each query token, find its highest-similarity document token, then sum those maxima across all query tokens",
-              "Concatenate the query and document token vectors and feed them through another transformer"
-            ],
-            "correctIndex": 2,
-            "explanation": "MaxSim gives each query token its own vote: it finds whichever document token it matches best, and the total score is the sum of those per-query-token maxima. That lets specific query tokens (like an exact identifier) find an exact match anywhere in the document instead of that signal being blended into one pooled vector."
-          },
-          {
-            "id": "c5ea9615-7aab-4d82-b92c-2e26db2e2a82",
-            "prompt": "What's the main practical cost of late interaction retrieval compared to a standard single-vector bi-encoder?",
-            "options": [
-              "It cannot be indexed offline at all",
-              "It requires a much larger index, since documents are stored as one vector per token instead of one vector total",
-              "It cannot match semantically similar words, only exact terms",
-              "It requires the query and document to be encoded by the same model call"
-            ],
-            "correctIndex": 1,
-            "explanation": "Late interaction still precomputes and indexes the document side offline — that part isn't lost. What changes is the index size: storing a vector per token (often a hundred-plus per document) instead of a single pooled vector is a real storage and infrastructure cost, which is why techniques like ColBERTv2's residual compression exist."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-14T07:03:33Z"
     }
   ]
 }
