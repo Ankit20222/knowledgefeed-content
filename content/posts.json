@@ -1,6 +1,193 @@
 {
   "posts": [
     {
+      "id": "3c44f98b-ee10-45ab-a12b-18a43987dd41",
+      "title": "RoPE: How Position Gets Baked Into Attention",
+      "subtitle": "No lookup table, no learned bias — just a rotation",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "attention",
+        "positional-encoding",
+        "transformers",
+        "context-length"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Rotary Position Embeddings (RoPE) rotate query and key vectors by an angle proportional to their token position, so the dot product between any two tokens depends only on their relative distance. It's the reason most modern open-weight LLMs handle position without a learned table — and the reason they need scaling tricks to go past their trained context length.",
+      "slides": [
+        {
+          "id": "77a0b419-ce2d-4ddb-941a-9ab426f40c68",
+          "kind": "cover",
+          "title": "RoPE: How Position Gets Baked Into Attention",
+          "body": "Self-attention has no built-in sense of word order — every token looks at every other token symmetrically. RoPE fixes that by rotating vectors, not adding to them.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "bcde6377-adce-40d0-a1b0-8988141fe206",
+          "kind": "problem",
+          "title": "Self-Attention Is Blind to Order",
+          "body": "Q·K attention scores are a dot product over content alone. Shuffle the tokens and, without a position signal, the scores don't change — 'dog bites man' and 'man bites dog' look identical to raw attention.",
+          "bullets": [
+            "Original Transformer (2017) fixed this by adding sinusoidal vectors to the input embeddings once, before layer 1.",
+            "That's an absolute fix: position 500 always gets the same vector added, regardless of what it's near.",
+            "Absolute embeddings generalize poorly past the trained sequence length and add no signal deeper in the network.",
+            "Later layers see position only as residue baked into the embedding — it isn't reinforced at every attention computation."
+          ],
+          "symbol": "questionmark.circle"
+        },
+        {
+          "id": "16e7c056-d220-43bb-a57f-e6d12d701e74",
+          "kind": "solution",
+          "title": "Rotate, Don't Add",
+          "body": "RoPE splits each query/key vector's d dimensions into d/2 pairs, treats each pair as a 2D point, and rotates it by an angle proportional to the token's position.",
+          "bullets": [
+            "Pair i gets frequency θ_i = base^(-2i/d), with base typically 10,000 in the original paper (Llama 3 and Qwen use 500,000–1,000,000 for longer context).",
+            "At position m, pair i is rotated by angle m·θ_i using a standard 2D rotation matrix.",
+            "Low-index pairs (i near 0) have high frequency — they rotate fast and distinguish neighboring positions.",
+            "High-index pairs (i near d/2) have low frequency — they rotate slowly and distinguish coarse, long-range position.",
+            "This happens inside every attention layer, applied to Q and K only (not V) — not once at the input."
+          ],
+          "symbol": "arrow.clockwise.circle"
+        },
+        {
+          "id": "82d0614d-14de-443f-9a48-34cdd03f7868",
+          "kind": "concept",
+          "title": "Relative Position Falls Out for Free",
+          "body": "The payoff is a mathematical identity: rotating both vectors by their absolute position makes their dot product depend only on the distance between them.",
+          "bullets": [
+            "Rotation matrices compose: R(m)ᵀ·R(n) = R(n − m).",
+            "So (R(m)q)·(R(n)k) = qᵀ·R(n−m)·k — position m and n vanish, only the offset (n−m) remains.",
+            "That's relative positional encoding, but derived from an absolute-looking mechanism — no separate relative-distance table needed (unlike Transformer-XL or T5's relative bias).",
+            "It also means the same offset (say, '3 tokens back') produces the same rotation everywhere in the sequence, which generalizes better than a table indexed by raw position."
+          ],
+          "symbol": "arrow.left.arrow.right"
+        },
+        {
+          "id": "5fd01929-1c9e-4e5c-ad90-fbcf0dbe4ea5",
+          "kind": "example",
+          "title": "Walking the Angles for One Head",
+          "body": "Take a toy 4-dimensional head (2 pairs) with base = 10,000.",
+          "bullets": [
+            "Pair 0: θ_0 = 10000^(-0/4) = 1.0 → at position m=5, rotation angle = 5.0 radians (fast — nearly a full extra turn).",
+            "Pair 1: θ_1 = 10000^(-2/4) = 0.01 → at position m=5, rotation angle = 0.05 radians (slow — barely moved).",
+            "A real head (d=128) has 64 such pairs spanning frequencies from ~1.0 down to ~10⁻⁴ — a spread that lets the model resolve both 'the token right before me' and 'the token 2,000 back'.",
+            "Two tokens 5 apart always produce the same relative rotation (5·θ_i) in every pair, whether they're at positions (10,15) or (9990,9995)."
+          ],
+          "symbol": "number"
+        },
+        {
+          "id": "4a86689d-44bd-4ee8-baa5-fd2cd4ad4ca6",
+          "kind": "comparison",
+          "title": "RoPE vs. the Alternatives",
+          "body": "Three ways to inject position, three different extrapolation stories.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Method",
+              "Where Applied",
+              "Native Length Extrapolation",
+              "Used In"
+            ],
+            "rows": [
+              [
+                "Sinusoidal absolute",
+                "Added once, at input embeddings",
+                "Poor",
+                "Original Transformer (2017)"
+              ],
+              [
+                "ALiBi",
+                "Linear bias subtracted from attention scores",
+                "Strong, no fine-tuning needed",
+                "BLOOM, MPT"
+              ],
+              [
+                "RoPE",
+                "Rotates Q/K vectors in every attention layer",
+                "Moderate — needs scaling to extend",
+                "Llama, Mistral, Qwen, DeepSeek, GPT-NeoX"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis"
+        },
+        {
+          "id": "5383efb8-992a-4bcf-a18d-6811488fd3d2",
+          "kind": "concept",
+          "title": "Where RoPE Breaks: Extrapolation",
+          "body": "A model trained with RoPE at an 8K context window sees only rotation angles up to m=8,000 during training. Push it to 32K and it's evaluating angles it never learned to use.",
+          "bullets": [
+            "Symptom: coherent output up to the trained length, then degrading or repetitive text beyond it.",
+            "Fix 1 — Position Interpolation: linearly compress new positions back into the trained range (e.g., treat position 32,000 as if it were 8,000) before rotating.",
+            "Fix 2 — NTK-aware scaling: stretch the base frequency itself instead of the positions, so high-frequency (local) pairs stay sharp while low-frequency (long-range) pairs stretch to cover the new length.",
+            "Fix 3 — YaRN: combines interpolation on low-frequency pairs with untouched high-frequency pairs, plus a temperature adjustment to attention logits — used to extend several open-weight models well past their original training length with light fine-tuning.",
+            "None of these are free: all trade some short-range precision for long-range reach, and most still need at least a short fine-tuning pass at the target length."
+          ],
+          "symbol": "exclamationmark.triangle"
+        },
+        {
+          "id": "64c2e4b2-717d-47df-8de6-580773171091",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "RoPE is now the default position scheme for open-weight LLMs because it's cheap, needs no extra parameters, and yields relative position as a mathematical side effect of rotation.",
+          "bullets": [
+            "Core trick: rotate Q/K per-layer by an angle proportional to position; the dot product then depends only on relative distance.",
+            "Low-frequency pairs encode long-range position, high-frequency pairs encode fine local position — same idea as sinusoidal encoding, applied as a rotation instead of an addition.",
+            "It doesn't extrapolate for free — going past the trained context length needs Position Interpolation, NTK-aware scaling, or YaRN.",
+            "If you're fine-tuning a RoPE model for longer context, changing the base frequency (θ) is usually the first lever to pull."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "id": "e1584719-8221-476d-ab97-21b04c02ec7b",
+        "questions": [
+          {
+            "id": "98e79c1d-c0ef-4fb4-8142-3ba439e9b4be",
+            "prompt": "What mathematical property lets RoPE encode relative position without a separate relative-distance lookup table?",
+            "options": [
+              "It adds a learned bias vector per distance",
+              "Rotating Q and K by their positions means their dot product depends only on the relative offset (n−m), since R(m)ᵀ·R(n) = R(n−m)",
+              "It concatenates a raw position integer to the input tokens",
+              "It uses a separate embedding table indexed by every possible distance"
+            ],
+            "correctIndex": 1,
+            "explanation": "Rotation matrices compose: rotating one vector by m and another by n, then taking their dot product, is equivalent to rotating by just the difference (n−m). Absolute positions cancel out algebraically — relative position is a byproduct of the rotation, not a lookup."
+          },
+          {
+            "id": "ae1798d0-548c-410e-8e78-5e7970a12cf5",
+            "prompt": "In RoPE, why do the low-frequency dimension pairs (large index i, small θ_i) matter for long documents?",
+            "options": [
+              "They rotate fastest, so they capture fine local detail",
+              "They're skipped entirely during inference to save compute",
+              "They rotate slowly, so they only change meaningfully over long distances — encoding coarse, long-range position",
+              "They store the token's raw absolute position as a number"
+            ],
+            "correctIndex": 2,
+            "explanation": "θ_i shrinks as the pair index grows, so high-index pairs need a large position gap before their rotation angle changes noticeably. That slow drift is what lets the model distinguish 'far apart' from 'very far apart' across long contexts."
+          },
+          {
+            "id": "1d9ab1ee-b1e4-4cf3-a96b-f49e32610209",
+            "prompt": "A model trained with RoPE at an 8K context window produces degraded output past 8K tokens. What's the standard fix, without retraining from scratch?",
+            "options": [
+              "Add more attention heads to the architecture",
+              "Apply a RoPE scaling technique — Position Interpolation, NTK-aware scaling, or YaRN — to adapt the rotation frequencies to the new length",
+              "Switch to absolute sinusoidal embeddings mid-inference",
+              "Increase the model's vocabulary size"
+            ],
+            "correctIndex": 1,
+            "explanation": "These techniques rescale how position maps to rotation angle (either compressing positions or stretching the base frequency) so the model operates within angle ranges closer to what it saw in training, typically combined with a short fine-tuning pass at the target length."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-24T00:39:36Z"
+    },
+    {
       "id": "9789575b-0c01-4343-b8de-c170273ff2d8",
       "title": "Sandboxing: Letting Agents Run Code Without Burning Prod",
       "subtitle": "The difference between an agent that can delete your database and one that can't.",
@@ -11020,192 +11207,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-14T07:03:33Z"
-    },
-    {
-      "id": "61f04b19-0a28-466d-914b-8fa4bc100b66",
-      "title": "GRPO: Reinforcement Learning Without a Critic",
-      "subtitle": "PPO needs a second neural network just to estimate a baseline — GRPO gets the same signal by making a group of answers grade each other.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "grpo",
-        "reinforcement learning",
-        "ppo",
-        "deepseek",
-        "reasoning models",
-        "post-training"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "heroImageURL": null,
-      "publishedDate": "2026-08-14T00:46:09Z",
-      "summary": "GRPO (Group Relative Policy Optimization) replaces PPO's learned critic with a simple trick: sample a group of completions for the same prompt, score each one, and use the group's own mean and standard deviation as the baseline. That advantage estimate — no separate value network required — drops straight into a PPO-style clipped objective with a KL penalty. It's the RL algorithm behind DeepSeekMath and DeepSeek-R1, and it works best exactly where PPO's critic struggled most: reasoning tasks with a clear, checkable reward.",
-      "slides": [
-        {
-          "id": "c2826d09-f131-4e88-8474-670d07b1b1af",
-          "kind": "cover",
-          "title": "Four Models to Train One Policy? PPO Says Yes.",
-          "body": "Classic RLHF's PPO stage keeps four models in memory at once. GRPO throws one of them out — and gets a better baseline in the process.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "cf199d8d-b84e-4df2-a352-8f43fbd2de50",
-          "kind": "problem",
-          "title": "The Critic Is the Expensive, Fragile Part",
-          "body": null,
-          "bullets": [
-            "PPO estimates 'how much better than expected was this action' using a learned value function (the critic) — a second network roughly the size of the policy, trained alongside it just to predict expected reward.",
-            "For LLMs the critic has to assign a value to every token position in a sequence, but the reward usually only arrives once, at the very end (e.g., 'was the final answer correct?') — that sparse signal makes the critic slow to converge and often noisy.",
-            "A bad critic doesn't just fail quietly: an inaccurate baseline produces biased advantage estimates, which push the policy in the wrong direction and destabilize training.",
-            "On top of the reward model and the frozen reference policy RLHF already needs, the critic is a fourth full-size model resident in GPU memory during training — real cost for a component whose only job is estimating a baseline."
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "9a3e2850-194d-497e-bcb0-cd0efa86ce11",
-          "kind": "solution",
-          "title": "Let a Group of Answers Grade Each Other",
-          "body": null,
-          "bullets": [
-            "For each prompt, sample a group of G completions from the current policy instead of just one — for a math problem, that means generating several independent attempts at solving it.",
-            "Score every completion in the group with the reward function (for verifiable tasks like math or code, this can just be 'did the final answer match' or 'did the tests pass' — no learned reward model required).",
-            "Compute the group's mean and standard deviation of rewards, then set each completion's advantage to (its reward − group mean) / group standard deviation — the group itself becomes the baseline, replacing the critic entirely.",
-            "That advantage plugs into the same clipped surrogate objective PPO uses, with a KL penalty against a reference policy added directly to the loss to keep updates from drifting too far in one step."
-          ],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "289d7f7b-96a9-4899-a602-7264e699e79b",
-          "kind": "example",
-          "title": "Same Problem, Four Attempts, One Signal",
-          "body": null,
-          "bullets": [
-            "Say the policy samples 4 attempts at one math problem and 2 of them land on the correct final answer: rewards = [1, 1, 0, 0].",
-            "Group mean = 0.5, group standard deviation = 0.5, so advantages work out to [+1, +1, −1, −1] — correct attempts get pushed up, incorrect ones get pushed down, in the same batch.",
-            "No critic ever ran a forward pass to produce that baseline — the group's own mean did the job.",
-            "If all 4 attempts happen to get the same reward (say all correct, or all wrong), the standard deviation is 0 and the advantage is undefined — a degenerate group that contributes no gradient signal at all."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null
-        },
-        {
-          "id": "04497fc8-1abe-434f-9716-492480e7847f",
-          "kind": "comparison",
-          "title": "GRPO vs. Its Neighbors",
-          "body": null,
-          "bullets": [
-            "GRPO keeps RL's core loop (sample, score, update) but removes the piece PPO needed to make that loop work — at the cost of needing many samples per prompt instead of one."
-          ],
-          "symbol": "square.grid.2x2",
-          "table": {
-            "headers": [
-              "",
-              "PPO (classic RLHF)",
-              "GRPO",
-              "DPO"
-            ],
-            "rows": [
-              [
-                "Models in memory",
-                "4 (policy, reference, reward, critic)",
-                "3 (policy, reference, reward/rule)",
-                "2 (policy, reference)"
-              ],
-              [
-                "Baseline source",
-                "Learned value network",
-                "Group mean/std of sampled rewards",
-                "N/A — no RL loop"
-              ],
-              [
-                "Needs multiple samples per prompt",
-                "No (one rollout)",
-                "Yes (a full sampled group)",
-                "No"
-              ],
-              [
-                "Best fit",
-                "Any reward model",
-                "Verifiable rewards — math, code, tests",
-                "Fixed offline preference pairs"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "b3dd8155-248a-4673-93e3-43a195742bb9",
-          "kind": "concept",
-          "title": "Where GRPO Struggles",
-          "body": null,
-          "bullets": [
-            "It trades critic cost for sampling cost: generating a whole group of completions per prompt at every training step means far more forward passes through the policy than PPO's single rollout.",
-            "Degenerate groups are a real failure mode — if every sampled completion in a group gets the same reward, the standard deviation collapses to zero and that batch teaches the model nothing, wasting the compute spent sampling it.",
-            "It leans on rewards that are cheap and reliable to compute at scale — GRPO shines with rule-based, verifiable rewards (correct/incorrect, tests pass/fail) and is less proven when the only reward source is a noisy learned preference model.",
-            "Larger groups give a more accurate mean/std estimate but cost proportionally more compute per update — group size is a real tuning knob, not a free lunch."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "02e2d6cd-172e-4e4b-aa99-dc62dde6873c",
-          "kind": "takeaways",
-          "title": "The Group Is the Baseline",
-          "body": null,
-          "bullets": [
-            "GRPO's central move: replace PPO's learned critic with the mean and standard deviation of a sampled group's rewards, then feed that advantage into the same clipped, KL-regularized update PPO already uses.",
-            "It removes an entire model from memory but adds sampling cost — a real tradeoff, not a strict improvement, and one that pays off most cleanly when rewards are cheap to verify (math, code) rather than expensive to learn.",
-            "First introduced for DeepSeekMath and later central to DeepSeek-R1's reasoning training, GRPO is now a standard option alongside PPO and DPO whenever a team has verifiable rewards and wants RL without a critic."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "ccdb8154-eded-482e-a676-9f69b224468b",
-            "prompt": "What does GRPO use as the baseline for computing advantage, in place of PPO's learned critic?",
-            "options": [
-              "A separate reward model trained on preference pairs",
-              "The mean and standard deviation of rewards across a sampled group of completions for the same prompt",
-              "A fixed constant set before training begins",
-              "The reward of the single best completion in the group"
-            ],
-            "correctIndex": 1,
-            "explanation": "GRPO samples a group of completions for each prompt, scores all of them, and normalizes each one's reward against that group's own mean and standard deviation — no learned value network needed."
-          },
-          {
-            "id": "28803dc1-f6c9-4b6d-b789-23e4c3b85fa8",
-            "prompt": "What happens when every completion in a GRPO sampling group receives the same reward?",
-            "options": [
-              "The policy update becomes larger to compensate",
-              "The group's standard deviation is zero, so the advantage is undefined and that batch contributes no useful gradient signal",
-              "GRPO automatically falls back to using a critic for that batch",
-              "The reward model is retrained on that group"
-            ],
-            "correctIndex": 1,
-            "explanation": "Advantage in GRPO is (reward − group mean) / group standard deviation. If every sampled completion scores identically, the standard deviation collapses to zero — a degenerate group that wastes the compute spent sampling it."
-          },
-          {
-            "id": "863df5c7-e286-4548-89b7-59db0dc488f6",
-            "prompt": "Compared to PPO, what does GRPO trade away in exchange for removing the critic?",
-            "options": [
-              "It requires sampling multiple completions per prompt instead of just one rollout, increasing generation cost per training step",
-              "It can no longer use a KL penalty against a reference policy",
-              "It requires human preference labels for every training example",
-              "It only works with models under 10B parameters"
-            ],
-            "correctIndex": 0,
-            "explanation": "GRPO still keeps a reference policy and KL regularization — what it gives up is single-rollout efficiency. Estimating a good baseline from a group instead of a critic means generating a whole group of completions per prompt at every step."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
