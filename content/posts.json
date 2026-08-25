@@ -1,6 +1,187 @@
 {
   "posts": [
     {
+      "title": "RLHF: The Reward Model and PPO Loop Behind Alignment",
+      "subtitle": "How human preference pairs become a scalar reward, and a scalar reward becomes a better policy",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rlhf",
+        "ppo",
+        "reward model",
+        "alignment",
+        "fine-tuning"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "hand.thumbsup.fill",
+      "summary": "RLHF turns a pile of human A/B preferences into a scalar reward model, then uses PPO to nudge a language model's policy toward higher-reward outputs while a KL penalty keeps it from drifting too far from its supervised starting point. It's powerful but expensive and unstable — exactly why DPO and GRPO exist.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Three Models, One Goal: Better Answers",
+          "body": "RLHF (Reinforcement Learning from Human Feedback) is the pipeline that turned raw instruction-following models into assistants that are pleasant, safe, and useful to talk to — by training on what humans prefer, not just what's statistically likely.",
+          "bullets": [],
+          "symbol": "hand.thumbsup.fill",
+          "id": "e6bd4cca-3ed8-4861-82d6-a7f87c388dbb"
+        },
+        {
+          "kind": "problem",
+          "title": "Next-token prediction has no sense of 'better'",
+          "body": "A pretrained and instruction-tuned model produces fluent, plausible completions — but nothing in that objective tells it a helpful, concise, honest answer beats a rambling or subtly wrong one. That preference only exists in humans' heads.",
+          "bullets": [
+            "Pretraining objective: predict the next token, not 'satisfy the user'",
+            "SFT teaches format and task-following, not a ranking over answer quality",
+            "Two equally fluent completions can differ hugely in usefulness or safety"
+          ],
+          "symbol": "questionmark.circle",
+          "id": "5306c172-ee47-43b5-bd42-f85896f72380"
+        },
+        {
+          "kind": "solution",
+          "title": "Step 1: Turn human comparisons into a scalar reward",
+          "body": "Labelers see a prompt with two model completions and pick the better one. That preference data trains a reward model to output a single number predicting how good an answer is, using a Bradley-Terry loss so higher-reward answers are more likely to be the preferred one in a pair.",
+          "bullets": [
+            "Input: (prompt, completion) pair -> output: one scalar reward",
+            "Trained by maximizing the probability that reward(chosen) > reward(rejected) across labeled pairs",
+            "Usually the same base architecture as the LLM, with the output head swapped for a single regression value"
+          ],
+          "symbol": "scalemass.fill",
+          "id": "a4166768-e129-4b26-b61c-56c11c744399"
+        },
+        {
+          "kind": "solution",
+          "title": "Step 2: PPO nudges the policy toward higher reward",
+          "body": "The policy (the LLM being trained) generates a response, the frozen reward model scores it, and PPO updates the policy's weights to make higher-reward outputs more likely — while a KL-divergence penalty against the original SFT model keeps it from wandering into degenerate, reward-gaming territory.",
+          "bullets": [
+            "Policy generates -> reward model scores -> PPO computes an advantage and updates weights",
+            "Penalized reward: r(x) - beta * KL(policy model || reference SFT model)",
+            "Needs 4 models in memory at once: policy, frozen reference, reward model, and a value/critic model"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "09219d13-0bb8-466a-bca3-8f7b7f82be77"
+        },
+        {
+          "kind": "example",
+          "title": "Walking through one preference update",
+          "body": "Prompt: \"Explain quantum entanglement to a 10-year-old.\" Completion A is three clear sentences with a toy analogy; Completion B is a dense paragraph full of jargon.",
+          "bullets": [
+            "Labeler picks A as the better answer for the audience",
+            "Reward model learns: simpler, audience-appropriate explanations score higher for this kind of prompt",
+            "During PPO, the policy sees a similar prompt, generates something A-like, gets a high reward, and that behavior gets reinforced",
+            "Over thousands of such updates, the policy shifts toward the labelers' collective taste"
+          ],
+          "symbol": "text.bubble.fill",
+          "id": "2b3e8b2a-e1a9-49a3-a0a2-645fe6e116f1"
+        },
+        {
+          "kind": "comparison",
+          "title": "RLHF isn't the only way to use preference data",
+          "body": "DPO and GRPO both emerged specifically to cut cost and instability out of the RLHF recipe.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Method",
+              "Reward model?",
+              "Critic/value model?",
+              "Relative cost"
+            ],
+            "rows": [
+              [
+                "RLHF (PPO)",
+                "Yes, separate model",
+                "Yes",
+                "Highest — 4 models in memory"
+              ],
+              [
+                "DPO",
+                "No — implicit in the loss",
+                "No",
+                "Low — 2 models (policy + reference)"
+              ],
+              [
+                "GRPO",
+                "Yes, or rule-based reward",
+                "No — group-relative baseline replaces it",
+                "Medium"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "id": "14625e47-a0a9-40f0-8c9e-e9e61c178a8f"
+        },
+        {
+          "kind": "problem",
+          "title": "Reward hacking is the classic failure mode",
+          "body": "PPO optimizes exactly what the reward model measures — and reward models are imperfect proxies for 'actually good,' so the policy learns to exploit the gap.",
+          "bullets": [
+            "Verbosity bias: reward models often favor longer answers, so policies learn to pad responses",
+            "Sycophancy: agreeing with the user's stated opinion can score higher than being correct",
+            "Too small a KL penalty lets the policy drift far from the reference, and quality degrades even as reward climbs",
+            "The four-model setup and PPO's hyperparameter sensitivity make full RLHF expensive and fiddly — a major reason teams reach for DPO or GRPO instead"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "dec7ea5e-e1bb-4566-85a5-83d61c8ea711"
+        },
+        {
+          "kind": "takeaways",
+          "title": "One pipeline, three moving parts",
+          "body": null,
+          "bullets": [
+            "RLHF = SFT model -> reward model trained on human A/B preferences -> PPO fine-tuning against that reward",
+            "The KL penalty is what keeps the policy anchored to the reference model instead of gaming the reward",
+            "Reward hacking (verbosity, sycophancy) is the central risk to watch for",
+            "DPO drops the reward model entirely; GRPO drops the critic — both exist because full RLHF is expensive and unstable"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "6a16f15b-fe40-46ec-bc9e-c57d1e04a9e5"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In RLHF, what does the reward model actually take as input and produce as output?",
+            "options": [
+              "A prompt alone, producing the next token",
+              "A (prompt, completion) pair, producing a single scalar score",
+              "Two completions, producing which model architecture is better",
+              "A completion alone, producing a corrected version of it"
+            ],
+            "correctIndex": 1,
+            "explanation": "The reward model is trained on human pairwise preferences to output one number estimating how good a given completion is for a given prompt — that scalar is what PPO then optimizes.",
+            "id": "130f8c48-f823-4600-8f22-fd93a93276d7"
+          },
+          {
+            "prompt": "Why does RLHF include a KL-divergence penalty against the original SFT model during PPO?",
+            "options": [
+              "To make training faster by skipping gradient updates",
+              "To keep the policy from drifting too far from sensible behavior while chasing reward, which limits reward hacking",
+              "To compress the model to a smaller size",
+              "It has no real effect and is only used for logging"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without that penalty, the policy can find degenerate outputs that score high on the (imperfect) reward model but read as gibberish or gamed text. The KL term anchors it to the reference model's distribution.",
+            "id": "5d9bf431-2e7b-480c-a14a-f6d72fd9dfff"
+          },
+          {
+            "prompt": "A team notices their RLHF-trained model gives longer and longer answers over training, even to simple questions, while its reward score keeps rising. What's the most likely explanation?",
+            "options": [
+              "The reward model correctly identified that longer answers are always better",
+              "Reward hacking — the reward model has a length bias, and PPO is exploiting it rather than genuinely improving answer quality",
+              "The KL penalty is too strong",
+              "The SFT stage was skipped"
+            ],
+            "correctIndex": 1,
+            "explanation": "This is the textbook reward-hacking symptom: verbosity bias in the reward model gets exploited by the policy, so reward climbs without a real quality improvement — a key reason RLHF pipelines need careful reward model auditing.",
+            "id": "2e66478a-7c6e-48a6-9a18-7d41957c041c"
+          }
+        ]
+      },
+      "references": [],
+      "id": "ee382acc-8697-40d2-a4a6-9cb41e3fbd4f",
+      "publishedDate": "2026-08-25T06:40:41Z"
+    },
+    {
       "title": "Function Calling: How an LLM Actually Invokes a Tool",
       "subtitle": "The JSON-schema contract that turns free text into structured actions",
       "category": "AI Agents",
@@ -10900,206 +11081,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-16T00:40:59Z"
-    },
-    {
-      "id": "df30d38b-a1ea-4abf-b017-3b8863b10cee",
-      "title": "PagedAttention: Borrowing Virtual Memory to Fix KV Cache Waste",
-      "subtitle": "vLLM treats GPU memory like an OS treats RAM — pages, not one giant reserved slab",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "paged-attention",
-        "vllm",
-        "kv-cache",
-        "memory-management",
-        "llm-serving",
-        "gpu-memory"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "rectangle.stack.fill",
-      "publishedDate": "2026-08-15T18:39:51Z",
-      "summary": "Naive LLM serving reserves one giant contiguous slab of GPU memory per request, sized for the worst case — and wastes most of it to fragmentation. PagedAttention borrows the operating system's virtual-memory trick: split the KV cache into fixed-size blocks, address them through a per-sequence block table, and let the attention kernel gather them on the fly. The payoff is memory waste that drops from the 60-80% typical of contiguous allocation to under 4%, plus the ability to share cache blocks across requests that partially overlap.",
-      "body": null,
-      "artPrompt": null,
-      "slides": [
-        {
-          "id": "54b6296b-2d90-449a-ac16-544371fefcd7",
-          "kind": "cover",
-          "title": "The KV Cache Is the Real Memory Hog, Not the Weights",
-          "body": "Every token an LLM generates needs the key and value vectors of every prior token kept around for attention. For long sequences and large batches, this KV cache — not the model weights — is what actually runs a GPU out of memory. How you lay it out in memory decides how many requests you can serve at once.",
-          "bullets": [],
-          "symbol": "rectangle.stack.fill",
-          "table": null
-        },
-        {
-          "id": "56a50e41-bf75-4d93-9c49-0eb9133f6314",
-          "kind": "problem",
-          "title": "Contiguous Allocation Reserves for the Worst Case",
-          "body": null,
-          "bullets": [
-            "Early LLM serving systems allocated each request's KV cache as one contiguous block of GPU memory, sized for the maximum sequence length the request could reach — even if the actual output ends up far shorter.",
-            "That over-reservation is internal fragmentation: memory sits allocated to a request but unused because the model stopped generating early. The vLLM paper measured 60-80% of allocated KV cache memory going to waste this way across real serving workloads.",
-            "Contiguous layout also blocks any sharing. If two requests share an identical prompt prefix (a system prompt, a few-shot example, parallel samples from one prompt), each still gets its own fully separate memory region — duplicating cache that is byte-for-byte identical.",
-            "The consequence compounds: memory waste caps how many sequences can be batched together at once, and batch size is the main lever for GPU throughput in LLM serving — so wasted memory directly costs served requests per second."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "958d6624-2d43-481f-9190-e4dbeb5bba3c",
-          "kind": "solution",
-          "title": "Split the Cache Into Fixed-Size Blocks, Address Them Indirectly",
-          "body": null,
-          "bullets": [
-            "PagedAttention (vLLM, Kwon et al.) divides each sequence's KV cache into fixed-size blocks — each holding the key/value vectors for a small, constant number of tokens — instead of one contiguous reservation.",
-            "A per-sequence block table maps logical block indices (block 0, 1, 2… of this sequence) to physical block locations anywhere in GPU memory, exactly like a page table maps virtual pages to physical frames in an OS.",
-            "Blocks are allocated on demand as generation produces new tokens, not upfront for a hypothetical maximum length — so a sequence that stops early never reserved memory it didn't use.",
-            "The attention kernel is rewritten to read key/value vectors through the block table's indirection, gathering scattered physical blocks at compute time instead of assuming one contiguous memory span."
-          ],
-          "symbol": "square.grid.3x2.fill",
-          "table": null
-        },
-        {
-          "id": "6499e39f-48fd-4431-9f8d-8c8991ddbedb",
-          "kind": "concept",
-          "title": "Indirection Also Buys Free Sharing",
-          "body": null,
-          "bullets": [
-            "Because a logical block can point to any physical block, two sequences with an identical prefix can point their early logical blocks at the very same physical blocks — no copying, just two block-table entries referencing one region.",
-            "Parallel sampling (multiple completions from one prompt) and beam search are the direct beneficiaries: the shared prompt prefix's KV cache is written once and referenced by every branch.",
-            "When a shared block needs to diverge — one beam continues differently than another — vLLM uses copy-on-write: only that one block is duplicated at the moment of divergence, not the whole cache.",
-            "This mirrors exactly how an OS shares a read-only code segment across processes and copy-on-writes a page only when one process actually modifies it — PagedAttention imports the whole idea, not just the block-table part."
-          ],
-          "symbol": "square.on.square",
-          "table": null
-        },
-        {
-          "id": "ef71c18f-5886-46a3-b11e-4367360b394e",
-          "kind": "example",
-          "title": "Worked Example: Four Parallel Samples, One Shared Prefix",
-          "body": "A request asks for 4 sampled completions of the same 500-token prompt, each generating up to 200 more tokens.",
-          "bullets": [
-            "Contiguous allocation: 4 independent reservations, each sized for 700 tokens worst case — the 500-token shared prompt gets stored 4 separate times, and any completion shorter than 200 tokens wastes the unused tail of its own slab.",
-            "PagedAttention: the ~500-token prompt occupies one set of physical blocks, referenced by all 4 block tables. Generation only allocates new blocks per branch as tokens are actually produced, and stops allocating the moment a branch finishes.",
-            "If the branches diverge after the first 50 generated tokens, only the blocks after that divergence point get copy-on-write duplicated — the prompt's blocks and the first 50 shared generated tokens stay shared across all 4.",
-            "Net effect on this single request: the prompt's memory footprint drops from 4x to 1x, and no branch ever reserves memory for tokens it never generates."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "eccc31d6-a9cf-46f2-ae4e-5cc7d5c0446f",
-          "kind": "comparison",
-          "title": "Contiguous vs. Paged KV Cache",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Property",
-              "Contiguous allocation",
-              "PagedAttention"
-            ],
-            "rows": [
-              [
-                "Allocation size",
-                "Reserved upfront for max possible length",
-                "Allocated block-by-block as tokens generate"
-              ],
-              [
-                "Typical memory waste",
-                "60-80% (vLLM paper measurement)",
-                "Under 4%"
-              ],
-              [
-                "Sharing identical prefixes",
-                "Not possible — each request fully separate",
-                "Shared via block-table indirection + copy-on-write"
-              ],
-              [
-                "Attention kernel",
-                "Reads one contiguous memory span",
-                "Gathers scattered physical blocks per lookup"
-              ],
-              [
-                "Effective batch size at fixed memory",
-                "Lower — waste eats into headroom",
-                "Higher — reclaimed memory serves more sequences"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "daf11722-660c-4c74-b679-9ddb73dbb2d5",
-          "kind": "concept",
-          "title": "What This Doesn't Fix, and What It Costs",
-          "body": null,
-          "bullets": [
-            "PagedAttention addresses memory layout, not scheduling — it's complementary to, not a substitute for, continuous batching, which decides when requests enter and leave a running batch. vLLM uses both together.",
-            "Block-table indirection adds a real kernel cost: gathering scattered physical blocks is slower per memory access than reading one contiguous span, so the attention kernel itself has to be specifically written (and optimized) for gather-style reads.",
-            "Block size is a genuine tuning knob: small blocks maximize sharing granularity and minimize waste from partially-filled blocks, but increase block-table bookkeeping overhead; large blocks cut overhead but reintroduce some internal fragmentation in the last partially-used block per sequence.",
-            "When it matters less: for workloads dominated by a handful of very long, fully independent sequences with no shared prefixes and generous memory headroom, the fragmentation and sharing gains shrink — the win is largest precisely when batches are large and requests share structure."
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "10178e57-6965-458d-ba1d-08ec616210aa",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "PagedAttention replaces one contiguous, worst-case-sized KV cache reservation per sequence with fixed-size blocks addressed through a per-sequence block table — the same virtual-memory idea an OS uses for RAM.",
-            "That indirection cuts typical memory waste from 60-80% down to under 4%, and as a side effect lets sequences with a shared prefix reference the same physical blocks, with copy-on-write only when they diverge.",
-            "It's a memory-layout fix, not a scheduling fix — it pairs with continuous batching rather than replacing it, and the gather-style attention kernel it requires is genuinely more complex than reading contiguous memory.",
-            "The gain scales with how much batches share structure and how tight memory headroom already is — it is the mechanism that made high-throughput, highly-batched LLM serving (vLLM) practical, not a universal speedup for every workload."
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "096f9f50-1c60-4568-828b-72860cef9112",
-            "prompt": "What causes the 60-80% memory waste in contiguous KV cache allocation that PagedAttention targets?",
-            "options": [
-              "The model weights are duplicated once per GPU",
-              "Each request reserves a contiguous block sized for the worst-case (maximum) sequence length, even if generation stops much earlier",
-              "The attention kernel recomputes keys and values for every new token",
-              "Every request must run on a separate GPU"
-            ],
-            "correctIndex": 1,
-            "explanation": "Contiguous allocation has to reserve for the worst case upfront because it can't grow a fixed memory span later — so memory sits allocated but unused whenever a sequence finishes shorter than its reserved maximum."
-          },
-          {
-            "id": "ca93c254-01ff-47a4-a42f-d912a3a2330c",
-            "prompt": "How does PagedAttention let two sequences share an identical prompt prefix without duplicating memory?",
-            "options": [
-              "It compresses the shared prefix using quantization",
-              "It reruns the forward pass once and broadcasts the result to both sequences",
-              "Each sequence's block table can point its logical blocks at the same physical blocks, with copy-on-write only when the sequences diverge",
-              "It merges the two requests into a single batch item until generation finishes"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because blocks are addressed indirectly through a per-sequence block table, multiple sequences can reference the same physical block. Only the block where their outputs actually start to differ needs to be duplicated (copy-on-write)."
-          },
-          {
-            "id": "3cddd500-d1c2-42e7-8403-9c7b1ab222fb",
-            "prompt": "Which statement correctly describes what PagedAttention does NOT solve on its own?",
-            "options": [
-              "It doesn't reduce KV cache memory waste from fragmentation",
-              "It doesn't decide which requests enter or leave the running batch — that's the job of continuous batching, which vLLM uses alongside it",
-              "It doesn't allow multiple sequences to share cache blocks",
-              "It doesn't work with beam search or parallel sampling"
-            ],
-            "correctIndex": 1,
-            "explanation": "PagedAttention is a memory-layout mechanism for the KV cache. Deciding when requests join or leave a batch is a separate scheduling concern, handled by continuous batching — vLLM runs both together."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
