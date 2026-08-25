@@ -1,6 +1,180 @@
 {
   "posts": [
     {
+      "id": "702c6232-a698-4a9b-a057-739d175cb402",
+      "title": "PagedAttention: OS Paging Tricks for the KV Cache",
+      "subtitle": "How vLLM stopped GPUs from wasting most of their memory on guesses",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "kv-cache",
+        "memory-management",
+        "vllm",
+        "inference-optimization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.3x3.fill",
+      "summary": "PagedAttention splits the KV cache into small fixed-size blocks and maps them through a per-sequence block table, borrowing virtual memory paging from operating systems. That single idea cut KV cache waste from 60-80% down to under 4% and let vLLM serve 2-4x more throughput at the same latency.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Your GPU Memory Is Full of Guesses",
+          "body": "Every LLM server has to reserve memory for the KV cache before it knows how long a generation will run. Get that guess wrong at scale and most of your GPU sits idle, reserved but unused.",
+          "bullets": [],
+          "symbol": "square.grid.3x3.fill",
+          "id": "781046af-7773-49f2-99dc-eeca12ee9525"
+        },
+        {
+          "kind": "problem",
+          "title": "Contiguous Allocation Wastes 60-80% of the KV Cache",
+          "body": "Classic serving systems allocate one contiguous memory slab per request, sized for the maximum sequence length the model supports. Most requests finish far shorter, so most of that slab is reserved and never touched.",
+          "bullets": [
+            "Internal fragmentation: a slab sized for 2048 tokens sitting mostly empty for a 200-token reply",
+            "External fragmentation: even the leftover space is scattered in slab-sized chunks nothing else fits into",
+            "The original vLLM paper measured 60-80% of allocated KV cache memory going to waste in existing systems",
+            "Wasted memory means fewer concurrent requests fit on the GPU, which means lower throughput"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "06a78a8e-5f8e-43a7-9751-421a8d9e9f0e"
+        },
+        {
+          "kind": "solution",
+          "title": "Borrow the Page Table From Operating Systems",
+          "body": "PagedAttention splits each sequence's KV cache into fixed-size blocks (16 tokens each in the original design) instead of one contiguous slab. Blocks live anywhere in GPU memory; a per-sequence block table maps logical block numbers to physical locations, exactly like a page table maps virtual pages to physical frames.",
+          "bullets": [
+            "Blocks are allocated on demand as a sequence grows, one block at a time",
+            "No need to reserve for the worst case up front, so there's nothing to over-provision",
+            "The attention kernel reads through the block table instead of assuming contiguous memory",
+            "Result: near-zero internal fragmentation and zero external fragmentation, since every block is the same size"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "id": "dcd0072d-9ef2-49cc-b8cd-13a1ad142d3b"
+        },
+        {
+          "kind": "example",
+          "title": "Parallel Sampling Shares Blocks Instead of Copying Them",
+          "body": "Ask a model for 5 completions of the same prompt and every one starts by re-processing an identical prefix. With block-level indirection, those 5 sequences can point their block tables at the same physical blocks for the shared prompt.",
+          "bullets": [
+            "A 500-token prompt generating 5 samples needs the prompt's KV cache stored once, not 5 times",
+            "Each sequence's block table just adds its own private blocks once generated tokens start to diverge",
+            "This is copy-on-write: a block is only duplicated at the moment two sequences would write different data into it",
+            "Beam search gets the same benefit across surviving beams that still share ancestry"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "id": "fc536656-46f5-4b2a-8b10-489db785b10f"
+        },
+        {
+          "kind": "comparison",
+          "title": "The Headline Numbers From the Paper",
+          "body": "vLLM (the system built around PagedAttention) was benchmarked against the state-of-the-art serving systems of the time, FasterTransformer and Orca.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Metric",
+              "Naive contiguous allocation",
+              "PagedAttention / vLLM"
+            ],
+            "rows": [
+              [
+                "KV cache memory waste",
+                "60-80%",
+                "under 4%"
+              ],
+              [
+                "Throughput at same latency",
+                "baseline",
+                "2-4x higher"
+              ],
+              [
+                "Memory sharing across sequences",
+                "not possible (copies required)",
+                "block-level copy-on-write"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "id": "e5b4c9ec-7383-453f-a01b-eba56c45e205"
+        },
+        {
+          "kind": "problem",
+          "title": "Where It Doesn't Help",
+          "body": "PagedAttention is a memory-management win, not a compute win, and it isn't free.",
+          "bullets": [
+            "It does nothing for prefill compute cost; a long prompt still costs the same FLOPs to process",
+            "Reading KV cache through a block table adds a layer of indirection versus a flat contiguous array",
+            "The benefit scales with concurrency and variance in output length; a single fixed-length batch job on a dedicated GPU has little fragmentation to reclaim",
+            "Custom attention kernels are required to read block-scattered memory efficiently, which is why it shipped as part of a full serving system (vLLM), not a drop-in kernel swap"
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "id": "208f45c8-d6fe-4b59-af91-93f4abcb6a96"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "The KV cache is what actually fills GPU memory during serving, not the model weights, once concurrency goes up",
+            "Contiguous per-request allocation forces a worst-case reservation that fragments and wastes memory",
+            "PagedAttention pages the KV cache into fixed-size blocks tracked by a per-sequence block table, like OS virtual memory",
+            "Non-contiguous blocks enable copy-on-write sharing across sequences from the same prompt, not just less waste",
+            "This is why vLLM became the reference point most open-source LLM serving stacks compare themselves against"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "fa09b884-e43a-40f3-a619-4e4edd9330a8"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "a97fc479-f130-45d5-b90c-6b4226bdcd5c",
+            "prompt": "What operating-systems concept does PagedAttention directly borrow?",
+            "options": [
+              "Virtual memory paging and page tables",
+              "Preemptive thread scheduling",
+              "LRU cache eviction",
+              "Copy-on-write process forking alone, unrelated to paging"
+            ],
+            "correctIndex": 0,
+            "explanation": "PagedAttention splits the KV cache into fixed-size blocks and maps them through a per-sequence block table, the same logical/physical split used by virtual memory paging in operating systems."
+          },
+          {
+            "id": "e193a521-1444-49f1-a30d-2c28f4660f0f",
+            "prompt": "In the original vLLM paper, how much KV cache memory did prior contiguous-allocation systems typically waste?",
+            "options": [
+              "60-80%",
+              "5-10%",
+              "20-25%",
+              "Effectively 0%"
+            ],
+            "correctIndex": 0,
+            "explanation": "Reserving a contiguous slab sized for the maximum possible sequence length wastes most of that space for the typical, much shorter request, which the paper measured at 60-80% waste."
+          },
+          {
+            "id": "843f2e65-06eb-42a4-b843-c27e1182ea5b",
+            "prompt": "Why does PagedAttention give an especially large win for parallel sampling (generating several completions from one prompt)?",
+            "options": [
+              "The shared prompt's KV cache blocks can be reused across sequences via copy-on-write instead of duplicated",
+              "It skips the attention computation for the shared prompt entirely",
+              "It compresses the KV cache with quantization",
+              "It reduces the number of output tokens needed"
+            ],
+            "correctIndex": 0,
+            "explanation": "Because the KV cache lives in independently addressable blocks, sequences that share a prompt can point their block tables at the same physical blocks and only fork (copy) a block once a sequence writes something different into it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "9611c753-c89e-4312-a4f0-651dfcbc7bd7",
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., SOSP 2023)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        }
+      ],
+      "publishedDate": "2026-08-25T12:45:24Z"
+    },
+    {
       "title": "RLHF: The Reward Model and PPO Loop Behind Alignment",
       "subtitle": "How human preference pairs become a scalar reward, and a scalar reward becomes a better policy",
       "category": "LLMs",
@@ -10886,201 +11060,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-16T06:39:32Z"
-    },
-    {
-      "id": "04fd5ed9-fbcb-4691-b65e-a0d6a42f6c24",
-      "title": "Multi-Head Latent Attention: One Cache, Any Head",
-      "subtitle": "How DeepSeek shrinks the KV cache by caching one compressed vector instead of one per head",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "kv-cache",
-        "inference-optimization",
-        "deepseek",
-        "transformers"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "rectangle.compress.vertical",
-      "summary": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2 and carried through DeepSeek's later models, caches a single low-rank latent vector per token instead of a separate key and value per attention head. A small decoupled slice still carries rotary position info at full size, and inference engines fold the reconstruction math into existing projections so decoding never materializes full per-head keys and values. The result is a KV cache close to a heavily-grouped GQA setup in size, without the quality hit GQA and MQA usually trade away.",
-      "body": null,
-      "table": null,
-      "explanation": null,
-      "slides": [
-        {
-          "id": "249385b3-eb4a-42d4-9d0e-e8bd7e71735d",
-          "kind": "cover",
-          "title": "What If You Cached One Vector Instead of One Per Head?",
-          "body": "Multi-Head Latent Attention (MLA) compresses every token's key and value into a single small latent vector, then reconstructs per-head attention from it on the fly.",
-          "bullets": [],
-          "symbol": "rectangle.compress.vertical",
-          "table": null
-        },
-        {
-          "id": "2e2fa0ed-75cd-4ff1-af97-139fc352e8b0",
-          "kind": "problem",
-          "title": "GQA Shrinks the Cache — It Doesn't Change Its Shape",
-          "body": null,
-          "bullets": [
-            "Standard multi-head attention (MHA) caches a distinct key and value vector per head, per token, per layer — cache size scales directly with head count.",
-            "Multi-Query Attention (MQA) shares one K/V pair across all heads, cutting the cache a lot but often costing model quality.",
-            "Grouped-Query Attention (GQA) groups heads into small clusters that share K/V — a tunable middle ground, and the default in models like Llama 3 and Mistral.",
-            "All three still cache full-width vectors per group. At long context lengths, reading that cache back from HBM — not the attention math itself — is what throttles decode speed."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "c59cf885-b22e-4b5b-93cb-e0e88584a1ae",
-          "kind": "solution",
-          "title": "Compress the Content, Decouple the Position",
-          "body": null,
-          "bullets": [
-            "MLA down-projects each token's hidden state into one small latent vector (c_KV) and caches only that — not separate per-head keys and values.",
-            "At attention time, learned up-projection matrices reconstruct per-head keys and values from the shared latent — one compressed vector expands back into every head's view.",
-            "Rotary position embeddings (RoPE) don't survive that compression cleanly: rotating a shared latent and then splitting it per head doesn't equal rotating each head's key first. MLA's fix is to decouple position from content — a small extra per-head slice is computed and cached at full size purely to carry RoPE's position signal, while the compressed latent carries content only.",
-            "So the cache holds two small pieces per token: the shared compressed latent, plus a tiny per-head positional slice — nowhere near the size of caching full keys and values per head."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "e0037c61-c312-407e-8b1d-93f3273c2543",
-          "kind": "architecture",
-          "title": "The Trick That Keeps Decoding Fast: Never Rebuild the Full Cache",
-          "body": null,
-          "bullets": [
-            "Naively, you'd decompress the latent back into full per-head K/V at every decode step — expanding the compression you just did, and adding matrix multiplies to the critical path.",
-            "Inference engines instead absorb the up-projection matrices into the query and output projections algebraically, so attention scores are computed directly against the compressed latent — the full-size K/V is never materialized at all.",
-            "That absorption is why MLA's decode-time compute stays close to a low-rank operation instead of ballooning back to MHA-sized matrices — the compression is real, not just cosmetic in storage.",
-            "This is also why MLA isn't a drop-in kernel swap: serving it fast requires an inference engine (vLLM, SGLang, and similar) that implements this absorbed form, not just a generic attention kernel."
-          ],
-          "symbol": "cpu",
-          "table": null
-        },
-        {
-          "id": "275c0ccc-7839-4143-a4db-07f199b49fc3",
-          "kind": "comparison",
-          "title": "Where MLA Sits Against MHA, MQA, and GQA",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Variant",
-              "Cached per token",
-              "Typical quality tradeoff"
-            ],
-            "rows": [
-              [
-                "MHA",
-                "Full K and V for every head",
-                "Best quality baseline, largest cache"
-              ],
-              [
-                "MQA",
-                "One shared K/V pair for all heads",
-                "Smallest cache, but often a real quality drop"
-              ],
-              [
-                "GQA",
-                "K/V shared within small head groups",
-                "Tunable middle ground — group count trades cache size for quality"
-              ],
-              [
-                "MLA",
-                "One shared low-rank latent + a small positional slice",
-                "DeepSeek-V2's reported design goal: cache footprint near a heavily-grouped GQA, quality at or above full MHA"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "6561347b-4206-4450-ad71-874d952d0b17",
-          "kind": "example",
-          "title": "Worked Example: What Compression Actually Buys You",
-          "body": null,
-          "bullets": [
-            "Illustrative numbers, not a specific model's real config: say a layer has 64 heads with head_dim 128. Full MHA caches 64 × 128 × 2 (K and V) = 16,384 values per token, per layer.",
-            "GQA with 8 groups cuts that 8x, to 2,048 values per token — still scales with group count.",
-            "MLA instead caches one shared latent of a few hundred values, plus a small fixed-size positional slice — independent of head count, because every head reconstructs from the same latent.",
-            "Multiply that per-token savings by every token in a long conversation or document, across every layer, and the difference decides how many concurrent long-context requests fit in a fixed amount of GPU memory."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null
-        },
-        {
-          "id": "ae1d1df9-d2bd-471b-b287-29ba77e87a45",
-          "kind": "concept",
-          "title": "The Catch: This Isn't a Free Upgrade to an Existing Model",
-          "body": null,
-          "bullets": [
-            "MLA changes the attention computation itself, not just how it's cached — you can't bolt it onto an already-trained MHA or GQA checkpoint the way you might swap a serving-side cache format.",
-            "A model has to be pretrained (or substantially adapted) with MLA's compress-then-reconstruct math from the start, which is a much bigger commitment than choosing a GQA group count at architecture-design time.",
-            "Fast serving depends on an inference engine that implements the weight-absorption trick — without it, naively decompressing the latent every step can erase the savings.",
-            "The decoupled positional slice means MLA doesn't shrink the cache as cleanly as the headline number suggests — there's a fixed per-head cost that doesn't go away."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "d73d053c-5dbc-414d-a7a8-e74b963730fa",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "MLA caches one compressed latent vector per token instead of separate keys and values per head, reconstructing per-head attention from it at inference time.",
-            "A small decoupled slice carries rotary position info at full size because compression and RoPE don't commute — the rest of the savings come from the shared low-rank content.",
-            "Weight absorption is what makes it fast in practice: engines fold the reconstruction into existing projections so full-size keys and values are never rebuilt.",
-            "It's an architecture choice made at pretraining time, not a serving-side toggle — the payoff is a KV cache footprint closer to aggressive GQA, without GQA's usual quality tradeoff."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "42015714-804b-4fc6-83f9-11f59d18289d",
-            "prompt": "What does Multi-Head Latent Attention cache per token, instead of a separate key and value per head?",
-            "options": [
-              "Nothing — it recomputes attention from scratch every step",
-              "One shared low-rank latent vector, plus a small per-head positional slice",
-              "A quantized 4-bit version of the full multi-head cache",
-              "Only the value vectors, never the keys"
-            ],
-            "correctIndex": 1,
-            "explanation": "MLA down-projects each token into one compressed latent that all heads reconstruct from, plus a small decoupled slice that carries rotary position information at full size."
-          },
-          {
-            "id": "d17c1f36-389c-4fc4-b168-2b4ec034f249",
-            "prompt": "Why does MLA need a separate 'decoupled' piece just for position information?",
-            "options": [
-              "Because rotary position embeddings don't commute with reconstructing per-head keys from a shared compressed latent",
-              "Because position information is always cached uncompressed in every attention variant",
-              "Because MLA doesn't support long context windows",
-              "Because it's a leftover implementation detail with no technical reason"
-            ],
-            "correctIndex": 0,
-            "explanation": "Rotating a shared latent and then splitting it per head isn't equivalent to rotating each head's key individually, so MLA carries position via a small full-size per-head slice instead of through the compressed content."
-          },
-          {
-            "id": "2449d5c4-2bd3-4b9e-b583-aa8d2ee7ae57",
-            "prompt": "What's a real limitation of adopting MLA?",
-            "options": [
-              "It only works on CPU inference",
-              "It requires pretraining (or substantial adaptation) with MLA's math from the start, and fast serving needs an engine that implements weight absorption",
-              "It increases the KV cache size compared to standard MHA",
-              "It eliminates the need for an attention mechanism entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "MLA is an architecture decision baked in at training time, not a serving-side cache format you can swap onto an existing checkpoint — and without an engine that absorbs the up-projection into existing weights, naive decompression can erase the cache savings."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-16T00:40:59Z"
     }
   ]
 }
