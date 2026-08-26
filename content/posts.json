@@ -1,6 +1,395 @@
 {
   "posts": [
     {
+      "id": "3fbec60e-3a12-4a2d-bc67-76ff8f40b158",
+      "title": "Temperature, Top-p, Top-k: How LLMs Pick a Word",
+      "subtitle": "The model never picks one word — it picks a distribution, then you decide how to gamble on it.",
+      "category": "LLMs",
+      "difficulty": "Beginner",
+      "postKind": "concept",
+      "tags": [
+        "llms",
+        "sampling",
+        "temperature",
+        "decoding",
+        "inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "dial.medium.fill",
+      "summary": "An LLM's final layer outputs a probability over every token in the vocabulary, not a single answer. Temperature, top-k, and top-p are the three knobs that turn that probability distribution into an actual choice — and getting them wrong is why the same prompt can feel brilliant or broken.",
+      "slides": [
+        {
+          "id": "a7b6f6b4-eaf8-4fe8-ab95-f9eb8c0e20b3",
+          "kind": "cover",
+          "title": "Same Prompt, Different Answer, Every Time",
+          "body": "Ask an LLM the same question twice and you can get two different answers. That's not a bug — it's three decoding knobs deciding how much randomness to let through.",
+          "bullets": [],
+          "symbol": "dial.medium.fill",
+          "table": null
+        },
+        {
+          "id": "0c20a3a7-2bea-49a9-85f2-a1886c1698b0",
+          "kind": "concept",
+          "title": "The Model Outputs a Distribution, Not a Word",
+          "body": "The final layer produces one logit per vocabulary token — often 100k+ of them. A softmax turns those logits into probabilities that sum to 1. Decoding is the separate step that turns that distribution into one chosen token.",
+          "bullets": [
+            "Softmax: p_i = exp(logit_i) / sum(exp(logit_j)) over the whole vocabulary",
+            "The highest-probability token is rarely the ONLY reasonable one",
+            "Decoding strategy = how you sample from that distribution"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "ec1404ad-e953-4b74-b002-f10c652d7193",
+          "kind": "concept",
+          "title": "Temperature: Sharpen or Flatten Before You Sample",
+          "body": "Temperature (T) divides every logit before the softmax: p_i = exp(logit_i / T) / sum(exp(logit_j / T)). It reshapes the distribution's confidence, it doesn't add randomness by itself.",
+          "bullets": [
+            "T < 1 (e.g. 0.2): sharpens the distribution — the model gets more confident, more repeatable",
+            "T = 1: uses the raw distribution the model learned, unchanged",
+            "T > 1 (e.g. 1.5): flattens it — long-shot tokens become competitive, output gets weirder",
+            "T = 0 is a special case: most runtimes skip the division and just take argmax (avoids dividing by zero)"
+          ],
+          "symbol": "thermometer.medium",
+          "table": null
+        },
+        {
+          "id": "ffeee11a-d011-4033-b8c4-74573fb5f9bd",
+          "kind": "concept",
+          "title": "Top-k and Top-p: Where You Cut Off the Tail",
+          "body": "Temperature reshapes the whole distribution; top-k and top-p decide how much of the tail is even eligible to be sampled.",
+          "bullets": [
+            "Top-k: keep only the k highest-probability tokens, discard the rest — fixed pool size regardless of shape",
+            "Top-p (nucleus): keep the smallest set of tokens whose cumulative probability reaches p (e.g. 0.9) — pool size adapts automatically",
+            "Top-p shrinks when the model is confident (few tokens needed to hit 0.9) and grows when it's uncertain",
+            "Most APIs let you combine top-k and top-p; the tighter of the two constraints wins at each step"
+          ],
+          "symbol": "list.number",
+          "table": null
+        },
+        {
+          "id": "72dbdc81-2ef5-47a5-9fe0-20dec357d61f",
+          "kind": "example",
+          "title": "Same Prompt, Three Settings",
+          "body": "Prompt: \"The best way to learn programming is\" — decoded three ways.",
+          "bullets": [
+            "T=0 (greedy): always the same continuation, e.g. \"...to practice consistently.\" — deterministic, can loop on repetitive phrasing",
+            "T=0.7, top_p=0.9: natural variation across runs — \"...by building small projects\", \"...to read other people's code\" — still coherent",
+            "T=1.5, no top_p: starts drifting into rare, off-topic tokens and can degrade into incoherent or repetitive noise"
+          ],
+          "symbol": "text.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "231a31eb-9ba1-4ca1-a4e5-c7d0e18e9e64",
+          "kind": "comparison",
+          "title": "The Knobs, Side by Side",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Knob",
+              "What it does",
+              "Typical use",
+              "Risk at the extreme"
+            ],
+            "rows": [
+              [
+                "Temperature",
+                "Scales logits before softmax",
+                "0 for code/math, 0.7-1.0 for prose",
+                "Too high → incoherent; too low → repetitive"
+              ],
+              [
+                "Top-k",
+                "Keeps a fixed count of top tokens",
+                "k≈40-50 as a safety net",
+                "Too small → bland; too large → no effect"
+              ],
+              [
+                "Top-p",
+                "Keeps smallest set covering p% mass",
+                "p≈0.9-0.95, adapts to shape",
+                "Too low → same as low temp; too high → tail leaks in"
+              ],
+              [
+                "Greedy (argmax)",
+                "Always the single top token",
+                "Reproducible pipelines, evals",
+                "Zero diversity, can loop"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "ed4a726e-2edb-4d35-b7ab-c2e6309fc607",
+          "kind": "problem",
+          "title": "Pitfalls: When These Knobs Fight Each Other",
+          "body": "The knobs interact, and misconfiguring them silently breaks output quality.",
+          "bullets": [
+            "Top-k=1 makes temperature irrelevant — only one token was ever eligible",
+            "Low temperature without a repetition penalty can trap the model in a repeating loop",
+            "High temperature with top_p=1 and no top_k lets truly rare, low-quality tokens through",
+            "Structured/agentic output (JSON, tool calls) wants low or zero temperature — sampling variance breaks strict parsers",
+            "min-p is a newer alternative: cutoff scales relative to the top token's probability instead of a fixed p"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "80384f76-fc63-445b-bd71-e70152a5b7ed",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Decoding is a separate step from generation — the model gives you a distribution, sampling picks the token",
+            "Temperature reshapes confidence; top-k/top-p decide how much of the tail is eligible",
+            "Low/zero temperature = deterministic and reliable; higher temperature = diverse but riskier",
+            "For code, tool calls, and structured output: go low temperature. For brainstorming: go higher"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b3a829d0-d2ff-4f9f-ba29-d7ab84dd40bc",
+            "prompt": "Setting temperature to 0 in most LLM APIs effectively performs which decoding strategy?",
+            "options": [
+              "Greedy / argmax decoding",
+              "Uniform random sampling",
+              "Top-p with p=0",
+              "Beam search"
+            ],
+            "correctIndex": 0,
+            "explanation": "As T approaches 0, dividing logits by T makes the distribution collapse onto the single highest-probability token. Runtimes special-case T=0 to just take that argmax directly, rather than dividing by zero."
+          },
+          {
+            "id": "7349a6a6-705a-4f3e-9270-fcbe1157aaf8",
+            "prompt": "Why is top-p (nucleus sampling) often preferred over a fixed top-k?",
+            "options": [
+              "It adapts the candidate pool size to how confident or uncertain the model is",
+              "It always samples fewer tokens than top-k",
+              "It disables temperature scaling entirely",
+              "It guarantees fully deterministic output"
+            ],
+            "correctIndex": 0,
+            "explanation": "Top-k always keeps the same number of tokens even when the model is very confident (wasting candidates) or very uncertain (too restrictive). Top-p keeps whichever number of tokens is needed to cover the target probability mass, so the pool shrinks or grows with the model's actual confidence."
+          },
+          {
+            "id": "a9db2baf-7405-4afb-965c-5ced481505fd",
+            "prompt": "An agent that must emit valid JSON tool calls should typically use which sampling settings?",
+            "options": [
+              "High temperature and high top-p, for creative tool selection",
+              "Low or zero temperature, often paired with tight constraints",
+              "Top-k=1 combined with temperature=2",
+              "Beam search with a negative temperature"
+            ],
+            "correctIndex": 1,
+            "explanation": "Structured output needs low variance so downstream parsers don't break. Agent and tool-calling pipelines typically use low or zero temperature (often combined with schema/grammar constraints) rather than settings tuned for creative variety."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-26T00:41:46Z",
+      "heroImageURL": null
+    },
+    {
+      "id": "d616badf-6e6b-41ec-a328-b98d5c88ff74",
+      "title": "Structured Outputs: Making LLM JSON Actually Valid",
+      "subtitle": "Grammar-constrained decoding turns 'usually valid JSON' into 'structurally impossible to get wrong.'",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "structured-outputs",
+        "constrained-decoding",
+        "json",
+        "tool-calling",
+        "agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "curlybraces",
+      "summary": "Prompting an LLM to 'return only JSON' gets it right most of the time — which isn't good enough for an automated pipeline. Grammar-constrained decoding masks out invalid tokens at every generation step, making malformed output structurally impossible rather than just unlikely.",
+      "slides": [
+        {
+          "id": "b6894052-8656-4a6a-ad5a-4c7e50928aee",
+          "kind": "cover",
+          "title": "Making JSON Structurally Impossible to Get Wrong",
+          "body": "Agent frameworks parse a model's output as JSON thousands of times a day. 'Usually valid' isn't a contract — constrained decoding is.",
+          "bullets": [],
+          "symbol": "curlybraces",
+          "table": null
+        },
+        {
+          "id": "bc582899-aa69-45a1-81b4-440e2b5732e9",
+          "kind": "problem",
+          "title": "Why 'Just Ask Nicely' Breaks at Scale",
+          "body": "A well-prompted model can hit high JSON validity in isolated tests, but small failure rates compound fast across a real workload.",
+          "bullets": [
+            "Trailing commas, prose before/after the JSON, wrong field types, missing required keys",
+            "A 1-2% failure rate looks fine in a demo and causes daily incidents at production volume",
+            "Retry-on-failure adds latency and cost, and still can't promise a bound on failures",
+            "Every downstream tool call, database write, or agent handoff assumes the JSON parses"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "5ad05bc1-3a84-41f0-b467-1a2c0a8aad58",
+          "kind": "solution",
+          "title": "Grammar-Constrained Decoding: Mask Invalid Tokens",
+          "body": "Instead of hoping the model stays in-schema, the decoder computes which next tokens are even legal at each step, and zeroes out the probability of every other token before sampling.",
+          "bullets": [
+            "A JSON Schema (or grammar) is compiled into a state machine ahead of generation",
+            "At each decoding step, the state machine says which tokens keep the output valid from here",
+            "Every other token's logit is set to -infinity before the softmax, so it can never be picked",
+            "The model still chooses freely among what's left — it just can't choose something invalid"
+          ],
+          "symbol": "lock.shield.fill",
+          "table": null
+        },
+        {
+          "id": "7f809221-16e1-4139-b96f-5ed99e4617b6",
+          "kind": "concept",
+          "title": "From Regex to Finite-State Machines to Full Grammars",
+          "body": "Constraint engines differ in how much structure they can enforce.",
+          "bullets": [
+            "Regex-level: constrains simple patterns (dates, enums) but not nested structure",
+            "Finite-state machines per JSON Schema: enforce types, required fields, enums, array/object nesting",
+            "Full context-free grammars (e.g. GBNF grammars, Lark-style): handle recursive structures a plain FSM can't express",
+            "Tools like Outlines, XGrammar, and llama.cpp grammars, and OpenAI/Anthropic-style structured-output APIs, all implement some version of this"
+          ],
+          "symbol": "flowchart",
+          "table": null
+        },
+        {
+          "id": "2d1f98b7-2ee3-4029-8242-b4c34d5cba3d",
+          "kind": "example",
+          "title": "Worked Example: A Typed Field Rejects a Bad Token",
+          "body": "Schema: { name: string, age: integer, tags: string[] }. Mid-generation, the decoder is at the \"age\": position.",
+          "bullets": [
+            "The grammar for that position only accepts digit tokens (and a closing structure after)",
+            "If the model's top-ranked next token were the start of a word like \"unknown\", its logit gets masked to -infinity",
+            "Sampling then happens only over the remaining legal tokens — a digit gets picked instead",
+            "The output is guaranteed to parse; the model never gets a chance to emit the illegal token"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "d80219e9-12d4-4fea-9355-acea1fb10871",
+          "kind": "comparison",
+          "title": "Three Ways to Get Structured Output",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Approach",
+              "Validity guarantee",
+              "Latency overhead",
+              "Handles complex/nested schemas"
+            ],
+            "rows": [
+              [
+                "Prompt only (\"return JSON\")",
+                "None — best-effort",
+                "Lowest",
+                "Degrades fast with nesting"
+              ],
+              [
+                "Grammar-constrained decoding",
+                "Syntactically guaranteed",
+                "Small, per-token check",
+                "Yes, with a full grammar engine"
+              ],
+              [
+                "Post-hoc validate + retry",
+                "Eventually, or gives up",
+                "Highest (extra round-trips)",
+                "Works, but costly at scale"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "fd2a97bd-ab34-48ee-99cc-44456b4b03ff",
+          "kind": "problem",
+          "title": "The Catch: Valid Syntax Isn't Valid Content",
+          "body": "Constrained decoding is a syntactic guarantee, not a factual one — don't confuse the two.",
+          "bullets": [
+            "The model can still hallucinate a well-typed but wrong value — a fabricated phone number that matches the pattern perfectly",
+            "It fixes shape, not truth: the grammar can't tell a real order ID from a made-up one",
+            "Building and checking the constraint automaton adds real per-token compute, especially for deeply nested schemas",
+            "A grammar can't rescue a model that genuinely doesn't know the answer — it can only stop it from expressing the wrong answer in the wrong shape"
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "table": null
+        },
+        {
+          "id": "80421988-8b5f-4b91-89e9-0782ac47ba90",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Prompting for JSON is probabilistic; grammar-constrained decoding makes invalid syntax impossible, not just unlikely",
+            "The mechanism is token masking: invalid next-tokens get -infinity logits before sampling, every step",
+            "Schema depth matters — full grammars handle recursive/nested structures that simple regex or FSMs can't",
+            "It guarantees structure, never truth — pair it with validation of actual values, not just shape"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2f8180f9-3d9a-4d89-85e2-1b083aca8f8d",
+            "prompt": "What does grammar-constrained decoding actually guarantee about a model's output?",
+            "options": [
+              "The output is factually correct",
+              "The output is syntactically valid according to the schema",
+              "The output is generated faster than unconstrained decoding",
+              "The model can never hallucinate a value"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding only guarantees structural/syntactic validity — that the output parses and matches the schema's shape. It says nothing about whether the values inside are factually correct."
+          },
+          {
+            "id": "f4e340d0-f11b-47ae-9b1e-0208f7643992",
+            "prompt": "Mechanically, how does constrained decoding stop the model from emitting an invalid token?",
+            "options": [
+              "It fine-tunes the model weights on valid examples first",
+              "It masks (sets to -infinity) the logits of any token that would violate the grammar at that step, before sampling",
+              "It generates the full response, then retries if the JSON fails to parse",
+              "It lowers the temperature to 0 for the entire response"
+            ],
+            "correctIndex": 1,
+            "explanation": "A schema-derived state machine tracks which tokens are legal at each position. Every other token's logit is masked to -infinity before the softmax, so it has zero probability of being sampled — invalid tokens are never a real option."
+          },
+          {
+            "id": "6c247010-602b-4776-aedb-09972ffe8610",
+            "prompt": "Which problem does constrained decoding NOT solve?",
+            "options": [
+              "Trailing commas or prose mixed into the JSON",
+              "Missing required fields in the output",
+              "The model confidently inventing a wrong but correctly-typed value",
+              "Nested objects being malformed"
+            ],
+            "correctIndex": 2,
+            "explanation": "Constrained decoding fixes structure — commas, required fields, nesting, types. It can't verify that a value is true; a hallucinated-but-well-typed phone number or ID will still sail through, since it doesn't violate the grammar."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-08-26T00:41:46Z",
+      "heroImageURL": null
+    },
+    {
       "id": "69851d6a-6532-4c94-a61a-0955bbaf8320",
       "title": "Apodex 1.1: Teaching One Model to Run a Team of Itself",
       "subtitle": "Berkeley's agent system trades single-shot prompting for delegation, recovery, and replanning",
@@ -10638,361 +11027,6 @@
       ],
       "id": "122c372d-4369-4cea-8d62-2434db5fbb93",
       "publishedDate": "2026-08-17T00:41:35Z"
-    },
-    {
-      "title": "BDH-CQ: Reasoning in Latent Space, No Chain of Thought",
-      "subtitle": "A 150M-parameter model beats the ARC-AGI-1 cost frontier by never writing down a thought.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "reasoning models",
-        "latent reasoning",
-        "arc-agi",
-        "post-transformer",
-        "inference cost"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "Pathway's BDH-CQ solves ARC-AGI-style tasks by iterating a recurrent latent state instead of generating chain-of-thought text, reaching 29.5% pass@2 at $0.0007/task — a new cost-accuracy frontier, though independent replication is still pending.",
-      "slides": [
-        {
-          "id": "1f17d0fd-599a-4010-a58c-66fe63644bef",
-          "kind": "cover",
-          "title": "150M Parameters, No Chain of Thought",
-          "body": null,
-          "bullets": [
-            "Pathway's BDH-CQ reasons entirely inside a recurrent latent state — it never generates intermediate text.",
-            "On ARC-AGI-1 it hits 29.5% pass@2 at $0.0007 per task, breaking the benchmark's reported cost-accuracy frontier."
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "dbb22203-4a1c-46ef-867f-4797e29e722e",
-          "kind": "problem",
-          "title": "Chain-of-Thought Reasoning Is Expensive by Design",
-          "body": "Every token a reasoning model 'thinks out loud' costs compute and latency — a full forward pass per thought, even when the reasoning doesn't need to be language-shaped.",
-          "bullets": [
-            "Frontier reasoning models spend thousands of output tokens per hard problem, each one billed and re-attended-over.",
-            "Pathway reports BDH-CQ running over 50x cheaper per task than larger transformer reasoners on ARC-AGI-style problems."
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "abe74640-ee3a-4fde-8b59-6d929a2795bb",
-          "kind": "architecture",
-          "title": "Two Stages: Memorize, Then Compute",
-          "body": "BDH-CQ builds on Pathway's Dragon Hatchling (BDH) architecture: high-dimensional positive activations, low-rank communication, and a recurrent associative memory.",
-          "bullets": [
-            "Stage 1 (memory acquisition): demonstrations are fed in sequentially; the recurrent state updates after each one, binding inputs to outputs.",
-            "Stage 2 (latent reasoning): the query is solved by iterating that same state in a high-dimensional latent workspace — no token is decoded until the final answer.",
-            "No chain-of-thought text is ever produced or attended over — that's where the cost savings come from."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "11e2a171-63e6-41e1-bf6e-50aab10a15f1",
-          "kind": "comparison",
-          "title": "Cost-Accuracy Frontier",
-          "body": "These are Pathway's own reported numbers; independent reruns haven't landed yet.",
-          "bullets": [],
-          "symbol": "chart.xyaxis.line",
-          "table": {
-            "headers": [
-              "Model",
-              "ARC-AGI-1",
-              "Cost / task"
-            ],
-            "rows": [
-              [
-                "BDH-CQ (150M)",
-                "29.5% pass@2",
-                "$0.0007"
-              ],
-              [
-                "Larger transformer reasoners (e.g. GPT-5.6 Luna class)",
-                "comparable or higher",
-                "50x+ more, per Pathway"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1728bdda-7225-4c83-816b-d2978dd05fa0",
-          "kind": "example",
-          "title": "What a Demonstration Sequence Looks Like",
-          "body": "Feed the model a couple of ARC-AGI grid transformations (say, 'reflect and recolor'). Its recurrent state updates after each demo, without restating any of them — then a new grid arrives with no answer attached.",
-          "bullets": [
-            "The model doesn't write 'I see the pattern is reflection...' — it iterates its latent state directly and decodes only the final grid.",
-            "Researchers ran controlled ARC-like interventions to probe which transformations it generalizes vs. merely memorizes."
-          ],
-          "symbol": "square.grid.3x3",
-          "table": null
-        },
-        {
-          "id": "2acf08ec-3c59-4f75-832b-39b3fb8f0411",
-          "kind": "concept",
-          "title": "The Catch: No Interpretability, Narrow Domain",
-          "body": "Latent reasoning trades away the one thing chain-of-thought gives you for free: a human-readable trace of why the model answered the way it did.",
-          "bullets": [
-            "You can't inspect why BDH-CQ reached an answer — there's no text trace to audit or debug.",
-            "Results so far are on ARC-AGI-style abstract-pattern tasks, not open-ended language reasoning.",
-            "These are Pathway's self-reported benchmarks; treat the headline cost numbers as promising, not settled, until independently replicated."
-          ],
-          "symbol": "eye.slash",
-          "table": null
-        },
-        {
-          "id": "5125de64-adb4-44aa-8b29-5c2d9c73cc0d",
-          "kind": "takeaways",
-          "title": "Why This Matters",
-          "body": null,
-          "bullets": [
-            "Test-time compute doesn't have to mean more output tokens — a recurrent latent state is a real alternative axis.",
-            "At 150M params, this runs on hardware a 70B+ reasoner never could.",
-            "Watch for independent replications before treating the cost numbers as final."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f01400e7-926f-4265-ba49-ae0e0d80caff",
-            "prompt": "What makes BDH-CQ's reasoning different from typical chain-of-thought models?",
-            "options": [
-              "It reasons in a recurrent latent state and never generates intermediate text",
-              "It uses a much larger context window",
-              "It fine-tunes its weights on each new task",
-              "It skips reasoning entirely and pattern-matches"
-            ],
-            "correctIndex": 0,
-            "explanation": "BDH-CQ solves queries by iterating a high-dimensional latent state — intermediate reasoning is never decoded into language, which is what makes it cheap."
-          },
-          {
-            "id": "76dc2ff0-2b88-49fb-b645-794197cf205c",
-            "prompt": "How does BDH-CQ learn a new task at inference time?",
-            "options": [
-              "By fine-tuning weights on the fly",
-              "By ingesting demonstrations sequentially into a recurrent memory that updates after each one",
-              "By retrieving similar tasks from a vector database",
-              "By generating and grading its own chain-of-thought"
-            ],
-            "correctIndex": 1,
-            "explanation": "Demonstrations update the recurrent associative state one at a time — that accumulated state is what the model reasons over, not a retrieved example or a weight update."
-          },
-          {
-            "id": "cdba928d-b21f-4416-b96b-55dc56fe0e37",
-            "prompt": "What's the main tradeoff BDH-CQ makes to get its cost efficiency?",
-            "options": [
-              "Lower ARC-AGI-1 accuracy than every transformer model",
-              "Loss of interpretability — there's no text reasoning trace to inspect",
-              "It requires more parameters than transformer alternatives",
-              "It cannot process unseen tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because reasoning never surfaces as text, you lose the auditable step-by-step trace chain-of-thought models give you for free."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "ea6b92a5-08e5-4aab-9329-7363f2a8795d",
-          "title": "BDH-CQ: In-Context Learning with Recurrent Latent Reasoning (arXiv:2608.09888)",
-          "url": "https://arxiv.org/abs/2608.09888"
-        }
-      ],
-      "id": "f64705da-7dd0-4a38-95a7-c2bf0f282ff2",
-      "publishedDate": "2026-08-16T18:39:14Z",
-      "body": null,
-      "symbol": null,
-      "table": null
-    },
-    {
-      "title": "GLM-5.3: Same Base Model, Big Coding and Cyber Jump",
-      "subtitle": "Z.ai squeezed a 6x jump on Terminal-Bench out of post-training alone — then delayed the weights.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "glm-5.3",
-        "z.ai",
-        "coding agents",
-        "post-training",
-        "open weights"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "chevron.left.forwardslash.chevron.right",
-      "summary": "Z.ai's GLM-5.3, released August 14, 2026, reuses GLM-5.2's base model but posts large post-training-only gains on long-horizon coding and vulnerability-discovery benchmarks — capable enough that Z.ai is delaying open weights for a safety review.",
-      "slides": [
-        {
-          "id": "74067d26-6ec6-43f3-8081-02d562937ade",
-          "kind": "cover",
-          "title": "Post-Training Alone, Not a New Pretrain",
-          "body": null,
-          "bullets": [
-            "Z.ai released GLM-5.3 on August 14, 2026, built on the exact same mixture-of-experts base as GLM-5.2.",
-            "Every benchmark gain reported comes from extended post-training — no new foundation model underneath."
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "aef99ed0-5301-4d2e-b9af-a48030499776",
-          "kind": "problem",
-          "title": "Why Reuse the Base Model?",
-          "body": "Pretraining a new foundation model costs enormous compute. Z.ai's bet: GLM-5.2's base still had headroom to extract through better post-training alone.",
-          "bullets": [
-            "Terminal-Bench 3.0 moved from 4.6 to 28.3 — roughly a 6x jump — from post-training changes only.",
-            "DeepSWE v1.1 moved from 46.2 to 66.9; ExploitBench moved from 24.4% to 54.4%."
-          ],
-          "symbol": "arrow.up.forward.circle.fill",
-          "table": null
-        },
-        {
-          "id": "40910112-05bd-4537-8e6f-e57e1fca3630",
-          "kind": "architecture",
-          "title": "Where the Gains Concentrate",
-          "body": "The jump is sharpest on the longest-horizon, most agentic tasks — ones requiring sustained multi-step tool use, not single-shot completions.",
-          "bullets": [
-            "Terminal-Bench 3.0 (long-horizon terminal agent tasks) shows the single biggest jump of any benchmark Z.ai reported.",
-            "CyberGym (vulnerability discovery) reached 84.5%, edging past Claude Mythos 5 (83.8%) and GPT-5.6 Sol (83.6%) per Z.ai's own numbers."
-          ],
-          "symbol": "apple.terminal.fill",
-          "table": null
-        },
-        {
-          "id": "71dc5999-0263-4939-b6e9-8714eb258683",
-          "kind": "comparison",
-          "title": "GLM-5.2 vs GLM-5.3",
-          "body": "All figures are Z.ai's self-reported benchmark mix; independent reruns haven't landed yet.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "GLM-5.2",
-              "GLM-5.3"
-            ],
-            "rows": [
-              [
-                "Terminal-Bench 3.0",
-                "4.6",
-                "28.3"
-              ],
-              [
-                "DeepSWE v1.1",
-                "46.2",
-                "66.9"
-              ],
-              [
-                "ExploitBench",
-                "24.4%",
-                "54.4%"
-              ],
-              [
-                "CyberGym",
-                "—",
-                "84.5%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1cf151cb-0ec2-4631-a705-684ba57839c1",
-          "kind": "example",
-          "title": "The Cybersecurity Surprise",
-          "body": "During evaluation, GLM-5.3 surfaced 2,436 vulnerabilities across 269 open-source projects — 1,097 rated critical or high severity.",
-          "bullets": [
-            "That capability jump is why Z.ai calls this its first explicitly cybersecurity-motivated weight delay.",
-            "Open weights and full API access are held back roughly two weeks past the August 14 release for safety hardening."
-          ],
-          "symbol": "ladybug.fill",
-          "table": null
-        },
-        {
-          "id": "bfdc275c-2bf1-4b21-8dfe-0cf305e04535",
-          "kind": "concept",
-          "title": "What's Actually Available Right Now",
-          "body": "GLM-5.3 ships day-one only through Z.ai's own GLM Coding Plan and ZCode — not as open weights, breaking the pattern GLM-5.2 set.",
-          "bullets": [
-            "GLM-5.2 shipped MIT-licensed weights within days of release; GLM-5.3 does not.",
-            "No per-token API pricing has been published yet — only Coding Plan subscription tiers (roughly $18 / $72 / $160 per month).",
-            "Every benchmark number above is Z.ai's own report on its own benchmark mix — not yet independently verified."
-          ],
-          "symbol": "lock.fill",
-          "table": null
-        },
-        {
-          "id": "20ee12c1-c8bd-45eb-bc2c-cba167f05992",
-          "kind": "takeaways",
-          "title": "Why It Matters",
-          "body": null,
-          "bullets": [
-            "Post-training-only jumps this large suggest base models still have a lot of unclaimed capability left on the table.",
-            "A frontier open-weight lab voluntarily delaying weights for offensive-cyber capability is a new precedent, not routine caution.",
-            "Watch for the delayed weight/API release in ~2 weeks and for independent benchmark reruns before trusting the numbers fully."
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "7d75653f-9e20-4a7d-becf-148191c003f8",
-            "prompt": "What is the main reason GLM-5.3 improved so much on Terminal-Bench and DeepSWE?",
-            "options": [
-              "A larger, newly pretrained base model",
-              "Extended post-training on the same GLM-5.2 base model",
-              "A brand-new mixture-of-experts architecture",
-              "Distillation from a bigger proprietary model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Z.ai explicitly reused GLM-5.2's base — every reported gain, including the Terminal-Bench 3.0 jump from 4.6 to 28.3, came from post-training, not a fresh pretrain."
-          },
-          {
-            "id": "de243d6c-c783-4814-8085-a8ff78a52716",
-            "prompt": "Why did Z.ai delay GLM-5.3's open weights and full API access?",
-            "options": [
-              "Legal disputes over training data",
-              "Vulnerability-discovery capability exceeded what they'd planned for, prompting a safety review",
-              "Insufficient GPU capacity to serve requests",
-              "A licensing disagreement with a benchmark provider"
-            ],
-            "correctIndex": 1,
-            "explanation": "GLM-5.3 surfaced 2,436 vulnerabilities (1,097 critical/high) during evaluation — Z.ai held back weights for about two weeks of safety hardening as a result."
-          },
-          {
-            "id": "0fb74838-f30e-4ce0-bcbc-7b874ac5b566",
-            "prompt": "How should you weigh the benchmark numbers Z.ai published at launch?",
-            "options": [
-              "As independently verified, peer-reviewed results",
-              "As Z.ai's own self-reported numbers on its own benchmark mix, pending independent reruns",
-              "As numbers audited by a third-party lab before release",
-              "As irrelevant since GLM-5.3 isn't available yet"
-            ],
-            "correctIndex": 1,
-            "explanation": "The reported scores come from Z.ai's own testing; treat them as a strong signal, not a settled, independently-verified result, until third parties rerun them."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3f7a6e50-a948-4b32-bdad-89a3ed8c3554",
-          "title": "GLM-5.3 Overview — Z.ai Developer Documentation",
-          "url": "https://docs.z.ai/guides/llm/glm-5.3"
-        }
-      ],
-      "id": "6a640b09-4596-441b-bd92-1b687e7d6fcd",
-      "publishedDate": "2026-08-16T18:39:14Z",
-      "body": null,
-      "symbol": null,
-      "table": null
     }
   ]
 }
