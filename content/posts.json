@@ -1,6 +1,380 @@
 {
   "posts": [
     {
+      "title": "Quantization: Shrinking Model Weights Without Losing the Plot",
+      "subtitle": "Trading bits per weight for a model that actually fits on your GPU",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "inference",
+        "gptq",
+        "awq",
+        "gguf",
+        "deployment"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.stack.3d.down.right",
+      "summary": "Quantization rounds a model's weights down from 16-bit floats to 8-bit or 4-bit integers, cutting memory and speeding up inference because LLM serving is usually bandwidth-bound, not compute-bound. Modern methods like AWQ protect the small set of high-impact weights while compressing the rest hard, so a 70B model can go from needing a multi-GPU server to fitting on a single card.",
+      "slides": [
+        {
+          "id": "dc477d4c-5b13-4076-85af-d1234fe92f9f",
+          "kind": "cover",
+          "title": "A 70B model doesn't need 140GB of memory",
+          "body": "Quantization cuts the precision of each weight, shrinking multi-hundred-gigabyte models to something that fits on a single GPU — often with almost no quality loss.",
+          "bullets": [],
+          "symbol": "square.stack.3d.down.right",
+          "table": null
+        },
+        {
+          "id": "15e215ef-e215-4057-85b4-c4f5e6daf889",
+          "kind": "problem",
+          "title": "Full precision is overkill for inference",
+          "body": "Models train in 16-bit floats, but shipping that same precision to production wastes memory bandwidth.",
+          "bullets": [
+            "A 70B-parameter model at FP16 (2 bytes/weight) needs ~140GB just for weights, before activations or KV cache",
+            "LLM inference is usually memory-bandwidth-bound, not compute-bound: every forward pass has to stream the full weight set through GPU memory",
+            "Weight distributions are narrow and models tolerate real rounding error — most of that precision isn't earning its keep at serving time"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "37a31636-6581-4fc5-b9af-0cec35fea752",
+          "kind": "solution",
+          "title": "Quantization: round weights to fewer bits",
+          "body": "Post-training quantization (PTQ) takes an already-trained model and compresses its weights directly, no retraining required.",
+          "bullets": [
+            "INT8: 16-bit weights → 8-bit integers, roughly halving memory, often near-lossless with proper calibration",
+            "INT4: halves memory again (~4x smaller than FP16) — the sweet spot for running large models on a single consumer or workstation GPU, with a small but real quality hit",
+            "Not all weights matter equally: methods like AWQ scale and protect a small subset of high-magnitude \"salient\" weight channels at higher precision while quantizing the rest aggressively",
+            "Quantization-aware training (QAT) is the alternative: simulate low precision during fine-tuning so the model adapts to it, giving better accuracy at very low bit-widths than PTQ alone"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null
+        },
+        {
+          "id": "a4dd553e-c9d7-4d1b-a2af-39eee0cfabea",
+          "kind": "example",
+          "title": "Worked example: fitting Llama-class 70B on one GPU",
+          "body": "The same 70B-parameter model at different precisions changes what hardware it needs entirely.",
+          "bullets": [
+            "FP16: 70B × 2 bytes ≈ 140GB → needs multiple 80GB-class datacenter GPUs",
+            "INT8: ≈ 70GB → still needs two or more high-end GPUs",
+            "INT4 (GPTQ/AWQ, or GGUF Q4_K_M): ≈ 35-40GB → fits on a single 48GB card, or two consumer 24GB cards",
+            "Real tradeoff: 4-bit quantization of a 70B model typically costs a small, measurable amount of benchmark accuracy — often worth it to go from \"needs a server\" to \"runs on a workstation\""
+          ],
+          "symbol": "desktopcomputer",
+          "table": null
+        },
+        {
+          "id": "8cfbf05f-09f4-4705-bd4b-a8ea67c50667",
+          "kind": "comparison",
+          "title": "Precision vs. size vs. quality",
+          "body": "Lower bit-widths keep shrinking the model, but the quality cost grows non-linearly.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Precision",
+              "Bits/weight",
+              "~70B model size",
+              "Typical quality impact"
+            ],
+            "rows": [
+              [
+                "FP16",
+                "16",
+                "~140GB",
+                "Baseline"
+              ],
+              [
+                "INT8",
+                "8",
+                "~70GB",
+                "Near-lossless"
+              ],
+              [
+                "INT4 (GPTQ/AWQ)",
+                "4",
+                "~35GB",
+                "Small, measurable drop"
+              ],
+              [
+                "INT2 / sub-4-bit",
+                "~2",
+                "~18GB",
+                "Significant drop; active research area"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "d2807637-1b14-483f-9ba5-c6a16738c0ff",
+          "kind": "problem",
+          "title": "Pitfall: aggregate benchmarks can hide real damage",
+          "body": "Quantization is lossy rounding, not compression — and its damage isn't evenly distributed.",
+          "bullets": [
+            "Lower bit-widths hit some capabilities harder than others: multi-step reasoning and long-context coherence tend to degrade faster than simple pattern matching",
+            "A quantized model can score nearly identically on an average benchmark while failing badly on specific prompts — averages mask outlier regressions",
+            "When NOT to quantize aggressively: precision-sensitive tasks (medical, legal, code with subtle correctness bugs) where the last few points of accuracy matter most",
+            "Quantization is applied at inference time in almost all cases — training itself still happens in higher precision (BF16/FP16), with QAT as the exception when very low bit-widths are the target"
+          ],
+          "symbol": "magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "b1886b2f-248f-40bd-9ee8-7b38793b6402",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Quantization trades weight precision for memory and speed — near-lossless down to INT8, a real-but-often-acceptable hit at INT4",
+            "PTQ methods (GPTQ, AWQ, GGUF-based tools) quantize an already-trained model in one pass; QAT bakes low precision into training for better low-bit accuracy",
+            "Not all weights matter equally — modern methods protect high-impact weight channels while compressing the rest harder",
+            "Always benchmark the quantized model on your actual task and spot-check real prompts, not just aggregate perplexity, before shipping"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c52c34c3-064a-4ed4-b82a-c88b8e929179",
+            "prompt": "Why is memory bandwidth usually the inference bottleneck for large LLMs, not raw compute?",
+            "options": [
+              "GPUs cannot do floating point math fast enough for LLMs",
+              "Every forward pass must stream the full set of weights through memory, and that transfer often takes longer than the matrix multiplications themselves",
+              "Quantization has no effect on compute or memory",
+              "LLMs don't use matrix multiplication during inference"
+            ],
+            "correctIndex": 1,
+            "explanation": "Inference is typically memory-bound: generating each token requires streaming the model's weights through GPU memory. Shrinking weight size directly attacks that bottleneck, which is why quantization speeds up inference and not just memory footprint."
+          },
+          {
+            "id": "fa6c8976-0f16-4194-bbec-a323e149ff4e",
+            "prompt": "What distinguishes AWQ from a naive \"round every weight equally\" approach?",
+            "options": [
+              "AWQ retrains an entirely new model from scratch at low precision",
+              "AWQ identifies weights that matter most based on activation magnitude and preserves their precision while quantizing the rest more aggressively",
+              "AWQ only works for 8-bit quantization",
+              "AWQ removes weights entirely rather than reducing precision"
+            ],
+            "correctIndex": 1,
+            "explanation": "AWQ (Activation-aware Weight Quantization) observes that a small fraction of weight channels have outsized impact on outputs and protects those, preserving more quality than uniformly quantizing every weight the same way."
+          },
+          {
+            "id": "cfc4ab72-fab3-4124-832b-bd8aef15cea0",
+            "prompt": "A team quantizes a 70B model to INT4 and finds aggregate benchmark scores barely change. What should they still check?",
+            "options": [
+              "Nothing further — an aggregate benchmark score fully guarantees reliability",
+              "Whether the model still runs on a GPU at all",
+              "Specific prompts and known failure modes, since low bit-widths can cause outlier errors on particular inputs even when averages hold up",
+              "The file size of the original FP16 checkpoint"
+            ],
+            "correctIndex": 2,
+            "explanation": "Aggregate benchmarks average across many examples and can mask outlier failures introduced by quantization. Spot-checking real prompts and known-hard cases catches regressions a single averaged metric hides."
+          }
+        ]
+      },
+      "references": [],
+      "id": "69053e9d-b2fa-46e4-b7ba-c5e57981db80",
+      "body": null,
+      "publishedDate": "2026-08-27T12:47:55Z"
+    },
+    {
+      "title": "MCP Resources: Data a Server Exposes Without a Tool Call",
+      "subtitle": "The read-only, URI-addressed primitive that fills context before the model even asks",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "resources",
+        "context",
+        "protocol",
+        "model-context-protocol"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.on.doc.fill",
+      "summary": "MCP Resources let a server expose data — files, database rows, logs — by URI, so a client can read it into context directly, without the model having to guess it should call a tool. Unlike Tools, which the model invokes, Resources are typically application-controlled: the host decides what actually gets attached.",
+      "slides": [
+        {
+          "id": "f1384ba8-efb6-4a0e-bbae-0a22dfeb29bb",
+          "kind": "cover",
+          "title": "Not every piece of context needs a tool call",
+          "body": "MCP Resources let a server expose data by URI, so a client can pull it into context directly — without the round-trip of a model deciding to invoke a tool.",
+          "bullets": [],
+          "symbol": "doc.on.doc.fill",
+          "table": null
+        },
+        {
+          "id": "94d21a09-a0b9-4dd2-816e-ccbfc22dda1a",
+          "kind": "problem",
+          "title": "Tools weren't built for exposing static data",
+          "body": "If a server only had Tools, surfacing a README or a table schema means the model must decide to call something first.",
+          "bullets": [
+            "With only Tools, exposing \"read this file\" means the model has to decide to call a tool, wait for a result, then reason about it — extra latency and reasoning steps for what's often just static data",
+            "Some data belongs in context proactively (a project's README, an open ticket, a schema) rather than fetched on demand only if a model happens to guess it should ask",
+            "MCP splits \"the model decides to act\" (Tools) from \"the application decides what's readable\" (Resources) — two different control planes for two different jobs"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "85e620f6-1213-4530-9e98-e1c058652b10",
+          "kind": "solution",
+          "title": "Resources: URI-addressed, read-only data",
+          "body": "Every resource is identified by a URI and described with metadata a client can browse before fetching.",
+          "bullets": [
+            "Every resource has a URI (file:///, postgres://, https://, or a custom scheme the server defines), a name, optional description, and a mimeType",
+            "resources/list returns the fixed catalog of resources the server currently offers",
+            "resources/templates/list returns parameterized URI templates (RFC 6570) for resources the server can generate on demand — e.g. \"file:///logs/{date}.log\" instead of listing every log file",
+            "resources/read takes a URI and returns contents — each entry carries a uri, mimeType, and either text or a base64 blob for binary data",
+            "Resources are read-only by design: they describe what's available to read, not actions to take — that's what Tools are for"
+          ],
+          "symbol": "link",
+          "table": null
+        },
+        {
+          "id": "a5c1e23b-91ab-4628-8ca3-7cee3de25f23",
+          "kind": "architecture",
+          "title": "Who decides what gets attached?",
+          "body": "Control is split deliberately between the model and the host application.",
+          "bullets": [
+            "Tools are model-controlled: the model chooses when to call them based on the conversation",
+            "Resources are typically application-controlled: the host app (an IDE, a chat client) decides which resources to surface, often via a UI where a user picks \"@file\" or \"+ attach\", and the client then fetches and injects the content",
+            "This matters for cost and safety: a server can expose thousands of resources without the model ever seeing that full catalog by default, since the client — not the model — decides what actually gets read and injected",
+            "Servers can push notifications/resources/list_changed when the catalog changes, and support resources/subscribe so a client gets notifications/resources/updated when one specific resource's content changes"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "634285ba-f207-4ed7-8aad-ce5acc22fe90",
+          "kind": "example",
+          "title": "Worked example: a database MCP server",
+          "body": "Resources make a table's schema visible without the model having to guess a query first.",
+          "bullets": [
+            "resources/list returns each table as a resource, e.g. postgres://mydb/orders, mimeType application/json, description \"Orders table schema + row count\"",
+            "A user asks their coding assistant to look at the orders table; the client attaches that resource by calling resources/read and gets back the schema, injected straight into context",
+            "The client later calls resources/subscribe on that URI; if a migration adds a column, the server sends notifications/resources/updated so the client can re-read and keep context fresh",
+            "Contrast: if the server only exposed a query_database Tool, the model would have to guess correct SQL and issue a tool call just to see the schema — Resources skip that guesswork entirely"
+          ],
+          "symbol": "cylinder.split.1x2.fill",
+          "table": null
+        },
+        {
+          "id": "bd238f8f-93a5-4455-8b52-481091c1b370",
+          "kind": "comparison",
+          "title": "Resources vs. Tools vs. Prompts",
+          "body": "MCP's three core primitives serve different purposes and are invoked by different parties.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Primitive",
+              "Who invokes it",
+              "Purpose",
+              "Read/write"
+            ],
+            "rows": [
+              [
+                "Resources",
+                "Client/application (usually)",
+                "Expose readable data by URI",
+                "Read-only"
+              ],
+              [
+                "Tools",
+                "The model",
+                "Perform actions or computations",
+                "Can read or write"
+              ],
+              [
+                "Prompts",
+                "The user (explicitly selects)",
+                "Reusable templated interactions",
+                "Template, not data"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7af0a035-0f55-4ed5-a4d9-cd713e99f458",
+          "kind": "problem",
+          "title": "Pitfall: Resources aren't a guaranteed channel",
+          "body": "Whether a resource reaches the model depends entirely on the host application's support and UI.",
+          "bullets": [
+            "If the client's UI never surfaces a resource, or the host doesn't implement the resources capability at all, that data simply never reaches the model — don't rely on Resources for anything the model absolutely must see",
+            "Large resources (a huge log file, a full table dump) can blow the context window if attached wholesale — scope them with templates or pagination instead of exposing \"the whole database\" as one resource",
+            "Not every client implements subscriptions or list-changed notifications — check a client's declared capabilities before depending on live updates",
+            "When to prefer a Tool instead: if the read needs a parameter the model decides mid-conversation (\"search logs for X\"), a Tool with a query argument fits more naturally than a static Resource"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "c5cd26b6-cc2d-4e1b-a996-4f983f93e581",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Resources are MCP's read-only, URI-addressed primitive for exposing data — distinct from Tools (model-invoked actions) and Prompts (user-invoked templates)",
+            "Control typically sits with the application, not the model: the host decides what gets attached to context, keeping large resource catalogs from silently consuming model reasoning",
+            "resources/list (or resources/templates/list for parameterized ones) discovers what's available; resources/read fetches content; resources/subscribe plus notifications/resources/updated keep it fresh",
+            "Use Resources for data that should be readable on demand or attached explicitly; use Tools when the model needs to decide dynamically what to fetch or act on"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "7227c3e1-734d-4b03-95db-9b2540b225de",
+            "prompt": "What's the key difference in \"who decides\" between MCP Tools and MCP Resources?",
+            "options": [
+              "Tools are always free, Resources always cost tokens",
+              "The model decides when to call a Tool, while the host application typically decides which Resources get attached to context",
+              "Resources can only be used by the model, never by a human user",
+              "There's no functional difference — they're aliases for the same primitive"
+            ],
+            "correctIndex": 1,
+            "explanation": "MCP separates \"the model acts\" (Tools, model-controlled) from \"the application curates\" (Resources, typically application-controlled) — a client's UI usually decides what resource content actually reaches the model."
+          },
+          {
+            "id": "7b62c4ae-6663-4cc0-96bc-59f12b13e7dc",
+            "prompt": "How does a client discover parameterized resources a server can generate on demand, like a log file per date?",
+            "options": [
+              "resources/list only, since templates aren't part of the spec",
+              "resources/templates/list, which returns RFC 6570 URI templates",
+              "By guessing valid URIs through trial and error",
+              "Only through a separate Tool call"
+            ],
+            "correctIndex": 1,
+            "explanation": "MCP defines resources/templates/list for exposing parameterized resources via URI templates (RFC 6570), letting a server describe a whole family of addressable resources without listing every instance individually."
+          },
+          {
+            "id": "8f853a8b-f38e-4805-9d92-575b9811b3b5",
+            "prompt": "Why might exposing an entire database as a single MCP resource be a bad idea?",
+            "options": [
+              "MCP resources can't contain JSON data",
+              "It risks blowing the context window if attached wholesale — better to scope with templates, per-table resources, or pagination",
+              "Databases can't be exposed as resources under the spec",
+              "It would violate the resources-are-read-only constraint"
+            ],
+            "correctIndex": 1,
+            "explanation": "A resource that returns unbounded data risks consuming the entire context window if a client attaches it. Scoping resources — per table, per date, paginated — keeps each read a manageable size."
+          }
+        ]
+      },
+      "references": [],
+      "id": "ed8dd006-53c2-4ac3-a742-ec63f60e61a8",
+      "body": null,
+      "publishedDate": "2026-08-27T12:47:55Z"
+    },
+    {
       "title": "Tokenization: Why Models Can't Count the R's in Strawberry",
       "subtitle": "Text becomes sub-word tokens before a model ever sees a letter",
       "category": "LLMs",
@@ -10719,367 +11093,6 @@
       ],
       "id": "c3c3ba80-5c5d-4dfa-af1b-7ef756780c96",
       "publishedDate": "2026-08-18T06:41:55Z"
-    },
-    {
-      "id": "3a5adfbf-b06b-451c-9329-4a65b3cb9d35",
-      "title": "Test-Time Capability Transfer: Harnesses, Not Fine-Tuning",
-      "subtitle": "A stronger model writes deterministic scaffolding that nearly doubles a weaker model's accuracy — no gradient update in sight.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "test-time compute",
-        "agent harness",
-        "capability transfer",
-        "salesforce ai research",
-        "scaffolding"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "wand.and.rays",
-      "summary": "Salesforce AI Research and UIUC show that a strong 'builder' model can write a deterministic inference-time harness — code, routing, and format rules — that lets a much weaker 'target' model solve tasks it otherwise fails, without touching a single weight. On four Theory-of-Mind benchmarks, average target accuracy went from 0.49 to 0.91.",
-      "slides": [
-        {
-          "id": "c3030dda-c1a2-4edd-8f8e-0f92094121e9",
-          "kind": "cover",
-          "title": "One Model Builds the Harness, Another Runs It",
-          "body": "AI4AI at Test-Time: Strong-to-Weak Capability Transfer via Harnesses — Salesforce AI Research + UIUC, arXiv:2608.12307, Aug 12 2026.",
-          "bullets": [
-            "No fine-tuning, no distillation, no new weights",
-            "Capability moves through scaffolding, not parameters"
-          ],
-          "symbol": "wand.and.rays",
-          "table": null
-        },
-        {
-          "id": "8c7177b3-3fef-4444-9a3e-3d29720d1b47",
-          "kind": "problem",
-          "title": "Weak Models Don't Fail Randomly — They Fail Predictably",
-          "body": "A small or cheap model missing a benchmark usually isn't 'less intelligent' in a fuzzy sense — it mis-formats answers, skips reasoning steps, or picks the wrong sub-strategy in consistent, fixable ways.",
-          "bullets": [
-            "The obvious fixes — use a bigger model, or fine-tune the small one — cost money, data, or both",
-            "The paper asks: can a strong model fix a weak model's *process* instead of its *weights*?"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "2e90e34f-bff7-4d91-a2c1-ca97517b10f6",
-          "kind": "solution",
-          "title": "The Builder Writes Code, Routing Rules, and Format Contracts",
-          "body": "A strong 'builder' model is given the task family and a small validation slice, then iteratively authors a harness that wraps the weak 'target' model at inference time.",
-          "bullets": [
-            "Harness = deterministic code + benchmark-specific routing + strict answer-format enforcement",
-            "Builder uses only 5% of the data as a validation set, refining the harness over multiple rounds",
-            "Once locked, the harness runs on the full test set — the target model's weights never change"
-          ],
-          "symbol": "hammer.fill",
-          "table": null
-        },
-        {
-          "id": "8d830462-d770-4eb9-80ea-f5e197c80056",
-          "kind": "example",
-          "title": "Example: A Weak Model Doing Theory-of-Mind Reasoning",
-          "body": "On a Theory-of-Mind benchmark (inferring what one character knows vs. another), the raw target model reasons inconsistently and sometimes answers in the wrong format entirely.",
-          "bullets": [
-            "The harness intercepts the model's output, routes ambiguous cases to a deterministic sub-solver, and rejects/retries malformed answers",
-            "The target model still does the 'thinking' — the harness just stops its process errors from becoming task failures"
-          ],
-          "symbol": "text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "1fbd60f2-df97-49d1-b4ca-67fcd1f27dff",
-          "kind": "comparison",
-          "title": "Nearly Double the Accuracy, Zero Parameter Updates",
-          "body": "Averaged across four Theory-of-Mind benchmarks:",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Condition",
-              "Avg. Accuracy"
-            ],
-            "rows": [
-              [
-                "Target model alone",
-                "0.49"
-              ],
-              [
-                "Target model + builder-authored harness",
-                "0.91"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "91ea5545-184d-47de-89c2-d59c4ce5a04b",
-          "kind": "concept",
-          "title": "Where the Gains Actually Come From",
-          "body": "The paper is explicit about the mechanism — it isn't 'the model reasons more.'",
-          "bullets": [
-            "Gains come from offloading unstable reasoning into deterministic code, not from longer chains of thought or more sampling",
-            "The weakest target models benefit the most — there's more process-error to remove",
-            "This makes it closer to a compiler pass over the model's behavior than a training technique"
-          ],
-          "symbol": "gearshape.2",
-          "table": null
-        },
-        {
-          "id": "03b52048-49de-40c5-8370-c90deddb0b55",
-          "kind": "problem",
-          "title": "When This Doesn't Help",
-          "body": "The setup has real constraints worth knowing before you reach for it.",
-          "bullets": [
-            "You need a strong builder model available at authoring time — that's a real cost, even if it's paid once",
-            "Validated only on Theory-of-Mind benchmarks with clear, checkable structure; open-ended generation tasks may not have an equivalent 'deterministic harness' to write",
-            "A harness tuned tightly to a benchmark's format risks overfitting to that benchmark rather than the underlying skill"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "4e1d275f-a596-48b9-aeba-d1a4a45de839",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Capability can transfer at test time through scaffolding, not just through weights",
-            "Deterministic code + routing + format enforcement fixed more errors than 'reason harder' would have",
-            "Cheap local models plus a well-built harness can close a surprising amount of the gap to bigger models"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a4e3acc4-4451-49e6-88a7-d1277caa05b0",
-            "prompt": "In the paper's setup, what actually changes about the weak 'target' model?",
-            "options": [
-              "Its weights are fine-tuned on the validation slice",
-              "Nothing — it's wrapped by an inference-time harness built by a stronger model",
-              "It's distilled into a smaller architecture",
-              "It's replaced by the builder model at test time"
-            ],
-            "correctIndex": 1,
-            "explanation": "The target model's parameters are never touched. All the gain comes from an external harness — code, routing, format rules — that the builder model authors around it."
-          },
-          {
-            "id": "e2f84f2e-b361-4803-98f3-025e41156c18",
-            "prompt": "Where do most of the accuracy gains come from, according to the paper?",
-            "options": [
-              "Encouraging the target model to sample more responses and vote",
-              "Giving the target model a longer chain-of-thought budget",
-              "Offloading unstable reasoning into deterministic code, routing, and format enforcement",
-              "Replacing the target model's tokenizer"
-            ],
-            "correctIndex": 2,
-            "explanation": "The authors are explicit that gains come from structural fixes — deterministic code and strict formatting — not from the target model reasoning more extensively or sampling more broadly."
-          },
-          {
-            "id": "3f495820-332f-472a-b0bb-6ee87ec09c4b",
-            "prompt": "What's a real limitation of this approach highlighted by its setup?",
-            "options": [
-              "It requires the target model's training data",
-              "It requires a strong builder model to author the harness, and was validated on structured Theory-of-Mind tasks specifically",
-              "It only works if both models have the same architecture",
-              "It cannot be evaluated on a held-out test set"
-            ],
-            "correctIndex": 1,
-            "explanation": "Authoring the harness needs a capable builder model, and the demonstrated results are on four Theory-of-Mind benchmarks with checkable structure — it's not yet shown to generalize to open-ended generation tasks."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "68c7576d-a21f-4050-9f73-c43de26b4d40",
-          "title": "AI4AI at Test-Time: Strong-to-Weak Capability Transfer via Harnesses (arXiv:2608.12307)",
-          "url": "https://arxiv.org/abs/2608.12307"
-        }
-      ],
-      "publishedDate": "2026-08-18T00:41:54Z"
-    },
-    {
-      "id": "8aeac53c-179e-4778-8c77-7b452d87b76e",
-      "title": "Qwen3.8-27B: A 27B Open Model That Runs on One GPU",
-      "subtitle": "Apache 2.0, 262K native context, native vision — and it beats Opus 4.6 Max on exactly one of five cited benchmarks.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "qwen",
-        "open weights",
-        "local llm",
-        "multimodal",
-        "apache 2.0"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Alibaba's Qwen team open-sourced Qwen3.8-27B on Aug 14, 2026: a dense 27B multimodal model under Apache 2.0 with 262K native context and a reasoning-effort dial, runnable on a single consumer GPU. It jumps sharply over its own predecessor and edges out Claude Opus 4.6 Max on one benchmark — but trails it clearly on most others.",
-      "slides": [
-        {
-          "id": "016d5890-89dc-4ded-bbe8-34d4bf1e2e82",
-          "kind": "cover",
-          "title": "A Frontier-Adjacent Model You Can Run Locally",
-          "body": "Qwen3.8-27B — Alibaba Qwen, released Aug 14, 2026, Apache 2.0 license.",
-          "bullets": [
-            "27B dense parameters, native multimodal",
-            "#1 trending on Hugging Face within days, 3M+ downloads"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "c10c655b-6f28-44e7-8b88-7df32d9e4e9e",
-          "kind": "problem",
-          "title": "Open Models Usually Trade Capability for Size",
-          "body": "The most capable open-weight models have generally meant either mixture-of-experts giants or dense models too large for a single consumer GPU — pushing serious local use out of reach for most developers.",
-          "bullets": [
-            "Running a frontier-adjacent open model at home usually meant multi-GPU setups or heavy quantization",
-            "Qwen3.8-27B targets that gap directly: strong benchmarks at a size that fits ~16-17GB of VRAM"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "6eb7b9a4-115d-4c0c-9aa9-effb2959f178",
-          "kind": "solution",
-          "title": "Dense 27B, 262K Context, a Reasoning Dial",
-          "body": "Rather than a mixture-of-experts design, Qwen3.8-27B is a dense multimodal model with a few notable specs.",
-          "bullets": [
-            "262,144-token native context, extendable to 1M tokens via YaRN",
-            "Native image and video understanding built in, not bolted on",
-            "A reasoning_effort parameter to trade latency/cost against answer quality per request",
-            "Weights released on Hugging Face and ModelScope under Apache 2.0"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "8ee280f0-f69a-4634-97c6-4ebdf05e20f8",
-          "kind": "comparison",
-          "title": "A Large Jump Over Its Own Predecessor",
-          "body": "Alibaba's own benchmark comparisons show the biggest gains are relative to the prior Qwen generation, not necessarily against frontier proprietary models:",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Predecessor",
-              "Qwen3.8-27B"
-            ],
-            "rows": [
-              [
-                "Terminal-Bench 2.1",
-                "63.4",
-                "73.0"
-              ],
-              [
-                "DeepSWE 1.1",
-                "13.3",
-                "42.2"
-              ],
-              [
-                "OSWorld-Verified",
-                "63.9",
-                "84.3"
-              ],
-              [
-                "SWE-MM",
-                "25.7",
-                "38.6"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a0151d0a-8604-4522-b32a-4f07e4363100",
-          "kind": "example",
-          "title": "Example: An Agentic Coding Task on a Single GPU",
-          "body": "A developer points Qwen3.8-27B at a repo through an agent harness for a multi-file coding task, running entirely on one consumer-grade GPU (~16-17GB).",
-          "bullets": [
-            "The reasoning_effort dial lets them run cheap/fast for simple edits, then turn it up for a gnarly refactor",
-            "262K native context means most repos' relevant files fit without aggressive chunking"
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "9cac14f4-4e57-4a3c-990b-35a0e33b96f4",
-          "kind": "problem",
-          "title": "The 'Beats Opus 4.6 Max' Headline Needs a Footnote",
-          "body": "Coverage highlighting Qwen3.8-27B beating Claude Opus 4.6 Max is accurate for exactly one benchmark, not a general claim.",
-          "bullets": [
-            "On SWE-bench Pro, Qwen3.8-27B scores 61.7 vs. a cited 53.4 for Opus 4.6 Max — but that Opus figure is imported from Anthropic's own report, not rerun under Qwen's harness, so it isn't a fully controlled comparison",
-            "On HLE, Qwen3.8-27B trails clearly: 30.8 vs. 40.0 for Opus 4.6 Max",
-            "Some cited benchmarks (QwenSWEBench, CoWorkBench, RecreationBench) are Qwen's own, and don't yet have the external auditability of a mature public suite"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "28dbb7ef-6e78-4905-b27d-c1bce87a73dd",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "A genuinely strong open-weight jump for a size that fits one GPU — the predecessor-vs-new-version gains are the most solid numbers here",
-            "Treat 'beats a frontier proprietary model' claims benchmark-by-benchmark, not as a blanket statement",
-            "262K native context and a reasoning-effort dial make it a practical pick for local agentic workloads, not just a benchmark chart"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "0376222b-7b76-4e7c-aac3-70bf0ed622cd",
-            "prompt": "What architecture choice does Qwen3.8-27B make, compared to many other large open models?",
-            "options": [
-              "It's a sparse mixture-of-experts model",
-              "It's a dense model, not mixture-of-experts",
-              "It's a retrieval-augmented model with no parameters of its own",
-              "It uses a diffusion-based text decoder"
-            ],
-            "correctIndex": 1,
-            "explanation": "Qwen3.8-27B is dense — all 27B parameters activate per token — which is part of why it fits on a single consumer GPU at this parameter count."
-          },
-          {
-            "id": "a58c0d2d-2b14-430a-b3cc-e9b1f1882695",
-            "prompt": "On which cited benchmark does Qwen3.8-27B actually score above Claude Opus 4.6 Max?",
-            "options": [
-              "HLE",
-              "SWE-bench Pro",
-              "All five cited benchmarks",
-              "None — it trails on every benchmark"
-            ],
-            "correctIndex": 1,
-            "explanation": "It scores 61.7 vs. a cited 53.4 on SWE-bench Pro — though that Opus figure is imported rather than rerun, so the comparison isn't fully controlled. It trails clearly on HLE (30.8 vs. 40.0)."
-          },
-          {
-            "id": "13b54051-2d9c-49d7-9edf-7b25fa4f74ca",
-            "prompt": "What lets Qwen3.8-27B extend context beyond its native 262,144 tokens?",
-            "options": [
-              "Retrieval-augmented generation",
-              "A second, smaller summarizer model",
-              "YaRN-based context extension, up to 1M tokens",
-              "It cannot exceed its native context"
-            ],
-            "correctIndex": 2,
-            "explanation": "The model's native context is 262,144 tokens, extendable to 1M tokens via YaRN, a rotary-position-embedding scaling technique."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "b40001b5-2e80-48c2-87f6-f1a5096ee321",
-          "title": "Qwen/Qwen3.8-27B model card — Hugging Face",
-          "url": "https://huggingface.co/Qwen/Qwen3.8-27B"
-        }
-      ],
-      "publishedDate": "2026-08-18T00:41:54Z"
     }
   ]
 }
