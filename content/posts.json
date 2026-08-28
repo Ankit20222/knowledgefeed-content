@@ -1,6 +1,212 @@
 {
   "posts": [
     {
+      "id": "808b1642-389d-464b-a03a-baa2a171f601",
+      "title": "Circuit Breakers: Stopping Cascading Failure",
+      "subtitle": "The pattern that trips before one slow dependency drags down everything upstream",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "system design",
+        "resilience",
+        "microservices",
+        "circuit breaker",
+        "distributed systems"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.slash.fill",
+      "summary": "Circuit breakers stop a struggling downstream service from taking the whole system down by failing fast instead of piling up retries. This post covers the closed/open/half-open state machine, real Hystrix-era thresholds, how it pairs with timeouts and bulkheads, and the thundering-herd trap a misconfigured half-open state creates.",
+      "slides": [
+        {
+          "id": "2a9af80a-8159-48f5-a323-2f36a793375a",
+          "kind": "cover",
+          "title": "One Slow Service, One System-Wide Outage",
+          "body": "A payment API starts timing out. Callers retry. Threads pile up waiting on responses that never come. Within minutes, an unrelated part of the system is down too — not because it failed, but because it ran out of threads waiting on something that did.",
+          "bullets": [
+            "Cascading failure is a resource-exhaustion problem, not a logic bug",
+            "Circuit breakers stop the bleeding by refusing to call a dependency that's already failing",
+            "Popularized by Netflix's Hystrix after real cascading outages in production"
+          ],
+          "symbol": "bolt.slash.fill",
+          "table": null
+        },
+        {
+          "id": "b3e18976-036b-4912-b088-232abb11a886",
+          "kind": "problem",
+          "title": "Why Retries and Timeouts Alone Aren't Enough",
+          "body": "Timeouts cap how long you wait per call, but if every caller still tries every request, you just get slow failures instead of fast ones — and the thread or connection pool still drains.",
+          "bullets": [
+            "A 500ms timeout with retries under heavy load still exhausts a fixed-size thread pool in seconds",
+            "Retries amplify load on a struggling service exactly when it needs less traffic",
+            "The failure spreads upstream: caller A blocks on B, caller Z blocks on A"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3ca27778-7fcd-4715-a9a6-caba2a619916",
+          "kind": "concept",
+          "title": "Three States: Closed, Open, Half-Open",
+          "body": "A circuit breaker wraps each call to a dependency and tracks its own health, switching behavior based on the recent failure rate.",
+          "bullets": [
+            "Closed: requests flow normally; breaker counts failures in a rolling window",
+            "Open: once failures cross a threshold, every call fails immediately (fail-fast) without touching the dependency",
+            "Half-Open: after a cool-down, a small number of trial requests test whether the dependency recovered",
+            "Hystrix's classic defaults: at least 20 requests and a 50% error rate in a 10s window trips it open, then a 5s sleep window before half-open"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "9f10d0ba-e2ac-40ed-b685-cc532c3147d5",
+          "kind": "architecture",
+          "title": "Where It Sits in the Call Path",
+          "body": "The breaker lives on the caller's side, per dependency — not inside the service being called.",
+          "bullets": [
+            "Each downstream dependency gets its own breaker instance and its own thread pool or semaphore (a bulkhead)",
+            "Stacks with timeouts (cap wait per call) and retries (used sparingly, only on the closed path)",
+            "Library-level tools (resilience4j, Polly, Hystrix) track state per process; service-mesh level (Envoy, Istio) tracks it per proxy sidecar instead",
+            "The open state should trigger a fallback — cached data, a default value, a degraded response — not just a raw exception"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "bc5a94df-cdf9-46e2-9f3c-32abcc0d414b",
+          "kind": "example",
+          "title": "Checkout Without the Fraud Service",
+          "body": "A checkout flow calls a fraud-scoring service before confirming payment. The fraud service starts timing out under load.",
+          "bullets": [
+            "Requests 1–20: normal fraud checks, breaker closed, quietly counting a rising error rate",
+            "Request 21: error rate crosses the 50% threshold in the rolling window — breaker flips open",
+            "Requests 22+: checkout skips the fraud call entirely, falls back to a conservative rule-based score, keeps selling",
+            "After the sleep window, one trial request probes the fraud service; if it succeeds, the breaker closes and normal checks resume"
+          ],
+          "symbol": "cart.fill",
+          "table": null
+        },
+        {
+          "id": "19201079-a8f4-4b57-b920-27ade7706d11",
+          "kind": "comparison",
+          "title": "Circuit Breaker vs. Its Neighbors",
+          "body": "These patterns are complementary, not competitors — production systems typically run all four together.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Pattern",
+              "Protects against",
+              "Fails how",
+              "Risk if misconfigured"
+            ],
+            "rows": [
+              [
+                "Timeout",
+                "Waiting forever on one slow call",
+                "One request fails after N ms",
+                "Too short: false failures; too long: still ties up threads"
+              ],
+              [
+                "Retry",
+                "Transient, one-off failures",
+                "Re-sends the same request",
+                "Amplifies load on an already-struggling service"
+              ],
+              [
+                "Circuit Breaker",
+                "Repeated failure taking down the caller",
+                "Fails instantly, no network call made",
+                "Too loose: cascades anyway; too tight: flaps on normal noise"
+              ],
+              [
+                "Bulkhead",
+                "One dependency starving all resources",
+                "Isolates thread/connection pools per dependency",
+                "Too many pools: resource waste; too few: isolation doesn't hold"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "40cb08b3-fb99-4948-8985-253ff42dd8a4",
+          "kind": "problem",
+          "title": "When It Backfires",
+          "body": "A circuit breaker adds a failure mode of its own if the thresholds or topology aren't tuned.",
+          "bullets": [
+            "Thundering herd: many replicas going half-open at the same instant re-flood a barely-recovering dependency — jitter the trial timing or share breaker state",
+            "Per-instance state in a horizontally scaled fleet means each replica trips independently; one hot replica's trouble doesn't always show up on the others",
+            "Thresholds set too aggressively trip on normal noise (\"flapping\"); set too loosely, they never trip before real damage happens",
+            "A breaker with no fallback just turns one failure into a different, faster failure — it doesn't fix availability by itself"
+          ],
+          "symbol": "bolt.trianglebadge.exclamationmark.fill",
+          "table": null
+        },
+        {
+          "id": "3a558eac-ecdf-4030-962f-9fb89f4da534",
+          "kind": "takeaways",
+          "title": "The Core Idea",
+          "body": null,
+          "bullets": [
+            "Circuit breakers trade a slow, resource-draining failure for a fast, cheap one",
+            "The state machine is simple — closed → open → half-open — but the thresholds and fallback are where the real engineering is",
+            "Always pair it with a fallback path; failing fast with no fallback just moves the outage upstream",
+            "In a fleet of replicas, decide deliberately whether breaker state is per-instance or shared — it changes the failure shape"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "421f6e7f-6bd6-4b7a-b85f-237977ebcdf3",
+            "prompt": "After a circuit breaker's failure threshold is crossed, what does it do in the Open state?",
+            "options": [
+              "Keeps forwarding every request as before",
+              "Fails every call immediately without contacting the dependency",
+              "Doubles the timeout on each retry",
+              "Queues requests until the dependency recovers"
+            ],
+            "correctIndex": 1,
+            "explanation": "Open means fail-fast: the breaker stops sending requests to the struggling dependency entirely, protecting the caller's own threads and connections instead of tying them up waiting on calls that are likely to fail."
+          },
+          {
+            "id": "335cc09c-c250-4f60-96f7-6b9c2f3117a7",
+            "prompt": "Hystrix's classic default thresholds required which condition before tripping a circuit open?",
+            "options": [
+              "A single failed request",
+              "At least 20 requests and a 50% error rate within a 10-second window",
+              "A 99% error rate sustained for 24 hours",
+              "Any request slower than 100ms"
+            ],
+            "correctIndex": 1,
+            "explanation": "Requiring a minimum request volume (20) and a real error rate (50%) in a short rolling window keeps a single blip from prematurely opening the breaker, while still reacting within seconds to a genuine outage."
+          },
+          {
+            "id": "d4efe86b-4e64-4a00-a705-23399c05bc78",
+            "prompt": "In a fleet of 50 service replicas, each running its own circuit breaker, what commonly goes wrong when they all transition to half-open at once?",
+            "options": [
+              "Nothing — half-open state doesn't send any traffic",
+              "Their simultaneous trial requests can re-overwhelm a dependency that was just starting to recover",
+              "The breakers permanently lock into the open state",
+              "Half-open automatically load-balances trials across regions"
+            ],
+            "correctIndex": 1,
+            "explanation": "Per-instance breaker state means 50 replicas can all decide to test the dependency in the same instant, turning a gentle recovery probe into a burst of load — the same thundering-herd problem the breaker was meant to prevent. Jittering the sleep window or sharing breaker state avoids it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "e4df9c4f-0902-46cd-bab0-9bf14b74577a",
+          "title": "CircuitBreaker",
+          "url": "https://martinfowler.com/bliki/CircuitBreaker.html"
+        }
+      ],
+      "publishedDate": "2026-08-28T06:40:28Z"
+    },
+    {
       "id": "115e63fa-0738-48cd-a1fd-14a377242055",
       "title": "GLM-5.3-Flash: The Stealth Model That Outed Itself",
       "subtitle": "Z.ai quietly A/B-tested a frontier model as \"Ox Alpha\" before claiming it",
@@ -10844,196 +11050,6 @@
             ],
             "correctIndex": 1,
             "explanation": "Without a stop condition, an ungrounded or poorly-grounded reflection loop has no guarantee of convergence — it can keep 'fixing' an answer in circles. A max-iteration cap or a hard pass/fail signal is what actually bounds it."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "2cee4071-6a45-4ec5-a94f-50a9876925b6",
-      "title": "DPO: Skipping the Reward Model Entirely",
-      "subtitle": "Turning a preference pair directly into a loss function — no reward model, no PPO rollouts.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "dpo",
-        "rlhf",
-        "preference-tuning",
-        "fine-tuning",
-        "alignment"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Direct Preference Optimization reframes RLHF as a single supervised classification loss: given a chosen and rejected response to the same prompt, it directly increases the model's relative log-probability of the chosen one. It proves that this loss has the exact same optimal policy as the RL objective PPO is trying to solve — RLHF's math, without RLHF's machinery. The tradeoff is that DPO fits a fixed, offline preference dataset, while PPO-based RLHF can keep sampling and re-ranking new completions as the policy shifts.",
-      "publishedDate": "2026-08-18T18:39:38Z",
-      "slides": [
-        {
-          "id": "8bb500e0-12b8-4d4a-9ddf-ece2c9b6f1ba",
-          "kind": "cover",
-          "title": "One Loss Function, No Reward Model",
-          "body": "RLHF normally needs three models in memory at once: policy, reward model, and a frozen reference copy, coordinated through PPO. DPO collapses that into one classification-style loss on preference pairs.",
-          "bullets": [
-            "Introduced in 2023 (Rafailov et al., Stanford) as a drop-in replacement for the RL stage of RLHF",
-            "Trains directly on (prompt, chosen response, rejected response) triples",
-            "No reward model to train, no rollouts to sample, no PPO hyperparameters to tune"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "8101c9bf-aa48-4b3a-ae00-9ccebd606cda",
-          "kind": "problem",
-          "title": "Classic RLHF Is a Three-Stage Rube Goldberg Machine",
-          "body": "Standard RLHF trains a reward model on human preference pairs, then runs PPO to optimize the policy against that reward model, all while a KL penalty holds it near a frozen reference model.",
-          "bullets": [
-            "Stage 1: train a reward model r(x,y) on labeled (chosen, rejected) pairs",
-            "Stage 2: run PPO — sample completions, score them with r, update the policy, repeat for thousands of steps",
-            "PPO is notoriously finicky: reward hacking, value-function instability, and sensitive hyperparameters make it hard to reproduce"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "5703128c-b9fd-4f7a-a7d3-ad0afc13f230",
-          "kind": "solution",
-          "title": "The Reward Model Has a Closed-Form Solution",
-          "body": "The key insight: for a KL-constrained reward maximization objective, the optimal policy can be written analytically in terms of the reward function. Invert that relationship and the reward function drops out of the training loss entirely.",
-          "bullets": [
-            "The RLHF objective's optimal policy has a known closed form: it's the reference policy re-weighted by exp(reward / beta)",
-            "Solving that equation for the reward turns it into a function of the policy itself, not a separate network",
-            "Substituting that back into the standard Bradley-Terry preference loss gives a loss written purely in terms of policy log-probabilities"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "b10659f3-3424-419b-9113-72c59e3c08d1",
-          "kind": "concept",
-          "title": "The DPO Loss, in Plain Terms",
-          "body": "For each pair, DPO compares how much the policy's log-probability of the chosen response has grown relative to the reference model, versus how much the rejected response's has grown.",
-          "bullets": [
-            "loss = -log sigmoid( beta * [ (logP_policy(chosen) - logP_ref(chosen)) - (logP_policy(rejected) - logP_ref(rejected)) ] )",
-            "beta controls how far the policy is allowed to drift from the frozen reference model — small beta means aggressive updates",
-            "The reference model's log-probs are computed once and cached; only the policy model needs gradient updates"
-          ],
-          "symbol": "sum",
-          "table": null
-        },
-        {
-          "id": "3d6e9c10-ca68-4ed1-97e7-c4fe25a2d018",
-          "kind": "example",
-          "title": "Worked Example: One Preference Pair",
-          "body": "Prompt: 'Explain recursion.' Chosen: a clear explanation with a base case. Rejected: a vague, circular non-answer.",
-          "bullets": [
-            "Suppose the policy already assigns the chosen response a higher log-prob than the reference model does (+2.1 nats), and the rejected response a lower one (-0.4 nats)",
-            "The margin (+2.1) - (-0.4) = 2.5 is scaled by beta (e.g. 0.1) and passed through -log(sigmoid(x))",
-            "A positive, growing margin drives the loss toward zero; the gradient step nudges the model to further favor the chosen response and suppress the rejected one, in that single backward pass"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "table": null
-        },
-        {
-          "id": "268ecd52-5ac3-4537-af0e-3e9b4dfa395d",
-          "kind": "comparison",
-          "title": "DPO vs. PPO-Based RLHF",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "",
-              "PPO-based RLHF",
-              "DPO"
-            ],
-            "rows": [
-              [
-                "Models in memory",
-                "Policy + reward model + reference (3)",
-                "Policy + reference (2)"
-              ],
-              [
-                "Data source",
-                "Online — samples new completions each step",
-                "Offline — fixed preference dataset"
-              ],
-              [
-                "Stability",
-                "Sensitive to reward hacking, value-loss collapse",
-                "Standard supervised-style training, far more stable"
-              ],
-              [
-                "Can improve past the dataset's ceiling",
-                "Yes — reward model generalizes to new samples",
-                "Bounded by what the static pairs teach it"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "40ca9b02-e8aa-4449-a699-6b52d0aebd0c",
-          "kind": "concept",
-          "title": "Where DPO Falls Short",
-          "body": "Removing the reward model removes a source of instability, but also removes a capability: PPO's reward model can score completions the policy hasn't seen yet, which is exactly how online RL keeps improving past its seed data.",
-          "bullets": [
-            "DPO can overfit to the specific chosen/rejected pairs it was given, especially with a small or noisy preference dataset",
-            "Because the loss only looks at relative log-probs, a policy can 'win' by pushing rejected-response probability toward zero rather than actually improving the chosen response",
-            "For domains where preferences shift as the policy improves (e.g. iterative red-teaming), online RL methods still have an edge — DPO needs a fresh round of pairs to catch up"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "04760830-26ff-46bf-a5d6-0ed606cd6f1d",
-          "kind": "takeaways",
-          "title": "What to Remember",
-          "body": null,
-          "bullets": [
-            "DPO proves the RLHF reward-then-PPO pipeline has a hidden closed form — you can optimize the same objective with one supervised-style loss on preference pairs",
-            "beta is the one knob that matters: it sets how far the policy can drift from the reference model per pair",
-            "Reach for DPO when you have a solid static preference dataset and want RLHF-grade alignment without PPO's instability; reach for online RL when the policy needs to keep improving past that dataset"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cbc8640c-9462-4e26-bdda-a5d2072c52ef",
-            "prompt": "What does DPO eliminate from the standard RLHF pipeline?",
-            "options": [
-              "The frozen reference model",
-              "The separate reward model and the PPO sampling loop",
-              "The need for any human preference labels",
-              "The KL penalty entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO still uses a frozen reference model and still relies on human (or AI) preference labels — it just proves the reward model and PPO's online sampling loop are unnecessary, because the optimal policy has a closed-form relationship to the reward that lets you substitute it directly into the loss."
-          },
-          {
-            "id": "111461d6-9ce5-4552-8544-4a2bcf3b5c23",
-            "prompt": "In the DPO loss, what does the beta parameter control?",
-            "options": [
-              "The learning rate of the optimizer",
-              "How many preference pairs are used per batch",
-              "How far the policy is allowed to drift from the reference model",
-              "The temperature used during inference sampling"
-            ],
-            "correctIndex": 2,
-            "explanation": "Beta scales the margin between chosen and rejected log-probability ratios inside the loss. A smaller beta permits larger deviations from the reference model per update; a larger beta keeps the policy closer to its starting point."
-          },
-          {
-            "id": "6a13e2f2-8708-4f57-8a4d-b8ff8319a0bc",
-            "prompt": "Why might PPO-based RLHF still outperform DPO in some settings?",
-            "options": [
-              "PPO doesn't require any human labels at all",
-              "PPO's reward model can score newly sampled completions, letting the policy keep improving past its original dataset",
-              "PPO is simpler to implement and more stable to train",
-              "DPO cannot be used with a KL penalty"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because PPO samples fresh completions and scores them with a learned reward model, it can keep discovering and reinforcing better behavior online. DPO trains on a fixed, offline set of pairs, so it's bounded by what those pairs teach it — it can't generalize a reward signal to responses it never saw labeled."
           }
         ]
       },
