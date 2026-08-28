@@ -1,6 +1,210 @@
 {
   "posts": [
     {
+      "id": "73ddffe8-d7ab-4336-bc35-22ea0acb3cc9",
+      "title": "MCP Roots: The Boundary a Client Hands the Server",
+      "subtitle": "The one MCP primitive that flows the other way — the client telling the server where it's allowed to look.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "roots",
+        "protocol",
+        "filesystem",
+        "security",
+        "agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "folder.fill",
+      "summary": "Roots let an MCP client declare which directories or URIs are actually in scope for a session, so a filesystem or code-search server doesn't have to guess or hardcode paths. It's the one primitive that flows client-to-server instead of server-to-client — and it's advisory, not enforced, so it's not a substitute for real sandboxing.",
+      "publishedDate": "2026-08-28T18:41:19Z",
+      "body": null,
+      "table": null,
+      "explanation": null,
+      "slides": [
+        {
+          "id": "e2d004f5-13f4-4610-802b-2b2ffd8bd44f",
+          "kind": "cover",
+          "title": "Who Tells the Server Where It's Allowed to Look?",
+          "body": "MCP roots let a client hand a server a short list of directories or URIs that are actually in scope for this session — instead of the server guessing, or being configured with a fixed path at install time.",
+          "bullets": [],
+          "symbol": "folder.fill",
+          "table": null
+        },
+        {
+          "id": "85aca65d-6ab4-42e6-98ff-17f7316cb4eb",
+          "kind": "problem",
+          "title": "A Filesystem Server Has No Idea What 'Your Project' Means",
+          "body": null,
+          "bullets": [
+            "An MCP filesystem or code-search server runs as its own process — it doesn't automatically know which folders on disk belong to the user's current workspace.",
+            "Hardcoding a path in server config breaks the moment the user opens a different project, or the editor has two or three folders open in one workspace at once.",
+            "Without a declared scope, a server is left with bad defaults: search the whole filesystem (slow and dangerous), or refuse to do anything until a human types out an absolute path."
+          ],
+          "symbol": "questionmark.folder.fill",
+          "table": null
+        },
+        {
+          "id": "dc8bd4ed-e426-46e1-8502-b95aec414e2d",
+          "kind": "solution",
+          "title": "roots/list: the Server Asks, the Client Answers",
+          "body": null,
+          "bullets": [
+            "A client that supports the feature declares a `roots` capability during initialization; a server can then send a `roots/list` request whenever it needs to know the current scope.",
+            "The client responds with an array of roots, each a `{ uri, name }` pair — typically a `file://` URI pointing at a folder the user actually has open, plus a human-readable label.",
+            "This is the one MCP primitive that runs in the opposite direction from Tools, Resources, Prompts, and Sampling: the client is exposing context to the server, not the other way around."
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "1fca3dd5-d046-49e7-b9a5-dbd9a89cdc89",
+          "kind": "architecture",
+          "title": "The Set Can Change Mid-Session",
+          "body": null,
+          "bullets": [
+            "If the client also declares the `listChanged` sub-capability, it must send a `notifications/roots/list_changed` notification whenever the user adds or removes a workspace folder.",
+            "A well-behaved server treats that notification as a cue to re-issue `roots/list`, not as data itself — the notification carries no payload, it just says 'ask again.'",
+            "This keeps the server's view of scope live without polling: it only re-checks when something actually changed."
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "835a77ad-c186-408a-931b-7b001e2ccb6a",
+          "kind": "example",
+          "title": "A Two-Folder Workspace, Then a Third Gets Added",
+          "body": null,
+          "bullets": [
+            "An editor has a multi-root workspace open: `frontend/` and `backend/`. On connect, the filesystem MCP server sends `roots/list` and gets back both folder URIs with names \"Frontend\" and \"Backend\".",
+            "A search tool call now scopes its file walk to just those two directories instead of the entire home directory — faster, and it can't accidentally surface files from an unrelated project on the same machine.",
+            "Midway through the session the user adds a third folder, `shared-libs/`. The client fires `notifications/roots/list_changed`; the server re-queries, gets three roots back, and the next search call covers all three."
+          ],
+          "symbol": "macwindow",
+          "table": null
+        },
+        {
+          "id": "4d6869e9-dd32-4878-ab98-ea951dfa499e",
+          "kind": "comparison",
+          "title": "Roots vs. the Other Four MCP Primitives",
+          "body": null,
+          "bullets": [
+            "Roots is the odd one out: everything else pushes something from server to client (or client's model); roots pushes context from client to server."
+          ],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "Primitive",
+              "Direction",
+              "What crosses the wire"
+            ],
+            "rows": [
+              [
+                "Roots",
+                "Client → Server",
+                "Which directories/URIs are in scope right now"
+              ],
+              [
+                "Resources",
+                "Server → Client",
+                "Data the server exposes for the client to read"
+              ],
+              [
+                "Tools",
+                "Client → Server (invoked)",
+                "A function the model can call with arguments"
+              ],
+              [
+                "Prompts",
+                "Server → Client",
+                "A reusable, user-triggered template"
+              ],
+              [
+                "Sampling",
+                "Server → Client's model",
+                "A request to borrow the client's LLM"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "65b88ed7-2d2b-4a6e-8c8f-3a35de15f6b4",
+          "kind": "concept",
+          "title": "Advisory, Not a Sandbox",
+          "body": null,
+          "bullets": [
+            "The MCP spec is explicit that roots are informational: a server SHOULD respect declared boundaries, but nothing in the protocol stops a buggy or malicious server from reading outside them.",
+            "Real access control still has to happen underneath — OS file permissions, a container boundary, a chroot — because roots are just a hint communicated over JSON-RPC, not an enforcement mechanism.",
+            "Older or minimal server implementations may not query roots at all and instead rely on whatever working directory or config path they were started with — don't assume every server in the wild honors this primitive.",
+            "Skip building security guarantees on top of roots alone. Use them for scoping and relevance (faster search, less noise, fewer irrelevant results) and enforce actual isolation somewhere the server can't opt out of."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "aba456c4-8eed-4ed0-8332-775d4e03ee36",
+          "kind": "takeaways",
+          "title": "A Hint About Scope, Sent the Other Direction",
+          "body": null,
+          "bullets": [
+            "Roots let a client tell a server which directories or URIs matter right now, via `roots/list` — the only MCP primitive that flows client-to-server.",
+            "`notifications/roots/list_changed` keeps that scope current as the user opens or closes workspace folders, without the server having to poll.",
+            "Roots are advisory: they narrow what a well-behaved server searches, but they are not a security boundary — pair them with real OS- or container-level isolation for anything that actually needs to be enforced."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c95f24c1-aaf3-4554-bb39-c49632f1360b",
+            "prompt": "Which direction does the Roots primitive flow, compared to Resources, Tools, and Prompts?",
+            "options": [
+              "Server to client, just like the others",
+              "Client to server — the client tells the server what's in scope",
+              "It's bidirectional and negotiated per request",
+              "It flows between two servers, bypassing the client"
+            ],
+            "correctIndex": 1,
+            "explanation": "Roots is the one primitive that runs in the opposite direction: the client exposes context (which directories/URIs are relevant) to the server, rather than the server exposing something to the client."
+          },
+          {
+            "id": "e87c27cb-d267-4ce8-99d2-be5abec412f4",
+            "prompt": "Does the MCP protocol itself prevent a server from reading files outside the roots a client declared?",
+            "options": [
+              "Yes, the JSON-RPC transport blocks any request outside declared roots",
+              "No — roots are advisory; enforcement has to come from the OS, a container, or another layer the server can't opt out of",
+              "Only if the client uses HTTPS transport",
+              "Yes, but only for servers written in the reference SDK"
+            ],
+            "correctIndex": 1,
+            "explanation": "The spec says servers SHOULD respect declared roots, but nothing in the protocol enforces it. A buggy or malicious server can still read outside the declared scope, so real isolation must happen underneath."
+          },
+          {
+            "id": "3b8e13ae-4716-4c54-a658-baddda9dfeeb",
+            "prompt": "What should a server do when it receives a `notifications/roots/list_changed` notification?",
+            "options": [
+              "Ignore it — the notification is purely informational and carries the new roots itself",
+              "Re-issue a `roots/list` request to fetch the updated set, since the notification carries no payload",
+              "Immediately terminate the session",
+              "Switch to Sampling to ask the client's model what changed"
+            ],
+            "correctIndex": 1,
+            "explanation": "The list_changed notification is just a signal that something changed — it doesn't include the new roots. A well-behaved server responds by calling roots/list again to get the current scope."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "db21ad8b-2e3a-45ae-889a-e3a9ae75d0cf",
+          "title": "Roots - Model Context Protocol Specification",
+          "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/roots"
+        }
+      ]
+    },
+    {
       "id": "f9081efd-2d92-4d7e-a7c5-393c186be24b",
       "title": "LongHorizon-Harness: Trust No Round Until It's Verified",
       "subtitle": "Three roles, one loop — why an agent that grades its own homework stops scaling past a few steps",
@@ -10891,211 +11095,6 @@
       "id": "f98ea47b-e16d-40b1-be42-a653735a74a7",
       "publishedDate": "2026-08-19T18:40:33Z",
       "heroImageURL": null
-    },
-    {
-      "id": "d8f47cdd-06f5-41ac-9866-734a2e24ebc4",
-      "title": "Kimi K3: Moonshot's 2.8T Open-Weight Flagship",
-      "subtitle": "896 experts, 16 fire per token, 1M-token context — and the full checkpoint is public.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "moonshot-ai",
-        "open-weights",
-        "mixture-of-experts",
-        "kimi-k3",
-        "llm-release"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Moonshot AI open-weighted Kimi K3, a 2.8-trillion-parameter Mixture-of-Experts model that activates only 104B parameters per token via 896 routed experts. It ships a native 1M-token context, a built-in MoonViT-V2 vision encoder, and MXFP4/MXFP8 quantization-aware weights — but serving the full checkpoint still needs a multi-GPU cluster.",
-      "publishedDate": "2026-08-19T12:41:03Z",
-      "heroImageURL": null,
-      "body": null,
-      "slides": [
-        {
-          "id": "209d6919-8665-4047-8600-0700307379f3",
-          "kind": "cover",
-          "title": "A 2.8-Trillion-Parameter Model, Fully Open",
-          "body": "Moonshot AI released Kimi K3's weights publicly — the largest open-weight model shipped to date, built as a sparse Mixture-of-Experts network rather than a dense giant.",
-          "bullets": [
-            "2.8T total parameters, only 104B activated per token",
-            "896 routed experts + 2 shared experts, 16 selected per token",
-            "Weights and code public under the Kimi K3 License"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "2f3807c5-36a8-4b11-b73f-b4049bc5e38c",
-          "kind": "problem",
-          "title": "Frontier-Tier Usually Means Closed-Weight",
-          "body": "The most capable models are almost all API-only. Open-weight releases have historically traded capability for openness.",
-          "bullets": [
-            "Fable 5, Opus 4.8, and GPT-5.6 all ship as closed APIs, not downloadable weights",
-            "Prior open models stayed smaller to stay servable on modest hardware",
-            "A trillion-plus-parameter dense model would be too expensive to even run, let alone open-source"
-          ],
-          "symbol": "lock.open.fill",
-          "table": null
-        },
-        {
-          "id": "c05ec9ef-8e4f-44fe-af1b-f9ff1e7b0960",
-          "kind": "solution",
-          "title": "Sparsity Is the Trick: 16 of 896 Experts Fire",
-          "body": "K3's Stable LatentMoE framework keeps almost all weights dormant on any given token, so compute scales with the 104B active slice, not the 2.8T total.",
-          "bullets": [
-            "93 layers total: 69 Kimi Delta Attention (KDA) layers + 24 Gated Multi-head Latent Attention (MLA) layers",
-            "Attention Residuals (AttnRes) stabilize training at this depth and sparsity",
-            "Native MXFP4 weights with MXFP8 activations via quantization-aware training, not post-hoc quantization"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "4366c01f-c01b-4dfc-a622-8236f60206ac",
-          "kind": "architecture",
-          "title": "One Encoder for Text, Image, and Video",
-          "body": "Multimodal input doesn't go through a bolted-on adapter — it's a native part of the model.",
-          "bullets": [
-            "MoonViT-V2 vision encoder: 401M parameters, trained jointly with the language model",
-            "160K-token vocabulary",
-            "1,048,576-token context window (1M), enough for a large codebase or a long video transcript in one pass"
-          ],
-          "symbol": "eye.fill",
-          "table": null
-        },
-        {
-          "id": "f493f814-84e4-40c6-84d4-b76a7897ac0b",
-          "kind": "comparison",
-          "title": "The Spec Sheet",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Value"
-            ],
-            "rows": [
-              [
-                "Total parameters",
-                "2.8 trillion"
-              ],
-              [
-                "Activated per token",
-                "104 billion (~3.7%)"
-              ],
-              [
-                "Routed experts",
-                "896 (16 active + 2 shared)"
-              ],
-              [
-                "Context window",
-                "1,048,576 tokens"
-              ],
-              [
-                "Vision encoder",
-                "MoonViT-V2, 401M params"
-              ],
-              [
-                "Precision",
-                "Native MXFP4 weights / MXFP8 activations"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "ac73d431-ce94-4e2a-b2c5-25b408b06dec",
-          "kind": "example",
-          "title": "What 1M Tokens Actually Buys You",
-          "body": "A concrete case: feeding K3 an entire mid-sized codebase plus its issue tracker history in one context window.",
-          "bullets": [
-            "No manual chunking or retrieval step needed to fit the repo in context",
-            "The model can trace a bug across files it read directly, not summaries of files",
-            "Same context budget covers a multi-hour video transcript via the native vision/video path"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "81df1e68-2b94-41c4-bc00-7aa684a58c52",
-          "kind": "problem",
-          "title": "Open Weights ≠ Runs on a Laptop",
-          "body": "Sparsity cuts compute per token, not storage. The full 2.8T-parameter checkpoint still has to live somewhere.",
-          "bullets": [
-            "Serving K3 needs vLLM, SGLang, or Moonshot's own TokenSpeed engine across multiple GPUs/nodes",
-            "Even MXFP4-quantized, a 2.8T-parameter checkpoint is a multi-hundred-gigabyte download and load",
-            "The 'Kimi K3 License' is Moonshot's own terms, not a standard OSI license — read it before commercial use",
-            "For most teams, the hosted API at platform.kimi.ai is the practical entry point, not self-hosting"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "4f00a7e5-0c4b-436c-9e02-5764624c6b95",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "2.8T total / 104B active MoE, 896 experts with 16 selected per token — sparsity, not size, drives efficiency",
-            "1M-token context plus a native MoonViT-V2 encoder for text, image, and video in one model",
-            "Moonshot reports ~2.5× overall scaling efficiency versus Kimi K2",
-            "Weights are public, but serving the full checkpoint still needs multi-GPU infrastructure",
-            "License is custom ('Kimi K3 License') — check terms before commercial deployment"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "id": "dba1d452-1de9-4001-b7e7-bff438c8511b",
-        "questions": [
-          {
-            "id": "c1d26821-49df-4188-9d37-bd3ec027a529",
-            "prompt": "How many of Kimi K3's 896 routed experts activate for a given token?",
-            "options": [
-              "16",
-              "64",
-              "128",
-              "All 896"
-            ],
-            "correctIndex": 0,
-            "explanation": "16 of 896 routed experts (plus 2 shared experts) fire per token. That sparsity is why only 104B of the 2.8T total parameters are activated per forward pass, cutting compute far below what a dense model of the same size would need."
-          },
-          {
-            "id": "260029a8-1dda-4c5d-825c-358f38b2c9e3",
-            "prompt": "What lets Kimi K3 process images and video without a separate pipeline?",
-            "options": [
-              "A bolt-on OCR plugin called after generation",
-              "The native MoonViT-V2 vision encoder trained as part of the model",
-              "Converting every image to a text caption before inference",
-              "It doesn't support images"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoonViT-V2 (401M parameters) is built into K3 itself, so the model handles text, images, and video natively rather than routing through an external adapter."
-          },
-          {
-            "id": "c787e15d-27e2-46f4-abf1-9e9f0b5ca038",
-            "prompt": "Why doesn't K3's open-weight release mean it can run on a single consumer GPU?",
-            "options": [
-              "Because the license forbids local deployment",
-              "Because the full 2.8T-parameter checkpoint must still be stored and served, typically across multiple GPUs or nodes, even though only 104B parameters activate per token",
-              "Because it has no quantized version available",
-              "Because it only supports TPU hardware"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE sparsity reduces compute per token, not the memory needed to hold the model. Engines like vLLM and SGLang still have to load the entire 2.8T-parameter checkpoint — even in MXFP4 — across a multi-GPU cluster."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "d84ccf66-a631-4af5-842a-e4e1a4c27b6b",
-          "title": "Kimi K3 — official model repository (MoonshotAI)",
-          "url": "https://github.com/MoonshotAI/Kimi-K3"
-        }
-      ]
     }
   ]
 }
