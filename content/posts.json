@@ -1,6 +1,362 @@
 {
   "posts": [
     {
+      "id": "c5508daa-3ff8-4967-8471-080d22d00a8d",
+      "title": "Contextual Retrieval: Fixing RAG's Broken Chunks",
+      "subtitle": "Prepend a sentence of context to every chunk before embedding — cache away the cost.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "embeddings",
+        "retrieval",
+        "chunking",
+        "prompt-caching"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "text.magnifyingglass",
+      "summary": "RAG chunks lose the surrounding context that gave them meaning, which is why retrieval so often misses the right passage. Contextual Retrieval fixes this by having an LLM write a short situating blurb for each chunk before it's embedded and indexed — and uses prompt caching to keep that step cheap. Stacked with hybrid BM25 and reranking, measured failure rates dropped from 12.85% to 4.74%.",
+      "body": null,
+      "table": null,
+      "explanation": null,
+      "slides": [
+        {
+          "id": "e81011e6-eb68-4fe5-b995-0f11b071782c",
+          "kind": "cover",
+          "title": "Why RAG misses the answer that's sitting right in the doc",
+          "body": "Split a document into chunks and each chunk loses the surrounding context that told the reader what it was about. The embedding never learns what it never saw.",
+          "bullets": [],
+          "symbol": "text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "4e8ab6ff-3fd0-4c9b-b7a9-d0f5613965aa",
+          "kind": "problem",
+          "title": "A chunk torn out of its document loses meaning",
+          "body": null,
+          "bullets": [
+            "A 200-token chunk that says \"the company's revenue grew 3% over the previous quarter\" doesn't say which company or which quarter once it's separated from the rest of the filing.",
+            "The embedding model only ever sees that one chunk's text — it can't infer what's sitting a page earlier or later.",
+            "The result: semantically relevant chunks rank low because the vector representing them is under-specified, not because the search is broken."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "61ad45a9-4548-4385-9365-035e6d0f259a",
+          "kind": "solution",
+          "title": "The fix: have an LLM situate each chunk before it's embedded",
+          "body": "For every chunk, feed the whole document plus that one chunk to an LLM and ask for a short blurb explaining what the chunk covers and where it sits in the document. Prepend that blurb to the chunk, then embed and index the combined text instead of the raw chunk.",
+          "bullets": [
+            "Prompt pattern: \"give a short succinct context to situate this chunk within the overall document, for the purposes of improving search retrieval.\"",
+            "The generated context (roughly 50-100 tokens) is prepended before both embedding and keyword indexing — it's a preprocessing step, not a new embedding model.",
+            "Works with any embedding model or vector store already in use."
+          ],
+          "symbol": "wand.and.stars",
+          "table": null
+        },
+        {
+          "id": "d38d37ad-f6d2-4d2e-81d1-f9361776677b",
+          "kind": "concept",
+          "title": "The trick that makes it affordable: prompt caching",
+          "body": null,
+          "bullets": [
+            "Naively, contextualizing every chunk means resending the FULL document once per chunk — a 100-chunk document means paying for that document 100 times over.",
+            "Process chunks document-by-document instead of in random order: the first chunk pays full price to write the document into a prompt cache, every later chunk from that same document reads it back at a steep discount.",
+            "Measured on 737 chunks across 9 codebases: $9.20 in input tokens without caching vs. $2.85 with it — a 69% cost cut for identical output.",
+            "The cache window only needs to last a few minutes — just long enough to walk through one document's chunks before moving to the next."
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "2a1a0153-ab87-45cc-88fd-88a06598af5f",
+          "kind": "comparison",
+          "title": "Each layer stacks on top of the last",
+          "body": null,
+          "bullets": [
+            "Contextual embeddings alone cut the failure rate roughly 40%; adding hybrid BM25 search on top brings it to about 47%; reranking on top of both reaches roughly 63% fewer failed retrievals than plain baseline RAG."
+          ],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Setup",
+              "Pass@10",
+              "Failure rate"
+            ],
+            "rows": [
+              [
+                "Baseline RAG",
+                "87.15%",
+                "12.85%"
+              ],
+              [
+                "+ Contextual embeddings",
+                "92.34%",
+                "7.66%"
+              ],
+              [
+                "+ Hybrid BM25 (contextual)",
+                "93.21%",
+                "6.79%"
+              ],
+              [
+                "+ Reranking",
+                "95.26%",
+                "4.74%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b6ad687d-7310-4771-b4d4-bc3a8b22aea1",
+          "kind": "example",
+          "title": "What a generated context blurb actually looks like",
+          "body": "For a chunk pulled from a differential-fuzzing codebase, the situating step produced: \"This chunk contains the module documentation and initial struct definition for a differential fuzzing executor. It introduces the DiffExecutor struct that wraps two executors (primary and secondary) to run them sequentially with the same input, comparing their behavior for differential testing.\" That ~100-token blurb gets prepended before embedding — so a query like \"how does the differential fuzzer compare two executors\" now matches on words the raw chunk never contained.",
+          "bullets": [],
+          "symbol": "chevron.left.forwardslash.chevron.right",
+          "table": null
+        },
+        {
+          "id": "43661dae-2a2d-4731-b48f-e5d074c47fb3",
+          "kind": "concept",
+          "title": "When it's not worth the extra LLM calls",
+          "body": null,
+          "bullets": [
+            "It's an extra LLM call per chunk at index time — for a corpus of atomic records with no natural document boundary (a flat FAQ list, a product catalog), the caching trick doesn't apply and cost climbs fast.",
+            "If chunks are already self-contained and short, the added context is just extra tokens diluting the embedding rather than helping it.",
+            "Hybrid search adds latency (roughly 50ms) and reranking adds more (roughly 100-200ms) per query — fine for a chat interface, tight for a sub-100ms budget.",
+            "Contextual chunks aren't a one-time cost: re-embedding is required every time the chunking strategy or the underlying documents change."
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "bd003119-4234-48a5-860e-e7f674c73034",
+          "kind": "takeaways",
+          "title": "The pattern in one sentence",
+          "body": null,
+          "bullets": [
+            "Chunks fail retrieval because they're read out of context — give the embedding a sentence of context back, and failures drop by roughly half.",
+            "Process document-by-document and lean on prompt caching, or the fix costs more than the problem it solves.",
+            "Stack it: contextual embeddings, then hybrid BM25, then reranking — each layer adds a real gain for a fraction of the previous layer's cost."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "243394dc-00c8-48b2-a61a-262f67b1485a",
+            "prompt": "Why does prepending document-level context to a chunk before embedding help retrieval?",
+            "options": [
+              "It makes the chunk shorter and faster to embed",
+              "It restores information the chunk lost when it was split out of its document, so the embedding captures what the chunk is actually about",
+              "It replaces the need for a vector database",
+              "It removes the need for keyword search entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "A chunk's own text often doesn't say what company, document, or section it belongs to. The generated context fills that gap before the text becomes a vector — it isn't about speed or replacing other components."
+          },
+          {
+            "id": "f5bbb39a-62d8-4dc4-8c6a-705fdccc6223",
+            "prompt": "Why does processing chunks document-by-document (instead of in random order) matter for cost?",
+            "options": [
+              "It's required by the embedding model's API",
+              "It lets multiple documents get batched into one LLM call",
+              "It lets the full document stay in a prompt cache so only the first chunk from a document pays full price, while later chunks from the same document read it back at a steep discount",
+              "It avoids hitting rate limits on the vector database"
+            ],
+            "correctIndex": 2,
+            "explanation": "Prompt caching keys off repeated prefix content. Running through one document's chunks back-to-back means that document body is served from cache instead of resent, which is what turned $9.20 into $2.85 in the measured example."
+          },
+          {
+            "id": "e06df9f9-0a05-4144-ba94-7b8362dd84f5",
+            "prompt": "In the measured Pass@10 results, which single addition took the failure rate from 12.85% to 7.66%?",
+            "options": [
+              "Switching to a larger embedding model",
+              "Contextual embeddings alone",
+              "Increasing the chunk size",
+              "Adding more chunks per query"
+            ],
+            "correctIndex": 1,
+            "explanation": "Contextual embeddings alone accounted for that drop, roughly 40% fewer failures, before hybrid BM25 or reranking were even added on top."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "26b6d0b9-7612-45ff-a014-2c0def4195ca",
+          "title": "Enhancing RAG with Contextual Retrieval — Claude Cookbook",
+          "url": "https://platform.claude.com/cookbook/capabilities-contextual-embeddings-guide"
+        }
+      ],
+      "publishedDate": "2026-08-29T06:46:31Z"
+    },
+    {
+      "id": "bd4f2bc8-7c09-4e52-a984-3001013214f9",
+      "title": "UrbanGround: Seeing a City Isn't Navigating It",
+      "subtitle": "700 tasks in a real Hong Kong replica show agent perception doesn't add up to sustained action.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "paper",
+      "tags": [
+        "agents",
+        "benchmark",
+        "embodied-ai",
+        "multimodal",
+        "spatial-reasoning"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "map.fill",
+      "summary": "UrbanGround rebuilds a real-scale slice of Hong Kong as a closed-loop Unity sandbox and scores multimodal agents on the full trajectory they walk, not just a final answer. The result: today's agents have solid atomic perception skills, but those skills don't compose into sustained, goal-directed navigation — errors accumulate over a route, and dynamic changes like a road closure expose weak online replanning that static benchmarks never catch.",
+      "body": null,
+      "table": null,
+      "explanation": null,
+      "slides": [
+        {
+          "id": "cb15148e-574d-4e0d-b86f-5d43923394e6",
+          "kind": "cover",
+          "title": "MLLM agents can see a city. Can they navigate one?",
+          "body": "UrbanGround turns real Hong Kong geospatial data into a live, closed-loop sandbox and asks a harder question than any single-turn benchmark can: does perception survive a multi-step route?",
+          "bullets": [],
+          "symbol": "map.fill",
+          "table": null
+        },
+        {
+          "id": "90d176f3-a292-480e-bf90-2aed35f918f0",
+          "kind": "problem",
+          "title": "Single-turn benchmarks can't catch compounding error",
+          "body": null,
+          "bullets": [
+            "Most agent benchmarks ask one-shot questions — \"what's in this image,\" \"where is X\" — and never test whether a small perception mistake early in a task snowballs into a completely wrong outcome later.",
+            "Urban navigation forces exactly that: recognize a landmark, infer a destination, plan a multi-stop route under a time window, then replan when a road closes or a pedestrian steps into frame — five different skills chained in sequence, not tested in isolation.",
+            "Earlier sandboxes are either toy grid-worlds too simple to expose compounding error, or synthetic game maps that aren't grounded in a real city's actual geometry, traffic rules, and physical constraints."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d01f1e00-9efb-4790-94da-b1b02666a750",
+          "kind": "solution",
+          "title": "Rebuild a real city, close the loop, score the whole trajectory",
+          "body": "UrbanGround (from Shanghai Jiao Tong University's BCMI Lab, led by Zhuosheng Zhang, with collaborators from NUS, CUHK, and Oxford) converts territory-wide 3D geospatial data of Hong Kong into a continuously interactive Unity environment — a georegistered, physically constrained replica of a real city, not a toy grid.",
+          "bullets": [
+            "Agents observe through a first-person camera and act through a compact control interface — the same observe-act loop a human would use to walk around.",
+            "Scoring is based on the actual trajectory the agent executes, not just a final answer, so errors that compound across steps get caught instead of averaged away.",
+            "700 manually verified task instances span five difficulty levels: local understanding, explicit navigation, implicit-intent inference, multi-stop planning, and dynamic replanning.",
+            "Released open-source under MIT license with web, macOS, Windows, and Linux builds, plus an OpenAI-compatible API so any model can be dropped in and evaluated."
+          ],
+          "symbol": "building.2.fill",
+          "table": null
+        },
+        {
+          "id": "c9d6b1e3-3088-4fdd-8ba4-8ff2e3c82ccb",
+          "kind": "comparison",
+          "title": "Where agents hold up, and where they fall apart",
+          "body": null,
+          "bullets": [
+            "Local understanding and explicit navigation (levels 1-2): current MLLM agents handle these reasonably well — visual recognition and short-range spatial reasoning are solid atomic skills on their own.",
+            "Implicit-intent inference and multi-stop planning (levels 3-4): performance drops once a task demands chaining multiple inferences instead of executing one clear instruction.",
+            "Dynamic replanning (level 5): this is where agents break down hardest — a road closure or a moving pedestrian exposes weak 'online' updating, since the agent's plan was built for a static world.",
+            "Core finding: local perceptual skills don't automatically compose into sustained, goal-directed behavior — small spatial errors accumulate across a route instead of getting corrected."
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "14af6a30-da07-4570-9400-50c153f767f5",
+          "kind": "example",
+          "title": "A five-step task that breaks the chain",
+          "body": "Ask an agent to \"grab a coffee near the harbor, then get to a meeting starting in 20 minutes.\" It has to recognize what \"near the harbor\" looks like, infer which of several visible cafés fits, plan a route that fits the time window, then react when the simulation closes a road or drops a pedestrian into its path mid-route. One missed orientation cue early on compounds — the agent doesn't just answer wrong, it walks the wrong way and never recovers. A single-turn benchmark would never surface that failure.",
+          "bullets": [],
+          "symbol": "figure.walk",
+          "table": null
+        },
+        {
+          "id": "2cbb4ce7-da01-4552-bafa-89c05fe8246d",
+          "kind": "concept",
+          "title": "What the benchmark does and doesn't tell you",
+          "body": null,
+          "bullets": [
+            "It's Hong Kong specifically — dense, vertical, pedestrian-heavy. Results may not transfer directly to sprawling low-density cities or indoor navigation.",
+            "The five-level hierarchy tests urban wayfinding, not every embodied-agent skill — it says nothing about manipulation, tool use, or long-horizon planning outside a city context.",
+            "700 tasks is enough for a rigorous first benchmark, but small enough that once labs start training against it, separating genuine skill gains from benchmark-specific overfitting gets harder."
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "5842ed40-a0be-4f12-bc36-ca2966d1009d",
+          "kind": "takeaways",
+          "title": "The pattern in one sentence",
+          "body": null,
+          "bullets": [
+            "Perception isn't the bottleneck for embodied agents anymore — sustained, multi-step composition of that perception is.",
+            "Scoring trajectories instead of final answers catches compounding error that static QA benchmarks structurally can't see.",
+            "Dynamic, changing environments — closures, moving obstacles — are where today's agents most need better online replanning, not better recognition."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6f6bcf32-1a9e-4874-8384-26930b757579",
+            "prompt": "What is UrbanGround's central finding about current MLLM agents?",
+            "options": [
+              "They can't recognize objects or landmarks in images at all",
+              "Their local perceptual skills work fine on their own, but those skills don't compose into sustained, goal-directed behavior over longer routes",
+              "They perform worse than random guessing on every task level",
+              "They require a text-only interface to function at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Recognition and short-range spatial reasoning are solid atomic skills. What breaks down is chaining them: small errors accumulate over a multi-step route instead of getting corrected."
+          },
+          {
+            "id": "baf42407-6db4-4422-b33d-d8f0f213862c",
+            "prompt": "Why does UrbanGround score the agent's full trajectory instead of just a final answer?",
+            "options": [
+              "It's cheaper to compute than answer accuracy",
+              "The Unity engine requires trajectory-based scoring",
+              "Small spatial errors compound across a multi-step route — scoring only the final answer would miss failures a single-turn benchmark structurally can't see",
+              "It removes the need for a control interface entirely"
+            ],
+            "correctIndex": 2,
+            "explanation": "An agent can get the final destination right by luck after a wrong turn, or wrong despite a mostly-correct route. Trajectory scoring is what exposes compounding error along the way."
+          },
+          {
+            "id": "7ef40964-169a-47c6-b108-ddd88327f34f",
+            "prompt": "Which of UrbanGround's five task levels exposes agents' weakest capability?",
+            "options": [
+              "Local understanding (visual recognition)",
+              "Explicit navigation (following a direct instruction)",
+              "Dynamic replanning (adapting to road closures and moving pedestrians)",
+              "There is no meaningful difference across levels"
+            ],
+            "correctIndex": 2,
+            "explanation": "Dynamic replanning is where performance drops hardest — agents' plans are built for a static world, so a road closure or a pedestrian entering the frame exposes weak online updating that the more static earlier levels don't test."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d868c84b-5ca3-42be-bb63-5de6f63d34c1",
+          "title": "UrbanGround: From Local Perception to Spatial Agency in a Real-Scale City (arXiv:2608.27456)",
+          "url": "https://arxiv.org/abs/2608.27456"
+        },
+        {
+          "id": "d5e1bb63-a70a-4910-b816-24b9685efc45",
+          "title": "UrbanGround — official code and benchmark release",
+          "url": "https://github.com/UrbanGround/UrbanGround"
+        }
+      ],
+      "publishedDate": "2026-08-29T06:46:31Z"
+    },
+    {
       "id": "6413546a-e331-44dc-94b4-a5da72afe95e",
       "title": "DPO: Skipping the Reward Model Entirely",
       "subtitle": "One loss function replaces RLHF's reward model and PPO loop.",
@@ -10722,389 +11078,6 @@
       "id": "81d0cbb2-d3f8-48fe-be6f-0926e79b7df0",
       "publishedDate": "2026-08-20T06:43:21Z",
       "heroImageURL": null
-    },
-    {
-      "title": "GPT-Live: OpenAI's Full-Duplex Voice Model",
-      "subtitle": "Listening and speaking at once, with a live handoff to GPT-5.5 for anything it can't do in-voice.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "voice-ai",
-        "gpt-live",
-        "openai",
-        "full-duplex",
-        "multimodal"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "waveform",
-      "summary": "OpenAI replaced ChatGPT's turn-based Advanced Voice Mode with GPT-Live, a full-duplex voice model that listens and speaks simultaneously and can be interrupted mid-sentence. When a request needs real reasoning or tools, GPT-Live hands off to GPT-5.5 running in parallel rather than trying to do it in-voice.",
-      "body": null,
-      "slides": [
-        {
-          "id": "58650131-3d43-4d77-be2e-008dc792d03f",
-          "kind": "cover",
-          "title": "Voice AI Stops Waiting Its Turn",
-          "body": null,
-          "bullets": [
-            "GPT-Live replaces Advanced Voice Mode as ChatGPT's default voice model",
-            "Full-duplex: it processes incoming speech and generates outgoing speech at the same time",
-            "Ships as two sizes — GPT-Live-1 and GPT-Live-1 mini"
-          ],
-          "symbol": "waveform",
-          "table": null
-        },
-        {
-          "id": "9a884cce-0347-432d-949e-254bebf03b40",
-          "kind": "problem",
-          "title": "Turn-Based Voice Feels Like a Walkie-Talkie",
-          "body": "Advanced Voice Mode waited for the user to finish speaking, then generated a full response before speaking back — no real interruption, no natural overlap, no acknowledgment while listening.",
-          "bullets": [
-            "Users can't interrupt mid-response the way they would with a person",
-            "No backchannel cues ('mm-hmm') while the model is listening",
-            "Latency between 'user stops talking' and 'model starts talking' breaks the illusion of a live conversation"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "cef48342-e312-4f40-84b3-3dfce2a36a13",
-          "kind": "solution",
-          "title": "A Model That Decides to Speak, Listen, or Interrupt Many Times a Second",
-          "body": "GPT-Live's full-duplex architecture continuously decides — many times per second — whether to speak, listen, pause, acknowledge, interrupt, or invoke a tool, rather than alternating strict turns.",
-          "bullets": [
-            "Runs as a native audio-in, audio-out model, not a speech-to-text-to-LLM-to-speech pipeline",
-            "Can be interrupted mid-sentence and adjust or stop instead of finishing a queued response",
-            "For requests beyond its native capability — complex math, multi-step research, tool use — it hands off live to GPT-5.5 running in parallel, then speaks the result"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "15a8b362-a2b5-4923-83f3-46d8671db086",
-          "kind": "comparison",
-          "title": "GPT-Live-1 vs. Advanced Voice Mode, on OpenAI's Own Benchmarks",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Advanced Voice Mode",
-              "GPT-Live-1 (High reasoning)"
-            ],
-            "rows": [
-              [
-                "GPQA (graduate science reasoning)",
-                "45.3%",
-                "84.2%"
-              ],
-              [
-                "BrowseComp (agentic web search)",
-                "0.7%",
-                "75.2%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "80402e78-dace-45ca-b21b-cbc47978b895",
-          "kind": "architecture",
-          "title": "Two Sizes, Two Tiers",
-          "body": "GPT-Live-1 becomes the default voice model for ChatGPT Go, Plus, and Pro subscribers; GPT-Live-1 mini serves free-tier users.",
-          "bullets": [
-            "Both roll out across iOS, Android, and web",
-            "The 'mini' tier trades some capability for lower latency/cost at free-tier scale",
-            "The handoff to GPT-5.5 is what lets a comparatively fast voice model still answer hard, tool-requiring questions"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "60e7fbb4-5485-42b6-8266-f0ade01aabb1",
-          "kind": "example",
-          "title": "Worked Example: Asking It to Research Something Mid-Conversation",
-          "body": null,
-          "bullets": [
-            "You're mid-conversation and ask GPT-Live a question that needs a live web lookup",
-            "Instead of stalling or guessing, GPT-Live recognizes the request exceeds native capability and hands off to GPT-5.5 in parallel",
-            "GPT-5.5 runs the multi-step search/tool-use work while GPT-Live keeps the conversation alive rather than going silent",
-            "GPT-Live speaks the synthesized result back once GPT-5.5 returns it — the handoff is largely invisible to the user"
-          ],
-          "symbol": "person.wave.2.fill",
-          "table": null
-        },
-        {
-          "id": "3a4abf66-680a-4d4a-9ff6-aca5727086e5",
-          "kind": "concept",
-          "title": "Where Full-Duplex Voice Still Trips Up",
-          "body": "Early users flagged the model as occasionally over-eager to interject.",
-          "bullets": [
-            "Reports of 'over-enthusiasm' — jumping in when the user was still mid-thought, not actually pausing",
-            "Full-duplex is a genuinely harder turn-taking problem than turn-based voice; getting the timing of when to speak right is as hard as generating good content",
-            "Not a fit for scenarios needing strict, auditable turn boundaries (e.g. structured intake calls) where interruption behavior needs to stay fully predictable"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "42be0734-f42e-4094-b87e-3c2817dac1f7",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "GPT-Live replaces ChatGPT's turn-based voice mode with a native full-duplex model that can be interrupted mid-response",
-            "It nearly doubles GPQA accuracy (45.3% -> 84.2%) and jumps BrowseComp from 0.7% to 75.2% versus the previous voice mode, by handing hard requests to GPT-5.5 in parallel",
-            "Two tiers ship: GPT-Live-1 for paid plans, GPT-Live-1 mini for free-tier, across iOS/Android/web",
-            "The tradeoff for natural interruption is a genuinely hard turn-taking problem — early users report it sometimes interjects too eagerly"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e6dbb9c6-c3f3-4c67-8bd8-8d7fdb2c5707",
-            "prompt": "What does 'full-duplex' mean in the context of GPT-Live's architecture?",
-            "options": [
-              "It runs two separate models and picks the better answer",
-              "It processes incoming speech and generates outgoing speech at the same time, rather than strict turns",
-              "It only works over a duplex network connection",
-              "It doubles the context window size"
-            ],
-            "correctIndex": 1,
-            "explanation": "Full-duplex means the model listens and speaks concurrently — deciding many times a second whether to talk, listen, pause, or interrupt — instead of waiting for the user to finish before generating a full response."
-          },
-          {
-            "id": "a16bdd64-ff14-4fba-bb4f-5dc36f93254a",
-            "prompt": "How does GPT-Live handle a request that exceeds its native voice capability, like multi-step research?",
-            "options": [
-              "It refuses and asks the user to type instead",
-              "It hands off to GPT-5.5 running in parallel, then speaks the synthesized result",
-              "It always answers with its best guess without any handoff",
-              "It switches the user to text-only mode automatically"
-            ],
-            "correctIndex": 1,
-            "explanation": "GPT-Live recognizes when a request needs more than native voice reasoning and delegates to GPT-5.5 running in parallel, keeping the conversation alive while it works, then voices the result."
-          },
-          {
-            "id": "6b8668d9-51c1-4607-8f98-3d1812214ba4",
-            "prompt": "On OpenAI's benchmarks, roughly how much did GPT-Live-1 (High reasoning) improve over Advanced Voice Mode on BrowseComp?",
-            "options": [
-              "A small, roughly 5-point bump",
-              "From 0.7% to 75.2%, driven by the handoff to a full reasoning model for agentic search",
-              "It scored slightly worse due to added voice latency",
-              "BrowseComp wasn't run on either model"
-            ],
-            "correctIndex": 1,
-            "explanation": "BrowseComp tests agentic web search. Advanced Voice Mode essentially couldn't do this in-voice (0.7%); GPT-Live's ability to hand tool-heavy work to GPT-5.5 pushed that to 75.2%."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "cd6d2ee8-5d03-493c-b1b2-7ce5b433cf0b",
-          "title": "Introducing GPT-Live (OpenAI)",
-          "url": "https://openai.com/index/introducing-gpt-live/"
-        }
-      ],
-      "id": "3d783aea-b7d1-4aab-8bf4-3578a58fdcd8",
-      "publishedDate": "2026-08-20T06:43:21Z",
-      "heroImageURL": null
-    },
-    {
-      "title": "MCP Elicitation: The Server Asks, the User Answers",
-      "subtitle": "The primitive that lets a server pause mid-call and request exactly the input it's missing.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "elicitation",
-        "protocol",
-        "human-in-the-loop",
-        "json-schema"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "person.crop.circle.badge.questionmark",
-      "summary": "Elicitation lets an MCP server pause a tool call and send the client a JSON-Schema-described question, so the human — not the model — supplies the missing piece. Responses come back as accept, decline, or cancel, and the spec deliberately restricts schemas to flat primitive fields and bans requesting sensitive data through the channel.",
-      "slides": [
-        {
-          "id": "864e6a09-34c3-445e-ad45-92eb26f53a0b",
-          "kind": "cover",
-          "title": "A Tool Call That Stops and Asks a Question",
-          "body": "MCP elicitation lets a server pause mid-operation and request structured input directly from the human, through the client — no model guessing required.",
-          "bullets": [],
-          "symbol": "person.crop.circle.badge.questionmark",
-          "table": null
-        },
-        {
-          "id": "0562045a-e83a-4374-83b7-e4b372a087fb",
-          "kind": "problem",
-          "title": "Before Elicitation, a Server Could Only Fail or Guess",
-          "body": null,
-          "bullets": [
-            "A deploy tool needs a target environment name the model never provided; a booking server needs a date the user forgot to mention; a destructive action needs explicit confirmation.",
-            "Without a way to ask, the server had three bad options: fail with an error and make the model re-guess, silently pick a default, or require every parameter to be configured up front at connection time.",
-            "Any of those breaks the moment a workflow is genuinely interactive — the missing piece lives in the human's head, not in the conversation so far."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "01b0d1c3-69d4-44f3-ac3b-fa1ce3282d37",
-          "kind": "solution",
-          "title": "elicitation/create Sends a Schema, Not Free Text",
-          "body": null,
-          "bullets": [
-            "A client that supports the feature declares an `elicitation` capability at initialization; a server can then send an `elicitation/create` request mid-call with a human-readable `message` and a `requestedSchema`.",
-            "That schema is deliberately restricted to a flat object of primitive properties only — strings, numbers, booleans, enums — with constraints like minLength or format: email. No nested objects, no arrays of objects.",
-            "The client renders that schema as an actual form (or CLI prompt) instead of just piping text back to the model, so the human fills in exactly the fields the server asked for."
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "897f6be8-e26a-4528-9886-96307f90aead",
-          "kind": "architecture",
-          "title": "Three Outcomes, Not Two: Accept, Decline, Cancel",
-          "body": null,
-          "bullets": [
-            "accept: the user explicitly submitted data — the response carries a content object matching the requested schema.",
-            "decline: the user explicitly refused the request — content is omitted, and the server should treat this as a real 'no', not a retry-able failure.",
-            "cancel: the user dismissed the dialog without choosing — content is omitted, and the server should treat this as inconclusive rather than a refusal.",
-            "The spec calls this out on purpose: humans get distracted, close dialogs, or come back later, and collapsing that into a boolean would lose information a well-behaved server actually needs."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "5ad3fcaf-a8ab-4988-ac15-84bb1d78965a",
-          "kind": "example",
-          "title": "A CI Tool Confirms Before It Deletes a Branch",
-          "body": null,
-          "bullets": [
-            "The model calls a `cleanup_stale_branches` tool. The server finds 14 branches untouched for 90+ days but has no idea if that threshold or that exact list is what the user actually wants.",
-            "Instead of deleting them or asking the model to re-prompt the user in chat, the server sends elicitation/create with a schema: a boolean `confirm` field and a number `days_threshold` field, plus a message listing the 14 branch names.",
-            "The client shows a real form. The user changes the threshold to 120 days and confirms — the server gets back `{action: \"accept\", content: {confirm: true, days_threshold: 120}}` and re-runs its own query with the corrected value, not a value the model invented."
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "1f8c58bc-d960-4a8b-bebe-1efbf62e1bf6",
-          "kind": "comparison",
-          "title": "Elicitation vs. the Other MCP Primitives",
-          "body": null,
-          "bullets": [
-            "Elicitation is the only primitive where the payload is a question for a human, not context for the model or a scope declaration."
-          ],
-          "symbol": "square.grid.2x2",
-          "table": {
-            "headers": [
-              "Primitive",
-              "What crosses the wire"
-            ],
-            "rows": [
-              [
-                "Elicitation",
-                "Server asks the human a direct, schema-shaped question"
-              ],
-              [
-                "Sampling",
-                "Server borrows the client's LLM to reason"
-              ],
-              [
-                "Roots",
-                "Client tells server which directories are in scope"
-              ],
-              [
-                "Tool call",
-                "Model invokes a server function with args it already has"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "660dec7f-5e90-4f32-95cf-0808976e49fd",
-          "kind": "concept",
-          "title": "The Restrictions Are the Point, Not a Limitation",
-          "body": null,
-          "bullets": [
-            "The spec explicitly bans using elicitation to request sensitive information — passwords, API keys, credit card numbers have no business flowing through a form a server designed.",
-            "Flat-primitives-only isn't laziness: it keeps every client able to render a generic form without a bespoke UI per server, and stops elicitation from becoming a way to smuggle arbitrary structured data collection into a tool call.",
-            "Skip elicitation for anything the model can already infer from context, and for genuinely sensitive input — route those through the client's own auth flow instead. Reach for it when the missing piece is a fact, choice, or confirmation only the human has."
-          ],
-          "symbol": "shield.slash.fill",
-          "table": null
-        },
-        {
-          "id": "def90897-1d19-48a9-9ca3-fb6dfcb3cf94",
-          "kind": "takeaways",
-          "title": "A Form, Not a Chat Message",
-          "body": null,
-          "bullets": [
-            "Elicitation gives a server a structured way to ask the human directly — mid-call — instead of failing, guessing, or offloading the question to the model.",
-            "Three response actions (accept / decline / cancel) preserve the difference between 'no' and 'not now,' which a server should handle differently.",
-            "Schemas are intentionally flat and primitive-only, and sensitive data is explicitly off-limits — the constraints exist to keep the channel safe and every client able to render it generically."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "475856e5-c192-4b1c-8f6c-28926c92a825",
-            "prompt": "What does a server send when it calls elicitation/create?",
-            "options": [
-              "A raw text prompt for the model to answer on the user's behalf",
-              "A message plus a requestedSchema describing the structured input it needs",
-              "An OAuth token request",
-              "The full list of the client's declared roots"
-            ],
-            "correctIndex": 1,
-            "explanation": "elicitation/create carries a human-readable message and a requestedSchema (a restricted JSON Schema), which the client renders as a form for the human to fill in directly."
-          },
-          {
-            "id": "a79547c8-2b98-414f-ac35-ca1ebc9419be",
-            "prompt": "Why does MCP elicitation use three response actions (accept, decline, cancel) instead of just success/failure?",
-            "options": [
-              "To match HTTP status code conventions",
-              "Because decline (an explicit 'no') and cancel (dismissed without choosing) need different handling from a well-behaved server",
-              "It's a legacy artifact from an earlier protocol version",
-              "Because JSON-RPC requires exactly three response types"
-            ],
-            "correctIndex": 1,
-            "explanation": "A user explicitly declining is a real answer a server should respect; a user dismissing the dialog without choosing is inconclusive. Collapsing both into one 'failure' state would lose that distinction."
-          },
-          {
-            "id": "10878302-ecb3-4a5f-bc06-df48fb2a366d",
-            "prompt": "Why are elicitation schemas restricted to flat objects with primitive properties only?",
-            "options": [
-              "JSON Schema doesn't support nested objects at all",
-              "To keep every client able to render a generic form and to discourage using elicitation as a general-purpose data collection channel",
-              "Because nested schemas are too slow to parse",
-              "Because the MCP spec forbids servers from using enums"
-            ],
-            "correctIndex": 1,
-            "explanation": "Flat, primitive-only schemas mean any compliant client can render a sensible form without server-specific UI, and the constraint keeps elicitation scoped to quick, well-defined questions rather than arbitrary structured input."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "a3aa984a-f88c-47d0-ac9f-0da65f921849",
-          "title": "Elicitation - Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation"
-        }
-      ],
-      "id": "3fa92220-348c-4991-9b5b-83f461b30ef9",
-      "publishedDate": "2026-08-20T00:41:16Z",
-      "body": null,
-      "table": null,
-      "explanation": null
     }
   ]
 }
