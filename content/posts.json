@@ -1,6 +1,201 @@
 {
   "posts": [
     {
+      "id": "6b8f0682-e939-48cb-8882-584a19b112ef",
+      "title": "LSM Trees: Why Modern Databases Write Sequentially",
+      "subtitle": "The write-optimized storage engine behind Cassandra, RocksDB, and LevelDB",
+      "category": "Databases",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lsm tree",
+        "databases",
+        "rocksdb",
+        "cassandra",
+        "write amplification",
+        "storage engines"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cylinder.split.1x2.fill",
+      "heroImageURL": null,
+      "summary": "B-trees update pages in place, which turns every write into a random disk I/O once data outgrows RAM. Log-Structured Merge trees buffer writes in memory and flush them as sorted, immutable files, turning writes sequential -- at the cost of extra work later during compaction and reads. That single tradeoff explains the storage engine choice behind Cassandra, RocksDB, LevelDB, and HBase.",
+      "publishedDate": "2026-08-30T18:39:57Z",
+      "slides": [
+        {
+          "id": "7a2f447b-a1af-4d2b-93ff-4ce86beeec71",
+          "kind": "cover",
+          "title": "Trade Random Writes for Sequential Ones",
+          "body": "A B-tree updates a record by rewriting its page in place, wherever that page happens to sit on disk. An LSM tree never does that -- it only ever appends. That one decision reshapes everything about how the engine reads, writes, and reclaims space.",
+          "bullets": [],
+          "symbol": "cylinder.split.1x2.fill",
+          "table": null
+        },
+        {
+          "id": "21039554-ce82-40f2-80da-cf81b6215ede",
+          "kind": "problem",
+          "title": "In-Place Updates Make Every Write a Random Seek",
+          "body": "The bottleneck isn't CPU -- it's where on disk the write has to land.",
+          "bullets": [
+            "A B-tree write touches whichever leaf page holds that key, and once the working set outgrows RAM cache, that page is somewhere random on disk",
+            "A random seek costs orders of magnitude more than a sequential write on spinning disks, and even on SSDs random writes trigger extra erase-block reshuffling internally",
+            "High-ingest workloads -- metrics, event logs, sensor streams, time series -- generate far more write volume than a random-I/O-bound engine can absorb before it falls behind"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d4533ab2-5388-4336-a735-bad7a79473ab",
+          "kind": "solution",
+          "title": "Buffer in Memory, Flush as Sorted Immutable Files",
+          "body": "An LSM tree defers the disk write and batches it.",
+          "bullets": [
+            "Every write lands first in an in-memory sorted structure (the memtable, typically a skip list) and is appended to a write-ahead log on disk for crash durability",
+            "When the memtable fills -- commonly a 64MB-256MB threshold -- it's flushed to disk as one large sequential write: an immutable Sorted String Table (SSTable) that is never modified again",
+            "A read has to check the memtable first, then potentially several SSTables from newest to oldest -- each SSTable carries a Bloom filter so the engine can skip files that provably don't contain the key without touching disk"
+          ],
+          "symbol": "tray.and.arrow.down.fill",
+          "table": null
+        },
+        {
+          "id": "36bde138-2c6b-4644-ad72-0d5baf77d18d",
+          "kind": "architecture",
+          "title": "Compaction Is What Keeps Reads From Degrading",
+          "body": "Left alone, SSTables pile up and a single read would need to check dozens of them -- compaction merges files back down.",
+          "bullets": [
+            "Leveled compaction (RocksDB and LevelDB's default): SSTables are organized into levels L0 through L6, each roughly 10x larger than the one above; a key gets rewritten as it's pushed down levels, which favors low read and space amplification at the cost of extra write work",
+            "Size-tiered compaction (Cassandra's default, in the Bigtable lineage): similarly-sized SSTables are merged together as they accumulate; this keeps write amplification lower but lets more duplicate/stale data coexist, so space amplification is higher",
+            "Compaction is a background process competing for the same CPU and disk bandwidth as live traffic -- if it can't keep up, SSTables accumulate faster than they're merged ('compaction debt') and read latency climbs"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "2500e915-dfe5-426e-b5de-6748b3a796ea",
+          "kind": "comparison",
+          "title": "The Tradeoff, Side by Side",
+          "body": "Neither structure is strictly better -- each optimizes for a different access pattern.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "B-Tree",
+              "LSM Tree"
+            ],
+            "rows": [
+              [
+                "Write pattern",
+                "Random, in-place page updates",
+                "Sequential append-only flushes"
+              ],
+              [
+                "Write amplification",
+                "Low, typically small multiples",
+                "Higher -- compaction rewrites keys multiple times as they move through levels"
+              ],
+              [
+                "Read path",
+                "Single, predictable page-lookup path",
+                "Memtable plus possibly several SSTables, narrowed by Bloom filters"
+              ],
+              [
+                "Space overhead",
+                "Low -- updates overwrite in place",
+                "Higher until compaction reclaims stale/overwritten versions"
+              ],
+              [
+                "Good fit",
+                "Read-heavy or balanced OLTP (Postgres, MySQL/InnoDB)",
+                "Write-heavy, high-ingest workloads (Cassandra, RocksDB, LevelDB, HBase)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "68d51d6b-a8e8-4394-a377-ed9bb30aeb20",
+          "kind": "example",
+          "title": "50,000 Sensors Writing Once a Second",
+          "body": "A fleet of IoT sensors each writes a reading every second -- 50k small writes/sec, scattered across an effectively random key space.",
+          "bullets": [
+            "On a B-tree engine, that's 50k potential random page touches per second -- disk IOPS becomes the bottleneck long before storage capacity does",
+            "On an LSM engine (this is Cassandra's write path), every write instead lands in the memtable plus the append-only commit log; the memtable flushes to a brand-new SSTable every few minutes as a single sequential write, regardless of how scattered the actual keys were",
+            "Reading the latest value for one sensor checks the memtable first (fast, in RAM), then consults each SSTable's Bloom filter -- with a well-tuned false-positive rate around 1%, almost all irrelevant SSTables are skipped without a single disk read"
+          ],
+          "symbol": "antenna.radiowaves.left.and.right",
+          "table": null
+        },
+        {
+          "id": "37c44dfc-68ad-4ed3-a18c-fa06fda35eaa",
+          "kind": "problem",
+          "title": "When an LSM Tree Is the Wrong Choice",
+          "body": "The write optimization isn't free, and sometimes it buys you nothing.",
+          "bullets": [
+            "Read-heavy, point-lookup-dominated workloads with light write volume gain little from the write optimization while still paying its read and space overhead -- a plain B-tree is simpler and often faster there",
+            "Range scans across many un-compacted SSTables with overlapping key ranges can be slower than a B-tree's contiguous leaf pages",
+            "Space amplification means an LSM store can temporarily consume well over the logical data size until compaction catches up -- a real capacity-planning concern, not just a theoretical one",
+            "Under sustained write rates that outpace compaction throughput, read latency degrades sharply as unmerged SSTables accumulate -- a failure mode that doesn't exist for a B-tree"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "39e5e1d5-73dd-460b-9ff4-28047a17b6cb",
+          "kind": "takeaways",
+          "title": "Pick the Engine That Matches Your Write Pattern",
+          "body": "The whole design comes down to when you pay the I/O cost: at write time, or later.",
+          "bullets": [
+            "LSM trees convert random writes into sequential ones by buffering in memory and flushing sorted, immutable files -- the mechanism behind Cassandra, RocksDB, LevelDB, and HBase",
+            "The cost shows up later: read amplification (multiple files to check per read) and write amplification (compaction rewrites data multiple times over its lifetime)",
+            "Leveled compaction trades more write amplification for better read/space efficiency; size-tiered compaction trades more space for better write throughput",
+            "Default to a B-tree for read-heavy or balanced OLTP; reach for an LSM-based engine when ingest volume, not lookup speed, is the binding constraint"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "31636b8f-a84d-4ae5-9606-d2545439b7b8",
+            "prompt": "What's the core trick an LSM tree uses to avoid random disk writes?",
+            "options": [
+              "It stores all data permanently in RAM",
+              "It buffers writes in memory and flushes them as sorted, immutable files in one sequential write",
+              "It uses a B-tree internally but caches more aggressively",
+              "It writes directly to raw SSD blocks using TRIM commands"
+            ],
+            "correctIndex": 1,
+            "explanation": "An LSM tree defers writing to disk until a memtable fills, then flushes the whole thing as one sequential file (an SSTable) instead of updating scattered pages in place -- that's what turns random writes into sequential ones."
+          },
+          {
+            "id": "31b4c0ac-1cfb-44d6-937a-be2c590e9913",
+            "prompt": "Why does an LSM tree rely on Bloom filters?",
+            "options": [
+              "To compress SSTables on disk",
+              "To encrypt data before compaction",
+              "To quickly rule out SSTables that can't contain a given key, without reading them from disk",
+              "To decide which compaction strategy to run"
+            ],
+            "correctIndex": 2,
+            "explanation": "Since a read may need to check many SSTables, a Bloom filter per SSTable lets the engine skip files that provably don't contain the key, avoiding wasted disk I/O. False positives just cost an extra unnecessary check -- they never cause a missed key."
+          },
+          {
+            "id": "b512f608-1ba9-4d60-b52a-b39060cb153e",
+            "prompt": "Which workload is an LSM tree's design NOT a great fit for?",
+            "options": [
+              "High-volume sensor or event ingestion",
+              "A write-heavy, append-mostly log",
+              "A read-heavy workload dominated by point lookups on rarely-changing data",
+              "Time-series data ingestion"
+            ],
+            "correctIndex": 2,
+            "explanation": "LSM trees pay their compaction and multi-file-read tax specifically to optimize writes. A workload that's mostly reads on rarely-changing data gets little of that benefit while still paying the read and space amplification costs -- a plain B-tree is usually simpler and faster there."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "eb4614df-3e60-435b-be0f-a7f36ec24a98",
       "title": "Hybrid Search: When Keyword Beats a Perfect Embedding",
       "subtitle": "Why every serious RAG stack still runs BM25 next to the vector index",
@@ -10928,181 +11123,6 @@
       "references": [],
       "publishedDate": "2026-08-21T18:39:21Z",
       "heroImageURL": null
-    },
-    {
-      "id": "4f27f9b8-adf8-4407-a205-baa9fd41d9b3",
-      "title": "ToolHazard: Scaling Adversarial Environments for Agent Security",
-      "subtitle": "Hand-built red-team environments don't scale. ToolHazard synthesizes stateful ones automatically — and shows agents are still very easy to hijack.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "prompt-injection",
-        "agent-security",
-        "ai-agents",
-        "red-teaming",
-        "alignment"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "shield.lefthalf.filled.trianglebadge.exclamationmark",
-      "summary": "ToolHazard is a framework that auto-generates stateful, tool-using environments to stress-test LLM agents against indirect prompt injection, replacing the manually-built or LLM-simulated environments prior security benchmarks relied on. Its ToolHazard-Bench (87 long-horizon tasks, 28 environments, 512 tools) shows agents remain highly vulnerable, that injection timing/placement changes attack success, and that training on ToolHazard-generated attacks measurably improves security on both ToolHazard-Bench and the existing AgentDojo benchmark without hurting benign task performance.",
-      "slides": [
-        {
-          "id": "8df91273-0108-43b2-a1eb-99e18644eec0",
-          "kind": "cover",
-          "title": "The Attack Doesn't Come From the User — It Comes From the Tool Output",
-          "body": "An agent that reads a webpage, a file, or an API response is trusting that content as much as it trusts its own instructions. Indirect prompt injection hides an attack inside exactly that content.",
-          "bullets": [],
-          "symbol": "shield.lefthalf.filled.trianglebadge.exclamationmark",
-          "table": null
-        },
-        {
-          "id": "d550c30e-d6f7-4c2d-ba86-5ef3e738a7e3",
-          "kind": "problem",
-          "title": "Security Benchmarks Were the Bottleneck, Not the Attacks",
-          "body": null,
-          "bullets": [
-            "Testing agent security at scale needs realistic, stateful environments — a fake email inbox, a fake shell, a fake ticketing system the agent can actually act on, not just a static prompt.",
-            "Prior work mostly relied on manually implemented or reused environments (slow, doesn't scale to new domains), or stochastic LLM-simulated tools (inconsistent, hard to reproduce), with injection points chosen in advance by the researchers.",
-            "That combination caps how broad and how realistic security evaluation can get — you can't stress-test an agent against attack surfaces nobody thought to hand-build.",
-            "ToolHazard's contribution isn't a new attack technique — it's a way to generate the adversarial environments themselves at scale, so evaluation can cover far more ground automatically."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "02aecfff-10a0-4967-a5d9-1f8669db4c91",
-          "kind": "solution",
-          "title": "Three Roles Synthesize an Attack End-to-End",
-          "body": null,
-          "bullets": [
-            "Environment Simulator: builds an executable, stateful environment (tools + underlying state) from a seed domain — so the agent's actions have real, persistent consequences, not scripted responses.",
-            "Attacker Agent: automatically discovers viable injection points inside that environment and generates payloads specific to it, instead of reusing a generic injected string across every domain.",
-            "User Simulator: constructs state-grounded, long-horizon tasks — multi-step goals that give the injected payload realistic opportunities to be encountered during normal tool use.",
-            "Together these three roles remove the human-engineering bottleneck: new seed domains and more compute directly buy more coverage, instead of more researcher-hours per environment."
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "3a08ae76-4ad1-49f8-b4fb-921f374d7dc3",
-          "kind": "comparison",
-          "title": "ToolHazard-Bench at a Glance",
-          "body": "The benchmark built from this framework is substantially larger and more complex than prior hand-built agent security suites.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Dimension",
-              "ToolHazard-Bench"
-            ],
-            "rows": [
-              [
-                "Long-horizon tasks",
-                "87"
-              ],
-              [
-                "Stateful environments",
-                "28"
-              ],
-              [
-                "Tools available",
-                "512"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "3bc6e736-a966-4626-bbc5-ce7903cf6cc9",
-          "kind": "example",
-          "title": "Worked Example: Where the Payload Lands Matters",
-          "body": null,
-          "bullets": [
-            "Picture an agent working a long-horizon task: read a support ticket, check an internal wiki, then send a reply — five or six tool calls deep.",
-            "The paper's findings show attacks are more effective when the injected instruction is encountered EARLIER in that sequence, and when it's placed near the END of a given tool observation (e.g. the tail of a long wiki page) rather than buried in the middle.",
-            "That means the same malicious string can succeed or fail purely based on where in the task and where in the document it's positioned — timing and placement are attack variables on their own, independent of the payload's content.",
-            "For anyone building agent evals, this implies a single injection test at a single position badly undersells real risk — you need to vary position and timing to see the actual attack surface."
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "85ba0938-373b-4ca9-8730-c749448d9cbc",
-          "kind": "problem",
-          "title": "The Headline Result: Agents Are Still Easy to Hijack",
-          "body": null,
-          "bullets": [
-            "Finding 1: LLM agents remain highly vulnerable to environmental prompt injections — this holds across the framework's generated environments, not just a handful of hand-picked cases.",
-            "Finding 2: injection timing and placement measurably change attack effectiveness (see the worked example) — defenses that only pattern-match on payload content will miss this dimension entirely.",
-            "Finding 3: training/alignment using ToolHazard-generated attack data improves security on BOTH ToolHazard-Bench and the pre-existing AgentDojo benchmark — evidence the generated attacks aren't just overfitting to their own benchmark.",
-            "Critically, that security improvement held while preserving benign task utility — the fix isn't just making the agent refuse more often at the cost of usefulness."
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "a6564049-8725-49fe-ac1d-32ece420af9a",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "ToolHazard automates building the stateful, tool-using environments needed for agent security testing — the bottleneck it removes is environment construction, not attack invention.",
-            "ToolHazard-Bench (87 tasks, 28 environments, 512 tools) is bigger and more realistic than prior hand-built agent security benchmarks.",
-            "Attack success depends on injection timing and placement, not just payload content — evaluation and defenses both need to account for position, not only text-matching.",
-            "Training on ToolHazard-generated attacks transferred to an independent benchmark (AgentDojo) without hurting benign performance — a meaningful signal the approach generalizes."
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "64289de3-48c2-4921-89e0-9af2955e1668",
-            "prompt": "What is ToolHazard's main contribution, according to the paper?",
-            "options": [
-              "A brand-new prompt injection attack technique nobody had used before",
-              "A framework that automatically synthesizes stateful, tool-using adversarial environments at scale, instead of relying on hand-built or LLM-simulated ones",
-              "A patch that fully eliminates prompt injection vulnerability in LLM agents",
-              "A dataset of only static, single-turn text prompts"
-            ],
-            "correctIndex": 1,
-            "explanation": "ToolHazard's contribution is scaling environment construction itself — via an Environment Simulator, Attacker Agent, and User Simulator — so security evaluation can cover far more realistic, stateful domains than manually engineered benchmarks allowed."
-          },
-          {
-            "id": "31a56940-b2e7-4164-bc80-c27ba01a0210",
-            "prompt": "According to the paper's findings, what makes an injected instruction MORE likely to succeed?",
-            "options": [
-              "Being encountered later in the task and placed at the very start of an observation",
-              "Being encountered earlier in the task and placed near the end of an observation",
-              "Injection timing and placement have no measurable effect on success",
-              "Only using injections written in a different language than the task"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper found attacks are more effective when injected instructions are encountered earlier in a long-horizon task and positioned near the end of a given tool observation — both position and timing are real attack-effectiveness variables."
-          },
-          {
-            "id": "b3ca20c6-c05b-4dda-a07e-0265bb89331d",
-            "prompt": "How did the paper demonstrate that alignment using ToolHazard-generated attacks actually generalizes, rather than just overfitting?",
-            "options": [
-              "By showing security gains only appear on ToolHazard-Bench itself",
-              "By showing the security improvement transferred to AgentDojo, an independent pre-existing benchmark, while preserving benign task utility",
-              "By testing on a single hand-picked example and declaring success",
-              "The paper doesn't test generalization at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "Training on ToolHazard-generated attack data improved security on both ToolHazard-Bench and the separate AgentDojo benchmark, without degrading performance on benign tasks — evidence the defense isn't just narrowly fit to ToolHazard's own test set."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "18466995-1c04-4f45-b851-684a5558ca08",
-          "title": "ToolHazard: Scaling Adversarial Environments for Security Evaluation and Alignment of LLM-based Agents (arXiv:2608.11878)",
-          "url": "https://arxiv.org/abs/2608.11878"
-        }
-      ],
-      "publishedDate": "2026-08-21T12:46:53Z"
     }
   ]
 }
