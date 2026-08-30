@@ -1,6 +1,206 @@
 {
   "posts": [
     {
+      "id": "12bed5cd-ac89-4dd3-b02a-2ef63bcfdec7",
+      "title": "Reflexion: Learning From Failure Without Retraining",
+      "subtitle": "A verbal note to itself replaces the gradient update",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "reflexion",
+        "self-critique",
+        "agent memory",
+        "verbal reinforcement learning",
+        "agent architecture"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "heroImageURL": null,
+      "summary": "Reflexion wraps a frozen LLM in an Actor / Evaluator / Self-Reflection loop: the Evaluator scores a trajectory, Self-Reflection turns that signal into a specific verbal critique, and the critique is stored in memory for the next attempt -- no weight updates required. On HumanEval it pushed GPT-4's pass@1 from 80% to 91%, and on ALFWorld it solved 130/134 tasks against a plain ReAct baseline.",
+      "publishedDate": "2026-08-30T00:41:02Z",
+      "slides": [
+        {
+          "id": "c118bb12-a4a1-46e0-8b03-e49581d933da",
+          "kind": "cover",
+          "title": "An agent that critiques its own failure, then tries again",
+          "body": "Reflexion skips gradient updates entirely. Instead of retraining, the agent writes itself a note about what went wrong and carries that note into the next attempt.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "4b105e71-7bf9-44df-9614-69aadc7b0903",
+          "kind": "problem",
+          "title": "Fine-tuning after every failure is too slow to use mid-task",
+          "body": "Traditional RL turns a failure into a gradient update -- useful across many training episodes, but useless for an agent that needs to do better on its very next attempt, in the same session.",
+          "bullets": [
+            "A weight update needs a gradient computation and a training loop -- not something you can run between two tool calls",
+            "A single failed trajectory carries a specific lesson (\"called the API with the wrong key name\") that a scalar reward collapses into one number",
+            "Naive retry-until-success wastes the failure entirely -- nothing stops the agent from repeating the same mistake"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "cf0f3c0f-ac87-430f-83f4-47a6963f0c2a",
+          "kind": "solution",
+          "title": "Three roles: Actor, Evaluator, Self-Reflection",
+          "body": "Reflexion (Shinn et al., 2023) wraps a frozen LLM in a loop of three roles that never touch its weights.",
+          "bullets": [
+            "Actor: the base LLM produces a trajectory -- actions, code, or reasoning steps -- given the task and any prior reflections",
+            "Evaluator: scores that trajectory -- unit tests for code, exact-match for QA, environment success/fail for decision-making tasks",
+            "Self-Reflection model: turns the Evaluator's signal into a specific verbal critique instead of a bare pass/fail number"
+          ],
+          "symbol": "square.stack.3d.up",
+          "table": null
+        },
+        {
+          "id": "64045215-50d5-4656-ac99-8766fc681fd1",
+          "kind": "architecture",
+          "title": "The critique is stored, not just spoken",
+          "body": "Each reflection is appended to a small episodic memory buffer that gets injected into the Actor's context on the next trial.",
+          "bullets": [
+            "The memory buffer is capped -- the paper keeps roughly the last 1-3 reflections, since it has to fit in the context window, not a database",
+            "No parameters change between trials -- every improvement lives entirely in the text carried forward",
+            "The loop repeats for a fixed trial budget (up to ~10-12 trials in the paper) or until the Evaluator reports success"
+          ],
+          "symbol": "memorychip",
+          "table": null
+        },
+        {
+          "id": "c2836ca8-d678-477f-ae08-e111c5021f91",
+          "kind": "example",
+          "title": "HumanEval: 80% to 91% pass@1, with no retraining",
+          "body": "On the HumanEval coding benchmark, wrapping GPT-4 in the Reflexion loop pushed pass@1 past the prior state of the art -- purely through self-critique and retries on the same problem.",
+          "bullets": [
+            "Baseline GPT-4, zero-shot, no reflection: 80% pass@1 -- the state of the art at publication",
+            "GPT-4 + Reflexion: 91% pass@1 -- unit-test failures become the Evaluator signal that drives the next reflection",
+            "On ALFWorld's 134 decision-making tasks, Reflexion solved 130 versus a plain ReAct baseline, and cut hallucinated-action rates from 32% to 3% over 10 trials"
+          ],
+          "symbol": "checkmark.circle",
+          "table": null
+        },
+        {
+          "id": "e7ce7423-08fa-4d61-ba58-0948319ae102",
+          "kind": "comparison",
+          "title": "Reflexion vs. plain retry vs. RL fine-tuning",
+          "body": "",
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "Plain retry",
+              "RL fine-tuning",
+              "Reflexion"
+            ],
+            "rows": [
+              [
+                "Learns from failure",
+                "No -- same mistake repeats",
+                "Yes, via gradient updates",
+                "Yes, via verbal self-critique"
+              ],
+              [
+                "Needs training infra",
+                "No",
+                "Yes -- reward model, optimizer",
+                "No -- frozen weights throughout"
+              ],
+              [
+                "Where the lesson lives",
+                "Nowhere",
+                "Model weights",
+                "Episodic memory buffer (text)"
+              ],
+              [
+                "Cost per lesson learned",
+                "Free, but useless",
+                "Expensive (a gradient step)",
+                "One extra LLM call"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8a550396-50bb-45d2-870f-755454510529",
+          "kind": "problem",
+          "title": "It only works when there's a real evaluator",
+          "body": "Reflexion's whole loop depends on getting back a trustworthy pass/fail or reward signal -- weak or absent evaluators break it.",
+          "bullets": [
+            "Tasks without a checkable signal, like open-ended creative writing, give the Self-Reflection model nothing solid to critique",
+            "An LLM-judged Evaluator can itself hallucinate a wrong verdict, teaching the agent the wrong lesson with total confidence",
+            "The memory buffer's small cap means older, still-relevant lessons get pushed out as new trials accumulate",
+            "Each trial costs a full extra generation pass -- multiply that by the trial budget before assuming it's cheap"
+          ],
+          "symbol": "xmark.octagon",
+          "table": null
+        },
+        {
+          "id": "43df2e55-6175-4101-bcfb-48cb41954150",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "Reflexion adds a learning loop entirely in-context, with no training infrastructure required.",
+          "bullets": [
+            "Actor generates, Evaluator scores, Self-Reflection writes a specific verbal lesson, memory carries it into the next trial",
+            "No gradient updates -- the thing that 'improves' is the growing text in the prompt, not the model's weights",
+            "It needs a real evaluator signal (unit tests, exact-match, environment success) -- a bad evaluator teaches a bad lesson",
+            "Proven on coding (HumanEval 80% -> 91% pass@1) and decision-making (ALFWorld 130/134 tasks, hallucination rate 32% -> 3%)"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ad8ce8c4-793f-4147-8283-36617725f97b",
+            "prompt": "What does the Self-Reflection component actually produce?",
+            "options": [
+              "A scalar reward value",
+              "A specific verbal critique stored in memory",
+              "An updated set of model weights",
+              "A new fine-tuning dataset"
+            ],
+            "correctIndex": 1,
+            "explanation": "Self-Reflection turns the Evaluator's pass/fail signal into a specific natural-language lesson, appended to the episodic memory buffer -- not a weight update."
+          },
+          {
+            "id": "4321c8fa-ff00-46f0-a932-e698b02eddc5",
+            "prompt": "On HumanEval, what pass@1 score did GPT-4 + Reflexion reach, up from an 80% baseline?",
+            "options": [
+              "82%",
+              "85%",
+              "91%",
+              "99%"
+            ],
+            "correctIndex": 2,
+            "explanation": "Reflexion pushed GPT-4 from 80% to 91% pass@1, purely by having it read its own unit-test failures and retry with a specific critique carried in context."
+          },
+          {
+            "id": "c74eda4b-ba86-43bb-af82-5bd196342d2f",
+            "prompt": "Why does Reflexion break down on a task with no reliable evaluator?",
+            "options": [
+              "Because the episodic memory buffer requires a database",
+              "Because the Self-Reflection model has nothing accurate to critique without a trustworthy pass/fail or reward signal",
+              "Because the Actor can't generate text without gradient updates",
+              "Because it requires a GPU to run the Evaluator"
+            ],
+            "correctIndex": 1,
+            "explanation": "The whole loop hinges on the Evaluator's signal. Without a trustworthy pass/fail or reward, Self-Reflection has nothing solid to critique and can reinforce the wrong lesson with full confidence."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d767dc2a-d7ac-4feb-8979-ccf432a48697",
+          "title": "Reflexion: Language Agents with Verbal Reinforcement Learning (Shinn et al., 2023)",
+          "url": "https://arxiv.org/abs/2303.11366"
+        }
+      ]
+    },
+    {
       "id": "ac715b06-cf59-44ef-ac4b-0929e09809fb",
       "title": "LLM-as-a-Verifier: A New Scaling Axis for Agents",
       "subtitle": "Score trajectories with logit expectations, not a single judge call",
@@ -10911,215 +11111,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "id": "1316edf2-83ae-4bc5-9479-0d2c268d0784",
-      "title": "Mixture of Experts: 671B Weights, 37B of Work",
-      "subtitle": "Sparse routing decouples how big a model is from how much it costs to run.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "mixture-of-experts",
-        "moe",
-        "sparse-models",
-        "inference-optimization",
-        "routing"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "A Mixture-of-Experts layer replaces one big feed-forward block with many small ones and a router that picks a handful per token. That breaks the usual link between parameter count and FLOPs: DeepSeek-V3 holds 671B parameters but does the arithmetic of a 37B model. The cost you don't escape is memory — you still have to hold every expert.",
-      "publishedDate": "2026-08-20T18:41:51Z",
-      "slides": [
-        {
-          "id": "6d24dc37-7164-47a1-8b57-e6e80d331250",
-          "kind": "cover",
-          "title": "Every Token Pays for Every Parameter — Unless It Doesn't",
-          "body": "In a dense transformer, a 70B model multiplies all 70B weights for every single token. Mixture of Experts breaks that rule: the weights sit in memory, but each token only touches a slice of them.",
-          "bullets": [],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "14201bca-1ebc-42bc-bae8-d51dda204fbf",
-          "kind": "problem",
-          "title": "Dense Scaling Ties Capacity to Cost 1:1",
-          "body": "Scaling laws say more parameters means a better model. But in a dense network, doubling parameters doubles the FLOPs per token — and therefore latency and serving cost.",
-          "bullets": [
-            "Roughly two-thirds of a transformer's parameters live in the feed-forward blocks, not attention.",
-            "Those blocks are where 'knowledge' concentrates — and where most of the per-token FLOPs go.",
-            "The uncomfortable question: does a token about Python syntax really need the weights that encode French poetry?"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "51a65225-0999-48c1-94d3-e95d14ba8c9c",
-          "kind": "solution",
-          "title": "Replace One FFN With N of Them, Plus a Router",
-          "body": "An MoE layer swaps the single feed-forward block for N smaller 'experts'. A tiny linear router scores all N for the incoming token, softmaxes the scores, and sends the token to only the top-k.",
-          "bullets": [
-            "Router is one matrix: hidden_dim x N. Cost is negligible next to the experts themselves.",
-            "Output = weighted sum of the k chosen experts, using their router probabilities as weights.",
-            "Attention is untouched and stays dense — every token still attends over the full sequence.",
-            "Routing is per-token AND per-layer: the same token can hit completely different experts at layer 5 and layer 30."
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "934a882a-1edf-4a28-9a15-f703387986ab",
-          "kind": "architecture",
-          "title": "Fine-Grained Experts and the Shared Expert",
-          "body": "Modern MoE designs shrink each expert and raise k, so the router composes many small specialists instead of picking one of a few generalists. Some architectures also add an expert every token always uses.",
-          "bullets": [
-            "Switch Transformer (2021) took the simplest route: top-1 routing, one expert per token, scaled to trillion-parameter models.",
-            "Mixtral 8x7B: 8 experts per layer, router picks 2.",
-            "DeepSeek-V3: 256 routed experts per layer, router picks 8 — far finer slicing of the same capacity.",
-            "DeepSeek-V3 also keeps 1 shared expert that every token passes through, so common knowledge isn't duplicated 256 times."
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "0e8f0978-84b1-4a5b-8db5-cab1f7073edc",
-          "kind": "comparison",
-          "title": "Total vs. Active Parameters, in Real Models",
-          "body": "The gap between the two columns is the whole point of MoE. DeepSeek-V3 activates about 5.5% of its parameters per token; Mixtral activates about 28%.",
-          "bullets": [
-            "Switch Transformers reported up to 7x faster pre-training than dense T5 baselines at equal compute.",
-            "Mixtral matches or beats Llama 2 70B on benchmarks while doing the per-token arithmetic of a 12.9B model."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Model",
-              "Total params",
-              "Active per token",
-              "Experts picked"
-            ],
-            "rows": [
-              [
-                "Switch-C",
-                "~1.6T",
-                "one expert's worth",
-                "1 (top-1)"
-              ],
-              [
-                "Mixtral 8x7B",
-                "46.7B",
-                "12.9B",
-                "2 of 8"
-              ],
-              [
-                "DeepSeek-V3",
-                "671B",
-                "37B",
-                "8 of 256 (+1 shared)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "4563d478-0219-4514-89ea-8bd1460bb444",
-          "kind": "example",
-          "title": "Worked Example: Sizing a Box for Mixtral 8x7B",
-          "body": "Say you want to serve Mixtral 8x7B in bf16. Budget the memory from total parameters and the throughput from active parameters — they give completely different answers.",
-          "bullets": [
-            "Memory: 46.7B params x 2 bytes = ~93 GB of weights. One 80 GB H100 is not enough; you need two, before any KV cache.",
-            "Compute: only 12.9B params multiply per token, so latency lands near a ~13B dense model, not a ~47B one.",
-            "Net effect: you buy 70B-class quality at 13B-class speed — and pay for it in VRAM, not in time.",
-            "DeepSeek-V3 makes the same trade far more extreme: ~670 GB of FP8 weights for 37B worth of arithmetic."
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "c172b559-47fb-4868-9e67-a8d4a6a3f3ae",
-          "kind": "concept",
-          "title": "Where MoE Hurts: Collapse, All-to-All, and Small Batches",
-          "body": "Sparsity is not free. Three failure modes bite in practice, and one of them can silently ruin a training run.",
-          "bullets": [
-            "Routing collapse: nothing stops the router from funneling most tokens into a few experts. The rest never train, and your 671B model behaves like a small dense one.",
-            "The classic fix is an auxiliary load-balancing loss — but it fights the language-modeling objective. DeepSeek-V3 instead nudges a per-expert bias used only for routing, keeping the loss clean.",
-            "Expert parallelism means an all-to-all shuffle at every MoE layer. DeepSeek-V3 caps each token's routing to 4 nodes purely to bound that traffic.",
-            "Small batches waste it: with few tokens in flight, each expert gets a handful of rows and the GPU idles on weights you paid to load."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9efacf03-03c2-4aeb-964e-97e56e050741",
-          "kind": "takeaways",
-          "title": "When to Reach for MoE — and When Not To",
-          "body": null,
-          "bullets": [
-            "MoE decouples capacity from compute: parameters set memory, active parameters set latency.",
-            "Best fit: high-throughput serving where big batches keep every expert busy and VRAM is available.",
-            "Worst fit: single-user local inference on one consumer GPU — you pay full memory for a fraction of the compute.",
-            "Always check the active-parameter count, not the headline one, when comparing an MoE model to a dense one."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "c374352b-db1d-4840-9374-c84293532821",
-            "prompt": "DeepSeek-V3 has 671B total parameters and activates 37B per token. What does that imply for deployment?",
-            "options": [
-              "You only need enough VRAM for 37B parameters",
-              "You need VRAM for all 671B, but the per-token compute is closer to a 37B model",
-              "Both memory and compute scale with 37B",
-              "Both memory and compute scale with 671B"
-            ],
-            "correctIndex": 1,
-            "explanation": "The router can pick any expert for any token, so all 671B parameters must be resident in memory. Only the 8 selected experts do arithmetic, so FLOPs per token track the 37B figure. Memory follows total params; latency follows active params."
-          },
-          {
-            "id": "9a2c67e4-41ef-4e74-9600-46a835a3e3a5",
-            "prompt": "What is 'routing collapse' in an MoE model?",
-            "options": [
-              "The router network runs out of memory during training",
-              "Experts are dropped when a node fails mid-training",
-              "The router sends most tokens to a small subset of experts, leaving the rest undertrained",
-              "Two experts learn identical weights and are merged"
-            ],
-            "correctIndex": 2,
-            "explanation": "Routing is a positive feedback loop: an expert that gets more tokens trains faster, so the router prefers it even more. Left unchecked, your huge sparse model effectively shrinks to a few active experts. Balancing schemes — an auxiliary loss, or DeepSeek-V3's routing-only bias term — exist to break that loop."
-          },
-          {
-            "id": "4cdb52a0-2995-4b35-a4b8-df559ad73a7b",
-            "prompt": "Which workload is the WORST fit for a Mixture-of-Experts model?",
-            "options": [
-              "A batched serving endpoint handling thousands of concurrent requests",
-              "Large-scale pre-training on a multi-node GPU cluster",
-              "Single-user chat on one consumer GPU with limited VRAM",
-              "A high-throughput document summarization pipeline"
-            ],
-            "correctIndex": 2,
-            "explanation": "MoE's win comes from spending memory to save compute, and it needs many tokens in flight so every expert gets a full batch. A single user on a memory-constrained GPU hits the worst of both: they must hold every expert, but never generate enough concurrent tokens to keep them busy."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "cb1c1bda-1b01-4ff5-815a-f8f125d9b416",
-          "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity (arXiv:2101.03961)",
-          "url": "https://arxiv.org/abs/2101.03961"
-        },
-        {
-          "id": "2dc3161e-9fa5-443c-a067-da51b27d9014",
-          "title": "Mixtral of Experts (arXiv:2401.04088)",
-          "url": "https://arxiv.org/abs/2401.04088"
-        },
-        {
-          "id": "a9cc41dc-8b4e-4dd2-b614-0e7bcc62b2ef",
-          "title": "DeepSeek-V3 Technical Report (arXiv:2412.19437)",
-          "url": "https://arxiv.org/abs/2412.19437"
-        }
-      ]
     }
   ]
 }
