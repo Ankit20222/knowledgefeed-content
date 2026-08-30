@@ -1,6 +1,183 @@
 {
   "posts": [
     {
+      "id": "eb4614df-3e60-435b-be0f-a7f36ec24a98",
+      "title": "Hybrid Search: When Keyword Beats a Perfect Embedding",
+      "subtitle": "Why every serious RAG stack still runs BM25 next to the vector index",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "hybrid search",
+        "bm25",
+        "vector search",
+        "reciprocal rank fusion",
+        "rag",
+        "retrieval"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.merge",
+      "heroImageURL": null,
+      "summary": "Dense vector search is great at meaning but bad at exact tokens -- SKUs, error codes, acronyms, rare proper nouns -- because embeddings compress them into the same neighborhood as similar-sounding words. Hybrid search fixes this by running a sparse keyword ranker (BM25) alongside the dense retriever and fusing the two rankings, typically with Reciprocal Rank Fusion, so exact matches and semantic matches both surface.",
+      "publishedDate": "2026-08-30T12:39:32Z",
+      "slides": [
+        {
+          "id": "a12ea97f-99cb-400b-a641-906557d4d904",
+          "kind": "cover",
+          "title": "Two Retrievers Are Better Than One",
+          "body": "Pure vector search quietly fails on the exact strings people actually search for -- part numbers, error codes, names. Hybrid search runs a keyword ranker alongside the embedding search and merges the results.",
+          "bullets": [],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "a2ccc543-f469-495f-bba1-6d194a4c947f",
+          "kind": "problem",
+          "title": "Embeddings blur the tokens that matter most",
+          "body": "A dense embedding model maps text into a continuous space optimized for semantic similarity. That's exactly the property that breaks exact-match retrieval.",
+          "bullets": [
+            "Query 'error E4021' can rank a doc about 'error E4029' above the one that actually contains E4021 -- the embedding sees them as nearly identical",
+            "Rare proper nouns, product SKUs, and acronyms often collapse into the same neighborhood as unrelated but stylistically similar text",
+            "Embedding models are trained on general semantic similarity, not on your domain's exact-identifier vocabulary"
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "table": null
+        },
+        {
+          "id": "367139a8-1ce7-460f-88f9-61c8a8c00c81",
+          "kind": "solution",
+          "title": "Run a sparse ranker in parallel, then fuse",
+          "body": "BM25 (a term-frequency / inverse-document-frequency ranking function) scores documents by exact and near-exact term overlap -- the opposite failure mode of dense embeddings. Hybrid search runs both retrievers on the same query and merges their result lists.",
+          "bullets": [
+            "BM25 rewards documents where the query's exact terms appear, weighted by how rare those terms are across the corpus",
+            "The two rankers produce scores on incompatible scales, so you can't just add them -- you need a fusion step",
+            "Reciprocal Rank Fusion (RRF) sidesteps the scaling problem entirely by fusing on RANK, not raw score: score(d) = sum over rankers of 1 / (k + rank(d)), with k commonly set around 60"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "c97e2ab0-4210-43e6-909f-63d90656199d",
+          "kind": "example",
+          "title": "Walking through one query",
+          "body": "Query: 'reset procedure for E4021'. The corpus has a runbook titled 'E4021 Reset Procedure' and a semantically similar but wrong doc titled 'E4029 Recovery Steps'.",
+          "bullets": [
+            "Dense retriever: ranks 'E4029 Recovery Steps' #1 (semantically close: both are error-reset docs) and buries the correct E4021 doc at #6",
+            "BM25: ranks the correct 'E4021 Reset Procedure' #1 because the exact token 'E4021' matches, and ranks the E4029 doc much lower",
+            "RRF fusion: the correct doc gets 1/(60+1) from BM25 plus a smaller contribution from dense, pushing it back to the top of the merged list"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "de2e0188-fa56-4a80-92fc-220977ce211e",
+          "kind": "comparison",
+          "title": "Each retriever covers the other's blind spot",
+          "body": "Neither ranker is strictly better -- they fail on different query shapes, which is exactly why fusing them helps instead of just picking the stronger one.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Query shape",
+              "Dense vector",
+              "BM25 keyword"
+            ],
+            "rows": [
+              [
+                "Exact IDs / codes / SKUs",
+                "Weak -- blurs into neighbors",
+                "Strong -- exact token match"
+              ],
+              [
+                "Paraphrased / conceptual",
+                "Strong -- captures meaning",
+                "Weak -- needs shared words"
+              ],
+              [
+                "Rare proper nouns",
+                "Weak -- undertrained embedding",
+                "Strong -- high IDF weight"
+              ],
+              [
+                "Synonyms, no shared words",
+                "Strong",
+                "Weak"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e2e15e85-58ac-47c1-b970-33b260319a82",
+          "kind": "problem",
+          "title": "Where hybrid search bites back",
+          "body": "Fusion isn't free -- it adds infrastructure, latency, and a new tuning surface.",
+          "bullets": [
+            "You now run and maintain two indexes (inverted index + vector index) instead of one, doubling storage and indexing pipelines",
+            "Query latency is the max of two retrieval calls plus the fusion step, not just one -- matters under tight p99 budgets",
+            "RRF's k constant and any per-ranker weighting still need tuning per corpus; a k tuned for short product docs may hurt on long-form technical text",
+            "For small corpora (a few thousand docs) where BM25 alone already gets near-perfect recall, the added complexity may not pay for itself"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3cb0a763-05e0-4be4-8539-451b1e333e20",
+          "kind": "takeaways",
+          "title": "Default to hybrid unless you've measured otherwise",
+          "body": "Most production RAG systems that handle real user queries -- not just clean benchmark questions -- end up needing both signal types.",
+          "bullets": [
+            "Pure dense search silently loses exact-match queries; pure keyword search silently loses paraphrased queries -- hybrid loses neither",
+            "Reciprocal Rank Fusion is the default fusion method because it needs no score normalization, only rank position",
+            "Pair hybrid retrieval with a reranker (cross-encoder) as a second-stage filter for best precision on the fused candidate set",
+            "Skip the complexity only when your corpus and query patterns are narrow enough that one retriever already covers both cases"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "8c6bb61d-03d8-4082-b224-eef2ea00229f",
+            "prompt": "Why can't you just add raw BM25 and vector similarity scores together?",
+            "options": [
+              "BM25 only works on English text",
+              "The two scores live on different, incompatible scales",
+              "Vector databases don't return numeric scores",
+              "BM25 scores are always higher than cosine similarity"
+            ],
+            "correctIndex": 1,
+            "explanation": "BM25 scores are unbounded term-weighted sums while cosine similarity is bounded roughly [-1,1] -- adding them directly lets whichever scale is numerically larger dominate. That's why rank-based fusion methods like RRF are used instead of raw score addition."
+          },
+          {
+            "id": "75c28af5-0ef7-4dc4-b1bd-64754cfd0d3e",
+            "prompt": "A user searches for an exact error code like 'E4021'. Which retriever is most likely to surface the right document?",
+            "options": [
+              "Dense vector search, because it understands meaning",
+              "BM25 keyword search, because it rewards exact rare-term matches",
+              "Neither -- exact codes can't be retrieved by either method",
+              "Only a reranker can find exact codes"
+            ],
+            "correctIndex": 1,
+            "explanation": "BM25's IDF weighting gives rare exact tokens like error codes a very high score when they match, while dense embeddings tend to blur near-identical codes into the same neighborhood. This is the core failure mode hybrid search is built to fix."
+          },
+          {
+            "id": "8e811d94-2326-4ea0-8b81-0f20ce2a5533",
+            "prompt": "What does Reciprocal Rank Fusion actually fuse on?",
+            "options": [
+              "The raw similarity scores from each retriever",
+              "The document's position (rank) in each retriever's result list",
+              "The length of the document",
+              "The embedding vectors directly, via averaging"
+            ],
+            "correctIndex": 1,
+            "explanation": "RRF computes score(d) = sum of 1/(k + rank(d)) across each ranker's result list, using only rank position -- never the raw score. That's what makes it robust to two rankers whose scores are on completely different scales."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "98e32df0-75ab-4096-be43-9ae83130ac87",
       "title": "Demystifying Agent Skills: Why They Work—Until They Don't",
       "subtitle": "8,135 trials say skills anchor behavior, not inject facts",
@@ -10925,190 +11102,6 @@
           "url": "https://arxiv.org/abs/2608.11878"
         }
       ],
-      "publishedDate": "2026-08-21T12:46:53Z"
-    },
-    {
-      "id": "aa21fea1-47ff-423b-b5ea-1a90130d9d47",
-      "title": "Cross-Encoder Reranking: The Second-Stage Filter RAG Skips",
-      "subtitle": "Vector search's top-10 is sorted by approximation, not relevance. A reranker reads query and document together to fix the order.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "reranking",
-        "cross-encoder",
-        "rag",
-        "vector-search",
-        "retrieval"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "slider.horizontal.3",
-      "summary": "A bi-encoder retriever (the kind behind most vector search) scores relevance as a dot product between two independently-computed embeddings — fast enough to search millions of documents, but blind to how the query and document actually interact. A cross-encoder reranker fixes the ordering by running query and document through the same transformer together, at the cost of needing a small shortlist instead of the whole corpus. Most production RAG pipelines skip this stage and pay for it in silently wrong top results.",
-      "slides": [
-        {
-          "id": "d9b9eafe-2efd-4871-9deb-800229c7c1b1",
-          "kind": "cover",
-          "title": "Your Top-10 Isn't Sorted By Relevance — It's Sorted By Approximation",
-          "body": "Vector search returns documents whose embeddings are geometrically close to the query's. Close in embedding space and actually relevant are correlated, not identical.",
-          "bullets": [],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "2b7b1a28-c5f9-4c9d-87a1-1b2de696bfb4",
-          "kind": "problem",
-          "title": "Bi-Encoders Score Without Ever Comparing",
-          "body": null,
-          "bullets": [
-            "A bi-encoder embeds the query and embeds each document completely separately — neither ever 'sees' the other during encoding. Relevance is just cosine similarity or dot product between the two fixed vectors.",
-            "That's exactly what makes it fast: document embeddings can be precomputed and indexed once (e.g. with HNSW), so search is a nearest-neighbor lookup, not a per-query encoding pass over the corpus.",
-            "The cost is precision at the margin: a document that shares vocabulary and topic with the query but answers a subtly different question can still land in the top 10, because the embedding compressed away the distinction.",
-            "This gets worse on queries with an exact-match component — an error code, a SKU, a specific API name — where semantic similarity and 'is this the actually correct document' diverge the most."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "A Cross-Encoder Reads Query and Document Together",
-          "body": null,
-          "bullets": [
-            "A cross-encoder concatenates the query and a candidate document into one input and runs it through a transformer with full self-attention — every query token can directly attend to every document token.",
-            "The output is a single relevance score for that specific (query, document) pair — not a reusable embedding. Nothing about it can be precomputed before the query arrives.",
-            "This is strictly more expressive than a bi-encoder's dot product: it can catch negation, exact-term mismatches, and query-document interactions a squashed single vector loses.",
-            "The tradeoff is direct: that expressiveness requires one full transformer pass PER candidate document, which is far too slow to run over an entire corpus."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "The Two-Stage Pipeline",
-          "body": "The standard fix isn't 'replace the bi-encoder,' it's 'add a second, more expensive stage on top of it.'",
-          "bullets": [
-            "Stage 1 (retrieve): the bi-encoder + ANN index (e.g. HNSW) pulls a cheap shortlist — typically the top 50-200 candidates — from the full corpus in milliseconds.",
-            "Stage 2 (rerank): a cross-encoder scores just that shortlist, one pair at a time, and reorders it. Because the shortlist is small, the O(n) transformer passes are affordable.",
-            "The final result set (top 5-10) is what gets shown to the user or passed into an LLM's context — the expensive model only ever touches a tiny fraction of the corpus."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Bi-Encoder vs. Cross-Encoder",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "Bi-Encoder",
-              "Cross-Encoder"
-            ],
-            "rows": [
-              [
-                "Encodes",
-                "Query, doc separately",
-                "Query + doc jointly"
-              ],
-              [
-                "Precomputable",
-                "Yes (index once)",
-                "No (per query)"
-              ],
-              [
-                "Cost at query time",
-                "One encode + ANN lookup",
-                "One pass per candidate"
-              ],
-              [
-                "Typical role",
-                "Stage 1: retrieve from millions",
-                "Stage 2: rerank tens/hundreds"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: 'How Do I Reset My API Key'",
-          "body": null,
-          "bullets": [
-            "Bi-encoder retrieval over a docs corpus returns a top-10 mixing 'reset your account password,' 'rotate your API key,' and 'API key rate limits' — all embedding-space neighbors of the query, only one of them the right answer.",
-            "A cross-encoder scores each of those 10 against the literal query text jointly. 'Rotate your API key' shares the key phrase 'API key' with real token-level overlap the cross-encoder can attend to directly; 'reset your account password' does not, despite being semantically adjacent.",
-            "The reranked top-1 becomes the actually-correct doc, and it moved there without touching or re-indexing the other 999,990 documents in the corpus — only the 10 retrieved candidates were scored."
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "When Reranking Isn't Worth It",
-          "body": null,
-          "bullets": [
-            "Hard real-time constraints: if your latency budget is single-digit milliseconds end-to-end, a reranking pass over even 50 candidates can blow the budget — bi-encoder-only may be the right tradeoff.",
-            "If Stage 1 recall is bad, reranking can't save you: a cross-encoder can only reorder what it's given. If the actually-correct document never makes the top-50 shortlist, no amount of reranking will surface it.",
-            "Very small corpora (a few hundred documents) may not need the bi-encoder stage at all — just cross-encode the whole thing directly.",
-            "Reranking adds a real cost line (extra model calls, extra latency) — it's worth it when top-of-list precision materially matters (RAG context, user-facing search), less so for internal bulk retrieval where recall alone is enough."
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Bi-encoders retrieve cheaply because they never compare query and document directly — that's also exactly why their ordering is approximate.",
-            "Cross-encoders fix ordering by scoring query+document jointly, but the score can't be precomputed — so they only work as a reranking stage over a small shortlist, never as the first-pass retriever.",
-            "The standard architecture is retrieve-then-rerank: bi-encoder + ANN index pulls candidates cheaply, cross-encoder reorders the final few.",
-            "Reranking can't fix bad recall — if Stage 1 never surfaces the right document, Stage 2 has nothing correct to promote."
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f8326596-308d-470e-b0f2-d5f9d6b1291f",
-            "prompt": "Why can't a cross-encoder's relevance score be precomputed the way a bi-encoder's embedding can?",
-            "options": [
-              "Cross-encoders are always larger models than bi-encoders",
-              "The score is a joint function of the specific query AND document pair, so it doesn't exist until both are known",
-              "Cross-encoders don't use transformers",
-              "Precomputing cross-encoder scores is technically possible but just unpopular"
-            ],
-            "correctIndex": 1,
-            "explanation": "A bi-encoder produces a fixed document embedding independent of any future query, so it can be indexed ahead of time. A cross-encoder's output is specific to one (query, document) pair — it literally doesn't exist until the query arrives."
-          },
-          {
-            "id": "eeba6688-0407-4e16-8bb1-9652e0bf7ccb",
-            "prompt": "In a standard two-stage RAG retrieval pipeline, what does the reranker operate on?",
-            "options": [
-              "The full corpus, replacing the first-stage retriever entirely",
-              "A small shortlist (e.g. top 50-200) already pulled by the first-stage bi-encoder retriever",
-              "Only documents the user has previously clicked on",
-              "Randomly sampled documents unrelated to the query"
-            ],
-            "correctIndex": 1,
-            "explanation": "The reranker is the second stage: a cheap bi-encoder + ANN index first pulls a shortlist from the full corpus, then the more expensive cross-encoder reorders just that shortlist — keeping total cost manageable."
-          },
-          {
-            "id": "f0223abd-4ef6-4c5d-b581-e954cc166f0b",
-            "prompt": "If the correct document never appears in the first-stage retriever's top-50 shortlist, what happens when you add a cross-encoder reranker?",
-            "options": [
-              "The reranker will still find and surface the correct document from the full corpus",
-              "Reranking can't help — it can only reorder the candidates it's given, and the correct document was never included",
-              "The pipeline automatically falls back to a full-corpus cross-encoder pass",
-              "The reranker will always promote the most recently added document instead"
-            ],
-            "correctIndex": 1,
-            "explanation": "A reranker only reorders whatever the first stage retrieved. If Stage 1 recall misses the correct document entirely, no amount of Stage 2 reranking can recover it — the fix has to happen at the retrieval stage, not the reranking stage."
-          }
-        ]
-      },
-      "references": [],
       "publishedDate": "2026-08-21T12:46:53Z"
     }
   ]
