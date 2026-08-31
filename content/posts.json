@@ -1,6 +1,187 @@
 {
   "posts": [
     {
+      "title": "FlashAttention: Fusing Attention to Skip the Memory Round-Trip",
+      "subtitle": "IO-aware tiling and an online softmax mean the N×N attention matrix never has to touch slow GPU memory.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "flashattention",
+        "attention mechanism",
+        "gpu memory bandwidth",
+        "io-aware kernels",
+        "transformer training"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "bolt.fill",
+      "summary": "FlashAttention rewrites attention as a single fused GPU kernel that tiles Q/K/V into on-chip SRAM and uses an online softmax so the full N×N attention matrix never has to be written to slow HBM. It computes exact attention — identical output to the naive algorithm — while training measurably faster and scaling memory linearly instead of quadratically with sequence length.",
+      "slides": [
+        {
+          "id": "f4445dae-5b2a-4cb5-8619-7e7eed7476d7",
+          "kind": "cover",
+          "title": "FlashAttention: Fusing Attention to Skip the Memory Round-Trip",
+          "body": "Self-attention is quadratic in sequence length — but the hidden cost is worse: every step reads and writes a full N×N matrix through slow GPU memory. FlashAttention rewrites the computation so that matrix never leaves the chip.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "0a3df4b2-f4e3-4d8e-8b49-7db07470e94a",
+          "kind": "problem",
+          "title": "Standard attention is memory-bound, not compute-bound",
+          "body": "Naive attention computes QKᵀ, writes the whole N×N score matrix to HBM, reads it back for softmax, writes the result again, then reads it once more to multiply by V.",
+          "bullets": [
+            "An A100's HBM moves data at roughly 1.5–2TB/s; its on-chip SRAM is close to an order of magnitude faster — every unnecessary HBM round-trip costs far more wall-clock time than the matmul itself.",
+            "The N×N score matrix grows quadratically: at sequence length 8K that's a 64-million-entry matrix per head, written and re-read multiple times before a single attention output exists.",
+            "This is why long-context training runs out of memory well before it runs out of raw FLOPs — the bottleneck is data movement, the same underlying issue that makes single-token LLM decoding slow."
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "87b3dd50-046c-4257-afc8-d22afb1bbe70",
+          "kind": "solution",
+          "title": "Tile Q/K/V into SRAM and never materialize the full matrix",
+          "body": "FlashAttention fuses the matmul, mask, softmax, and second matmul into one GPU kernel, processing blocks of queries against blocks of keys/values that fit entirely in fast on-chip SRAM.",
+          "bullets": [
+            "For each query block it loops over key/value blocks, computing partial scores and immediately folding them into the output — the full N×N matrix is never written to HBM at all.",
+            "An 'online softmax' keeps a running max and running sum per query row, rescaling the accumulated output as each new block arrives — algebraically identical to computing softmax over the whole row at once.",
+            "In the backward pass it recomputes attention from the small saved statistics instead of storing the full matrix — extra compute traded for far less memory traffic, since compute is cheap relative to HBM bandwidth."
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "118fabbe-6b56-4b90-b844-7b5c80697fc2",
+          "kind": "example",
+          "title": "Walking through an 8K-token sequence",
+          "body": "Sequence length 8,192, block size 128 — naive attention versus FlashAttention's tiling.",
+          "bullets": [
+            "Naive attention: an 8,192×8,192 score matrix per head — about 67 million floats (~268MB in fp32) written to and read from HBM before the output exists.",
+            "FlashAttention: loops through 64 key/value blocks of 128 tokens each, holding at most one 128×128 tile (~64KB) in SRAM at any time.",
+            "After each tile, the running softmax max/sum for every query row updates and the partial output rescales — by the 64th tile the result is numerically the exact softmax over all 8,192 keys, computed without ever holding the full matrix at once."
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "cbd40c5d-0764-4ea3-8a99-560610ea51d7",
+          "kind": "comparison",
+          "title": "The win is memory traffic, not new math — and it compounds in v2",
+          "body": "FlashAttention computes exact attention, identical output to the naive algorithm — the speedup comes entirely from cutting HBM reads/writes, and FlashAttention-2 pushes the same idea further with better GPU work partitioning.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Version",
+              "Reported result",
+              "Why"
+            ],
+            "rows": [
+              [
+                "Naive attention (baseline)",
+                "Only ~25–40% of an A100's theoretical peak FLOPs/s utilized",
+                "Most kernel time goes to moving the N×N matrix through HBM, not computing"
+              ],
+              [
+                "FlashAttention (2022)",
+                "3x faster GPT-2 training (seq 1K); 15% faster end-to-end BERT-large than the MLPerf 1.1 record; 2.4x on Long-Range Arena",
+                "Fused kernel + tiling removes the N×N HBM round-trip entirely"
+              ],
+              [
+                "FlashAttention-2 (2023)",
+                "~2x faster than FlashAttention; up to 230 TFLOPs/s on A100 (73% of peak); 225 TFLOPs/s (72% model FLOPs utilization) end-to-end training",
+                "Better parallelization across thread blocks/warps and fewer non-matmul ops in the inner loop"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "dec0be1a-e2c8-4b95-bb85-6d63b3c08b04",
+          "kind": "concept",
+          "title": "It doesn't cut FLOPs, and short sequences barely notice",
+          "body": "FlashAttention is exact and purely an I/O and kernel-fusion optimization — it changes zero math, so it isn't always the right lever to pull.",
+          "bullets": [
+            "At short sequence lengths the N×N matrix already fits comfortably in SRAM-sized chunks with little wasted bandwidth — the speedup shrinks and may not justify a specialized kernel.",
+            "It doesn't reduce the underlying O(N²) FLOP count of exact attention — for very long contexts you still need a genuinely sub-quadratic or sparse/linear scheme, not just a faster exact one.",
+            "Recomputing the attention matrix in the backward pass adds real extra FLOPs versus caching it — a good trade only because compute is cheap and memory bandwidth is the actual bottleneck on modern GPUs.",
+            "It requires a custom fused kernel tied closely to specific GPU architectures — portability isn't automatic, which is why FlashAttention-2 and -3 exist as separate hardware-tuned releases."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "f8bda68e-975c-48b6-aaca-f1aa22c3b150",
+          "kind": "takeaways",
+          "title": "Same math, radically fewer memory round-trips",
+          "body": null,
+          "bullets": [
+            "FlashAttention computes exact attention — no approximation, same output as the naive algorithm, just reorganized to be IO-aware.",
+            "Tiling plus online softmax mean the O(N²) score matrix is never fully materialized in HBM — memory use drops from quadratic to linear in sequence length.",
+            "Reported gains: 3x GPT-2 training, 15% BERT-large end-to-end, 2.4x Long-Range Arena (FlashAttention); ~2x further and up to 73% of A100 peak FLOPs (FlashAttention-2).",
+            "It's a foundation, not a cure-all — it doesn't reduce attention's FLOP count, and its benefit scales with how memory-bound your sequence length actually is."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "382ba5c5-1b6f-44d9-bd63-0ff19c75b0d8",
+            "prompt": "What is the primary bottleneck FlashAttention targets in standard attention?",
+            "options": [
+              "Reads/writes of the N×N score matrix between GPU HBM and on-chip SRAM",
+              "The number of floating-point operations in QKᵀ",
+              "Network bandwidth between GPUs in distributed training",
+              "The numerical precision of the softmax function"
+            ],
+            "correctIndex": 0,
+            "explanation": "Standard attention is memory-bound: it repeatedly writes and reads the full N×N score matrix through slow HBM. FlashAttention doesn't change the FLOP count — it removes those HBM round-trips."
+          },
+          {
+            "id": "f13631d1-6176-4b4d-9046-62b1a164797b",
+            "prompt": "How does FlashAttention avoid ever materializing the full N×N attention matrix?",
+            "options": [
+              "It tiles Q/K/V into SRAM-sized blocks and uses an online softmax to incrementally accumulate the output",
+              "It approximates softmax with a cheaper linear function",
+              "It prunes low-attention-score tokens before computing softmax",
+              "It stores the matrix in a compressed quantized format"
+            ],
+            "correctIndex": 0,
+            "explanation": "Online softmax keeps a running max and sum per query row so each new key/value block's contribution can be folded into the output immediately — mathematically identical to full softmax, computed one block at a time."
+          },
+          {
+            "id": "b63fd579-5be6-41c4-ae3e-5fb498006bb3",
+            "prompt": "Which statement about FlashAttention's tradeoffs is accurate?",
+            "options": [
+              "It recomputes attention in the backward pass to trade extra compute for less memory traffic, and does not reduce attention's underlying O(N²) FLOP count",
+              "It approximates attention scores, trading a small amount of accuracy for speed",
+              "It only works for inference, not training",
+              "It replaces softmax with a hardware-friendly sigmoid"
+            ],
+            "correctIndex": 0,
+            "explanation": "FlashAttention is exact, not approximate. Its speedup comes purely from cutting memory traffic — including recomputing rather than storing the attention matrix during backprop — not from doing less math overall."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "5470b9d6-197a-420c-b647-64d11f2b4dc3",
+          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao, Fu, Ermon, Rudra, Ré — NeurIPS 2022)",
+          "url": "https://arxiv.org/abs/2205.14135"
+        },
+        {
+          "id": "8a023dac-ccc4-4566-9cf2-aa0da05b3c7d",
+          "title": "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning (Dao, 2023)",
+          "url": "https://arxiv.org/abs/2307.08691"
+        }
+      ],
+      "id": "4a58060e-11c4-4115-8f8f-58b32a171cac",
+      "publishedDate": "2026-08-31T18:42:12Z"
+    },
+    {
       "id": "5b85c98d-4cf9-4eac-bf4d-f02225cfcb51",
       "title": "Speculative Decoding: Guessing Tokens to Skip the Wait",
       "subtitle": "A tiny draft model guesses ahead so the big model only has to verify, not generate, one token at a time.",
@@ -10827,199 +11008,6 @@
             ],
             "correctIndex": 1,
             "explanation": "Because the batch's membership can change on every decode step, the KV cache allocator needs to add and evict sequences fast. Page-table-style block allocation (as in PagedAttention) makes that cheap; a single contiguous buffer would need expensive resizing or copying on every swap."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "e7f8e066-6a51-4d35-9413-7c1171866024",
-      "title": "Knowledge Distillation: Teaching a Small Model to Mimic a Big One",
-      "subtitle": "The teacher's wrong answers carry more signal than its right ones",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "distillation",
-        "model-compression",
-        "soft-labels",
-        "efficiency",
-        "small-models",
-        "teacher-student"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "graduationcap.fill",
-      "publishedDate": "2026-08-23T00:39:11Z",
-      "summary": "Knowledge distillation trains a small 'student' model to reproduce a large 'teacher' model's full output distribution, not just its final answer — because the relative probabilities the teacher assigns to wrong answers ('dark knowledge') encode how it generalizes. A temperature-raised softmax exposes that structure, a KL-divergence loss transfers it, and the result is a compact model that captures far more of the teacher's behavior than training the same small architecture from scratch on hard labels ever could. It's not free: the student is capped by its own capacity, needs teacher inference during training, and can inherit the teacher's blind spots — so it's a targeted efficiency tool, not a universal fix.",
-      "body": null,
-      "slides": [
-        {
-          "id": "580435f7-4ce0-4165-806b-3903a9a28002",
-          "kind": "cover",
-          "title": "The Best Teacher Doesn't Just Give the Right Answer",
-          "body": "A large model asked to classify a handwritten '2' might output 0.7 for '2', 0.2 for '3', and 0.099 spread across everything else. That 0.2 isn't noise — it's the teacher telling you a '2' looks a bit like a '3'. Knowledge distillation trains a small model on that whole distribution, not just the label '2'.",
-          "bullets": [],
-          "symbol": "graduationcap.fill",
-          "table": null
-        },
-        {
-          "id": "76fd4a2e-81df-4bae-9448-9342da5c30f6",
-          "kind": "problem",
-          "title": "A Small Model Trained From Scratch Learns Less Than It Could",
-          "body": null,
-          "bullets": [
-            "You often can't ship the giant model: a 70B-parameter LLM is too slow and too expensive for a latency-sensitive product surface, but a 7B model trained the normal way — on the same hard labels or the same next-token targets — usually falls well short of the big model's behavior.",
-            "Hard labels are a single one-hot vector: 'this token is X, everything else is 0.' That throws away all the information in how confident the model was, and which wrong answers it considered plausible.",
-            "The small model has to rediscover every pattern the large model learned, from the same finite training set, with far less capacity — it's learning from scratch what the teacher already learned from a much bigger training run.",
-            "The core question distillation answers: instead of making the student re-derive the teacher's knowledge, can you just transfer it directly?"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "69be6ccb-484c-46fc-936a-20b035e1d027",
-          "kind": "solution",
-          "title": "Train the Student to Match the Teacher's Full Distribution",
-          "body": null,
-          "bullets": [
-            "The classic recipe (Hinton, Vinyals & Dean, 'Distilling the Knowledge in a Neural Network', 2015): run the teacher on the training data, keep its output probability distribution (the 'soft targets') instead of just the top prediction, and train the student to match that distribution with a KL-divergence loss.",
-            "In practice the student is trained on a blend: a distillation loss against the teacher's soft targets, plus (often) the normal loss against the real hard labels — a weighted mix rather than either alone.",
-            "For LLMs specifically, the 'label' at each position is a token, and the teacher's soft target is its full next-token probability distribution — so distillation transfers not just what the teacher would say, but how uncertain it was between alternatives, token by token.",
-            "This works with the student and teacher having completely different architectures or sizes — distillation only needs matching output spaces (the same vocabulary or class set), not matching internals."
-          ],
-          "symbol": "person.2.fill",
-          "table": null
-        },
-        {
-          "id": "c54012bb-52f8-405e-827d-9041510b5645",
-          "kind": "concept",
-          "title": "Temperature Is the Knob That Exposes 'Dark Knowledge'",
-          "body": null,
-          "bullets": [
-            "A normal softmax at low temperature is spiky: one class near 1.0, everything else near 0 — that near-zero tail is where the useful similarity information lives, and it's too small to learn from as-is.",
-            "Raising the softmax temperature T (dividing logits by T before the softmax) flattens the distribution, pulling those near-zero probabilities up into a range the student can actually learn from — the same trick used to make a probability distribution 'softer' for sampling.",
-            "Hinton's term for this signal is 'dark knowledge': the teacher's relative ranking of wrong answers (a '2' looking more like a '3' than a '7') reflects learned structure in the input space that hard labels never expose.",
-            "Both teacher and student use the same raised temperature during distillation training, then the student is switched back to normal temperature (T=1) at inference time."
-          ],
-          "symbol": "thermometer.medium",
-          "table": null
-        },
-        {
-          "id": "7d995ceb-0c98-4739-8563-9ac8b7b10596",
-          "kind": "example",
-          "title": "Worked Example: Why the '2' vs '3' Signal Matters",
-          "body": "Two training images both labeled '2': one is written cleanly, the other has an open loop that could pass for a '3'.",
-          "bullets": [
-            "Training on hard labels alone, both images produce the identical target: 100% '2', 0% everything else — the student gets no signal that the second image is a harder, more ambiguous case.",
-            "The teacher's soft output on the ambiguous image might be 65% '2', 30% '3', 5% other — training the student against that distribution teaches it exactly where the decision boundary between '2' and '3' is blurry.",
-            "Multiply this across an entire dataset: every example now carries a graded, per-class similarity signal instead of one bit of information, which is why a distilled student can match a from-scratch model of the same size trained on far more labeled data.",
-            "The same idea scales to LLMs: distilling next-token distributions teaches a small model which alternative phrasings or tokens the teacher considered close calls, not just which one it picked."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null
-        },
-        {
-          "id": "cc76c248-3f18-4069-a43d-210227788a83",
-          "kind": "comparison",
-          "title": "Distillation vs. Pruning vs. Quantization",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Technique",
-              "What changes",
-              "Needs retraining?",
-              "Best for"
-            ],
-            "rows": [
-              [
-                "Distillation",
-                "Different (smaller) model learns teacher's behavior",
-                "Yes — a full training run",
-                "Shrinking parameter count while keeping behavior"
-              ],
-              [
-                "Pruning",
-                "Removes weights/heads from the same model",
-                "Usually needs fine-tuning after",
-                "Cutting size with minimal architecture change"
-              ],
-              [
-                "Quantization",
-                "Same weights, lower numeric precision",
-                "No (post-training) or light calibration",
-                "Cutting memory/compute with the same architecture"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "fb9d584d-73b9-4c83-b98d-cc3f1a53ff65",
-          "kind": "concept",
-          "title": "Where Distillation Falls Short",
-          "body": null,
-          "bullets": [
-            "Capacity ceiling: a student can't exceed what its own architecture can represent — distillation transfers knowledge efficiently, but it can't make a 1B model 'contain' everything a 70B model knows.",
-            "Training cost isn't free: you need teacher inference over the whole training set (or on-the-fly during training), which for a huge teacher can be a significant compute cost of its own, on top of training the student.",
-            "Inherited blind spots: the student is optimized to match the teacher, including the teacher's systematic errors, biases, and hallucination patterns — distillation compresses behavior, it doesn't correct it.",
-            "Diminishing returns at extreme compression ratios: distilling a huge teacher into a very small student tends to transfer surface-level patterns well but loses the teacher's rarer, long-tail capabilities first."
-          ],
-          "symbol": "xmark.seal.fill",
-          "table": null
-        },
-        {
-          "id": "5f927a5a-1494-4b43-b7f3-cd031ba2dec3",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Distillation trains a small student to match a large teacher's full output distribution, not just its top answer — the 'dark knowledge' in the near-zero probabilities is the whole point.",
-            "Temperature-scaled softmax is the mechanism that makes that dark knowledge learnable; the student typically trains against a blend of the teacher's soft targets and the real hard labels.",
-            "It composes with pruning and quantization rather than replacing them — the three techniques change different things (architecture, weight count, numeric precision).",
-            "It's an efficiency tool with real limits: a student is capped by its own capacity, costs teacher inference to produce, and inherits the teacher's errors along with its knowledge."
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "d07acfb3-70cb-439e-8145-f6d3d0286c5e",
-            "prompt": "In knowledge distillation, what is the student model primarily trained to match?",
-            "options": [
-              "The teacher's single top-predicted label only",
-              "The teacher's full output probability distribution across all classes/tokens",
-              "The teacher's internal weight values layer by layer",
-              "The teacher's training dataset, resampled at random"
-            ],
-            "correctIndex": 1,
-            "explanation": "The whole point of distillation is the 'soft targets' — the teacher's full distribution over outputs, including the low probabilities it assigns to wrong answers. Those near-zero values ('dark knowledge') encode how the teacher generalizes, which a single hard label discards."
-          },
-          {
-            "id": "814f8f60-f7e6-42cd-beed-731c2c91a76c",
-            "prompt": "What does raising the softmax temperature during distillation accomplish?",
-            "options": [
-              "It makes the teacher's predictions more confident and spiky",
-              "It flattens the output distribution, making the small probabilities on wrong classes large enough to learn from",
-              "It reduces the number of parameters in the student model",
-              "It converts the teacher's outputs into hard one-hot labels"
-            ],
-            "correctIndex": 1,
-            "explanation": "A low-temperature softmax is spiky — one class near 1.0, the rest near 0. Dividing logits by a temperature T > 1 before the softmax spreads probability mass out, surfacing the relative differences between wrong answers so the student has a learnable signal instead of near-zero noise."
-          },
-          {
-            "id": "7c673597-75d7-4e50-8f79-a573ffb9e544",
-            "prompt": "Which limitation is specific to knowledge distillation, as opposed to quantization?",
-            "options": [
-              "It cannot reduce inference latency at all",
-              "It requires running the teacher model to produce training targets, adding compute cost before the student is even trained",
-              "It only works on convolutional neural networks",
-              "It always requires the student and teacher to share identical architectures"
-            ],
-            "correctIndex": 1,
-            "explanation": "Quantization just reduces numeric precision on existing weights — no separate model needs to run. Distillation requires generating soft targets from the teacher (often over the whole training set), which is a real compute cost on top of training the student, and the student is still capped by its own capacity."
           }
         ]
       },
