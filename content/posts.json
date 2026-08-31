@@ -1,6 +1,182 @@
 {
   "posts": [
     {
+      "id": "5b85c98d-4cf9-4eac-bf4d-f02225cfcb51",
+      "title": "Speculative Decoding: Guessing Tokens to Skip the Wait",
+      "subtitle": "A tiny draft model guesses ahead so the big model only has to verify, not generate, one token at a time.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "speculative decoding",
+        "inference optimization",
+        "llm serving",
+        "draft model",
+        "rejection sampling"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding speeds up LLM generation by having a small draft model guess several tokens ahead, then letting the large target model verify all of them in a single parallel forward pass. A rejection-sampling correction guarantees the output distribution is identical to plain decoding — it's a pure latency win, not a quality tradeoff.",
+      "publishedDate": "2026-08-31T12:44:10Z",
+      "slides": [
+        {
+          "id": "b2266d2c-4011-4a45-9e40-86a149775809",
+          "kind": "cover",
+          "title": "Speculative Decoding: Guessing Tokens to Skip the Wait",
+          "body": "LLM generation is slow not because GPUs are weak, but because they sit mostly idle waiting on memory. Speculative decoding fixes that by having a small model guess ahead.",
+          "bullets": [],
+          "symbol": "hare.fill",
+          "table": null
+        },
+        {
+          "id": "ab6123c9-5589-479d-bb40-f00f328d6f0d",
+          "kind": "problem",
+          "title": "Autoregressive decoding wastes the GPU, not the CPU",
+          "body": "Generating one token means a full forward pass through every weight, streamed from HBM into compute. The arithmetic takes nanoseconds; loading the weights takes milliseconds.",
+          "bullets": [
+            "A 70B model in fp16 is roughly 140GB of weights read from memory for every single token generated.",
+            "At batch size 1, that forward pass uses a tiny fraction of the GPU's available FLOPs — the bottleneck is memory bandwidth, not compute.",
+            "This is why batch-1 generation from a large model can crawl even on top-tier hardware: the GPU spends most of its time waiting on memory, not computing."
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "df889f15-4fd7-455e-9107-408a5f47577b",
+          "kind": "solution",
+          "title": "Draft cheap, verify in parallel, keep the same output",
+          "body": "A small 'draft' model autoregressively guesses the next several tokens — fast, since it's tiny. The big 'target' model then checks all of them in a single forward pass, which is nearly free per extra token because it's compute-bound, not memory-bound.",
+          "bullets": [
+            "Verification uses rejection sampling: accept a draft token with probability min(1, p_target(x) / p_draft(x)).",
+            "If rejected, resample from the residual distribution (p_target − p_draft)⁺, normalized — this keeps the final output mathematically identical to sampling from the target model alone.",
+            "Net effect: the same memory-bound pass that used to yield 1 token now often yields several, because the expensive weight read happens once for many candidate tokens instead of once per token."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "e81d9d23-6407-4238-aebc-017f04266470",
+          "kind": "example",
+          "title": "Walking through one verification step",
+          "body": "Draft model proposes 4 tokens for the prompt 'The capital of France is'; the target model checks all 4 in one pass.",
+          "bullets": [
+            "Draft guesses: 'Paris', 'and', 'it', 'is' — the target computes true probabilities for all 4 positions simultaneously, not one at a time.",
+            "Tokens 1–3 ('Paris', 'and', 'it') pass the accept test — the target agreed strongly, since these are near-deterministic continuations.",
+            "Token 4 ('is') is rejected — the target resamples its own token there instead (e.g. 'known'), and the draft restarts guessing from that point.",
+            "Result: 3 tokens accepted for the cost of roughly one target forward pass, instead of 4 sequential passes."
+          ],
+          "symbol": "text.append",
+          "table": null
+        },
+        {
+          "id": "71f842dd-9de5-421d-bdad-3655f1955e1d",
+          "kind": "comparison",
+          "title": "Where the speedup actually shows up",
+          "body": "The technique's introducing paper measured a 2-3x wall-clock speedup on T5-XXL with no change to output quality, because verification guarantees the same distribution as plain sampling.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Setting",
+              "Typical effect",
+              "Why"
+            ],
+            "rows": [
+              [
+                "Predictable text (code, boilerplate)",
+                "Speedup near the top of the range",
+                "High agreement between draft and target — most guesses accepted"
+              ],
+              [
+                "Open-ended / creative generation",
+                "Smaller speedup",
+                "Higher entropy means more rejections and more resampling"
+              ],
+              [
+                "Large serving batch sizes",
+                "Speedup shrinks toward none",
+                "Serving is already compute-bound at scale, so there's less idle compute for 'free' verification"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "1af304c1-952a-4950-979b-346c4ff8f96e",
+          "kind": "concept",
+          "title": "When speculation doesn't pay off",
+          "body": "Speculative decoding trades extra compute for lower latency — that trade isn't free.",
+          "bullets": [
+            "Needs a second model resident in GPU memory (the draft) — real VRAM overhead, though drafts are typically 10-20x smaller than the target.",
+            "A poorly-matched draft (different tokenizer, very different training distribution) gets rejected constantly — you pay for guesses that never land, with no speedup.",
+            "High-temperature, high-diversity sampling lowers acceptance rates, since the target's true distribution disagrees with the draft more often.",
+            "Gains shrink as serving batch size grows, since verification stops being 'free' once the GPU is already compute-saturated — the technique matters most for low-batch, latency-sensitive serving, not high-throughput batch offline inference."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "cfd970ad-a020-4856-b8d5-0afcbd1d1e74",
+          "kind": "takeaways",
+          "title": "The core idea, in one line",
+          "body": null,
+          "bullets": [
+            "Let a cheap model guess several tokens ahead, then let the expensive model check them all in one memory-bound pass instead of many.",
+            "Rejection sampling guarantees the output is statistically identical to plain decoding — this is a speed trick, not a quality tradeoff.",
+            "Biggest wins: low-batch, latency-sensitive serving with predictable text. Smallest wins: high-batch throughput serving or highly creative sampling."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "54e4e03a-993d-4289-b756-ba1a9af1f0de",
+            "prompt": "Why is single-request (batch=1) LLM decoding usually memory-bound rather than compute-bound?",
+            "options": [
+              "Because attention is quadratic in sequence length",
+              "Because every token requires reading the full model weights from memory, while only a small amount of arithmetic happens per byte read",
+              "Because GPUs don't have enough FLOPs for transformers",
+              "Because tokenization runs on the CPU"
+            ],
+            "correctIndex": 1,
+            "explanation": "At batch=1, one forward pass streams the entire weight matrix from memory but performs comparatively little arithmetic on it — so time is dominated by moving bytes, not computing. This is the exact bottleneck speculative decoding attacks: verifying several tokens in one pass amortizes that memory read over more output."
+          },
+          {
+            "id": "0a1720d2-4d94-47af-9701-0eb05619029b",
+            "prompt": "What guarantees that speculative decoding produces the exact same output distribution as normal decoding from the target model?",
+            "options": [
+              "The draft model is trained to be identical to the target model",
+              "A modified rejection-sampling accept/resample rule that corrects for any mismatch between the draft and target probabilities",
+              "Both models are run with temperature = 0",
+              "The target model only checks the last proposed token"
+            ],
+            "correctIndex": 1,
+            "explanation": "A draft token is accepted with probability min(1, p_target/p_draft), and on rejection the algorithm resamples from the leftover probability mass (p_target − p_draft)⁺. This correction — not similarity between the models — is what makes the sampled output statistically indistinguishable from vanilla decoding."
+          },
+          {
+            "id": "4f743b8e-1e6b-43fa-bce2-55445b49edbc",
+            "prompt": "In which serving scenario does speculative decoding help the LEAST?",
+            "options": [
+              "A single user chatting with a large model on a dedicated GPU",
+              "Autocomplete for repetitive boilerplate code",
+              "A high-throughput server already running many concurrent requests at a large batch size",
+              "Generating a long, mostly deterministic form letter"
+            ],
+            "correctIndex": 2,
+            "explanation": "At large batch sizes the GPU is already compute-bound, so there's little idle compute left for 'free' verification passes — the memory-bound gap speculative decoding exploits has mostly closed. It shines most for low-batch, latency-sensitive serving."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "0443659c-7398-47c4-ad59-4a897ac30412",
+          "title": "Fast Inference from Transformers via Speculative Decoding (Leviathan, Kalman, Matias — Google Research)",
+          "url": "https://arxiv.org/abs/2211.17192"
+        }
+      ]
+    },
+    {
       "id": "acb92086-ca2e-4c12-be81-10c07df5aa46",
       "title": "Nemotron 3.5 Lightning: NVIDIA Bets on Speed Over Size",
       "subtitle": "31.6B params, 3.6B active, ~670 tok/s — built for the boring parts of agent loops",
@@ -10844,210 +11020,6 @@
             ],
             "correctIndex": 1,
             "explanation": "Quantization just reduces numeric precision on existing weights — no separate model needs to run. Distillation requires generating soft targets from the teacher (often over the whole training set), which is a real compute cost on top of training the student, and the student is still capped by its own capacity."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "ea452ca6-b7f0-41c2-9372-9ef1ded9db90",
-      "title": "FlashAttention: Rewriting Attention Around the Memory Wall",
-      "subtitle": "The bottleneck was never the math — it was moving data between GPU memory tiers",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "flashattention",
-        "attention",
-        "gpu-memory",
-        "kernel-fusion",
-        "inference-optimization",
-        "transformers"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "bolt.fill",
-      "publishedDate": "2026-08-22T18:40:05Z",
-      "summary": "Standard self-attention is compute-quadratic, but on modern GPUs the real bottleneck is memory bandwidth: the naive kernel repeatedly writes and reads the full N×N attention matrix to slow HBM. FlashAttention fuses the matmul-softmax-matmul sequence into one kernel that tiles Q/K/V into fast on-chip SRAM and uses an online softmax trick, so it computes mathematically exact attention while never materializing that full matrix — turning quadratic memory into linear memory and delivering roughly a 2-4x training speedup in the original paper. It's an IO-aware systems rewrite, not an approximation, which is why it composes with quantization, GQA, and paged KV caches rather than replacing them.",
-      "body": null,
-      "slides": [
-        {
-          "id": "ee8c3f59-f624-45e6-a476-fcc171fe53d1",
-          "kind": "cover",
-          "title": "Attention's Bottleneck Was Never the Math",
-          "body": "Standard self-attention is O(N²) in compute, but on modern GPUs the multiply-adds finish long before the data does. FlashAttention noticed that attention is memory-bandwidth bound, not compute bound — and got 2-4x faster by rewriting the same math to move less data, not do less of it.",
-          "bullets": [],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "2cd58a44-85ec-49ab-a178-b1edb989fc91",
-          "kind": "problem",
-          "title": "Materializing the Full Attention Matrix Is the Real Cost",
-          "body": null,
-          "bullets": [
-            "Standard attention computes Q·Kᵀ, applies softmax, then multiplies by V — but the naive implementation writes the full N×N attention matrix (scores and post-softmax probabilities) out to GPU high-bandwidth memory (HBM) at every step, then reads it back for the next op.",
-            "Modern GPUs have vastly more FLOPs available than memory bandwidth to feed them — for the small, repeated matrix operations in attention, the kernel spends most of its wall-clock time waiting on memory reads/writes, not doing arithmetic.",
-            "That N×N matrix also means quadratic memory: attention over a long sequence needs to hold a full sequence-length-squared matrix per head, per layer, which is what caps how long a context window standard attention can afford to train on.",
-            "This is a classic 'memory wall' problem — GPU compute has scaled much faster than memory bandwidth over the past decade, so kernels that were compute-bound in the past have quietly become bandwidth-bound."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f0657a46-2dfc-44cf-a2e7-05192aed30a1",
-          "kind": "solution",
-          "title": "Tile the Computation, Never Materialize the Full Matrix",
-          "body": null,
-          "bullets": [
-            "FlashAttention (Dao et al.) splits Q, K, V into small blocks that fit in the GPU's fast on-chip SRAM — orders of magnitude smaller but far faster than HBM — and fuses the matmul + softmax + matmul into a single kernel.",
-            "For each block, it computes partial attention scores and partial output entirely inside SRAM, then updates a running (unnormalized) output and running softmax statistics — never writing the full N×N score matrix to HBM at all.",
-            "This uses an 'online softmax' trick: because softmax needs a normalization constant over the whole row, FlashAttention keeps a running max and running sum per row and rescales previously-computed partial outputs as new blocks arrive, producing the mathematically exact same softmax as the standard two-pass version.",
-            "The result is exact attention — not an approximation like sparse or low-rank attention variants — with memory that scales linearly in sequence length instead of quadratically, because the full matrix is never stored."
-          ],
-          "symbol": "square.grid.3x2.fill",
-          "table": null
-        },
-        {
-          "id": "247368fa-dfe4-484c-8abd-be489368417f",
-          "kind": "concept",
-          "title": "The Backward Pass Trades More FLOPs for Less I/O",
-          "body": null,
-          "bullets": [
-            "Backpropagation normally needs the attention matrix computed in the forward pass — the naive approach is to store it, which is exactly the quadratic-memory cost FlashAttention just avoided.",
-            "Instead, FlashAttention recomputes the attention matrix on the fly during the backward pass, using the small saved softmax normalization statistics (the running max/sum from the forward pass) rather than reading a stored N×N matrix back from HBM.",
-            "This sounds like it should be slower — recomputation means strictly more floating-point operations than reusing a stored result. But because the kernel is bandwidth-bound, not compute-bound, avoiding the HBM read/write more than pays for the extra arithmetic.",
-            "This is the core IO-awareness idea: count HBM accesses, not just FLOPs, as the cost model — the standard implementation makes far more HBM accesses than FlashAttention for typical sequence lengths, and that gap is what drives the wall-clock speedup."
-          ],
-          "symbol": "arrow.up.arrow.down.circle.fill",
-          "table": null
-        },
-        {
-          "id": "93f81110-87bb-47b9-9393-e2a5fec4c896",
-          "kind": "example",
-          "title": "Worked Example: Affording a Longer Context Window",
-          "body": "Say a training run needs to go from a 1K-token context to a 4K-token context — a 4x increase — on the same fixed GPU memory budget.",
-          "bullets": [
-            "With standard attention, memory for the attention matrix grows with the square of sequence length, so a 4x longer context needs roughly 16x the attention memory per layer — on fixed GPU memory, that forces a much smaller batch size, or makes the run infeasible outright.",
-            "With FlashAttention's linear memory scaling, the same 4x context increase costs roughly 4x the memory, not 16x — leaving enough headroom to keep batch sizes practical instead of collapsing them to fit.",
-            "The original paper used exactly this kind of setup to train GPT-2 with a longer context than prior recipes on the same hardware, and reported the longer-context run reaching better quality — purely because the longer context became affordable to train on at all.",
-            "The same underlying fix produced two separate wins in that experiment: a roughly 2-4x wall-clock training speedup, and a context window that was out of reach for standard attention on the same hardware."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": null
-        },
-        {
-          "id": "4eaa9389-ae11-4f48-815b-78d0f3c47d6c",
-          "kind": "comparison",
-          "title": "Standard Attention vs. FlashAttention",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Property",
-              "Standard attention",
-              "FlashAttention"
-            ],
-            "rows": [
-              [
-                "Attention matrix",
-                "Fully materialized in HBM (N×N)",
-                "Never materialized — computed in tiles inside SRAM"
-              ],
-              [
-                "Memory scaling with sequence length",
-                "Quadratic",
-                "Linear"
-              ],
-              [
-                "Numerical result",
-                "Exact softmax attention",
-                "Exact softmax attention (same math)"
-              ],
-              [
-                "Backward pass",
-                "Reads the stored attention matrix",
-                "Recomputes it from small saved statistics"
-              ],
-              [
-                "Bottleneck",
-                "HBM read/write bandwidth",
-                "On-chip SRAM compute (much faster)"
-              ],
-              [
-                "Reported training speedup",
-                "baseline",
-                "~2-4x on GPT-2 / BERT-large (original paper)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "31b8994e-380a-4c2e-847d-3dd47b5ba035",
-          "kind": "concept",
-          "title": "What It Doesn't Change, and Where It Gets Complicated",
-          "body": null,
-          "bullets": [
-            "FlashAttention changes how attention is computed, not what it computes — it doesn't reduce the underlying quadratic FLOP count of full attention, so for extremely long sequences it's still doing quadratic work, just with far less wasted memory movement.",
-            "It's a hand-written, hardware-specific kernel — later versions (FlashAttention-2, FlashAttention-3) exist specifically because each new GPU generation has a different SRAM size, warp structure, and instruction set that needs re-tuning the tiling and scheduling to keep hitting close to peak throughput.",
-            "It doesn't help as much when a workload is already compute-bound rather than memory-bound — for very short sequences or unusual shapes where the N×N matrix was never the real bottleneck, the gain from avoiding HBM traffic shrinks.",
-            "For genuinely sub-quadratic scaling — not just less wasted memory within quadratic compute — you need a different algorithm entirely, such as state-space models like Mamba. FlashAttention makes exact quadratic attention efficient; it doesn't make attention linear-compute."
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "72319af1-d3de-4c60-8bab-59c1e5a78a27",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "FlashAttention is exact attention rewritten around the GPU memory hierarchy: tile Q/K/V into SRAM-sized blocks, fuse matmul+softmax+matmul into one kernel, and use online softmax so the full N×N matrix is never written to HBM.",
-            "That single change turns quadratic memory into linear memory, and — because attention on modern GPUs is bandwidth-bound, not compute-bound — trading extra backward-pass recomputation for less data movement makes the whole thing faster, not slower.",
-            "The reported system-level win was roughly a 2-4x training speedup plus the ability to train with meaningfully longer context on the same hardware, without changing the model's outputs at all.",
-            "It's an IO-aware systems optimization, not an approximation or a new architecture — which is why it composes with almost everything else (quantization, GQA, paged KV caches) rather than replacing them."
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6c45cc07-972b-4eb6-a2dd-d98f98c05722",
-            "prompt": "What makes standard attention memory-bandwidth bound rather than compute bound on modern GPUs?",
-            "options": [
-              "GPUs have too little compute to keep up with attention's FLOP count",
-              "The naive implementation writes/reads the full N×N attention matrix to/from HBM, and GPU memory bandwidth has grown much slower than compute",
-              "Softmax cannot be computed in parallel on a GPU",
-              "Attention requires more registers than a GPU streaming multiprocessor has available"
-            ],
-            "correctIndex": 1,
-            "explanation": "GPU compute (FLOPs) has scaled far faster than memory bandwidth over the past decade. The naive attention kernel repeatedly writes and reads the full N×N score/probability matrix to slow HBM, so it spends most of its time waiting on data movement rather than doing arithmetic — that's what 'memory-bandwidth bound' means."
-          },
-          {
-            "id": "6ae8602b-c52f-4562-aaa5-ef24d587a548",
-            "prompt": "How does FlashAttention avoid quadratic memory growth while still computing exact softmax attention?",
-            "options": [
-              "It approximates softmax with a cheaper linear function",
-              "It drops the lowest attention scores before computing softmax",
-              "It tiles Q/K/V into SRAM-sized blocks and uses a running max/sum (online softmax) to compute the exact result without ever storing the full N×N matrix",
-              "It caches the attention matrix from the previous layer and reuses it"
-            ],
-            "correctIndex": 2,
-            "explanation": "Online softmax lets FlashAttention process the sequence in tiles, keeping a running normalization statistic and rescaling partial outputs as new blocks arrive — mathematically identical to standard softmax, computed without ever materializing the full matrix."
-          },
-          {
-            "id": "16b4612b-4f1d-4301-8936-45325801d21a",
-            "prompt": "Why does recomputing the attention matrix during the backward pass make FlashAttention faster, not slower, despite doing more FLOPs?",
-            "options": [
-              "Recomputation runs on a separate, otherwise-idle GPU",
-              "GPUs have compute capacity to spare relative to memory bandwidth, so avoiding a large HBM read/write more than offsets the extra arithmetic",
-              "The backward pass doesn't actually need the attention matrix at all",
-              "Recomputation only happens during inference, not training"
-            ],
-            "correctIndex": 1,
-            "explanation": "This is the IO-awareness core idea: on a bandwidth-bound kernel, the real cost is HBM traffic, not FLOP count. Recomputing from small saved statistics avoids a large HBM read of the stored matrix, and since GPUs have compute to spare relative to bandwidth, that trade comes out ahead in wall-clock time."
           }
         ]
       },
