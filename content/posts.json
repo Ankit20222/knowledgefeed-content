@@ -1,6 +1,189 @@
 {
   "posts": [
     {
+      "id": "cb29a7b1-7d79-4a53-8a63-78d95c26309b",
+      "title": "Reranking: The Second-Stage Filter RAG Forgets",
+      "subtitle": "Vector search finds candidates fast; a reranker decides which ones actually answer the question",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "reranking",
+        "cross-encoder",
+        "vector-search",
+        "retrieval",
+        "information-retrieval"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.up.arrow.down.circle.fill",
+      "heroImageURL": null,
+      "summary": "Bi-encoder vector search is fast because it embeds queries and documents independently and precomputes the index, but that independence is also its weakness: it never lets the query and document actually attend to each other. A cross-encoder reranker fixes this by scoring the query and each candidate jointly, and is added as a cheap-to-expensive second stage that reorders a small shortlist rather than the whole corpus.",
+      "publishedDate": "2026-08-31T00:39:01Z",
+      "slides": [
+        {
+          "id": "688f7e92-cc0d-48a2-96a6-f23331d8bcf6",
+          "kind": "cover",
+          "title": "Fast and Right Are Different Jobs",
+          "body": "A vector index can hand back the top 100 candidates for a query in milliseconds. It's much worse at telling you which one of those 100 is actually the best answer. Reranking is the stage that fixes that.",
+          "bullets": [],
+          "symbol": "arrow.up.arrow.down.circle.fill",
+          "table": null
+        },
+        {
+          "id": "20f0ad7b-9fe6-451b-a22f-eaa36c009553",
+          "kind": "problem",
+          "title": "Bi-encoders never let query and document meet",
+          "body": "A standard vector retriever (a bi-encoder) embeds the query and every document separately, ahead of time, then compares the two vectors with cosine similarity or dot product at query time.",
+          "bullets": [
+            "That separation is what makes vector search fast: document embeddings are precomputed once and stored in an ANN index, so a query only needs one new embedding plus a nearest-neighbor lookup",
+            "But the model never sees the query and a specific document together -- it can't let query tokens attend to document tokens, so it can't judge fine-grained relevance the way a reader would",
+            "The result: the top-k list is a reasonable shortlist, but the ordering within it is often noisy -- a document that's topically close but doesn't actually answer the question can outrank one that does"
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "table": null
+        },
+        {
+          "id": "f1d4fbe8-e47e-4fe7-a0a0-0ec6c6508b27",
+          "kind": "solution",
+          "title": "Score query and document together, on a shortlist",
+          "body": "A cross-encoder reranker concatenates the query and one candidate document into a single input and runs the pair through a transformer jointly, so every query token can attend to every document token before producing one relevance score.",
+          "bullets": [
+            "Because it needs both the query and the document at inference time, a cross-encoder can't be precomputed -- it must run a fresh forward pass for every query-document pair, so it never runs over a whole corpus directly",
+            "The fix is a two-stage pipeline: a cheap bi-encoder (or hybrid/BM25) retrieves a wide candidate set -- commonly the top 50 to a few hundred -- and the cross-encoder reranks only that shortlist down to the top 5-10 actually sent to the LLM",
+            "Some stacks swap the cross-encoder for an LLM-as-reranker: prompt a language model to score or rank the shortlist directly. More accurate on nuanced queries, but noticeably slower and costlier per candidate than a purpose-built cross-encoder"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "5bb90c5a-ea0e-4d0d-8939-951e3f83e5c3",
+          "kind": "example",
+          "title": "Walking through one query",
+          "body": "Query: 'How do I cancel a subscription mid-cycle and get a prorated refund?' The vector index returns three candidates in this order.",
+          "bullets": [
+            "#1 from vector search: a general 'Managing Your Subscription' FAQ page -- high embedding similarity because it shares lots of subscription-related vocabulary, but never mentions refunds",
+            "#2 from vector search: 'Prorated Refunds for Mid-Cycle Cancellations' -- the actual answer, but ranked lower because its wording overlaps less with the query on the surface",
+            "#3 from vector search: a billing-cycle explainer with no cancellation content at all",
+            "The cross-encoder reads the query jointly with each candidate and correctly promotes #2 to the top -- it can recognize that 'cancel mid-cycle' + 'prorated refund' is directly addressed there, something cosine similarity on separate embeddings couldn't weigh precisely"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "90c6b8e9-af32-4599-9335-d8623ed32732",
+          "kind": "comparison",
+          "title": "Two different jobs in the pipeline",
+          "body": "Bi-encoders and cross-encoders trade accuracy for scale in opposite directions -- that's exactly why production systems use both, in sequence, rather than picking one.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "Bi-encoder (vector search)",
+              "Cross-encoder (reranker)"
+            ],
+            "rows": [
+              [
+                "Query vs. document",
+                "Embedded independently",
+                "Encoded jointly, with attention between them"
+              ],
+              [
+                "Can be precomputed?",
+                "Yes -- documents indexed once, offline",
+                "No -- runs fresh per query-document pair"
+              ],
+              [
+                "Scale it runs over",
+                "Entire corpus (via ANN index)",
+                "Small shortlist only (tens to a few hundred)"
+              ],
+              [
+                "Relative accuracy",
+                "Good approximate ranking",
+                "Higher precision on the shortlist"
+              ],
+              [
+                "Relative cost per candidate",
+                "Near-zero at query time",
+                "One full transformer forward pass"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "cfa5fcef-0350-418f-935c-e878606870c9",
+          "kind": "problem",
+          "title": "Where reranking stops paying for itself",
+          "body": "A second stage is not free -- it adds latency and a new model to maintain, and it isn't always the bottleneck worth fixing.",
+          "bullets": [
+            "Every candidate you rerank costs one more forward pass; reranking a shortlist of a few hundred documents with a heavier model can add a meaningful chunk of end-to-end latency to a request that otherwise felt instant",
+            "If the first-stage retriever already has strong recall and a clean top-k (small, well-separated corpus, narrow domain), the reranker mostly reorders documents that were already fine -- added cost for little quality gain",
+            "Rerankers are trained on general-purpose relevance data; a reranker that hasn't seen your domain's vocabulary (internal jargon, legal or medical terms) can misjudge relevance just as confidently as it judges correctly elsewhere",
+            "Reranking corrects ordering within the shortlist -- it cannot recover a genuinely relevant document that the first-stage retriever failed to surface at all. Bad recall upstream still needs fixing upstream"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9f08f395-d6e7-4df5-ac59-0f57cd7a41be",
+          "kind": "takeaways",
+          "title": "Retrieve wide, rerank narrow",
+          "body": "Reranking is the standard second stage in production RAG for a reason: it's precision applied exactly where it's affordable.",
+          "bullets": [
+            "Use a fast bi-encoder (optionally fused with BM25/hybrid search) to pull a wide candidate set with high recall, then a cross-encoder to reorder that set with high precision",
+            "The shortlist size is the main knob: too narrow and the reranker never sees the right answer; too wide and latency creeps up for little extra gain",
+            "Skip reranking when your corpus is small and clean enough that the first-stage ranking is already reliable, or when the latency budget genuinely can't absorb another model call",
+            "A reranker fixes ordering, not recall -- pair it with good chunking and a retriever tuned for your domain rather than treating it as a cure-all"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "d7cfc935-a5b9-4329-a514-337586cd9dcc",
+            "prompt": "Why can't a cross-encoder reranker be precomputed the way a bi-encoder's document embeddings can?",
+            "options": [
+              "Cross-encoders only work on short documents",
+              "It needs the query and a specific document together as input, so there's nothing to embed ahead of time",
+              "Cross-encoders don't use transformers",
+              "It's a licensing restriction, not a technical one"
+            ],
+            "correctIndex": 1,
+            "explanation": "A cross-encoder concatenates the query and one document and runs them jointly through the model, so the score only exists once you know both. That's exactly why it's applied to a small shortlist at query time instead of the whole corpus."
+          },
+          {
+            "id": "4068bfe4-7a44-43dc-bcc9-456d3e7fe870",
+            "prompt": "A RAG pipeline's vector search already has excellent recall on a small, narrow-domain corpus. What does adding a reranker mostly buy you here?",
+            "options": [
+              "A large accuracy jump, since reranking always transforms results dramatically",
+              "Little benefit -- the candidates were already well-ordered, so reordering them adds latency for small gain",
+              "Nothing changes recall, but reranking will always be free",
+              "It replaces the need for a vector index entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reranking's value comes from fixing noisy ordering in a large, imprecise shortlist. If the first-stage retriever is already precise on a small, well-separated corpus, there's less noise to fix, so the extra model call costs latency without much quality upside."
+          },
+          {
+            "id": "b3bd5949-6074-41ab-a338-acaf61c510bf",
+            "prompt": "A relevant document never appears in the top 100 results returned by the first-stage retriever. Will a cross-encoder reranker fix this?",
+            "options": [
+              "Yes, cross-encoders can recover any relevant document regardless of the first stage",
+              "No -- the reranker only reorders candidates it's given; it can't rank a document it never sees",
+              "Yes, but only if the document is very short",
+              "No, because cross-encoders never change document order"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reranking operates strictly on the shortlist handed to it by the first-stage retriever. A recall failure upstream -- the right document never making the candidate set -- has to be fixed in retrieval (better chunking, hybrid search, larger k), not in reranking."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "6b8f0682-e939-48cb-8882-584a19b112ef",
       "title": "LSM Trees: Why Modern Databases Write Sequentially",
       "subtitle": "The write-optimized storage engine behind Cassandra, RocksDB, and LevelDB",
@@ -10929,199 +11112,6 @@
       },
       "references": [],
       "publishedDate": "2026-08-22T00:38:54Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "fa116171-2445-427c-b368-a14040ed1993",
-      "title": "Event-Driven Architecture: Systems That React Instead of Ask",
-      "subtitle": "Why Kafka, SQS, and EventBridge exist, and what they cost you.",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "event-driven",
-        "distributed-systems",
-        "message-queues",
-        "system-design",
-        "kafka"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "bolt.horizontal.circle.fill",
-      "summary": "Request/response chains couple every service's uptime to the slowest link and force producers to know every future consumer. Event-driven architecture routes events through a broker instead, decoupling services at the cost of immediate consistency and a single call stack to debug.",
-      "slides": [
-        {
-          "id": "af67395e-7a67-4025-ac32-c890f333e12e",
-          "kind": "cover",
-          "title": "Producers Emit, Consumers React — Nobody Calls Anybody",
-          "body": "Event-driven architecture replaces direct service-to-service calls with asynchronous events flowing through a broker, trading immediate consistency for independence and resilience.",
-          "bullets": [],
-          "symbol": "bolt.horizontal.circle.fill",
-          "table": null
-        },
-        {
-          "id": "028a470a-47c8-46f5-a7f8-434e6e95eedb",
-          "kind": "problem",
-          "title": "Synchronous Call Chains Couple Every Service's Uptime Together",
-          "body": "In a request/response architecture, Service A calling B calling C means A is only as available and as fast as the slowest link in that chain.",
-          "bullets": [
-            "If C is down or slow, B's request blocks or times out, and A's request blocks behind it — one failure cascades backward through the whole chain.",
-            "Adding a new consumer of A's data (say, a fraud-check service) means changing A's code to call it directly, coupling A to every future subscriber.",
-            "Scaling requires every service in the chain to scale together, even when only one of them is the actual bottleneck."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "fb484283-5886-4490-bca0-68f3b0eeddc7",
-          "kind": "solution",
-          "title": "A Broker Sits Between Producers and Consumers",
-          "body": "Instead of calling other services directly, a service publishes an event (e.g. OrderPlaced) to a broker — Kafka, SQS, EventBridge, RabbitMQ. Any number of consumers subscribe independently.",
-          "bullets": [
-            "The producer doesn't know or care who — or how many — consumers exist; it writes the event and moves on.",
-            "Consumers process events at their own pace, so a slow or down consumer doesn't block the producer or any other consumer.",
-            "Most brokers guarantee at-least-once delivery, not exactly-once, so a message can arrive more than once during retries."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "3a14be1d-cdea-48b8-a7de-35eaa814646d",
-          "kind": "architecture",
-          "title": "Choreography vs Orchestration: Who Decides What Happens Next",
-          "body": "There are two ways to coordinate a multi-step workflow across services that communicate through events.",
-          "bullets": [
-            "Choreography: each service reacts to events and emits its own — OrderPlaced triggers Inventory to reserve stock and emit StockReserved, which triggers Payment. No single service knows the whole flow.",
-            "Orchestration: a central coordinator (e.g. Temporal, AWS Step Functions) calls each step explicitly and tracks the overall workflow state.",
-            "Choreography scales better and has no single point of control; orchestration keeps 'why did this order fail' answerable in one place instead of scattered across every consumer's logs."
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "05ca779d-da8c-4c62-8a30-fb39d5cd2fb3",
-          "kind": "comparison",
-          "title": "Request/Response vs Event-Driven, by the Property That Matters",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Property",
-              "Request/Response (REST/RPC)",
-              "Event-Driven"
-            ],
-            "rows": [
-              [
-                "Coupling",
-                "Caller must know callee's address & API",
-                "Producer knows only the event schema"
-              ],
-              [
-                "Failure isolation",
-                "Callee down means caller blocks or fails",
-                "Callee down means events queue until it recovers"
-              ],
-              [
-                "Consistency",
-                "Immediate (synchronous)",
-                "Eventual — consumers lag behind producers"
-              ],
-              [
-                "Adding a consumer",
-                "Requires changing the producer's code",
-                "Subscribe to the topic; zero producer changes"
-              ],
-              [
-                "Debugging a flow",
-                "One call stack to trace",
-                "Spread across every consumer's own logs"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "7378229e-ee70-45d4-9a9a-06a00815707a",
-          "kind": "example",
-          "title": "One Order, Three Independent Consumers",
-          "body": "An e-commerce checkout service publishes a single OrderPlaced event carrying order ID, items, and total.",
-          "bullets": [
-            "The Inventory service consumes it to decrement stock and, if a SKU is out, emits an OutOfStock event — checkout never needed to know Inventory exists.",
-            "The Notification service consumes the same event to send a confirmation email, added six months after launch by subscribing to the existing topic with zero changes to checkout's code.",
-            "The Analytics pipeline consumes it into a warehouse for revenue dashboards — a third consumer, again with no coordination required between teams."
-          ],
-          "symbol": "cart.fill",
-          "table": null
-        },
-        {
-          "id": "a0038154-cbef-4910-8b77-a6fa909bcd99",
-          "kind": "problem",
-          "title": "Pitfalls: Duplicates, Ordering, and the Poison Message",
-          "body": "Decoupling doesn't remove the hard problems — it relocates them to the consumer.",
-          "bullets": [
-            "At-least-once delivery means consumers MUST be idempotent — processing the same OrderPlaced event twice must not charge the customer twice.",
-            "Ordering is only guaranteed within a partition (Kafka) or not at all (SQS standard queues); cross-service ordering needs a shared partition key like order ID.",
-            "A malformed 'poison' message a consumer can't process will loop on retries and block that consumer's queue unless routed to a dead-letter queue after a max-retry count.",
-            "When NOT to use it: a workflow needing an immediate synchronous answer — 'is this credit card valid right now' — is a poor fit; event-driven trades away that immediacy for decoupling."
-          ],
-          "symbol": "exclamationmark.arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "e4c59f60-a946-4cb8-b14b-64dd36611316",
-          "kind": "takeaways",
-          "title": "Decoupling Is the Point, Eventual Consistency Is the Cost",
-          "body": "Event-driven architecture isn't free — it's a trade.",
-          "bullets": [
-            "Producers and consumers no longer share deployment schedules, uptime, or scaling needs — new consumers subscribe without touching producer code.",
-            "In exchange, you give up immediate consistency and a single call stack to debug, and take on idempotency, ordering, and dead-letter handling as first-class design problems.",
-            "Reach for it when consumers are numerous, independent, or unknown at design time; reach for direct calls when you need an answer right now."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "60e46016-3397-4103-b056-166c7e2fd39b",
-            "prompt": "Why must consumers in most event-driven systems be idempotent?",
-            "options": [
-              "Because brokers process events in random order",
-              "Because most brokers guarantee at-least-once delivery, so a consumer can receive the same event more than once",
-              "Because events are always broadcast to every consumer",
-              "Because idempotency is required by the HTTP spec"
-            ],
-            "correctIndex": 1,
-            "explanation": "At-least-once delivery (the default in systems like Kafka and SQS) means retries can redeliver a message that was already processed, so handling it twice must be safe — e.g. checking an order ID before charging again."
-          },
-          {
-            "id": "778f4628-76e6-4ffe-8bb6-41a2c103bd29",
-            "prompt": "What's the key difference between choreography and orchestration in event-driven workflows?",
-            "options": [
-              "Choreography is synchronous, orchestration is asynchronous",
-              "Choreography has each service react to events independently; orchestration uses a central coordinator that explicitly calls each step",
-              "Orchestration doesn't use a message broker",
-              "They are two names for the same pattern"
-            ],
-            "correctIndex": 1,
-            "explanation": "In choreography, no single service knows the full workflow — each just reacts to events and emits its own. Orchestration centralizes that knowledge in a coordinator, trading a single point of control for easier tracing."
-          },
-          {
-            "id": "c2361146-19d7-41e9-8ce9-0339e6e71b37",
-            "prompt": "A consumer keeps crashing on one malformed event, retrying forever and blocking the rest of its queue. What's the standard fix?",
-            "options": [
-              "Delete the broker and restart",
-              "Route the message to a dead-letter queue after a maximum retry count, so it stops blocking healthy messages",
-              "Have the producer stop sending any events",
-              "Increase the retry count to infinity"
-            ],
-            "correctIndex": 1,
-            "explanation": "A dead-letter queue isolates messages that repeatedly fail processing (a 'poison message') after N retries, letting the rest of the queue keep flowing while the bad message is inspected separately."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-08-21T18:39:21Z",
       "heroImageURL": null
     }
   ]
