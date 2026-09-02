@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "title": "Prompt Caching: Reusing the KV-Cache You Already Paid For",
+      "subtitle": "Same prefix, same tokens — a fraction of the compute, but only if it matches exactly",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llm-inference",
+        "kv-cache",
+        "prompt-caching",
+        "cost-optimization",
+        "latency"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "clock.arrow.circlepath",
+      "summary": "Prompt caching lets an LLM API skip recomputing the attention keys and values for a prompt prefix it has already processed, cutting both latency and cost on repeated context. It only pays off when a prefix is reused verbatim, often enough, and within a short time window — get any of those wrong and you pay a write premium for nothing.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The Same 30,000 Tokens, Sent Again and Again",
+          "body": "Every chat turn re-sends the system prompt, the tool schemas, the codebase context — and by default the model reprocesses all of it from scratch, every single time.",
+          "bullets": [],
+          "symbol": "clock.arrow.circlepath",
+          "id": "7b7071a0-24e6-4a76-9fc7-9213517ea337",
+          "table": null
+        },
+        {
+          "kind": "problem",
+          "title": "Attention Scales With Input Length — Even the Part That Never Changes",
+          "body": "Computing the keys and values for a transformer's attention layers costs compute proportional to input length. If 95% of a prompt is byte-for-byte identical to the last request, the model still redoes that work — full price, full latency, for tokens it has already seen.",
+          "bullets": [
+            "A 20K-token system prompt plus tool schema gets recomputed on every single turn",
+            "Time-to-first-token grows with prefix length, even when the prefix never changes",
+            "Cost scales with total input tokens, not with what's actually new in the request"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "23d98e03-bd8b-4aa7-811a-679c82e0d0b4",
+          "table": null
+        },
+        {
+          "kind": "solution",
+          "title": "Cache the KV Tensors, Not Just the Text",
+          "body": "Prompt caching stores the computed key/value tensors for a prompt prefix in fast memory after the first request. A later request with an identical prefix skips the forward pass for those tokens entirely and only computes attention for the new suffix.",
+          "bullets": [
+            "The cache key is the exact token sequence up to a declared breakpoint — not a semantic or fuzzy match",
+            "A single differing token anywhere before the breakpoint invalidates the cache for everything after it",
+            "Cached entries expire after a short TTL (commonly just minutes) if nothing reuses them"
+          ],
+          "symbol": "bolt.fill",
+          "id": "d9a3fccb-af2e-4392-98a7-ef3073fdd2df",
+          "table": null
+        },
+        {
+          "kind": "architecture",
+          "title": "Where You Put the Breakpoint Decides What Gets Reused",
+          "body": "Providers let a request mark one or more cache breakpoints — typically right after the system prompt, after tool definitions, or after a long shared document. Everything before the last breakpoint is a candidate for reuse; everything after it is computed fresh.",
+          "bullets": [
+            "Static content (system prompt, tool defs, RAG documents) belongs before the breakpoint",
+            "Volatile content (the user's latest turn) belongs after it",
+            "Reordering a prompt so static content comes first is often the only change needed to make caching pay off"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "id": "ddc6e0f4-9770-482f-87ae-8f8a416241d4",
+          "table": null
+        },
+        {
+          "kind": "comparison",
+          "title": "Cache Reads Are Cheap; Cache Writes Are a Small Bet",
+          "body": null,
+          "bullets": [
+            "Exact multipliers vary by provider, but the shape is consistent across all of them",
+            "Break-even is typically just two or three reuses of the same prefix within the TTL window"
+          ],
+          "symbol": "tablecells",
+          "id": "454d7305-54ca-4263-aa9a-7c2750c886b0",
+          "table": {
+            "headers": [
+              "",
+              "Cache miss",
+              "Cache write (first hit)",
+              "Cache read (later hit)"
+            ],
+            "rows": [
+              [
+                "Prefix compute",
+                "Full forward pass",
+                "Full forward pass + store",
+                "Skipped"
+              ],
+              [
+                "Relative cost",
+                "1x baseline",
+                "Slightly above baseline",
+                "A small fraction of baseline"
+              ],
+              [
+                "Time-to-first-token",
+                "Scales with full prefix",
+                "Scales with full prefix",
+                "Scales with new suffix only"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "example",
+          "title": "A Coding Agent That Resends 30K Tokens of Context Every Turn",
+          "body": "An agent's system prompt plus the current repo's file tree and open files totals 30K tokens. The user asks five follow-up questions in a row. Without caching, all five requests reprocess the full 30K-token prefix. With a breakpoint placed right after that context, the first request pays a small write premium; the next four barely pay for the prefix at all.",
+          "bullets": [
+            "Turn 1: ~30K tokens computed in full, cache written",
+            "Turns 2-5: the 30K-token prefix is read from cache almost for free — only the new turn is computed fresh",
+            "Net effect: latency and cost on turns 2-5 track the size of the new message, not the size of the accumulated context"
+          ],
+          "symbol": "text.bubble.fill",
+          "id": "e8992299-2feb-4713-900f-1e2a329cf763",
+          "table": null
+        },
+        {
+          "kind": "concept",
+          "title": "When Prompt Caching Doesn't Help — or Backfires",
+          "body": null,
+          "bullets": [
+            "A prefix that changes on every call (e.g., a timestamp interpolated into the system prompt) never hits the cache — it just adds a write cost for nothing",
+            "Low-traffic prompts that go several minutes between calls expire before the next request arrives, so the write premium is a pure loss",
+            "Caching only covers tokens before the breakpoint — putting the volatile part first defeats the whole mechanism",
+            "It's a short-TTL cache, not a persistent store — don't design a product around it surviving hours or serving across accounts"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "id": "a34d1c8e-f558-4df5-b3a5-e4875946f974",
+          "table": null
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Put everything static and shared first, the volatile turn last, and mark the breakpoint between them",
+            "Prompt caching saves the most on long, repeated prefixes hit multiple times within the TTL — think agent loops and multi-turn chats, not one-off calls",
+            "It's an infrastructure optimization, not a correctness feature: the output is identical either way, just cheaper and faster on repeat hits",
+            "Check your provider's actual write/read multipliers and TTL before assuming it pays off — they vary and change over time"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "91a573eb-631e-4eca-8cde-1f9161a2685c",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What determines whether a request gets a prompt-cache hit?",
+            "options": [
+              "The semantic similarity of the new prompt to a previous one",
+              "An exact match of the token sequence up to the declared cache breakpoint",
+              "Whether the same user ID sent the request",
+              "The total length of the conversation so far"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prompt caching matches on the literal token sequence, not meaning — that's what makes it a different mechanism from semantic caching, which matches on similarity of an entire query.",
+            "id": "19108116-4d97-4603-82d0-cbf5c4ca133d"
+          },
+          {
+            "prompt": "Why does placing static content (system prompt, tools) before the volatile part of a prompt matter for caching?",
+            "options": [
+              "It doesn't — the model reads the whole prompt anyway",
+              "Everything after the cache breakpoint is recomputed fresh, so only content before it can benefit from caching",
+              "Static content must legally come first per API convention",
+              "It reduces the model's context window usage"
+            ],
+            "correctIndex": 1,
+            "explanation": "Only the prefix up to the breakpoint is cached; putting the part that changes every turn before that breakpoint means nothing ever gets reused.",
+            "id": "d28a4021-49fd-4a08-b673-bb141e6b1168"
+          },
+          {
+            "prompt": "A prompt is called once every 20 minutes with an identical 10K-token prefix, and the provider's cache TTL is 5 minutes. What happens?",
+            "options": [
+              "Every call is a cache write that never becomes a cache read — the TTL always expires first, so caching adds cost without ever paying it back",
+              "The cache extends its own TTL automatically whenever there's any traffic on the account",
+              "The 10K-token prefix is cached permanently after the first call",
+              "Caching still saves money because cost only depends on prefix length, not on timing"
+            ],
+            "correctIndex": 0,
+            "explanation": "If requests arrive less often than the TTL, the cache entry always expires before it can be reused — you pay the write premium on every call and never collect a cheap read.",
+            "id": "f7f6ffdb-91da-4136-ba3a-c7947bd78029"
+          }
+        ]
+      },
+      "references": [],
+      "id": "6447751c-dd5b-4bb6-9e20-f31dafb91961",
+      "publishedDate": "2026-09-02T06:39:50Z"
+    },
+    {
       "title": "Continuous Batching: How LLM Servers Stop Wasting the GPU",
       "subtitle": "Scheduling at the token level, not the request level, is what actually keeps GPUs fed",
       "category": "LLMs",
@@ -10960,192 +11150,6 @@
         }
       ],
       "id": "9cef3aed-c802-48e4-a962-46fa5b7f24ac",
-      "publishedDate": "2026-08-24T12:48:29Z"
-    },
-    {
-      "title": "Grouped-Query Attention: Fewer Keys, Faster Inference",
-      "subtitle": "How Llama 2 and Mistral cut the KV cache 8x without losing much quality",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "llm-architecture",
-        "inference-optimization",
-        "kv-cache",
-        "transformers"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "square.stack.3d.up.fill",
-      "summary": "Grouped-Query Attention (GQA) interpolates between Multi-Head Attention and Multi-Query Attention by sharing each Key/Value head across a group of query heads instead of one-per-head or one-for-all. Llama 2 70B uses 8 KV groups for 64 query heads — an 8x smaller KV cache than full MHA for under a 1% benchmark cost — which is why GQA became the default in most modern open LLMs.",
-      "slides": [
-        {
-          "id": "984a3b8a-e3ff-4b1f-8fd4-42e17d5e62f1",
-          "kind": "cover",
-          "title": "One Cache, Fewer Keys",
-          "body": "Every attention head used to keep its own Key/Value cache. Grouped-Query Attention shares KV heads across groups of query heads instead — cutting memory without gutting quality.",
-          "bullets": [],
-          "symbol": "square.stack.3d.up.fill"
-        },
-        {
-          "id": "fc87a20c-32f4-4a50-83da-14d5a69011b1",
-          "kind": "problem",
-          "title": "The KV Cache Is What Actually Runs Out of Memory",
-          "body": null,
-          "bullets": [
-            "Multi-Head Attention (MHA) gives every query head its own K and V projection — Llama 2 70B's 64 heads means 64 separate KV pairs cached per token, per layer.",
-            "At long context lengths the KV cache, not the model weights, becomes the memory bottleneck — it grows with sequence length and head count.",
-            "Multi-Query Attention (MQA) fixed this by sharing ONE KV head across every query head — a huge memory win, but with a real quality cost and less stable training."
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "d76b09e6-afb0-4b26-a551-4c70462a00e4",
-          "kind": "solution",
-          "title": "GQA Splits the Difference: Group the Query Heads",
-          "body": "Instead of one KV head per query head (MHA) or one KV head total (MQA), Grouped-Query Attention partitions query heads into G groups — each group shares a single KV head.",
-          "bullets": [
-            "G = number of query heads → identical to MHA (no sharing)",
-            "G = 1 → identical to MQA (full sharing)",
-            "G in between → most of MQA's memory savings, most of MHA's quality"
-          ],
-          "symbol": "wand.and.stars"
-        },
-        {
-          "id": "208c9d38-2298-4ff0-bfa7-d4b514251e98",
-          "kind": "architecture",
-          "title": "How Llama 2 and Mistral Actually Wire It",
-          "body": null,
-          "bullets": [
-            "Llama 2 70B: 64 query heads grouped into 8 KV groups — 8 query heads share each KV head, an 8x smaller KV cache than full MHA at that scale (Llama 2 7B/13B still use plain MHA).",
-            "Mistral 7B: 32 query heads split into 8 KV groups, the same grouping ratio, paired with sliding-window attention for further savings.",
-            "GQA is decided at pretraining time, not bolted on afterward — Llama 2 70B was pretrained with it from scratch."
-          ],
-          "symbol": "cpu.fill"
-        },
-        {
-          "id": "5542d97c-0d9e-4387-9f2e-16fd13cb2d64",
-          "kind": "comparison",
-          "title": "MHA vs GQA vs MQA",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "MHA",
-              "GQA",
-              "MQA"
-            ],
-            "rows": [
-              [
-                "KV heads",
-                "= query heads",
-                "G groups (e.g. 8)",
-                "1"
-              ],
-              [
-                "KV cache size",
-                "baseline",
-                "roughly (H/G)x smaller",
-                "smallest, H x smaller"
-              ],
-              [
-                "Quality",
-                "highest",
-                "close to MHA",
-                "measurably lower"
-              ],
-              [
-                "Training stability",
-                "stable",
-                "stable",
-                "can be unstable"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "986638f0-2765-4616-936a-5e38f68c3a75",
-          "kind": "example",
-          "title": "Serving 70B at Long Context",
-          "body": "Picture serving Llama 2 70B at a long context for a batch of concurrent requests. With full MHA, the KV cache for those 64 heads competes directly with model weights for GPU memory, capping how many requests fit at once. With GQA-8, that cache is roughly 8x smaller — the same GPU can now serve more concurrent requests, or the same batch at a longer context, for under a 1% hit on most benchmark scores.",
-          "bullets": [],
-          "symbol": "memorychip.fill"
-        },
-        {
-          "id": "6a9bea4c-7f11-46e0-bf17-5f59900b7e8e",
-          "kind": "concept",
-          "title": "When GQA Isn't the Right Call",
-          "body": null,
-          "bullets": [
-            "You can't add GQA to a live MHA model for free — the paper's uptraining recipe (mean-pool KV heads per group, then continue pretraining on a slice of the original compute) is itself a real training step, not a config flag.",
-            "Fewer KV groups means less quality headroom — pushing toward MQA (G=1) trades noticeably more accuracy for memory than a moderate G does.",
-            "For short-context, low-batch serving the KV cache was never the bottleneck — GQA's savings matter most when context length or concurrent batch size is large."
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "c9aae016-b00e-4fea-b442-3a6dd0c180f8",
-          "kind": "takeaways",
-          "title": "The Interpolation That Won",
-          "body": null,
-          "bullets": [
-            "GQA is now the default in most modern open LLMs (Llama 2/3, Mistral, and others) because it buys most of MQA's inference speed without most of MQA's quality tax.",
-            "The tunable knob is the number of groups — more groups trade memory for quality, fewer groups trade quality for memory.",
-            "It's a memory optimization decided at pretraining time, not something you toggle after the fact without retraining."
-          ],
-          "symbol": "checkmark.circle.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5591a66b-4bc6-44c3-8567-e2f77fb8bb4d",
-            "prompt": "In Grouped-Query Attention, what determines the size of the KV cache relative to Multi-Head Attention?",
-            "options": [
-              "The sequence length alone",
-              "The number of KV groups — fewer groups means a smaller cache",
-              "The number of query heads only",
-              "The model's total parameter count"
-            ],
-            "correctIndex": 1,
-            "explanation": "GQA's KV cache scales with the number of groups (G), not the number of query heads. Llama 2 70B uses G=8 for 64 query heads, giving roughly an 8x smaller cache than full MHA (G=64) at the same head count."
-          },
-          {
-            "id": "16b61ee7-196d-4638-8aa5-26a430ff1405",
-            "prompt": "What problem does standard Multi-Query Attention (MQA) have that motivated Grouped-Query Attention?",
-            "options": [
-              "It doesn't reduce memory at all",
-              "It shares one KV head across every query head, which measurably lowers quality and can destabilize training",
-              "It requires more attention heads than MHA",
-              "It only works on encoder-only models"
-            ],
-            "correctIndex": 1,
-            "explanation": "MQA collapses all KV heads into one shared head — great for memory and inference speed, but that much sharing costs quality and can make training less stable. GQA keeps several groups instead of one, recovering most of the quality while keeping most of the memory win."
-          },
-          {
-            "id": "3d76b585-76c8-434b-8c31-14caa9c6913c",
-            "prompt": "Why can't you simply flip a config flag to turn an existing MHA checkpoint into a GQA model?",
-            "options": [
-              "GQA models require a different tokenizer",
-              "The KV heads need to be mean-pooled into groups and the model needs further pretraining to adapt to the new structure",
-              "GQA only works with sliding-window attention",
-              "It's not possible under any circumstances"
-            ],
-            "correctIndex": 1,
-            "explanation": "Converting an MHA checkpoint to GQA is a real architecture change: mean-pool each group's original KV heads into one, then continue pretraining ('uptraining') on a slice of the original compute so the model relearns to use the shared representation."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "9264d0e8-7e62-49d1-9eea-cd7a9d6f2e60",
-          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (arXiv 2305.13245)",
-          "url": "https://arxiv.org/abs/2305.13245"
-        }
-      ],
-      "id": "3d547632-845c-4621-910c-28b9970c4635",
       "publishedDate": "2026-08-24T12:48:29Z"
     }
   ]
