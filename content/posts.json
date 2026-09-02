@@ -1,6 +1,199 @@
 {
   "posts": [
     {
+      "title": "Continuous Batching: How LLM Servers Stop Wasting the GPU",
+      "subtitle": "Scheduling at the token level, not the request level, is what actually keeps GPUs fed",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "inference",
+        "batching",
+        "throughput",
+        "gpu-utilization"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "speedometer",
+      "summary": "Static batching wastes GPU capacity because a batch can't start its next round until its slowest sequence finishes. Continuous (iteration-level) batching reschedules the batch after every single decoding step, so finished requests are swapped out and new ones swapped in immediately — the technique behind the throughput jump in serving engines like vLLM and Orca-style schedulers.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A GPU running an LLM server is often idle — even under heavy load",
+          "body": "Batch several requests together and the batch is only as fast as its slowest member. If one sequence needs 300 tokens and its batchmates need 20, those 20-token slots sit empty for the rest of the round, burning GPU time on nothing.",
+          "bullets": [
+            "Naive batching groups requests once, then runs the whole batch to completion",
+            "Real traffic has wildly different output lengths — chat replies vs. long completions",
+            "The fix: reschedule the batch after every token, not after every request"
+          ],
+          "symbol": "speedometer",
+          "id": "3fa7230f-0ae5-4575-9855-77d9764cd916",
+          "table": null
+        },
+        {
+          "kind": "problem",
+          "title": "Static batching ties every request to the slowest one in its group",
+          "body": "In request-level (static) batching, the server picks N requests, runs the whole forward pass loop until every one of them emits an end token, and only then admits new work. The batch's wall-clock time is set by whichever sequence generates the most tokens.",
+          "bullets": [
+            "A batch of 20-token and 300-token requests takes as long as the 300-token one",
+            "Finished sequences still occupy a batch 'slot' doing nothing until the round ends",
+            "Under bursty traffic, new requests queue behind a batch that's mostly idle capacity"
+          ],
+          "symbol": "clock.fill",
+          "id": "5c04ca06-a45e-4a6c-b64f-90e1f8c28e96",
+          "table": null
+        },
+        {
+          "kind": "solution",
+          "title": "Continuous batching reschedules after every decoding step",
+          "body": "Also called iteration-level or in-flight batching. Instead of committing to a fixed batch until it fully finishes, the scheduler runs one forward pass (one new token for every active sequence), then immediately evicts anything that just hit its stop token and splices in queued requests to fill the freed slots — every single step.",
+          "bullets": [
+            "Scheduling granularity drops from 'whole request' to 'one token step'",
+            "A finished sequence's slot is reused on the very next iteration, not the next batch",
+            "Requires per-sequence KV cache state that can be attached/detached independently"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "90654b51-a061-4d5b-9a64-15ccc77f07b0",
+          "table": null
+        },
+        {
+          "kind": "architecture",
+          "title": "It needs flexible KV cache management to actually work",
+          "body": "Splicing a new request into a running batch mid-flight means the server must allocate KV cache for it on the fly and free the departing sequence's cache immediately — which is why continuous batching is almost always paired with block-based KV cache allocators like PagedAttention rather than one contiguous buffer per batch slot.",
+          "bullets": [
+            "Scheduler runs once per forward pass, not once per request lifecycle",
+            "KV cache is allocated/freed per sequence, in small blocks, not per fixed batch slot",
+            "Long prompts (prefill) are often chunked so they don't stall in-flight decodes"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "id": "2d4372cb-1ac8-459a-8e09-f237a196c54d",
+          "table": null
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: three requests, one queue",
+          "body": "Requests A (20 tokens), B (200 tokens), and C (300 tokens) start together in a batch of size 3, and D is waiting in the queue.",
+          "bullets": [
+            "Static batching: A and B finish at steps 20 and 200 but their slots sit empty; D waits until step 300",
+            "Continuous batching: the instant A finishes at step 20, D is spliced into A's freed slot and starts generating",
+            "By step 200, B's slot is freed and the next queued request starts immediately — the GPU never drops back to running fewer than 3 sequences",
+            "Net effect: total tokens generated per second of GPU time goes up because idle slots are eliminated, not because any single request got faster"
+          ],
+          "symbol": "chart.bar.fill",
+          "id": "1e66240d-5850-4cc9-b343-6b4a070c8642",
+          "table": null
+        },
+        {
+          "kind": "comparison",
+          "title": "Static vs. continuous batching",
+          "body": null,
+          "bullets": [],
+          "symbol": "table",
+          "id": "38c1b147-8a79-4a82-96c1-09115bb22cb3",
+          "table": {
+            "headers": [
+              "",
+              "Static (request-level)",
+              "Continuous (iteration-level)"
+            ],
+            "rows": [
+              [
+                "Scheduling granularity",
+                "Whole batch, once",
+                "Every single decode step"
+              ],
+              [
+                "Idle GPU slots",
+                "Common — bounded by slowest sequence",
+                "Near zero — refilled every step"
+              ],
+              [
+                "New request latency",
+                "Waits for the current batch to fully drain",
+                "Can join on the very next step"
+              ],
+              [
+                "Requires",
+                "Fixed-size batch buffer",
+                "Per-sequence KV cache + fast scheduler"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "concept",
+          "title": "What it doesn't fix",
+          "body": "Continuous batching removes decode-time idling, but it isn't a free lunch — it shifts the bottleneck elsewhere and introduces new scheduling questions.",
+          "bullets": [
+            "Prefill (processing a new prompt) is compute-bound, not slot-bound — a big prompt spliced in naively can stall every other sequence's next token, which is why chunked prefill exists",
+            "Without a fairness policy, a stream of short new requests can keep getting priority over one long-running sequence, starving it",
+            "You're still capped by total VRAM for KV cache — continuous batching fills slots faster, but can't admit a request there's no memory for",
+            "It optimizes throughput (tokens/sec across all users), not the latency of any one individual request"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "bec69739-6571-48ea-b5af-63fa1724f4a3",
+          "table": null
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Static batching wastes GPU time because a batch can't start its next round until its slowest member finishes",
+            "Continuous (iteration-level) batching reschedules after every single decode step, swapping finished sequences out and queued ones in immediately",
+            "It needs per-sequence KV cache that can be allocated and freed independently — usually paired with a block-based allocator like PagedAttention",
+            "It raises aggregate throughput, not individual request speed, and still needs chunked prefill and fairness policies to behave well under mixed workloads"
+          ],
+          "symbol": "checklist",
+          "id": "d2082d83-cba2-4f8d-9f5e-689eb980a607",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why does static (request-level) batching waste GPU capacity?",
+            "options": [
+              "It uses too much memory per request",
+              "The whole batch runs until its slowest sequence finishes, leaving other slots idle in the meantime",
+              "It can only process one request at a time",
+              "It doesn't use a KV cache at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "A static batch is scheduled once and runs to completion as a unit. Sequences that finish early still hold a batch slot that does no useful work until the whole batch — bounded by its longest sequence — finally ends.",
+            "id": "f3d69da6-80fe-4767-a80f-3078d63ea423"
+          },
+          {
+            "prompt": "What has to be true about KV cache management for continuous batching to work?",
+            "options": [
+              "KV cache must be a single fixed-size buffer shared by the whole batch",
+              "KV cache isn't needed since tokens are generated one at a time anyway",
+              "Each sequence's KV cache must be allocatable and freeable independently, since sequences enter and leave the batch every step",
+              "KV cache must be recomputed from scratch on every decode step"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because sequences can join or leave on any given step, the server needs to attach and release per-sequence KV cache on the fly — which is why continuous batching is typically paired with block-based allocators like PagedAttention instead of one fixed buffer per slot.",
+            "id": "7171806c-f7cf-493b-8669-4b3614f00dec"
+          },
+          {
+            "prompt": "What is a real limitation continuous batching does NOT solve on its own?",
+            "options": [
+              "It can't reduce time-to-first-token for any request",
+              "It doesn't reduce GPU idle time at all",
+              "A large new prompt's compute-bound prefill can still stall other in-flight sequences unless prefill is chunked",
+              "It requires every request to have the same output length"
+            ],
+            "correctIndex": 2,
+            "explanation": "Continuous batching fixes idle decode slots, but prefill is a different, compute-bound phase — splicing in a big prompt naively can hog a whole forward pass and delay everyone else's next token, which is why serving engines add chunked prefill on top.",
+            "id": "5de8e7c9-8a0e-417e-9a3d-ce7d2a816705"
+          }
+        ]
+      },
+      "references": [],
+      "id": "bad2e30c-ce73-42d3-a607-54c871af8fcc",
+      "publishedDate": "2026-09-02T00:39:26Z"
+    },
+    {
       "title": "OpenAI's Ten Proofs: Math You Can Verify Yourself",
       "subtitle": "Ten decades-old open problems, each shipped as a Lean 4 certificate anyone can compile",
       "category": "AI Innovations",
@@ -10954,173 +11147,6 @@
       ],
       "id": "3d547632-845c-4621-910c-28b9970c4635",
       "publishedDate": "2026-08-24T12:48:29Z"
-    },
-    {
-      "title": "IdleSpec: Making Agents Think While They Wait",
-      "subtitle": "Speculating on the next move during every tool call, instead of sitting idle",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "llm-agents",
-        "inference-optimization",
-        "speculative-execution",
-        "latency",
-        "tool-use"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "hourglass",
-      "summary": "IdleSpec exploits the dead time an LLM agent spends waiting on tool calls by speculatively drafting candidate next-step plans during that window, then verifying/aggregating them once the real observation lands — improving GAIA+FRAMES accuracy by 5.1 points with Gemini-2.5-Flash without added latency.",
-      "slides": [
-        {
-          "id": "98232645-6bae-41bb-94f9-a465884955a1",
-          "kind": "cover",
-          "title": "Every Tool Call Leaves the Agent Idle",
-          "body": "While a web search, code execution, or API call is in flight, a typical LLM agent does nothing but wait for the result before it starts thinking about what to do next.",
-          "bullets": [],
-          "symbol": "hourglass"
-        },
-        {
-          "id": "56dba1d3-0485-44c6-bc9e-065c8561ba9a",
-          "kind": "problem",
-          "title": "Wall-Clock Time, Wasted",
-          "body": "Multi-step agent tasks (GAIA, FRAMES, MLE-Bench) chain many tool calls. Each round-trip has real latency, and the agent's own compute sits unused until the observation returns — then it starts planning the next step from scratch.",
-          "bullets": [
-            "Tool latency (search, code exec, browsing) is often seconds — much longer than a single LLM forward pass",
-            "The planning step for 'what to do next' only starts AFTER the observation arrives, serializing latency and compute",
-            "No mechanism previously reused that dead time for useful work"
-          ],
-          "symbol": "clock.badge.exclamationmark"
-        },
-        {
-          "id": "2d4f8a72-b045-4056-959f-6215b39b319c",
-          "kind": "solution",
-          "title": "Speculate During the Wait, Verify on Arrival",
-          "body": "IdleSpec drafts multiple candidate next-step plans WHILE the tool call is still pending, sampling from a mix of drafting strategies to hedge against not knowing the real observation yet. When the observation finally arrives, it aggregates/selects among the pre-computed candidates instead of starting cold.",
-          "bullets": [
-            "Idle-time compute is spent generating plan candidates conditioned on plausible observation outcomes",
-            "A learned strategy distribution balances diverse guesses against convergent, high-probability ones",
-            "Once the real observation lands, the matching (or closest) candidate is reused or lightly repaired"
-          ],
-          "symbol": "arrow.triangle.branch"
-        },
-        {
-          "id": "918bee71-0e76-440d-891a-9309d48b31ad",
-          "kind": "comparison",
-          "title": "Consistent Gains Across Models and Benchmarks",
-          "body": "Evaluated on GAIA, FRAMES, and MLE-Bench — tool-augmented reasoning, multi-hop search, and long-horizon interactive tasks.",
-          "bullets": [
-            "With Gemini-2.5-Flash: 55.6% average accuracy on GAIA+FRAMES, +5.1 points over the vanilla no-idle-time baseline",
-            "Gains hold across smaller open models too, not just one flagship"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Model",
-              "Accuracy gain from IdleSpec"
-            ],
-            "rows": [
-              [
-                "Gemini-2.5-Flash",
-                "+5.1 pts (55.6% avg, GAIA+FRAMES)"
-              ],
-              [
-                "Gemma4-E4B",
-                "+4.6 pts"
-              ],
-              [
-                "Qwen3.5-4B",
-                "+6.8 pts"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "5a60c3cd-5270-4c5a-9d56-c68b828969b9",
-          "kind": "example",
-          "title": "Worked Example: A Research Agent Mid-Search",
-          "body": "The agent fires a web search for 'quarterly revenue of Company X.' While the search API is still returning results, IdleSpec doesn't idle — it drafts several plausible next steps in parallel.",
-          "bullets": [
-            "Candidate A: 'if results show a press release, extract the number and cite it'",
-            "Candidate B: 'if results are ambiguous, issue a follow-up search narrowing the date range'",
-            "Candidate C: 'if no revenue figure appears, fall back to the company's investor relations page'",
-            "When results return, the agent picks the matching candidate instantly — no fresh planning call needed"
-          ],
-          "symbol": "magnifyingglass"
-        },
-        {
-          "id": "2210028d-3785-4bab-af6f-d9321a9dd127",
-          "kind": "problem",
-          "title": "When It Doesn't Pay Off",
-          "body": "IdleSpec is a bet on idle time being worth exploiting — that bet doesn't always pay off.",
-          "bullets": [
-            "Near-instant tool calls leave almost no idle window to speculate into — overhead can outweigh benefit",
-            "Highly unpredictable next steps waste speculative compute on candidates that don't match the real observation",
-            "Aggregating/verifying multiple candidates adds implementation complexity over a plain sequential agent loop"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "70200c87-ec57-4821-8df3-93bc5dfe512e",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Agent latency isn't just LLM decoding time — tool round-trips are a huge, previously wasted chunk of it",
-            "IdleSpec turns that dead time into speculative planning compute, verified once ground truth arrives",
-            "+5.1 to +6.8 points of accuracy across models on GAIA/FRAMES-style benchmarks, at no added wall-clock cost",
-            "Most valuable for agents with slow, high-latency tools (search, browsing, code execution) — least valuable for near-instant ones"
-          ],
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "47b31a87-aba9-47c8-a347-ca7c25860a4a",
-            "prompt": "What idle window does IdleSpec exploit?",
-            "options": [
-              "The time between user messages",
-              "The time an agent spends waiting for a tool call's result to return",
-              "GPU idle cycles during model loading",
-              "The delay before a user reads the agent's response"
-            ],
-            "correctIndex": 1,
-            "explanation": "IdleSpec targets the latency of tool calls (search, code execution, API requests) — time the agent would otherwise spend doing nothing before it can plan its next step."
-          },
-          {
-            "id": "b1c58569-7b08-4552-b6ac-9fb3dbd8f3c3",
-            "prompt": "How does IdleSpec use that idle time?",
-            "options": [
-              "It caches the previous turn's KV cache to disk",
-              "It speculatively drafts multiple candidate next-step plans before the real observation arrives",
-              "It retrains the policy model in the background",
-              "It pre-fetches the next likely tool call's API documentation"
-            ],
-            "correctIndex": 1,
-            "explanation": "It generates several candidate plans conditioned on plausible outcomes, sampling from a strategy distribution, then verifies/aggregates against the real observation once it lands."
-          },
-          {
-            "id": "b6ededa6-cb4d-4848-851e-63dc4b9bbd87",
-            "prompt": "On GAIA+FRAMES with Gemini-2.5-Flash, what was IdleSpec's reported improvement over the vanilla baseline?",
-            "options": [
-              "+0.5 points",
-              "+5.1 points (to 55.6% average accuracy)",
-              "+25 points",
-              "No measurable improvement"
-            ],
-            "correctIndex": 1,
-            "explanation": "IdleSpec reached 55.6% average accuracy on GAIA+FRAMES with Gemini-2.5-Flash, a 5.1-point gain over the same agent without idle-time speculation."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "IdleSpec: Exploiting Idle Time via Speculative Planning for LLM Agents (arXiv 2605.22154)",
-          "url": "https://arxiv.org/abs/2605.22154"
-        }
-      ],
-      "id": "b9b084f4-3c08-4eca-b185-c67a3ef341ea",
-      "publishedDate": "2026-08-24T06:39:47Z"
     }
   ]
 }
