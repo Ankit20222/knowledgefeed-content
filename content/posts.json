@@ -1,6 +1,213 @@
 {
   "posts": [
     {
+      "id": "ded83bb2-3ca6-4838-887c-2e71d285be07",
+      "title": "LoRA: Fine-Tuning Billion-Parameter Models on a Single GPU",
+      "subtitle": "Freeze the weights, train a tiny low-rank patch instead — most of full fine-tuning's quality for a fraction of the memory.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "peft",
+        "qlora",
+        "llms"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu.fill",
+      "summary": "LoRA freezes a pretrained model's weights and learns a small low-rank correction matrix instead of updating every parameter. It cuts trainable parameters and optimizer memory by orders of magnitude, merges back into the base model for free at inference, and — combined with 4-bit quantization as QLoRA — lets a 65B model be fine-tuned on a single GPU.",
+      "slides": [
+        {
+          "id": "964db95a-be41-4855-a48c-c3c775619bfa",
+          "kind": "cover",
+          "title": "Fine-Tuning Without Touching Most of the Model",
+          "body": "LoRA (Low-Rank Adaptation) freezes a pretrained model's weights and trains a tiny add-on patch instead of the whole network.",
+          "bullets": [
+            "The base model's weights never change — a small correction matrix is learned alongside them",
+            "Trainable parameters typically drop to under 1% of the full model",
+            "The patch merges back into the base weights after training, adding zero inference latency"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "b7660c08-8ce4-490a-a297-8a5951ec2d4c",
+          "kind": "problem",
+          "title": "Full Fine-Tuning Costs 4x a Model's Weight Memory",
+          "body": "The Adam optimizer is the hidden cost: every trainable parameter needs its weight, its gradient, and two optimizer moment buffers held in memory simultaneously.",
+          "bullets": [
+            "A 7B-parameter model in fp16 is already about 14GB of weights alone",
+            "Full fine-tuning with Adam needs weights + gradients + 2 moment buffers — well over 100GB before a single batch loads",
+            "That memory bill rules out fine-tuning on a single consumer or even single-datacenter GPU"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2b4fb943-9a88-4607-8b09-036cf50cf8e7",
+          "kind": "solution",
+          "title": "Freeze W, Learn a Low-Rank Update ΔW = B·A",
+          "body": "LoRA (Hu et al., 2021) replaces 'update every weight' with 'learn a small correction.' The original weight matrix W never moves.",
+          "bullets": [
+            "For a weight matrix W (size d×k), LoRA adds two small matrices B (d×r) and A (r×k), where rank r is often just 4-16",
+            "Only B and A get gradients — W stays frozen throughout training",
+            "B is initialized to all zeros, so ΔW = B·A = 0 on step one — training starts exactly at the base model's behavior",
+            "A scaling factor (alpha/r) controls how strongly the learned update is applied once training moves it away from zero"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "e229f671-43b4-481c-bb9c-78f80c4e24af",
+          "kind": "architecture",
+          "title": "Usually Bolted Onto the Attention Projections",
+          "body": "You choose which weight matrices get a LoRA adapter — adapting the whole model isn't required.",
+          "bullets": [
+            "Most setups target the query and value projections (Wq, Wv) in attention; some also adapt key/output projections and MLP layers",
+            "More target matrices means more adaptation capacity, but more trainable parameters and memory to train",
+            "Because ΔW = B·A merges algebraically into W, the adapter can be folded into the base weights after training with zero added inference cost",
+            "Unmerged adapters can also be kept separate and hot-swapped per task or customer without duplicating the full base model"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "3175d13e-72e0-4b3e-b5d6-2baf316e7187",
+          "kind": "example",
+          "title": "Worked Example: 7B Model, 24GB GPU",
+          "body": "The original LoRA paper fine-tuned GPT-3 175B with 10,000x fewer trainable parameters and 3x less GPU memory than full fine-tuning.",
+          "bullets": [
+            "Full fine-tune of a 7B model (fp16 weights + fp32 Adam states): well over 100GB of GPU memory, needing multiple GPUs",
+            "LoRA at rank r=8 on Wq/Wv across every layer: roughly 4-8M trainable parameters — under 0.1% of the 7B total",
+            "That collapse in optimizer-state memory is what makes fine-tuning fit on a single 24GB consumer GPU",
+            "QLoRA goes further: quantize the frozen base model to 4-bit (NF4) and train LoRA adapters on top of it — a 65B model fine-tunes on one 48GB GPU"
+          ],
+          "symbol": "desktopcomputer",
+          "table": null
+        },
+        {
+          "id": "ff7e751b-8f9f-4f88-a1bb-77a1a42ba266",
+          "kind": "comparison",
+          "title": "Trainable Parameters vs. Inference Cost",
+          "body": "These methods trade off differently — LoRA's specific advantage is paying almost nothing extra at inference time.",
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Method",
+              "Trainable params",
+              "Extra inference cost"
+            ],
+            "rows": [
+              [
+                "Full fine-tune",
+                "100%",
+                "None"
+              ],
+              [
+                "Prompt / prefix tuning",
+                "<0.1% (soft tokens only)",
+                "Extra tokens on every forward pass"
+              ],
+              [
+                "LoRA",
+                "~0.01%-1% (rank-dependent)",
+                "None once merged"
+              ],
+              [
+                "QLoRA",
+                "Same as LoRA, on a 4-bit base",
+                "None once merged"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b6ea6a83-3901-4f63-8cb6-35dc99dea9d6",
+          "kind": "concept",
+          "title": "Rank Is a Dial, Not a Free Lunch",
+          "body": "LoRA doesn't reduce training compute — the full forward and backward pass still runs through the frozen base model. It only shrinks trainable parameters and optimizer memory.",
+          "bullets": [
+            "Too small a rank (r=1-2) underfits tasks that need broad behavior change, like teaching a genuinely new skill or language",
+            "Forward/backward FLOPs through the frozen base model are unchanged — LoRA saves memory and storage, not training wall-clock",
+            "Serving many unmerged adapters per request adds latency and routing complexity versus one merged model",
+            "Catastrophic forgetting still happens, just less severely than full fine-tuning, since most of the network stays frozen"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "4efc5c9d-1046-4330-a7c4-f34e5474a33c",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "LoRA freezes the base weights and learns a low-rank correction B·A instead of updating every parameter",
+            "It cuts trainable parameters and optimizer memory by orders of magnitude — not training compute",
+            "The adapter merges back into the base model for free at inference; QLoRA adds 4-bit quantization for even bigger memory savings",
+            "Pick rank and target layers based on how much the task actually needs to change the model's behavior"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "36b4c020-4a7a-42c8-96ce-d9aa8de9fcfc",
+            "prompt": "What does LoRA actually train?",
+            "options": [
+              "Every weight in the model",
+              "A pair of small low-rank matrices added to selected weight matrices",
+              "Only the embedding layer",
+              "A separate reward model"
+            ],
+            "correctIndex": 1,
+            "explanation": "LoRA freezes the original weight matrix W and learns a low-rank decomposition B·A added to it — only B and A receive gradients."
+          },
+          {
+            "id": "d46f0832-b5e1-4b84-afa2-66c5f6012680",
+            "prompt": "Why is the B matrix initialized to all zeros?",
+            "options": [
+              "To save disk space",
+              "So the model matches the frozen base model's output exactly before any training happens",
+              "Because A is initialized to zero instead",
+              "It's an unrelated regularization trick"
+            ],
+            "correctIndex": 1,
+            "explanation": "With B=0, ΔW = B·A = 0 at step one, so training starts from the exact same behavior as the untouched base model and only diverges as B learns."
+          },
+          {
+            "id": "6c653cba-3dd3-4aed-acb6-72abd90fbd48",
+            "prompt": "What does LoRA NOT save you, compared to full fine-tuning?",
+            "options": [
+              "GPU memory for optimizer states",
+              "Disk space for storing many fine-tuned variants",
+              "Forward/backward compute through the frozen base model",
+              "Trainable parameter count"
+            ],
+            "correctIndex": 2,
+            "explanation": "LoRA still runs a full forward and backward pass through the frozen base model each step — it reduces trainable parameters and optimizer memory, not the FLOPs spent per training step."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "61799013-14db-41fb-a2b7-4a7d98c7f815",
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al. — arXiv:2106.09685)",
+          "url": "https://arxiv.org/abs/2106.09685"
+        },
+        {
+          "id": "d61484cb-8466-46b2-8d30-8312f5a85cfc",
+          "title": "QLoRA: Efficient Finetuning of Quantized LLMs (Dettmers et al. — arXiv:2305.14314)",
+          "url": "https://arxiv.org/abs/2305.14314"
+        }
+      ],
+      "publishedDate": "2026-09-03T06:41:59Z",
+      "heroImageURL": null
+    },
+    {
       "id": "8c2ac65b-d896-453a-8bf4-832e37fa8862",
       "title": "Claude Mythos 5.1: The Model Anthropic Won't Hand You",
       "subtitle": "Same weights as Fable 5.1, permissive safeguards — and access gated to vetted cyber and biology labs only.",
@@ -11098,152 +11305,6 @@
           "id": "681242e0-4f13-4c47-b05e-a8ee69774ba5",
           "title": "Apodex 1.1: Scaling Agentic Intelligence for Complex Work (arXiv 2608.23283)",
           "url": "https://arxiv.org/abs/2608.23283"
-        }
-      ],
-      "publishedDate": "2026-08-25T18:40:00Z"
-    },
-    {
-      "id": "26aa461f-950b-4592-80ed-4f140a55599d",
-      "title": "DeepSeek-V4-Flash-Vision-Exp: Text Agent Gains Eyes",
-      "subtitle": "An experimental multimodal endpoint bolted onto V4-Flash, not a new base model",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "deepseek",
-        "multimodal",
-        "vision",
-        "api release",
-        "agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "eye.fill",
-      "summary": "DeepSeek shipped DeepSeek-V4-Flash-Vision-Exp on Aug 21, 2026 -- an experimental multimodal endpoint that adds image understanding to V4-Flash while keeping its text and agentic performance unchanged, at the same token pricing.",
-      "slides": [
-        {
-          "id": "c7b6fd05-600e-4fc5-808b-b239f0f86c49",
-          "kind": "cover",
-          "title": "V4-Flash can now see",
-          "body": "On August 21, 2026, DeepSeek put DeepSeek-V4-Flash-Vision-Exp live on its API platform -- a multimodal variant of its V4-Flash agent model.",
-          "bullets": [
-            "Experimental ('-Exp') API launch, not a weights release",
-            "Announced via the official DeepSeek API changelog and DeepSeek's own account"
-          ],
-          "symbol": "eye.fill"
-        },
-        {
-          "id": "78e5a9d6-c61f-4542-9ff7-cbdbb1bb0db1",
-          "kind": "problem",
-          "title": "Text-only agents can't read a screenshot",
-          "body": "DeepSeek's V4-Flash is built for agentic work -- tool use, reasoning, world knowledge -- but a growing share of real agent tasks involve visual input: a UI error, a chart, a scanned document.",
-          "bullets": [
-            "Without vision, an agent has to be told what's on screen instead of seeing it",
-            "Bolting vision onto an existing agent model risks degrading the text/agent skills that made it useful"
-          ]
-        },
-        {
-          "id": "a227a9dc-1721-4101-819d-cc62ccf67173",
-          "kind": "solution",
-          "title": "Add a vision path, don't touch the base",
-          "body": "DeepSeek's approach: keep V4-Flash's text and agentic capabilities intact, and add image understanding as a parallel input path.",
-          "bullets": [
-            "Matches DeepSeek-V4-Flash on text capabilities -- agents, reasoning, world knowledge -- unchanged",
-            "Each image is capped at 384 tokens, keeping the added cost predictable",
-            "Same token pricing as V4-Flash -- vision isn't billed as a separate, pricier tier"
-          ],
-          "symbol": "photo.on.rectangle.angled"
-        },
-        {
-          "id": "e44d5763-2b67-46df-a60d-02931f95a40f",
-          "kind": "architecture",
-          "title": "How to call it",
-          "body": "The model is available under the name deepseek-v4-flash-vision-exp across DeepSeek's existing API surfaces.",
-          "bullets": [
-            "Works with Chat Completions, Messages, and Responses APIs",
-            "Images accepted as base64 data URLs, external URLs, or uploads via the free Files API",
-            "Supported formats: JPEG, PNG, GIF, WebP",
-            "Images and text can be freely mixed in the same request"
-          ]
-        },
-        {
-          "id": "97210f25-eb79-4a46-9bcc-6955b9ded8a7",
-          "kind": "comparison",
-          "title": "What actually improved",
-          "body": "DeepSeek reports a 'major leap' on multimodal agent benchmarks over plain V4-Flash, describing performance as closing in on Anthropic's Opus 4.8 -- but has not published exact multimodal benchmark scores for this experimental release.",
-          "bullets": [
-            "Text/agent benchmarks: unchanged from V4-Flash (by design)",
-            "Multimodal agent benchmarks: described qualitatively as a major step up, not yet quantified in public numbers",
-            "Treat the 'close to Opus 4.8' framing as DeepSeek's own qualitative claim until independent evals land"
-          ]
-        },
-        {
-          "id": "4dadb175-66fb-48a6-ba6b-6a79d1cc3f63",
-          "kind": "example",
-          "title": "Worked scenario: debugging from a screenshot",
-          "body": "A developer pastes a screenshot of a failed CI run plus the instruction 'find the failing test and suggest a fix.'",
-          "bullets": [
-            "The model reads the error text and stack trace directly from the image instead of requiring it to be retyped",
-            "Because agentic/text ability is untouched, it can still reason about the codebase and propose a patch -- not just describe the picture",
-            "The 384-token image cap means a single screenshot is cheap, but a dense multi-page PDF may need to be split into several images"
-          ]
-        },
-        {
-          "id": "a723db0e-bb45-4971-ab1d-e3d0c570ff79",
-          "kind": "takeaways",
-          "title": "Why it matters -- and its limits",
-          "bullets": [
-            "It's an experimental API add-on ('-Exp'), not confirmed as open-weight -- don't expect to self-host it yet",
-            "384 tokens/image keeps costs flat but limits fine detail work like dense tables or small text in large images",
-            "No independent multimodal benchmark numbers are public yet -- DeepSeek's 'close to Opus 4.8' claim is unverified outside their own framing",
-            "Good fit: agent workflows that occasionally need to glance at a screenshot or diagram, not primary document-vision workloads"
-          ]
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "895257df-c592-4250-85dc-8745c0d75c13",
-            "prompt": "What does the '-Exp' suffix on DeepSeek-V4-Flash-Vision-Exp signal?",
-            "options": [
-              "It's a permanently stable, production-grade model",
-              "It's experimental and may change or be replaced",
-              "It's an export-only build for on-premise deployment",
-              "It has expired and is no longer available"
-            ],
-            "correctIndex": 1,
-            "explanation": "'-Exp' is DeepSeek's own naming convention for experimental releases that may be revised or superseded."
-          },
-          {
-            "id": "562f741c-16dd-473f-8f32-db7c62d33b1c",
-            "prompt": "How does DeepSeek cap the cost of each image passed to the model?",
-            "options": [
-              "Images are billed at 10x the text token rate",
-              "Each image uses no more than 384 tokens, at the same pricing as text",
-              "Only one image per request is allowed",
-              "Images must be under 100KB in file size"
-            ],
-            "correctIndex": 1,
-            "explanation": "DeepSeek caps each image at 384 tokens and bills it at V4-Flash's existing token pricing, keeping multimodal cost predictable."
-          },
-          {
-            "id": "d9e63d7a-3a25-4f7a-817b-9ea98ce52159",
-            "prompt": "According to the release, what happened to V4-Flash's text and agentic capabilities when vision was added?",
-            "options": [
-              "They were reduced to make room for the vision encoder",
-              "They were reported as unchanged / matching plain V4-Flash",
-              "They were retrained from scratch alongside vision",
-              "They are only available in the text-only version now"
-            ],
-            "correctIndex": 1,
-            "explanation": "DeepSeek states V4-Flash-Vision-Exp matches V4-Flash on text capabilities, meaning vision was added without regressing the base agent skills."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "85468da5-720b-4fb3-96a6-c5e5bcb43628",
-          "title": "DeepSeek-V4-Flash-Vision-Exp Release: Multimodal API Now Live",
-          "url": "https://api-docs.deepseek.com/news/news260821/"
         }
       ],
       "publishedDate": "2026-08-25T18:40:00Z"
