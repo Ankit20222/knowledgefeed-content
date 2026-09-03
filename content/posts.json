@@ -1,6 +1,202 @@
 {
   "posts": [
     {
+      "id": "2e4fe9af-f9ba-461b-b408-257749abfdb9",
+      "title": "Consistent Hashing: Scaling a Cluster Without Reshuffling Everything",
+      "subtitle": "Naive mod-N hashing remaps almost every key when a node joins or leaves — one ring-shaped trick fixes that.",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "consistent-hashing",
+        "distributed-systems",
+        "sharding",
+        "caching",
+        "system-design"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Naive key%N sharding remaps nearly every key whenever a node is added or removed, forcing a mass cache miss or data migration. Consistent hashing places nodes and keys on the same circular hash space so only the keys owned by the changed node's neighbors move — roughly 1/N of the data instead of nearly all of it. Virtual nodes fix the uneven-load problem that a plain ring introduces, at the cost of extra bookkeeping.",
+      "slides": [
+        {
+          "id": "4706c138-611d-425e-9eaf-a4f8879396b6",
+          "kind": "cover",
+          "title": "Adding One Server Shouldn't Move Everyone's Data",
+          "body": "Consistent hashing is the technique behind distributed caches, sharded databases, and CDNs that lets clusters grow and shrink without a full data reshuffle.",
+          "bullets": [
+            "Used in Amazon's Dynamo, Apache Cassandra, DynamoDB, and memcached client libraries",
+            "Solves one specific problem: minimizing key movement when the number of nodes changes",
+            "The core idea is a hash ring — nodes and keys share the same circular coordinate space"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "eee596bb-f0b6-40d5-8c13-a35d4aba4b47",
+          "kind": "problem",
+          "title": "Naive hash(key) % N Breaks the Moment N Changes",
+          "body": "The obvious way to shard is key % numberOfNodes. It's simple and balances load perfectly — right up until a node joins or leaves.",
+          "bullets": [
+            "Going from N to N+1 nodes changes the modulus for almost every key, not just the new node's share",
+            "A key that mapped to bucket 7 under %10 can land on a completely different bucket under %11",
+            "In practice this means nearly the entire cache goes cold, or nearly the entire dataset gets re-copied, on a single scaling event",
+            "That's unacceptable for a live cache or a database that can't afford a full re-shard window"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9499538c-5bae-4c70-85c7-06ac33013870",
+          "kind": "solution",
+          "title": "Put Nodes and Keys on the Same Ring",
+          "body": "Consistent hashing hashes both the nodes and the keys into one large circular space (commonly 0 to 2^32-1) and assigns each key to the first node found walking clockwise.",
+          "bullets": [
+            "Hash each node's identifier (e.g. its IP:port) onto the ring — that's its position",
+            "Hash each key the same way, then walk clockwise to find the nearest node — that node owns the key",
+            "When a node is removed, only the keys between it and its counter-clockwise neighbor move — they now belong to that neighbor",
+            "When a node is added, it only steals keys from the single node it lands next to on the ring"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "6b8d3888-ae51-4515-b439-71d55fc640e2",
+          "kind": "architecture",
+          "title": "Virtual Nodes Fix the Ring's Load-Balance Problem",
+          "body": "A plain ring with one point per physical node produces wildly uneven arcs by chance — one node might own 40% of the keyspace while another owns 5%.",
+          "bullets": [
+            "The fix: hash each physical node to many points on the ring (its 'virtual nodes'), not just one",
+            "More virtual nodes per physical node smooths out the arc sizes, converging toward an even split",
+            "Virtual nodes also make heterogeneous hardware easy: give a bigger machine more virtual nodes to give it a proportionally bigger share",
+            "The tradeoff is memory and lookup cost — every virtual node is an entry the router has to keep and search"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "8b964cb9-621f-40eb-9c98-983ba67efff1",
+          "kind": "comparison",
+          "title": "Keys Remapped When the Cluster Changes Size",
+          "body": "This is the entire reason consistent hashing exists: it bounds how much data moves on a topology change.",
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Scheme",
+              "Keys remapped on node add/remove",
+              "Load balance without extra work"
+            ],
+            "rows": [
+              [
+                "Naive hash % N",
+                "Nearly all keys",
+                "Perfect (until N changes)"
+              ],
+              [
+                "Consistent hashing (no virtual nodes)",
+                "~1/N of keys",
+                "Poor — arcs vary widely by chance"
+              ],
+              [
+                "Consistent hashing + virtual nodes",
+                "~1/N of keys",
+                "Good — smooths out with more virtual points"
+              ],
+              [
+                "Rendezvous hashing (highest random weight)",
+                "~1/N of keys",
+                "Good, no ring bookkeeping, but O(N) lookup per key"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8f767852-fc1b-44c7-ae4f-499a7d8ce4de",
+          "kind": "example",
+          "title": "Worked Example: Growing a 4-Node Cache to 5",
+          "body": "Say a memcached cluster holds 1,000,000 keys across 4 nodes on a consistent-hash ring.",
+          "bullets": [
+            "Naive mod-N: switching from %4 to %5 relocates on the order of 800,000+ keys — almost the whole cache goes cold at once",
+            "Consistent hashing: the new 5th node's virtual points carve arcs out of its ring neighbors only — roughly 200,000 keys (about 1/5) move, the other 800,000 stay exactly where they were",
+            "Those 800,000 untouched keys mean the other 4 nodes keep serving cache hits through the whole rebalance",
+            "Only the new node and its immediate neighbors need to stream data during the transition — not the whole cluster"
+          ],
+          "symbol": "desktopcomputer",
+          "table": null
+        },
+        {
+          "id": "070eac0d-924f-49b0-bb18-c86f840f3f3a",
+          "kind": "concept",
+          "title": "Where It Bites: Hotspots and Skewed Keys",
+          "body": "Consistent hashing bounds churn, but it doesn't guarantee even load if your access pattern is skewed.",
+          "bullets": [
+            "A single viral key (a celebrity profile, a trending post) can still overload whichever one node owns it — consistent hashing spreads storage, not per-key traffic",
+            "Too few virtual nodes per physical node still leaves lumpy arcs; too many bloats the routing table every client must hold",
+            "Ring position isn't capacity-aware by default — a small node and a large node get equal shares unless you deliberately assign more virtual nodes to the bigger one",
+            "Not worth the complexity for a fixed, rarely-resized cluster — plain mod-N sharding is simpler and fine if node count never changes"
+          ],
+          "symbol": "gauge.medium",
+          "table": null
+        },
+        {
+          "id": "f1827771-29f7-4735-9824-cef8365c8e96",
+          "kind": "takeaways",
+          "title": "The Core Trade Being Made",
+          "body": "Consistent hashing swaps a small amount of routing complexity for a huge reduction in data movement during scaling events.",
+          "bullets": [
+            "Naive hashing: simple, but a node change reshuffles nearly everything",
+            "Consistent hashing: a node change moves roughly 1/N of the keys, bounded and predictable",
+            "Virtual nodes trade extra ring entries for even load distribution and capacity-aware sharding",
+            "It solves data placement, not hot-key traffic — pair it with request-level caching or replication for viral keys"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2b29e389-7c9d-4a73-81d5-5857aa4f3d9f",
+            "prompt": "A cluster shards keys with hash(key) % N. Why is adding one more node so disruptive?",
+            "options": [
+              "It changes the modulus, which remaps almost every key to a different bucket, not just a share of them",
+              "It doubles memory usage on every node",
+              "It requires re-hashing every node's identifier",
+              "It only affects keys that hash to the new node's exact bucket number"
+            ],
+            "correctIndex": 0,
+            "explanation": "Because % N depends on the total node count, changing N changes where nearly every key lands — not a targeted subset. That's the exact problem consistent hashing was designed to avoid."
+          },
+          {
+            "id": "b707a5c4-3444-43bf-889d-21c9bb28c775",
+            "prompt": "In consistent hashing, when a node is removed from the ring, which keys move?",
+            "options": [
+              "All keys in the cluster",
+              "Only the keys that were owned by the removed node — they pass to its next clockwise neighbor",
+              "No keys move; removal is free",
+              "Every key whose hash is a multiple of the node count"
+            ],
+            "correctIndex": 1,
+            "explanation": "Only the arc previously owned by the removed node changes hands, going to its neighbor on the ring. Every other node's keys are untouched, which is exactly why the disruption is bounded to roughly 1/N of the data."
+          },
+          {
+            "id": "cc576bff-3b84-43d5-b4c6-833821648bd9",
+            "prompt": "Why do real systems give each physical node many 'virtual nodes' on the ring instead of just one?",
+            "options": [
+              "It makes hashing faster",
+              "It's required for the ring to work at all",
+              "A single point per node produces unevenly sized arcs by chance; many points per node average out into a fairer split, and let bigger machines get proportionally more virtual nodes",
+              "It removes the need to hash keys"
+            ],
+            "correctIndex": 2,
+            "explanation": "With only one ring position per node, arc sizes vary widely by luck of the hash. Spreading each physical node across many virtual positions smooths that out, and assigning more virtual nodes to higher-capacity machines lets the ring reflect real capacity differences."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-09-03T12:40:01Z"
+    },
+    {
       "id": "ded83bb2-3ca6-4838-887c-2e71d285be07",
       "title": "LoRA: Fine-Tuning Billion-Parameter Models on a Single GPU",
       "subtitle": "Freeze the weights, train a tiny low-rank patch instead — most of full fine-tuning's quality for a fraction of the memory.",
@@ -11132,182 +11328,6 @@
       "references": [],
       "publishedDate": "2026-08-26T00:41:46Z",
       "heroImageURL": null
-    },
-    {
-      "id": "69851d6a-6532-4c94-a61a-0955bbaf8320",
-      "title": "Apodex 1.1: Teaching One Model to Run a Team of Itself",
-      "subtitle": "Berkeley's agent system trades single-shot prompting for delegation, recovery, and replanning",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "agentic ai",
-        "benchmarks",
-        "long-horizon",
-        "multi-agent"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "Apodex 1.1 (UC Berkeley) targets 'working capability' -- sustained, verifiable progress on real tasks -- by scaling executable environments and training agents to decompose, delegate, and recover from failure as an Agent Team. Its 35B-parameter Mini variant matches a 1T-parameter model on agentic search while running on far less hardware.",
-      "slides": [
-        {
-          "id": "5914ea1b-77e7-407b-b48a-ea3518d4a40f",
-          "kind": "cover",
-          "title": "One model, dispatched as a team",
-          "body": "Apodex 1.1, from UC Berkeley (published Aug 17, 2026), reframes agent capability around finishing real, multi-step jobs -- not just answering single prompts well.",
-          "bullets": [
-            "Full system + a 35B-parameter 'Mini' variant",
-            "Published on arXiv 2608.23283"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted"
-        },
-        {
-          "id": "f7b8d2e1-ee73-4cf9-b544-acd8d97c71de",
-          "kind": "problem",
-          "title": "Single-shot agents don't survive long jobs",
-          "body": "Most agent benchmarks reward one clean tool call after another. Real work -- a multi-file refactor, a research report with citations -- needs the agent to keep state across hours, notice when a sub-task failed, and recover without restarting from scratch.",
-          "bullets": [
-            "The paper calls this 'working capability': sustained, verifiable progress toward an objective",
-            "Requires state maintenance, failure recovery, and verifiable delivery -- not just correct single steps"
-          ]
-        },
-        {
-          "id": "80e5bab9-c756-4256-a347-1fca9345ffad",
-          "kind": "solution",
-          "title": "Two scaling axes, not one bigger model",
-          "body": "Apodex 1.1 improves on two separate fronts instead of just adding parameters.",
-          "bullets": [
-            "Environment Scaling: more diverse, verifiable file / search / code environments to train against",
-            "Agentic Coordination Scaling: trains agents to decompose long-horizon tasks, delegate parallel sub-work, integrate results that come back asynchronously, and replan",
-            "Agentic RL then optimizes over the resulting trajectories and coordination traces"
-          ],
-          "symbol": "gearshape.2.fill"
-        },
-        {
-          "id": "27215df5-8884-4950-a852-baded3af2685",
-          "kind": "architecture",
-          "title": "The Agent Team pattern",
-          "body": "Instead of one long linear tool-call chain, an orchestrating agent splits the task, hands pieces to sub-agents that run in parallel, and reassembles the results.",
-          "bullets": [
-            "Decompose the objective into sub-tasks",
-            "Delegate sub-tasks so they execute concurrently",
-            "Integrate results as they return -- not in a fixed order",
-            "Replan when a branch fails or returns something unexpected"
-          ],
-          "symbol": "arrow.triangle.branch"
-        },
-        {
-          "id": "5a7a9c6e-e8f2-4fa8-b40c-c008dd8e10ad",
-          "kind": "comparison",
-          "title": "Small model, frontier-band results",
-          "body": "The full Apodex 1.1 Agent Team system leads on finance and science benchmarks; the 35B Mini variant, run as a team, nearly matches a model 28x its size on agentic search.",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Apodex 1.1 (full)",
-              "Apodex 1.1 Mini (35B, Agent Team)"
-            ],
-            "rows": [
-              [
-                "FrontierFinance",
-                "54.3",
-                "50.2"
-              ],
-              [
-                "FrontierScience-Research",
-                "63.3",
-                "51.7"
-              ],
-              [
-                "APEX-Agent",
-                "38.5",
-                "27.7 (vs. Kimi K2.6, 1T params: 27.9)"
-              ],
-              [
-                "GDPVal (win rate)",
-                "78.8",
-                "--"
-              ],
-              [
-                "HLE (reasoning)",
-                "56.1",
-                "--"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "8922d248-3d06-4c4d-80f3-62bca5d81df0",
-          "kind": "example",
-          "title": "Worked scenario: a research report under time pressure",
-          "body": "Given 'write a due-diligence memo on a biotech pipeline,' the orchestrator splits the job: one sub-agent pulls filings, another checks trial data, a third drafts the writeup.",
-          "bullets": [
-            "If the trial-data sub-agent hits a paywall and fails, the orchestrator doesn't abort -- it replans, tries an alternate source, and continues",
-            "Partial results integrate as they arrive instead of blocking the whole pipeline on the slowest branch",
-            "This is what 'verifiable delivery' means in the paper: the final memo can be checked against the sources each sub-agent actually used"
-          ]
-        },
-        {
-          "id": "a6690057-c6e9-400d-b608-c7e52ba06a35",
-          "kind": "takeaways",
-          "title": "Why this matters",
-          "bullets": [
-            "Coordination architecture, not just parameter count, drives long-horizon agent performance",
-            "A 35B model running as a team can approach results from models over an order of magnitude larger",
-            "Failure recovery and replanning are the difference between a demo and a system that finishes real jobs",
-            "Trade-off: running several sub-agents concurrently costs more tokens and infrastructure than one linear chain -- worth it only when the task is genuinely decomposable"
-          ]
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "ae01b3c7-b3a0-412a-b428-c132ef7221cd",
-            "prompt": "What does Apodex 1.1's paper mean by 'working capability'?",
-            "options": [
-              "Raw benchmark accuracy on single-turn Q&A",
-              "Sustained, verifiable progress toward a real-world objective, including recovering from failures",
-              "The number of tools an agent can call in one turn",
-              "Inference speed measured in tokens per second"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper explicitly targets sustained progress with state maintenance and failure recovery -- not just single-step accuracy."
-          },
-          {
-            "id": "92e3ffce-f0da-4c8a-a8c7-727f5cbaff78",
-            "prompt": "On the APEX-Agent benchmark, how did the 35B Apodex 1.1 Mini (as an Agent Team) compare to Kimi K2.6 (1T parameters)?",
-            "options": [
-              "It scored far lower, as expected for a much smaller model",
-              "It scored virtually the same (27.7 vs 27.9), despite being ~28x smaller",
-              "It outperformed Kimi K2.6 by more than 10 points",
-              "The two were not compared on this benchmark"
-            ],
-            "correctIndex": 1,
-            "explanation": "27.7 vs 27.9 is a near-match -- evidence that coordination architecture can substitute for raw parameter count on agentic tasks."
-          },
-          {
-            "id": "51f755fd-008f-4013-b7d0-3a2018f5f38d",
-            "prompt": "What happens in the Agent Team pattern when one delegated sub-task fails?",
-            "options": [
-              "The entire job aborts and must be restarted",
-              "The orchestrator ignores the failure and returns a partial answer",
-              "The orchestrator replans -- e.g., trying an alternate path -- while other branches keep running",
-              "The failing sub-agent is retried indefinitely until it succeeds"
-            ],
-            "correctIndex": 2,
-            "explanation": "Replanning around failures, without blocking the whole pipeline on one broken branch, is central to the 'working capability' this paper targets."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "681242e0-4f13-4c47-b05e-a8ee69774ba5",
-          "title": "Apodex 1.1: Scaling Agentic Intelligence for Complex Work (arXiv 2608.23283)",
-          "url": "https://arxiv.org/abs/2608.23283"
-        }
-      ],
-      "publishedDate": "2026-08-25T18:40:00Z"
     }
   ]
 }
