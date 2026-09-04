@@ -1,6 +1,216 @@
 {
   "posts": [
     {
+      "title": "RLHF: Teaching a Model What Humans Actually Want",
+      "subtitle": "Turning pairwise human preferences into a training signal a policy can optimize",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rlhf",
+        "alignment",
+        "ppo",
+        "reward-model",
+        "llm-training",
+        "dpo"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "hand.thumbsup.fill",
+      "summary": "RLHF aligns a language model by training a reward model on human pairwise rankings, then optimizing the policy against it with PPO under a KL penalty. It's the pipeline behind InstructGPT and the reference point that cheaper methods like DPO and GRPO are built to replace.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "RLHF: Teaching a Model What Humans Actually Want",
+          "body": "Pretraining teaches a model to predict the next token on internet text. It doesn't teach the model which of two correct answers a human would actually prefer. RLHF closes that gap.",
+          "bullets": [],
+          "symbol": "hand.thumbsup.fill",
+          "id": "75c1fba2-3e90-4aac-b912-bf4d057c88dc"
+        },
+        {
+          "kind": "problem",
+          "title": "A Model That Predicts Text Isn't a Model That Helps You",
+          "body": "Pretraining minimizes next-token loss on web text, so a base model is just as likely to continue a question with more questions, a wall of caveats, or a fluent-sounding lie as with the answer you actually wanted.",
+          "bullets": [
+            "A raw base model completes prompts — ask it a question and it may just generate more similar-looking questions instead of answering",
+            "There's no single 'correct' next token for 'write a poem about the ocean' — quality here is a preference, not a label",
+            "Supervised fine-tuning (SFT) on human demonstrations helps, but hand-writing enough ideal responses for every situation doesn't scale"
+          ],
+          "symbol": "questionmark.bubble.fill",
+          "id": "9e1fa6b0-acda-4810-a34b-4a866982f8ab"
+        },
+        {
+          "kind": "solution",
+          "title": "Three Stages: Demonstrate, Score, Optimize",
+          "body": "InstructGPT (Ouyang et al., 2022) formalized the now-standard pipeline: supervised fine-tuning, then a learned reward model, then reinforcement learning against that reward model.",
+          "bullets": [
+            "Stage 1 — SFT: fine-tune the base model on a small set of human-written demonstrations (prompt → ideal response)",
+            "Stage 2 — Reward Model: humans rank several SFT outputs for the same prompt; train a model to score outputs the way humans ranked them",
+            "Stage 3 — RL (PPO): the SFT model generates responses, the reward model scores them, and PPO updates the policy to raise its expected reward"
+          ],
+          "symbol": "list.number",
+          "id": "88412803-ac0f-4a29-9c97-3940584e1c54"
+        },
+        {
+          "kind": "concept",
+          "title": "The Reward Model Learns From Rankings, Not Labels",
+          "body": "Labelers don't rate outputs on an absolute scale — they just say which of two responses is better. The reward model is trained on that pairwise signal with a Bradley-Terry style loss.",
+          "bullets": [
+            "Loss ≈ −log(sigmoid(r(chosen) − r(rejected))) — push the score of the preferred response above the rejected one",
+            "Pairwise comparisons are far more consistent between labelers than absolute 1–10 ratings, which is why RLHF is built on rankings",
+            "The reward model is usually initialized from the SFT checkpoint itself, with the final layer swapped for a single scalar output"
+          ],
+          "symbol": "chart.bar.fill",
+          "id": "69f1ce6d-2308-43e9-aa53-f438b68e7413"
+        },
+        {
+          "kind": "concept",
+          "title": "PPO's KL Penalty Is a Leash, Not an Afterthought",
+          "body": "Maximize reward with nothing holding it back and the policy drifts into text that scores well on the reward model but reads like nonsense. PPO's objective subtracts a KL-divergence penalty against the frozen SFT model to prevent that.",
+          "bullets": [
+            "Objective ≈ E[reward(response)] − β · KL(policy ‖ reference SFT model)",
+            "β is tuned per run — too low and the policy reward-hacks; too high and it barely moves off the SFT model",
+            "PPO's clipped surrogate objective also caps how far any single update can move the policy in one step"
+          ],
+          "symbol": "link",
+          "id": "53787ecf-f019-4b55-a533-494048acaef1"
+        },
+        {
+          "kind": "example",
+          "title": "Walking Through One Prompt",
+          "body": "Prompt: 'Explain photosynthesis to a 10-year-old.' The SFT model samples four different responses; a labeler ranks them best to worst.",
+          "bullets": [
+            "Ranked #1: a short, concrete analogy ('plants eat sunlight like you eat food') — the reward model learns to score this style highly",
+            "Ranked #4: a technically correct but jargon-heavy paragraph about chlorophyll and ATP — scores low despite being 'more complete'",
+            "During PPO, the policy is nudged toward simpler, more concrete phrasing for this kind of prompt — without ever being told the 'right' words directly"
+          ],
+          "symbol": "text.bubble.fill",
+          "id": "72cf45a5-d377-4e63-ab95-4067df05f3d8"
+        },
+        {
+          "kind": "comparison",
+          "title": "RLHF, DPO, and GRPO Solve the Same Problem Differently",
+          "body": "DPO removes the reward model and the RL loop entirely by showing the RLHF objective has a closed-form solution in terms of the policy itself. GRPO keeps RL but drops the value network by normalizing reward across a group of samples per prompt.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "",
+              "RLHF (PPO)",
+              "DPO",
+              "GRPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "4: policy, reference, reward, value",
+                "2: policy, reference",
+                "3: policy, reference, reward — no value net"
+              ],
+              [
+                "Needs a trained reward model",
+                "Yes",
+                "No — optimizes preference likelihood directly",
+                "Often — sometimes replaced by a rule-based/verifiable reward"
+              ],
+              [
+                "Sampling",
+                "On-policy rollouts every step",
+                "Offline, fixed preference pairs",
+                "On-policy, multiple samples per prompt"
+              ],
+              [
+                "Known for",
+                "InstructGPT / early ChatGPT alignment",
+                "Simpler, cheaper preference tuning",
+                "DeepSeek-R1 style reasoning RL"
+              ]
+            ]
+          },
+          "symbol": "tablecells.fill",
+          "id": "367cb071-c7e3-4ede-8434-0497b2674fef"
+        },
+        {
+          "kind": "concept",
+          "title": "Reward Hacking Is the Failure Mode to Design Around",
+          "body": "A reward model is a proxy for human preference, not preference itself — and policies are very good at finding the gap between the two.",
+          "bullets": [
+            "Verbosity bias: reward models frequently favor longer answers, so unconstrained RLHF tends to make outputs bloated",
+            "Sycophancy: a reward model trained on human ratings can reward agreeable-sounding answers over correct ones",
+            "Cost: RLHF needs a labeling pipeline, a trained reward model, and up to 4 models resident in memory during training — for narrow, in-domain tasks, SFT alone or DPO is often 'good enough' and far cheaper",
+            "Alignment tax: RLHF'd models can measurably regress on certain benchmarks (e.g. calibration, some factual QA) relative to the SFT-only checkpoint"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "6e3dc0c4-95e8-4a0f-8060-50f4a3d5f303"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "RLHF turns 'what humans prefer' into a trainable signal: a reward model learns from pairwise rankings, then PPO optimizes a policy against it",
+            "The KL penalty against the reference model is what keeps optimization from collapsing into reward hacking",
+            "DPO and GRPO are direct responses to RLHF's cost — DPO removes the RL loop, GRPO removes the value network",
+            "InstructGPT showed a 1.3B RLHF'd model's outputs were preferred by human labelers over the base 175B GPT-3 — parameter count alone doesn't determine helpfulness"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "11f4aa48-babf-4008-bbe3-ee1a2db7c86f"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In PPO-based RLHF, what does the KL-divergence penalty term do?",
+            "options": [
+              "Increases the reward for longer responses",
+              "Keeps the policy from drifting too far from the reference SFT model, limiting reward hacking",
+              "Removes the need for a reward model",
+              "Speeds up training by skipping the reference model entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without the KL penalty, the policy is free to over-optimize the reward model's quirks and produce fluent-looking but low-quality text. The KL term anchors it to the SFT model's distribution of reasonable text.",
+            "id": "639b2e36-34c9-4362-a765-345fe44fce72"
+          },
+          {
+            "prompt": "What is the key structural difference between DPO and PPO-based RLHF?",
+            "options": [
+              "DPO doesn't use human preference data at all",
+              "DPO trains a separate value network instead of a reward model",
+              "DPO eliminates the separate reward model and RL rollouts by optimizing a closed-form loss directly on the policy",
+              "DPO requires more models in memory than PPO"
+            ],
+            "correctIndex": 2,
+            "explanation": "DPO reformulates the RLHF objective algebraically so the optimal policy can be trained directly from preference pairs with a single loss — no reward model, no on-policy sampling, no PPO clipping.",
+            "id": "a33022dd-2290-43c0-83ca-a7dc8ff6c484"
+          },
+          {
+            "prompt": "Why does RLHF train the reward model on pairwise rankings instead of absolute quality scores?",
+            "options": [
+              "Pairwise rankings are cheaper to compute automatically",
+              "Absolute scores are illegal to collect from crowdworkers",
+              "Humans are much more consistent when comparing two outputs than when rating one on an absolute scale",
+              "Pairwise data doesn't require a Bradley-Terry loss"
+            ],
+            "correctIndex": 2,
+            "explanation": "Absolute 1–10 style ratings vary a lot between labelers and even for the same labeler over time. 'Which of these two is better' is a far more reliable, reproducible judgment — which is why the reward model is trained with a Bradley-Terry-style pairwise loss.",
+            "id": "d535ce44-06ba-46c5-8f80-f14c6d434cfc"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Training language models to follow instructions with human feedback (InstructGPT)",
+          "url": "https://arxiv.org/abs/2203.02155",
+          "id": "eaafa02c-e6d2-452a-a880-876fe1b59c3b"
+        },
+        {
+          "title": "Deep reinforcement learning from human preferences",
+          "url": "https://arxiv.org/abs/1706.03741",
+          "id": "0309658c-1a22-4c36-b938-deb8e43277f1"
+        }
+      ],
+      "id": "88f2f81c-67e6-4739-84bf-74219ec1c95c",
+      "publishedDate": "2026-09-04T06:41:36Z"
+    },
+    {
       "id": "7426723e-32fb-47e2-9c37-1d9293019945",
       "title": "PagedAttention: Serving LLMs Without Wasting the KV Cache",
       "subtitle": "vLLM's trick: treat the KV cache like OS virtual memory, not one giant reserved block.",
@@ -11059,210 +11269,6 @@
       "id": "c649b363-a340-4d3f-82da-bd3dae8cd51d",
       "body": null,
       "publishedDate": "2026-08-27T06:41:03Z"
-    },
-    {
-      "title": "Prime Agent: The Harness That Edits Its Own Playbook",
-      "subtitle": "Recursive subagent calls plus a self-editing memory push one benchmark from 30% to 95.5%.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "agents",
-        "recursive-language-models",
-        "test-time-compute",
-        "benchmarks",
-        "open-source"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "Prime Agent is an open-source coding/research harness built on the Recursive Language Model abstraction: context as a variable, subagents as function calls, and a self-editing memory (the Continual Harness) that persists across sessions. On top of an unchanged Claude Opus 5, it reports pushing ARC-AGI-3 RHAE Best@1 from 30% to 95.5% — a self-reported, not-yet-verified result worth reading with real skepticism.",
-      "slides": [
-        {
-          "id": "d998cc8d-1819-4fc5-84fc-aa31ff079b87",
-          "kind": "cover",
-          "title": "Prime Agent",
-          "body": null,
-          "bullets": [
-            "Open-source coding & research harness from Prime Intellect + Princeton",
-            "Built on the Recursive Language Model (RLM) abstraction",
-            "Self-reported: ARC-AGI-3 RHAE Best@1 jumps from 30% to 95.5%"
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "2b7d3035-5484-4454-85fe-64f184cd4e9c",
-          "kind": "problem",
-          "title": "Long-horizon work breaks single-shot agents",
-          "body": null,
-          "bullets": [
-            "Most coding/research agents run one flat loop: read context, call a tool, repeat — with no durable memory between sessions.",
-            "Spin up a subagent to handle a subtask and its results vanish once it returns; nothing it learned carries forward.",
-            "Disconnect a terminal mid-task and the agent's state is gone — there's no daemon to reattach to."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "80b3abc9-2052-432d-916f-e6f7bfbc3f15",
-          "kind": "solution",
-          "title": "Treat context as a variable, subagents as function calls",
-          "body": "Prime Agent runs inside a persistent Python REPL. The Recursive Language Model (RLM) abstraction lets the model hold prompts as variables and call rlm(...) to spawn child agents programmatically — recursion instead of a fixed tool schema.",
-          "bullets": [
-            "rlm(...) subagents run as real function calls inside the REPL, returning results the parent can immediately reuse in code.",
-            "Subagents can message each other directly — coordination doesn't have to round-trip through the top-level agent or the user.",
-            "The REPL itself is the tool: file edits, shell commands, and orchestration all happen as Python, not a rigid tool-call schema."
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "5284bc0b-7a4f-475c-9898-224cebaab7a3",
-          "kind": "solution",
-          "title": "The Continual Harness is memory that edits itself",
-          "body": "A /refine command reviews the current trajectory and writes small, evidence-backed updates to durable state — memories, skill descriptions, reusable subagent specs — that persist across sessions.",
-          "bullets": [
-            "Sessions are daemon-backed: close the terminal, reattach later, and the agent's state and history are still there.",
-            "Refinements are incremental and evidence-backed, not wholesale rewrites — the harness edits what it learned, not what it assumes.",
-            "Turn, token, and time budgets plus quality gates keep the self-editing loop from running away unchecked."
-          ],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "a3a5985b-1be7-4894-bb21-89b27dc21ea2",
-          "kind": "comparison",
-          "title": "95.5% on ARC-AGI-3 — with an asterisk",
-          "body": null,
-          "bullets": [
-            "RHAE (Relative Human Action Efficiency) scores how few actions the agent needed relative to a human, with a squared penalty for inefficiency.",
-            "The 95.5% figure is self-reported by Prime Intellect and not yet on ARC's verified leaderboard — read it as directionally striking but unverified.",
-            "Same underlying model (Claude Opus 5) throughout; the harness, not the model, is what moved the number."
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Score"
-            ],
-            "rows": [
-              [
-                "ARC-AGI-3 RHAE Best@1 (best run)",
-                "95.5%"
-              ],
-              [
-                "ARC's reported human-expert baseline",
-                "95.4%"
-              ],
-              [
-                "Best@3 across 3 runs",
-                "99.97%"
-              ],
-              [
-                "Levels completed",
-                "183 / 183"
-              ],
-              [
-                "Official ARC-AGI-3 leaderboard score",
-                "30.2% (Opus 5 alone)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "31c66b60-cb2c-4242-a9dc-18b5e3677097",
-          "kind": "example",
-          "title": "A GPU-kernel task, worked through the harness",
-          "body": "Ask Prime Agent to write a faster CUDA kernel. It drafts an attempt in the REPL, spawns an rlm() subagent to benchmark it against a baseline, and gets back a failure trace.",
-          "bullets": [
-            "On failure, /refine writes a note to the Continual Harness: check shared-memory bank conflicts before assuming occupancy is the bottleneck.",
-            "The next attempt — this session or a future one — starts with that note already in its skill library, so it doesn't repeat the same wrong hypothesis.",
-            "The same loop is reported to hold up on long-context coding, emulator construction, and autonomous nanoGPT training speedruns."
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "97542147-2aff-4e49-9b7a-81a161783d36",
-          "kind": "problem",
-          "title": "Not a sandbox — and not a verified score",
-          "body": null,
-          "bullets": [
-            "Prime Agent runs model-generated Python and shell commands with your user permissions; the project's own docs say explicitly it is 'not a security sandbox.'",
-            "Recursive rlm() calls multiply token and compute cost — every subagent is another model call, so budgets and quality gates matter as much as capability.",
-            "Skip it for short, single-turn tasks or anywhere untrusted code needs isolation; the self-editing harness is built for long-running, trusted work."
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "e44ee974-2ff2-46e3-bb55-98d98376d158",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "RLM turns context into a variable and subagents into function calls — recursion replaces a fixed tool-call loop.",
-            "The Continual Harness is what makes it 'self-improving': small, evidence-backed edits to memory persist across sessions via /refine.",
-            "The 95.5% ARC-AGI-3 number is a self-reported harness result on an unchanged model — apply the same skepticism you'd give any unverified leaderboard entry."
-          ],
-          "symbol": "list.bullet.clipboard",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "65a5bf3c-b590-4653-99d5-f8d12664b323",
-            "prompt": "In the RLM abstraction, what does rlm(...) do inside Prime Agent's persistent REPL?",
-            "options": [
-              "Spawns a recursive subagent as a normal function call, returning its result to the parent's code",
-              "Restarts the language model with a cleared context window",
-              "Compiles the current Python session into a fixed tool schema",
-              "Sends a webhook notification to the user's terminal"
-            ],
-            "correctIndex": 0,
-            "explanation": "RLM treats prompts as variables and subagents as callable functions — rlm(...) runs a child agent and hands its output straight back into the parent's running code, which is what lets subagents compose and coordinate."
-          },
-          {
-            "id": "9226dd83-a809-46fd-b1ea-d769854e0aac",
-            "prompt": "What does the Continual Harness's /refine command actually change?",
-            "options": [
-              "The model's underlying weights, via a small fine-tuning step",
-              "Durable harness state — memories, skill descriptions, and subagent specs — through small, evidence-backed updates",
-              "The pricing tier of the API call",
-              "The ARC-AGI-3 benchmark's official leaderboard entry"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prime Agent never touches model weights. /refine reviews the trajectory and edits durable, external state — the harness's own memory — so future sessions start smarter without any retraining."
-          },
-          {
-            "id": "70342d08-966b-4e60-850f-949a97d80037",
-            "prompt": "Why should the 95.5% ARC-AGI-3 RHAE score be read with caution?",
-            "options": [
-              "It was measured on a much easier version of the benchmark",
-              "It's a self-reported result not yet on ARC's verified leaderboard, and it swaps out the harness, not the underlying model",
-              "The benchmark has since been deprecated",
-              "It only reflects performance on multiple-choice questions"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prime Intellect reports the number themselves; ARC-AGI-3's official leaderboard still lists Opus 5 alone at 30.2%. The harness produced a large jump on the same model, but that jump hasn't been independently verified yet."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "028d4edf-82a0-409c-8aa1-368af3ab21b6",
-          "title": "Prime Agent: A Self-Improving RLM Harness (arXiv:2608.23552)",
-          "url": "https://arxiv.org/abs/2608.23552"
-        },
-        {
-          "id": "f3f8b23b-489b-4b68-baab-db01ce39401c",
-          "title": "PrimeIntellect-ai/prime-agent (GitHub)",
-          "url": "https://github.com/PrimeIntellect-ai/prime-agent"
-        }
-      ],
-      "id": "e90d1ac2-5ddb-459b-a970-22fc4180f6f3",
-      "publishedDate": "2026-08-27T00:42:32Z"
     }
   ]
 }
