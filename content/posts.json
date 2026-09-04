@@ -1,6 +1,540 @@
 {
   "posts": [
     {
+      "id": "7426723e-32fb-47e2-9c37-1d9293019945",
+      "title": "PagedAttention: Serving LLMs Without Wasting the KV Cache",
+      "subtitle": "vLLM's trick: treat the KV cache like OS virtual memory, not one giant reserved block.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "pagedattention",
+        "vllm",
+        "kv-cache",
+        "llm-serving",
+        "memory-management"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.stack.3d.up.fill",
+      "summary": "PagedAttention applies OS-style virtual memory paging to the LLM KV cache, splitting it into fixed-size blocks instead of one contiguous reservation per request. It cut wasted KV-cache memory from 60-80% down to under 4% and is now the default memory manager behind most production LLM serving stacks.",
+      "publishedDate": "2026-09-04T00:41:50Z",
+      "slides": [
+        {
+          "id": "94e1cf22-fb34-4394-8281-6a6153b83961",
+          "kind": "cover",
+          "title": "The KV cache used to waste 60-80% of its allocated memory",
+          "body": "PagedAttention, introduced by the vLLM team (UC Berkeley, Stanford, UC San Diego, 2023), applies OS-style virtual memory paging to the attention KV cache — and it's now the default memory manager behind most production LLM serving stacks.",
+          "bullets": [
+            "From the vLLM paper (Kwon et al., SOSP 2023)",
+            "Fixes fragmentation in how servers store each request's KV cache",
+            "Now standard in vLLM, TensorRT-LLM, and most serving frameworks"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "90e2130d-4d8f-4106-8fed-d819001d46f7",
+          "kind": "problem",
+          "title": "Contiguous KV cache allocation wastes most of the memory",
+          "body": "Before PagedAttention, servers reserved one contiguous memory block per request sized for the maximum possible sequence length — even for a 10-token prompt.",
+          "bullets": [
+            "A request generating 20 tokens still reserves memory for the max possible length 'just in case'",
+            "Internal fragmentation: unused reserved space inside a request's own block",
+            "External fragmentation: gaps between blocks too small to fit a new request",
+            "Measured result: 60-80% of KV cache memory wasted this way"
+          ],
+          "symbol": "square.dashed",
+          "table": null
+        },
+        {
+          "id": "8eedc8f1-d4ab-4df5-afa0-296efbf965ef",
+          "kind": "solution",
+          "title": "Borrow paging from operating systems",
+          "body": "PagedAttention splits each sequence's KV cache into fixed-size blocks (like OS memory pages) that don't need to be contiguous in GPU memory.",
+          "bullets": [
+            "KV cache split into small fixed-size blocks, each holding a handful of tokens",
+            "A block table (like a page table) maps logical sequence positions to physical GPU blocks",
+            "Blocks are allocated on demand as generation proceeds — no upfront max-length reservation"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "aa83b315-8934-4c18-898d-f66a95c258de",
+          "kind": "architecture",
+          "title": "What this unlocks beyond saving memory",
+          "body": "Once the cache is block-based, sharing memory across requests becomes possible.",
+          "bullets": [
+            "Copy-on-write blocks let parallel sampling (multiple completions from one prompt) share the prompt's KV cache instead of duplicating it",
+            "Beam search shares cache blocks across beams that haven't diverged yet",
+            "Memory that used to sit reserved-but-unused goes directly into a bigger batch size"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "7764ae9b-ab7a-47e9-831c-aebe7d80984f",
+          "kind": "comparison",
+          "title": "The numbers from the original paper",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Metric",
+              "Result"
+            ],
+            "rows": [
+              [
+                "KV cache memory wasted (prior systems)",
+                "60% – 80%"
+              ],
+              [
+                "KV cache memory wasted (PagedAttention)",
+                "Under 4%"
+              ],
+              [
+                "Throughput vs. FasterTransformer/Orca",
+                "2-4x higher at the same latency target"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "5caaf452-1910-4b4f-a3a4-3bb8cd05fc00",
+          "kind": "example",
+          "title": "A worked example: 3 requests sharing a GPU",
+          "body": "How the pieces combine in practice.",
+          "bullets": [
+            "Request A: a 10-token prompt wants a 20-token reply — old systems reserve a slab sized for the max sequence length; PagedAttention allocates just a couple of blocks and grows them as needed",
+            "Request B: same prompt as A, but samples 4 parallel completions — the shared prompt's blocks are copy-on-write across all 4, instead of duplicated 4x",
+            "Net effect: many more concurrent requests fit in the same GPU memory, which is what drives the throughput gain"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "5d36b9cf-9be2-45fc-9a0e-67508d224abe",
+          "kind": "concept",
+          "title": "Where paging isn't free",
+          "body": "The technique has real tradeoffs, not just upside.",
+          "bullets": [
+            "Block-table lookups add a small indirection cost per attention step vs. a flat contiguous cache",
+            "Custom attention kernels are required to read efficiently from non-contiguous block memory",
+            "Very short, fixed-length workloads (e.g. classification) see less benefit — there's little fragmentation to fix"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "e32f3a7c-d1c3-4e94-bbde-5057cbac5b51",
+          "kind": "takeaways",
+          "title": "What to actually take from this",
+          "body": null,
+          "bullets": [
+            "PagedAttention treats the KV cache like OS virtual memory: fixed-size blocks plus a block table, not one giant reservation",
+            "Fixing fragmentation is what lets serving frameworks pack more concurrent requests onto the same GPU",
+            "Copy-on-write block sharing is what makes parallel sampling and beam search cheap",
+            "It's now table-stakes: most production LLM servers ship some form of paged KV cache"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b6d1de81-8f58-4913-a278-9dbfb43fc9ff",
+            "prompt": "What problem does PagedAttention solve in LLM serving?",
+            "options": [
+              "Slow tokenization",
+              "Memory fragmentation from over-reserving contiguous KV cache space",
+              "Overfitting during fine-tuning",
+              "Slow disk I/O when loading model weights"
+            ],
+            "correctIndex": 1,
+            "explanation": "Before PagedAttention, servers reserved one contiguous block sized for the max possible sequence length per request, wasting 60-80% of that memory to internal and external fragmentation."
+          },
+          {
+            "id": "797bc6bf-0be0-497e-8486-182edafe01df",
+            "prompt": "What OS concept does PagedAttention borrow to fix this?",
+            "options": [
+              "Process scheduling",
+              "Virtual memory paging with fixed-size blocks and a block/page table",
+              "File system journaling",
+              "Interrupt handling"
+            ],
+            "correctIndex": 1,
+            "explanation": "PagedAttention splits the KV cache into fixed-size blocks that don't need to be contiguous in memory, tracked with a block table — the same idea as OS virtual memory paging."
+          },
+          {
+            "id": "c6e66a97-27f1-4a58-a37f-656cd7a48fdf",
+            "prompt": "Why does block-based KV cache make parallel sampling cheaper?",
+            "options": [
+              "It skips computing attention for extra samples entirely",
+              "Shared prompt blocks can be copy-on-write across multiple completions instead of duplicated per sample",
+              "It reduces the number of tokens generated",
+              "It stores samples on disk instead of GPU memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the KV cache is block-based, multiple completions sampled from the same prompt can share that prompt's blocks via copy-on-write, only duplicating memory once the sequences actually diverge."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "00f2251d-2d9c-4b31-82fa-01b2a19f2a85",
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention",
+          "url": "https://arxiv.org/abs/2309.06180"
+        }
+      ]
+    },
+    {
+      "id": "1bb13f45-46db-4f1e-b51c-77b9d52d6abb",
+      "title": "ChatGPT for Healthcare Now Reads Epic Patient Charts",
+      "subtitle": "Read-only access to notes, labs, and meds — inside ChatGPT, or inside Epic itself.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "openai",
+        "chatgpt",
+        "healthcare-ai",
+        "epic-ehr",
+        "enterprise-ai"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "heart.text.square.fill",
+      "summary": "OpenAI connected ChatGPT for Healthcare to Epic's electronic health record system on September 1, 2026, giving authorized clinicians read-only access to notes, labs, medications, and specialist documentation. UCSF Health leads a pilot cohort of major U.S. health systems testing the integration.",
+      "publishedDate": "2026-09-04T00:41:50Z",
+      "slides": [
+        {
+          "id": "05084bf0-bafd-4a20-b464-34bea798b299",
+          "kind": "cover",
+          "title": "OpenAI just plugged ChatGPT into the hospital's record system",
+          "body": "On September 1, 2026, OpenAI connected ChatGPT for Healthcare to Epic — the EHR system that holds the charts of a majority of U.S. hospital patients.",
+          "bullets": [
+            "Rolled out September 1, 2026",
+            "Read-only access to Epic patient records",
+            "UCSF Health leads a pilot cohort of major health systems"
+          ],
+          "symbol": "heart.text.square.fill",
+          "table": null
+        },
+        {
+          "id": "79b9b4ef-d3b5-46be-a59c-7ead8db240df",
+          "kind": "problem",
+          "title": "Clinicians drown in scattered records",
+          "body": "A single patient's history is spread across notes, labs, medications, and specialist reports inside Epic — reconstructing 'what changed' before an appointment means clicking through dozens of screens.",
+          "bullets": [
+            "Notes, lab results, medications, and specialist docs live in separate Epic views",
+            "Prepping for one appointment can mean manually stitching together a full chart history",
+            "No prior AI layer had authorized read access to the live record inside this workflow"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "aba4068b-c05b-4b39-8e8a-5d4ddecaa724",
+          "kind": "solution",
+          "title": "Two ways in: bring data to ChatGPT, or bring ChatGPT to the chart",
+          "body": "The integration supports two workflows depending on how a health system deploys it.",
+          "bullets": [
+            "Workflow 1: clinicians pull authorized patient data from Epic into ChatGPT to review history and prep for a visit",
+            "Workflow 2 (supported deployments): ChatGPT is embedded directly inside the Epic UI, so clinicians never leave the patient chart",
+            "Access requires a Business Associate Agreement (BAA) for HIPAA-compliant handling"
+          ],
+          "symbol": "arrow.left.arrow.right",
+          "table": null
+        },
+        {
+          "id": "372edfa2-d5f5-487c-8534-abd9413f8ce2",
+          "kind": "architecture",
+          "title": "What it can — and can't — touch",
+          "body": "The integration is deliberately read-only.",
+          "bullets": [
+            "Reads: clinical notes, lab results, medications, specialist documentation",
+            "Cannot write back to the patient record — no chart edits, no orders",
+            "Paired with a separate Healthcare Public Data plugin linking datasets like PubMed, DailyMed, and CMS Coverage"
+          ],
+          "symbol": "lock.doc.fill",
+          "table": null
+        },
+        {
+          "id": "a7065456-44e6-438b-8de9-31ff3f735f94",
+          "kind": "example",
+          "title": "What a pilot looks like at UCSF Health",
+          "body": "UCSF Health is OpenAI's featured pilot, testing whether the tool actually helps clinical teams spot what changed across a complex chart — not just summarize it.",
+          "bullets": [
+            "Launch partners also include AdventHealth, Baylor Scott & White, Boston Children's Hospital, Cedars-Sinai, HCA Healthcare, and Memorial Sloan Kettering",
+            "Example use: a clinician prepping for a follow-up pulls the last 6 months of a chart into ChatGPT instead of clicking through each note individually",
+            "The bar for success is catching a changed medication or new lab flag a human might scan past"
+          ],
+          "symbol": "person.text.rectangle",
+          "table": null
+        },
+        {
+          "id": "d7a915ab-20e7-4b9a-adf7-9ed87ed6c15f",
+          "kind": "concept",
+          "title": "Why this isn't a takeover of Epic's role",
+          "body": "The read-only, opt-in design means ChatGPT layers on top of Epic rather than replacing it — narrower than the headlines suggest.",
+          "bullets": [
+            "Epic keeps the system of record; ChatGPT is a reasoning layer on top, not a replacement",
+            "Health systems opt in per-organization — this is not a blanket rollout to every Epic customer",
+            "Positions OpenAI as enterprise infrastructure inside a regulated, high-stakes workflow"
+          ],
+          "symbol": "building.columns",
+          "table": null
+        },
+        {
+          "id": "c5472874-ac4e-4cfd-9193-80f0918e1d92",
+          "kind": "takeaways",
+          "title": "What to actually take from this",
+          "body": null,
+          "bullets": [
+            "Read-only by design lowers — but doesn't eliminate — the risk of an AI layer touching live patient records",
+            "The pilot list (UCSF, HCA, Cedars-Sinai, MSK) signals real enterprise health-system buy-in, not a demo",
+            "The two integration modes matter: pulling data into ChatGPT is far less disruptive than embedding ChatGPT inside Epic itself",
+            "Worth watching whether 'read-only' access holds as the product matures, or expands toward write-back"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4281dab5-0443-40e1-a9ce-083ed3cb5a02",
+            "prompt": "What kind of access does the ChatGPT–Epic integration have to the patient record?",
+            "options": [
+              "Full read/write access, including placing orders",
+              "Read-only — it can retrieve data but not modify the record",
+              "Access only to billing data",
+              "No direct access; it only reads doctor-typed summaries"
+            ],
+            "correctIndex": 1,
+            "explanation": "OpenAI built the integration as read-only: ChatGPT can retrieve and reason over notes, labs, meds, and specialist docs, but cannot write anything back into Epic."
+          },
+          {
+            "id": "4ba46f30-86f9-4234-8201-2aa8d8efacb1",
+            "prompt": "Which organization is OpenAI's featured pilot partner for this integration?",
+            "options": [
+              "Mayo Clinic",
+              "UCSF Health",
+              "Kaiser Permanente",
+              "Cleveland Clinic"
+            ],
+            "correctIndex": 1,
+            "explanation": "UCSF Health is the featured pilot, alongside launch partners like AdventHealth, Cedars-Sinai, HCA Healthcare, and Memorial Sloan Kettering Cancer Center."
+          },
+          {
+            "id": "501db7f3-f67f-44f2-8314-6c92b1beb595",
+            "prompt": "What compliance mechanism unlocks HIPAA-compliant access to the integration?",
+            "options": [
+              "A Business Associate Agreement (BAA)",
+              "A one-time API key",
+              "SOC 2 certification alone",
+              "Nothing — it's HIPAA-compliant by default for all users"
+            ],
+            "correctIndex": 0,
+            "explanation": "Customers need a Business Associate Agreement in place with OpenAI to get HIPAA-compliant access to patient data through the integration."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "3a38ef84-1a4c-4969-ae36-5552ec0d0444",
+          "title": "ChatGPT for Healthcare adds Epic integration",
+          "url": "https://www.beckershospitalreview.com/healthcare-information-technology/innovation/chatgpt-for-healthcare-adds-epic-integration/"
+        },
+        {
+          "id": "1b1b247b-2372-436a-9e77-993fb2002ac5",
+          "title": "ChatGPT Health adds Epic integration for clinicians to import patient data",
+          "url": "https://techcrunch.com/2026/09/01/chatgpt-health-adds-epic-integration-for-clinicians-to-import-patient-data/"
+        }
+      ]
+    },
+    {
+      "id": "24afe501-7b4e-4164-a6c6-78cdf56e5465",
+      "title": "SMELT: Loop the Middle Layers, Skip the Bigger Model",
+      "subtitle": "Looping half a MoE transformer's layers twice cuts training compute 6.8–18% at matched size.",
+      "category": "AI Concepts",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "looped-transformers",
+        "mixture-of-experts",
+        "scaling-laws",
+        "llm-training",
+        "arxiv"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "SMELT (Tsinghua + ByteDance) is the first looped-transformer study to hold FLOPs, parameters, and KV-cache fixed against a non-looped baseline. Looping just the middle half of a MoE transformer's layers twice cuts compute-optimal training FLOPs by 6.8-18%, with gains concentrated on code and long-context tasks.",
+      "publishedDate": "2026-09-04T00:41:50Z",
+      "slides": [
+        {
+          "id": "7b392223-d39a-4c18-8e90-af282324eb34",
+          "kind": "cover",
+          "title": "A transformer that revisits its own middle layers",
+          "body": "SMELT, from researchers at Tsinghua University and ByteDance, re-runs the middle half of a Mixture-of-Experts transformer's layers a second time — and does it under a strict apples-to-apples compute comparison most looped-architecture papers skip.",
+          "bullets": [
+            "Posted to arXiv September 2026 (2609.01343)",
+            "Loops the middle half of layers twice, matching baseline compute/params/KV-cache",
+            "Cuts compute-optimal training FLOPs by 6.8-18%"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "a52a5cd9-d63c-42f6-b86a-bf0dc53b2b73",
+          "kind": "problem",
+          "title": "Depth used to mean more layers. That's not free.",
+          "body": "Most prior looped-transformer papers compared architectures at a fixed parameter count — which quietly hands the looped model extra FLOPs per token, since it runs some layers twice. That makes 'looping helps' hard to distinguish from 'looping just spends more compute.'",
+          "bullets": [
+            "Fixed-parameter comparisons conflate architectural gains with extra FLOPs",
+            "A looped model with more compute beating the baseline proves little",
+            "SMELT is the first to match FLOPs, non-embedding params, AND KV-cache simultaneously"
+          ],
+          "symbol": "questionmark.circle",
+          "table": null
+        },
+        {
+          "id": "717f115c-02e0-4bcc-b4e6-7dc7bfa95c1e",
+          "kind": "solution",
+          "title": "The recipe: loop only the middle, only twice",
+          "body": "SMELT stands for Sparse MoE Transformer, middle-layers-Loop-Twice. Instead of looping the whole stack, it re-runs just the middle 50% of layers one extra time, while holding total non-embedding parameters, per-token FLOPs, and KV-cache size fixed against a matched non-looped baseline.",
+          "bullets": [
+            "Loops the middle half of layers exactly one extra pass (not the full stack)",
+            "Held constant vs. baseline: non-embedding params, per-token FLOPs, KV-cache size",
+            "Scaled across four model sizes up to 54B non-embedding parameters",
+            "A separate Chinchilla-style scaling law fit for each architecture"
+          ],
+          "symbol": "gearshape.2",
+          "table": null
+        },
+        {
+          "id": "892f3419-26b5-488c-b28c-62fb552b9665",
+          "kind": "comparison",
+          "title": "What compute-matching actually bought",
+          "body": "At every scale and sparsity level tested, SMELT reached lower validation loss than the matched baseline — and the advantage carried over to downstream benchmarks, not just the loss curve.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Metric",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Training FLOPs saved (compute-optimal frontier)",
+                "6.8% – 18.0% vs. matched baseline"
+              ],
+              [
+                "Largest scale tested",
+                "54B non-embedding parameters"
+              ],
+              [
+                "Where downstream gains concentrate",
+                "Code tasks"
+              ],
+              [
+                "Effect vs. context length",
+                "Grows with longer samples and more in-context examples"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "0bcd54c5-a745-4c2e-85c4-f789414828cc",
+          "kind": "example",
+          "title": "What looping actually changes inside the model",
+          "body": "The paper doesn't stop at the loss curve — it looks at attention patterns to explain why the second pass helps.",
+          "bullets": [
+            "On the second visit through looped layers, the attention sink (heavy attention on token 0) shrinks",
+            "That freed attention mass gets redirected toward content-relevant tokens",
+            "Reads as a refinement step — like re-reading a draft — not just bolted-on extra capacity"
+          ],
+          "symbol": "eye.trianglebadge.exclamationmark",
+          "table": null
+        },
+        {
+          "id": "1dec6f65-d217-4adb-b5f8-b08f0098ba2e",
+          "kind": "concept",
+          "title": "Where this stops paying off",
+          "body": "Compute-matched training FLOPs is not the same as free inference — and the results are still lab-scale.",
+          "bullets": [
+            "The extra pass adds inference latency even though parameters stay fixed — a real throughput cost",
+            "Gains concentrate on code and long-context settings; smaller on short, simple prompts",
+            "Tested only up to 54B non-embedding params — not yet validated at 100B+ frontier scale"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "f64f99c0-6b51-4b4f-80b5-93efe516fb5f",
+          "kind": "takeaways",
+          "title": "What to actually take from this",
+          "body": null,
+          "bullets": [
+            "Match FLOPs, params, and KV-cache before claiming an architecture 'wins' — that framing is the paper's real contribution",
+            "Looping trades inference latency for training-compute savings, not a free upgrade",
+            "Looping just the middle half, twice, beats naively looping the whole stack at matched budget",
+            "The effect is mechanistic (attention-sink reduction), not just a curve fit"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "682ccd1d-0bb2-4933-96d1-d60bfab2035a",
+            "prompt": "What is the key methodological fix SMELT makes compared to prior looped-transformer studies?",
+            "options": [
+              "It uses a much bigger model than any baseline",
+              "It matches compute (FLOPs), parameters, and KV-cache against a non-looped baseline",
+              "It removes the KV cache entirely",
+              "It trains on more data than the baseline"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prior comparisons matched parameter count but let looped models use more FLOPs per token, which made looping look better partly because it was more expensive. SMELT holds FLOPs, params, and KV-cache fixed to isolate the real architectural effect."
+          },
+          {
+            "id": "bac8dc25-f44a-440f-9af0-5894d48a103b",
+            "prompt": "Which layers does SMELT loop, and how many extra times?",
+            "options": [
+              "All layers, three extra passes",
+              "The middle half of layers, one extra pass",
+              "Only the first layer, five extra passes",
+              "The output layer only, one extra pass"
+            ],
+            "correctIndex": 1,
+            "explanation": "SMELT ('middle layers Loop Twice') re-runs just the middle 50% of the network one extra time, rather than looping the whole stack or a single layer."
+          },
+          {
+            "id": "d48316d7-488d-40b8-8eef-008da6499a32",
+            "prompt": "According to the paper's mechanistic analysis, what changes on the second pass through the looped layers?",
+            "options": [
+              "The model attends more heavily to the first token (attention sink) for stability",
+              "Attention sink shrinks and attention mass shifts toward content-relevant tokens",
+              "The KV cache doubles in size",
+              "Gradient updates are skipped entirely on the second pass"
+            ],
+            "correctIndex": 1,
+            "explanation": "The second visit reduces the attention sink and redirects that freed attention toward tokens that carry real information — evidence the loop acts as a refinement step, not just extra raw capacity."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "1d872b2e-fd01-472e-b463-dd42c252066b",
+          "title": "SMELT: Scaling Laws for Compute-Matched MoE Looped Transformers",
+          "url": "https://arxiv.org/abs/2609.01343"
+        }
+      ]
+    },
+    {
       "id": "38bd6378-3526-480c-9d00-4dd54ffbe55e",
       "title": "GPT-6 Astra: OpenAI's Biggest Model Trips Its Own Safety Wire",
       "subtitle": "A flagship trained on 100K+ GPUs — gated the moment it got too good at hacking.",
@@ -10729,581 +11263,6 @@
       ],
       "id": "e90d1ac2-5ddb-459b-a970-22fc4180f6f3",
       "publishedDate": "2026-08-27T00:42:32Z"
-    },
-    {
-      "title": "A2A: The Protocol for Agents Talking to Agents",
-      "subtitle": "MCP wires a model to tools. A2A wires one agent to another.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "agents",
-        "a2a",
-        "interoperability",
-        "protocols",
-        "multi-agent"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.left.arrow.right.circle.fill",
-      "summary": "Agent2Agent (A2A) is an open protocol, created by Google and now governed by the Linux Foundation, that standardizes how independent agents discover each other's capabilities and delegate work — the horizontal layer MCP was never built to cover. Agent Cards advertise capability, Tasks carry work through a real lifecycle, and Artifacts return structured results.",
-      "slides": [
-        {
-          "id": "6514cdef-d8a7-4bb9-bd30-b55f735330a6",
-          "kind": "cover",
-          "title": "A2A: Agent2Agent Protocol",
-          "body": null,
-          "bullets": [
-            "An open protocol for agents built by different teams and vendors to discover and delegate work to each other",
-            "Created by Google, donated to the Linux Foundation in June 2025 with 100+ companies backing it",
-            "Complements MCP — MCP wires a model to tools, A2A wires one agent to another"
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "6421d964-39bc-4aff-a4cb-c58620f88e74",
-          "kind": "problem",
-          "title": "MCP solves the wrong half of the problem",
-          "body": null,
-          "bullets": [
-            "MCP standardizes how one agent reaches tools, files, and data sources — a vertical connection between an app and its resources.",
-            "It says nothing about how two independent agents, each with their own model and tools behind a closed door, should talk to each other.",
-            "Before A2A, teams either hand-rolled a bespoke API per pair of agents, or forced every agent through the same framework — killing interoperability."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "68f067a8-2e19-42ab-8107-07539d3a0965",
-          "kind": "solution",
-          "title": "Agent Cards: capability without exposing internals",
-          "body": "Every A2A-compliant agent publishes an Agent Card — a JSON manifest describing what it can do, how to reach it, and what auth it needs — without revealing its prompts, model, or tools.",
-          "bullets": [
-            "A caller reads the card, decides if the agent fits the task, and never needs to know whether it's Claude, GPT, or a hand-built classifier underneath.",
-            "This is what makes agents 'opaque' by design: capability is discoverable, implementation stays private.",
-            "If a request doesn't match any local capability, an agent can route it to another agent whose card advertises a better fit."
-          ],
-          "symbol": "doc.text.fill",
-          "table": null
-        },
-        {
-          "id": "a056404d-9b33-4d15-9bc8-45f8e3f5a8de",
-          "kind": "architecture",
-          "title": "Tasks move through real states, not one request/response",
-          "body": "The unit of work in A2A is a Task, identified by an ID and tracked through a defined lifecycle — because agent work can take seconds or days.",
-          "bullets": [
-            "submitted -> working -> completed / failed / canceled, plus input-required and auth-required for work that needs a human or credentials mid-flight.",
-            "Long-running tasks stream progress over Server-Sent Events (tasks/sendSubscribe), or push a webhook POST when the caller has disconnected.",
-            "Outputs come back as Artifacts built from Parts — text, file references, or structured data — not a single opaque blob."
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "0625e693-3128-4424-bae8-9a641f1b4d2a",
-          "kind": "comparison",
-          "title": "MCP and A2A operate at different layers",
-          "body": null,
-          "bullets": [
-            "They're complementary, not competing: an A2A agent commonly uses MCP internally to reach its own tools before ever exposing a Task to another agent."
-          ],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "",
-              "MCP",
-              "A2A"
-            ],
-            "rows": [
-              [
-                "Direction",
-                "App/agent -> tools & data (vertical)",
-                "Agent -> agent (horizontal)"
-              ],
-              [
-                "Primitive",
-                "Tools, Resources, Prompts",
-                "Tasks, Artifacts, Agent Cards"
-              ],
-              [
-                "Transport",
-                "stdio or HTTP",
-                "JSON-RPC 2.0 over HTTP + SSE + webhooks"
-              ],
-              [
-                "Typical duration",
-                "One tool call",
-                "Seconds to multi-day tasks"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "fe268853-9e34-4e33-b3f7-44527448d6d8",
-          "kind": "example",
-          "title": "Booking a trip across three agents",
-          "body": "A travel-planner agent gets 'book me a flight and hotel for the conference.' It doesn't own flight or hotel search — it delegates.",
-          "bullets": [
-            "It reads the Agent Card of a flight-search agent, submits a Task with the trip constraints, and gets a task ID back immediately.",
-            "While that task is 'working,' it submits a second Task to a hotel-search agent in parallel — both run independently, each streaming status over SSE.",
-            "When a fare requires a login the planner doesn't have, the flight agent flips the task to 'input-required' instead of failing outright, and the planner relays that back to the user."
-          ],
-          "symbol": "airplane",
-          "table": null
-        },
-        {
-          "id": "7d4703ee-ec65-4c00-b07f-31a3527bac34",
-          "kind": "problem",
-          "title": "Skip it for anything that fits in one process",
-          "body": null,
-          "bullets": [
-            "If one team owns both sides and the call is a single synchronous request, plain function calling or MCP is simpler — A2A's task lifecycle is overhead you don't need.",
-            "A public Agent Card and a webhook endpoint are both attack surface: verify who's calling before you execute a delegated Task, and treat card claims as untrusted until an agent proves them.",
-            "Cross-agent debugging is harder — a failure three delegated Tasks deep means tracing state across services you don't own, not just reading one stack trace."
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "3d8bbe55-b0f6-42f8-9f60-69edf65254b7",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "A2A standardizes agent-to-agent delegation the way MCP standardized agent-to-tool access — the two are meant to stack, not substitute.",
-            "Agent Cards make capability discoverable while keeping an agent's internals opaque; Tasks give delegated work a real lifecycle instead of one blocking call.",
-            "Reach for it when agents cross team or vendor boundaries and work can run long; skip it inside a single process where a normal function call already does the job."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "220bfae1-965c-46b0-b44c-d83ffd7c98d1",
-            "prompt": "What problem does A2A solve that MCP does not?",
-            "options": [
-              "How a model calls a single tool synchronously",
-              "How two independent agents, possibly from different vendors, discover each other's capabilities and delegate work",
-              "How to fine-tune a model on new data",
-              "How to cache repeated prompts to cut token cost"
-            ],
-            "correctIndex": 1,
-            "explanation": "MCP wires an agent to tools and data (a vertical connection). A2A wires one agent to another (a horizontal connection) — the layer MCP was never designed to cover."
-          },
-          {
-            "id": "6986d4be-47fd-4b4f-96f8-dbec5f452c65",
-            "prompt": "What is an Agent Card?",
-            "options": [
-              "A trading card generated for viral marketing",
-              "A JSON manifest an agent publishes describing its capabilities and how to reach it, without exposing its internals",
-              "A log of every Task an agent has completed",
-              "A billing record for API usage"
-            ],
-            "correctIndex": 1,
-            "explanation": "The Agent Card is how A2A keeps agents 'opaque': callers can evaluate whether an agent fits a task from its published capabilities alone, without seeing its prompts, model, or tools."
-          },
-          {
-            "id": "a14b7ee6-605f-4aeb-9747-4134940e2f92",
-            "prompt": "A Task assigned 'input-required' status in A2A means:",
-            "options": [
-              "The task failed permanently and must be resubmitted from scratch",
-              "The task needs additional information or human input before it can continue",
-              "The requesting agent's authentication has expired",
-              "The task completed successfully with a partial artifact"
-            ],
-            "correctIndex": 1,
-            "explanation": "A2A's task lifecycle includes states built for real-world friction — input-required and auth-required let a task pause for a missing piece rather than failing outright."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "f5f7b7dd-a15c-4314-9de7-aa9962829895",
-          "title": "Linux Foundation Launches the Agent2Agent Protocol Project",
-          "url": "https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents"
-        },
-        {
-          "id": "ba74b4f3-5ed1-4c18-a6fb-b51847904402",
-          "title": "A2A Protocol Specification",
-          "url": "https://a2a-protocol.org/latest/"
-        }
-      ],
-      "id": "c9c8658d-0941-4b6d-b338-455a1a83d5ca",
-      "publishedDate": "2026-08-27T00:42:32Z"
-    },
-    {
-      "id": "da9b1d5b-29e1-42c1-aab1-3d14318bde81",
-      "title": "MCP Sampling: The Server Calls Back to the Model",
-      "subtitle": "Tools let the model call the server. Sampling lets the server call the model.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "sampling",
-        "agents",
-        "model-context-protocol",
-        "llms"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Sampling is the MCP primitive that flips the usual direction: instead of the model calling a server tool, the server asks the client to run a completion for it, with the human able to inspect or veto every request. It lets thin, credential-free servers borrow real reasoning without ever holding an API key.",
-      "publishedDate": "2026-08-26T18:39:21Z",
-      "slides": [
-        {
-          "id": "488d1f52-cf15-47d0-b6d6-b58bc01cbadd",
-          "kind": "cover",
-          "title": "The One MCP Primitive That Runs Backwards",
-          "body": "Tools, Resources, and Prompts all flow one way: client and model reach into the server. Sampling reverses it — the server reaches into the model.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "132bd8af-0c2d-452b-bae3-3ee34d7e28fb",
-          "kind": "problem",
-          "title": "A server sometimes needs to think, not just fetch",
-          "body": "Imagine an MCP server that watches a huge log stream or a big diff. It could return the raw data and let the orchestrating model make sense of it — but that can blow the context budget, and a naive filter can't judge nuance the way a language model can.",
-          "bullets": [
-            "Returning everything wastes context tokens on noise",
-            "A hand-written heuristic can't judge severity or intent",
-            "The server would need its own LLM API key to reason locally — a credential most servers shouldn't hold"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "fa7cf562-1635-4bc0-8fd6-46ec53cb532c",
-          "kind": "solution",
-          "title": "sampling/createMessage: the server borrows the client's model",
-          "body": "MCP defines a request the SERVER sends to the CLIENT: sampling/createMessage. The client — which already holds the model connection and the user's trust — runs the completion and hands the text back to the server.",
-          "bullets": [
-            "Server never touches an API key or model credential",
-            "Client decides which actual model serves the request; the server only sends optional 'modelPreferences' hints (intelligence vs. speed priority)",
-            "The completion is scoped to exactly the messages the server includes — not the user's full conversation"
-          ],
-          "symbol": "arrow.left.arrow.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "9fbc83db-d245-4a09-98f2-09145d0d2c8a",
-          "kind": "architecture",
-          "title": "Human-in-the-loop is mandatory, not optional",
-          "body": "The spec requires the client to give the user visibility into a sampling request before it runs, and again before the result goes back to the server.",
-          "bullets": [
-            "Client SHOULD show the user the proposed prompt and let them edit or reject it",
-            "Client SHOULD show the completion before releasing it to the server",
-            "This is what makes it safe for a server to 'use AI' without becoming a second, unaudited gatekeeper of the model"
-          ],
-          "symbol": "person.badge.shield.checkmark.fill",
-          "table": null
-        },
-        {
-          "id": "18849bb6-23e4-410d-b283-4ea3d9f67ad6",
-          "kind": "comparison",
-          "title": "Sampling vs. the other three MCP primitives",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells.fill",
-          "table": {
-            "headers": [
-              "Primitive",
-              "Who initiates",
-              "Direction"
-            ],
-            "rows": [
-              [
-                "Tools",
-                "Model decides to call",
-                "Model to server"
-              ],
-              [
-                "Resources",
-                "App attaches context",
-                "Server to app"
-              ],
-              [
-                "Prompts",
-                "User invokes a template",
-                "User to server"
-              ],
-              [
-                "Sampling",
-                "Server requests a completion",
-                "Server to client/model"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "c72afe62-80d0-42c2-a4cd-4d72de287864",
-          "kind": "example",
-          "title": "Worked example: a diff-review server",
-          "body": "A code-review MCP server pulls a 4,000-line diff from a webhook. Instead of dumping it into the calling agent's context, it uses sampling to pre-digest it.",
-          "bullets": [
-            "Server sends sampling/createMessage with the diff and a prompt: 'flag risky changes only'",
-            "Client's model (chosen by the client, not the server) reads the diff and returns a 200-word risk summary",
-            "Server returns just that summary as the tool result — the orchestrating agent's context never sees the raw diff",
-            "Net effect: one extra model round-trip buys a large reduction in tokens spent downstream"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "c0b068fc-dcaf-4c71-bab5-09d3590f0be1",
-          "kind": "takeaways",
-          "title": "Where it breaks, and what to remember",
-          "body": "Sampling is powerful but easy to misuse.",
-          "bullets": [
-            "It's an OPTIONAL client capability — many MCP clients don't implement it yet, so servers must degrade gracefully if it's absent",
-            "A server that fires sampling requests in a loop can rack up real model cost and latency behind the user's back — rate-limit it server-side",
-            "Approval prompts add friction; reserve sampling for steps that genuinely need judgment, not every server action",
-            "Remember the core inversion: Tools are the model reaching OUT to the server; Sampling is the server reaching BACK into the model"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cfc91b43-c1db-482f-8bb7-9e4329307dbd",
-            "prompt": "In MCP, which direction does a sampling/createMessage request travel?",
-            "options": [
-              "From the model to the server, like a tool call",
-              "From the server to the client, asking it to run a completion",
-              "From the user directly to the model, bypassing the server",
-              "From one server to another server"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sampling reverses the usual flow: the SERVER sends the request, and the CLIENT (which owns the model connection) executes it and returns the completion — the only MCP primitive that lets a server 'use AI' without holding its own model credentials."
-          },
-          {
-            "id": "efa7414a-16f4-43b2-b5ee-7f78decc77ac",
-            "prompt": "Why does the MCP spec require human-in-the-loop review for sampling requests?",
-            "options": [
-              "To make responses slower for security theater",
-              "Because servers are not allowed to see any model output",
-              "Because a server could otherwise trigger model completions the user never sees or approves, using the user's model access",
-              "It doesn't — sampling is fully automatic by design"
-            ],
-            "correctIndex": 2,
-            "explanation": "Since the server never holds its own API key, sampling effectively lets it spend the user's model access. Requiring the client to surface the prompt and result for approval keeps that spend and content visible to the human instead of happening silently."
-          },
-          {
-            "id": "5a30790d-640f-4f78-bee5-08abd569d071",
-            "prompt": "A server needs to summarize a huge log file before returning results to the orchestrating agent, to avoid blowing its context budget. Which MCP primitive fits best?",
-            "options": [
-              "Resources, because logs are just static context",
-              "Prompts, because summarization is a template",
-              "Sampling, so the server can get a model-generated summary before responding",
-              "Tools, because the server should expose the raw log as a tool result"
-            ],
-            "correctIndex": 2,
-            "explanation": "This is exactly the sampling use case: the server needs judgment (what's worth keeping) that a fixed template or raw dump can't provide, so it asks the client to run a completion and returns the condensed result instead of the raw data."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "dcbcadb9-6813-46d3-91ff-87d1dd32a2df",
-      "title": "ReAct: Reasoning and Acting in the Same Loop",
-      "subtitle": "A written thought before every tool call — the pattern that turned LLMs from answerers into agents.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "react",
-        "agentic-workflows",
-        "llm-agents",
-        "reasoning",
-        "tool-use",
-        "chain-of-thought"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "brain.head.profile",
-      "summary": "ReAct interleaves a short written thought with every tool call and its resulting observation, so an agent reasons about what it just learned before deciding what to do next. It's a prompting pattern, not an architecture change, and it's the scaffold underneath most 'agentic' LLM products today.",
-      "publishedDate": "2026-08-26T12:55:02Z",
-      "slides": [
-        {
-          "id": "c0b16377-e5de-4fd3-a685-ff8e8572ce27",
-          "kind": "cover",
-          "title": "Think, Then Act, Then Look",
-          "body": "ReAct interleaves a written thought with every tool call and every observation, so an agent reasons about what it just learned before deciding what to do next.",
-          "bullets": [
-            "Introduced by Yao et al. in 2022 as 'ReAct: Synergizing Reasoning and Acting in Language Models'",
-            "The scaffold underneath most 'agentic' LLM products today, from research assistants to coding agents",
-            "Not a new architecture — a prompting structure: Thought, Action, Observation, repeat"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "0687e391-4e4e-4bda-bb28-477c441a766d",
-          "kind": "problem",
-          "title": "Pure Reasoning Hallucinates, Pure Acting Has No Plan",
-          "body": "Before ReAct, agent designs mostly fell into two camps, each missing half the picture.",
-          "bullets": [
-            "Chain-of-thought prompting reasons step by step but never touches the outside world — an early wrong guess compounds silently, with nothing to catch it",
-            "Naive 'action-only' agents call tools and act on whatever comes back, with no explicit deliberation about whether the last result actually helped",
-            "Neither camp lets reasoning and evidence correct each other mid-task"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "3cf6be4c-f972-4631-bdc9-2bda006dfc5e",
-          "kind": "solution",
-          "title": "Thought, Action, Observation — Repeat",
-          "body": "ReAct threads a short natural-language thought before each action, and feeds the tool's real result back in as an observation the next thought can react to.",
-          "bullets": [
-            "Thought: the model writes a sentence of reasoning about the current state and what to do next",
-            "Action: it emits a tool call (search, lookup, code execution) chosen based on that thought",
-            "Observation: the tool's real output is appended to the context, verbatim",
-            "The loop repeats until a Thought concludes with a Finish[answer] action"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "6cc5dba0-a631-4f2d-a691-204b9da2e49e",
-          "kind": "architecture",
-          "title": "Built With Prompting, Not New Weights",
-          "body": "The original ReAct paper implements the whole pattern with few-shot exemplars in the prompt — no architecture change and no extra training required to get it working.",
-          "bullets": [
-            "A handful of hand-written Thought/Action/Observation traces go in the prompt as examples",
-            "The harness parses each model turn: if it's an Action, execute the tool and inject the Observation; if it's Finish, stop and return the answer",
-            "Later systems fine-tune models directly on ReAct-style traces so the format doesn't rely on few-shot examples at all",
-            "This is the same act-observe scaffold most native tool-calling APIs now bake in directly"
-          ],
-          "symbol": "list.bullet.rectangle",
-          "table": null
-        },
-        {
-          "id": "c0aed807-7cca-492a-bca8-8570e93df241",
-          "kind": "example",
-          "title": "Answering a Question That Needs Two Lookups",
-          "body": "A worked trace for: 'Which city is home to the headquarters of the company that makes the iPhone?'",
-          "bullets": [
-            "Thought 1: 'I need the iPhone's manufacturer before I can find a headquarters.' Action: Search[iPhone manufacturer]. Observation: Apple Inc.",
-            "Thought 2: 'Now I need Apple's headquarters city.' Action: Search[Apple Inc. headquarters]. Observation: Cupertino, California.",
-            "Thought 3: 'I have both facts chained together, I can answer now.' Action: Finish[Cupertino, California]",
-            "Each thought picks the next query using only what's been observed so far — not a fixed plan written up front"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "8976b407-fb6c-41f5-bc38-f47e7e744e8a",
-          "kind": "comparison",
-          "title": "ReAct vs. Chain-of-Thought-Only vs. Act-Only",
-          "body": "On the multi-step QA and interactive decision-making benchmarks in the original paper, ReAct's traces were far more interpretable than either baseline, since every action arrived with a stated reason attached.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Approach",
-              "Uses external evidence",
-              "Main failure mode"
-            ],
-            "rows": [
-              [
-                "Chain-of-thought only",
-                "No — reasons purely from the model's own memory",
-                "Confidently wrong on facts outside training data"
-              ],
-              [
-                "Act-only (no thought)",
-                "Yes — but with no deliberation between calls",
-                "Wastes calls or misreads a result with nothing correcting course"
-              ],
-              [
-                "ReAct",
-                "Yes — every action is chosen by a preceding thought",
-                "Can still loop or misread an observation, but errors show up in the trace"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "920364b1-04d3-4613-bb77-e592d0035f91",
-          "kind": "concept",
-          "title": "Where ReAct Falls Down",
-          "body": null,
-          "bullets": [
-            "Thought-action loops can repeat: the model re-issues a similar search after a bad observation instead of trying a different angle",
-            "Every thought is extra tokens and extra latency — for a single factual lookup, one tool call beats a multi-turn ReAct loop",
-            "A wrong observation (a bad search result, a stale API response) gets reasoned over as if it were true — ReAct doesn't verify evidence, it just reacts to it",
-            "Needs either good few-shot exemplars or fine-tuning on traces; a model with weak instruction-following can drift out of the format entirely"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "6fa12935-7267-458b-a3ce-dd5d949c940e",
-          "kind": "takeaways",
-          "title": "What to Remember",
-          "body": null,
-          "bullets": [
-            "ReAct = write a thought before every action, feed the real observation back in, repeat until Finish",
-            "It's a prompting/scaffolding pattern, not a model architecture — buildable with few-shot examples or fine-tuning",
-            "It beats pure chain-of-thought (no grounding) and pure act-only (no deliberation) by letting reasoning and evidence correct each other mid-task",
-            "Skip it for single-lookup tasks, where the extra thought steps just add latency without changing the outcome"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "363b03e1-887c-4e40-9cfd-20a710b96f03",
-            "prompt": "In the ReAct loop, what does the 'Observation' step contain?",
-            "options": [
-              "The model's next planned action",
-              "The real, verbatim result returned by the tool the action just called",
-              "A critique of the previous thought",
-              "A summary of the entire conversation so far"
-            ],
-            "correctIndex": 1,
-            "explanation": "Observation is the actual output of whatever tool or action was just executed — search results, an API response, code output — injected back into context so the next Thought can reason over real evidence, not a guess."
-          },
-          {
-            "id": "668110a5-2ec7-4579-83e4-24745cb325cf",
-            "prompt": "Why does ReAct tend to hallucinate less than pure chain-of-thought prompting on knowledge-heavy questions?",
-            "options": [
-              "It always uses a larger model",
-              "Its thoughts are grounded by real tool observations instead of reasoning purely from the model's parametric memory",
-              "It skips reasoning entirely and only acts",
-              "It requires beam search decoding"
-            ],
-            "correctIndex": 1,
-            "explanation": "Chain-of-thought alone reasons from what the model already 'knows' internally, so an early wrong guess compounds silently. ReAct's thoughts are checked against real observations pulled from tools, giving the model a chance to correct course mid-task."
-          },
-          {
-            "id": "a6f8802c-9f7a-46ee-83b0-4ab541a1d54e",
-            "prompt": "What's a realistic failure mode of a ReAct agent?",
-            "options": [
-              "It cannot call external tools at all",
-              "It re-issues a similar unhelpful action after a bad observation instead of changing its approach",
-              "It always terminates after exactly one step",
-              "It requires no prompt engineering whatsoever"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because each thought reasons mainly over the immediate observation, a ReAct agent can get stuck repeating a similar query when the tool keeps returning unhelpful results, instead of stepping back to try a fundamentally different action."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "24b9f0ee-ae40-4646-ba85-cddb9db667ca",
-          "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
-          "url": "https://arxiv.org/abs/2210.03629"
-        }
-      ]
     }
   ]
 }
