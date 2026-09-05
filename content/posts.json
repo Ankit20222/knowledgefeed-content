@@ -1,6 +1,394 @@
 {
   "posts": [
     {
+      "title": "MCP Sampling: Letting a Server Borrow the Client's Model",
+      "subtitle": "Nested LLM calls, with a human still in the loop",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "sampling",
+        "agentic ai",
+        "human-in-the-loop",
+        "llm"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bubble.left.and.bubble.right",
+      "summary": "Sampling is the MCP primitive that lets a server ask the client to run a model completion on its behalf via sampling/createMessage, instead of the server needing its own API key. It's designed for agentic servers that need a nested reasoning step, and the spec explicitly wants a human able to review both the outgoing prompt and the incoming response.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The server that needs to think, without its own model",
+          "body": "MCP servers expose tools, resources, and prompts — but what if the server itself needs an LLM to reason, summarize, or decide something mid-task? Sampling lets it ask the client to run that completion, rather than bundling its own API key and model choice.",
+          "bullets": [],
+          "symbol": "bubble.left.and.bubble.right",
+          "table": null,
+          "id": "1a1050ed-69fc-4f71-8411-0c11a17dead0"
+        },
+        {
+          "kind": "problem",
+          "title": "Without it: every agentic server needs its own model",
+          "body": "A search server that wants to triage ten scraped pages down to the three relevant ones needs some model to do that triage. Without sampling, it either bundles its own API key and config (cost, provider lock-in, duplicated setup for every server) or dumps all ten raw pages into the calling agent's context and makes the orchestrator do the filtering.",
+          "bullets": [
+            "Bundling a model per server means N servers = N separate API bills and configs",
+            "Pushing raw data into the orchestrator's context bloats it with things the top-level agent never needed to see",
+            "Neither option lets the user's client control which model is actually doing the work"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null,
+          "id": "6093ca5f-a703-429b-8958-ef695acbef5c"
+        },
+        {
+          "kind": "solution",
+          "title": "sampling/createMessage: a request, not a bundled API key",
+          "body": "The server sends a sampling/createMessage request with the conversation so far, an optional system prompt, a maxTokens limit, and modelPreferences. The client — which already has a model connection — runs the completion and returns an assistant message with role, content, the model actually used, and a stop reason.",
+          "bullets": [
+            "modelPreferences carries costPriority, speedPriority, and intelligencePriority as normalized 0-1 hints",
+            "Model hints are substring-based suggestions ('prefer something like claude-haiku') — advisory only, not a hard requirement",
+            "The client makes the final model choice; hints just steer it"
+          ],
+          "symbol": "curlybraces",
+          "table": null,
+          "id": "0ef3fe3c-517a-46b7-a353-edcab1659898"
+        },
+        {
+          "kind": "architecture",
+          "title": "The spec's core requirement: a human SHOULD be in the loop",
+          "body": "Sampling inverts MCP's usual direction — server asks client, not client asks server — which is exactly why the spec leans hard on human oversight. Clients are expected to let users review and edit the outgoing prompt, and review the response, before either one is finalized.",
+          "bullets": [
+            "Applications SHOULD show clear UI for reviewing sampling requests",
+            "Users should be able to edit the prompt before it's sent, and see the response before it's returned to the server",
+            "Security guidance also covers content validation, respecting model hints, and rate limiting on the client side"
+          ],
+          "symbol": "person.crop.circle.badge.checkmark",
+          "table": null,
+          "id": "b1d0369f-dc48-463b-b2b0-490478ffae35"
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: a research server triaging results",
+          "body": "A web-research MCP server crawls ten pages for a query. Instead of forwarding all ten into the orchestrating agent's context, it calls sampling/createMessage with just the ten summaries and a focused prompt: 'which three are most relevant to X?' It sets costPriority high and intelligencePriority low, since triage doesn't need the strongest model.",
+          "bullets": [
+            "The client (e.g. a desktop MCP host) can show the user this sub-request before running it",
+            "A fast, cheap model handles the triage; only the three chosen pages ever reach the orchestrator's context",
+            "The server never needed its own API key — it borrowed the client's model connection for one nested call"
+          ],
+          "symbol": "list.bullet.rectangle",
+          "table": null,
+          "id": "04ac2c0b-6804-4dda-8b66-48a69c4832d6"
+        },
+        {
+          "kind": "comparison",
+          "title": "Sampling vs. tools vs. elicitation",
+          "body": "All three are MCP capabilities the client must declare support for, but they move information in different directions for different reasons.",
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "Tools",
+              "Sampling",
+              "Elicitation"
+            ],
+            "rows": [
+              [
+                "Direction",
+                "Client calls server",
+                "Server asks client for a completion",
+                "Server asks client for human input"
+              ],
+              [
+                "Returns",
+                "An action's result",
+                "Model-generated text",
+                "User-supplied structured data"
+              ],
+              [
+                "Review expected?",
+                "Optional",
+                "SHOULD be reviewable by a human",
+                "Yes, by design"
+              ]
+            ]
+          },
+          "id": "be7cdd98-7b1c-4e60-a410-e735bbfa3540"
+        },
+        {
+          "kind": "problem",
+          "title": "Where sampling doesn't fit",
+          "body": "Sampling is not free, and it's not for everything a server does.",
+          "bullets": [
+            "Many MCP clients haven't implemented sampling yet — it requires wiring up model access and review UI, so servers must treat it as optional and degrade gracefully",
+            "A human-reviewable request per call doesn't scale to tight, high-frequency loops — it's for occasional, meaningful reasoning steps, not per-token decisions",
+            "Model hints are advisory: don't write server logic that assumes a specific model actually ran"
+          ],
+          "symbol": "xmark.octagon",
+          "table": null,
+          "id": "2c1ba186-f2e4-4acf-8d97-86dfb947bb79"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "Sampling lets servers get LLM reasoning without owning a model connection — at the cost of needing client support and, by design, a human who can see what's being asked and answered.",
+          "bullets": [
+            "sampling/createMessage flips MCP's usual direction: the server requests, the client fulfills",
+            "modelPreferences are hints (cost/speed/intelligence priorities), not guarantees — the client picks the actual model",
+            "The spec wants a human able to review both the outgoing prompt and the returned completion",
+            "Treat it as optional: not every client supports it, so servers need a fallback path"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null,
+          "id": "8b5aaa6c-011c-4c4c-945b-605c903b7e25"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What JSON-RPC method does a server call to request a model completion from the client?",
+            "options": [
+              "tools/call",
+              "resources/read",
+              "sampling/createMessage",
+              "elicitation/create"
+            ],
+            "correctIndex": 2,
+            "explanation": "sampling/createMessage is the method a server sends when it wants the client to run an LLM completion on its behalf, passing messages, an optional system prompt, maxTokens, and modelPreferences.",
+            "id": "da8adda8-477b-454f-bd68-ae1a981b40fb"
+          },
+          {
+            "prompt": "What does the MCP spec say about human involvement in sampling requests?",
+            "options": [
+              "Humans should never see sampling requests, to keep latency low",
+              "A human SHOULD be able to review and edit the prompt and review the response before either is finalized",
+              "Only server administrators may approve sampling requests",
+              "Human review is required only for requests over a certain token count"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because sampling lets a server trigger model usage through the client, the spec expects the client to give users a way to see and edit the outgoing prompt and to review the response before it goes back to the server.",
+            "id": "4a46dfbf-c1d8-4ee0-8628-a76fd07f9e98"
+          },
+          {
+            "prompt": "What are modelPreferences (costPriority, speedPriority, intelligencePriority) in a sampling request?",
+            "options": [
+              "Hard requirements the client must obey exactly",
+              "Billing tiers the user is charged",
+              "Advisory hints — the client makes the final model choice",
+              "A list of banned models"
+            ],
+            "correctIndex": 2,
+            "explanation": "modelPreferences and model hints are advisory: they steer the client toward a cheaper, faster, or more capable model, but the client always makes the final selection — servers shouldn't assume a specific model ran.",
+            "id": "47f521f7-d7cf-4815-a972-233afb8759f1"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Sampling — Model Context Protocol Specification (2025-06-18)",
+          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/sampling.mdx",
+          "id": "fa04d9b7-4daa-46bb-994b-92c2459e4416"
+        }
+      ],
+      "id": "542ee188-4476-4adf-a6b2-6e1153136421",
+      "publishedDate": "2026-09-05T18:42:46Z",
+      "heroImageURL": null
+    },
+    {
+      "title": "FreeToken: Running 700B+ MoE Models on a Gaming PC",
+      "subtitle": "Datacenter-scale weights, one consumer GPU",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "mixture of experts",
+        "inference optimization",
+        "edge computing",
+        "quantization",
+        "llm serving"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "desktopcomputer",
+      "summary": "FreeToken is an open-source inference engine that runs frontier-scale Mixture-of-Experts models — up to 753B parameters — on a single consumer GPU by treating PCIe bandwidth and host RAM as first-class resources instead of assuming a datacenter cluster. It does this with bandwidth-adaptive CPU-GPU co-execution, an LRU cache for expert weights, and streaming prefill, and ships as real, MIT/Apache-licensed code supporting 20+ open MoE models.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A 753B-parameter model, one workstation GPU",
+          "body": "FreeToken (arXiv 2608.16157, 'Efficient Edge-Native MoE Serving with Bandwidth-Adaptive Execution') is an open-source engine that runs frontier-scale open-weight MoE models locally — no cluster, no datacenter NVLink, just a single GPU and a lot of clever memory management.",
+          "bullets": [],
+          "symbol": "desktopcomputer",
+          "table": null,
+          "id": "c6dcacd2-ecd2-4cd1-8364-2588e16dfdd1"
+        },
+        {
+          "kind": "problem",
+          "title": "MoE models are huge, but only sparsely awake",
+          "body": "A model like GLM-5.2 has 744B total parameters but activates roughly 40B of them per token. The problem: even though most of the model sits idle for any given token, every parameter still has to live somewhere — and 'somewhere' has traditionally meant many datacenter GPUs with high-bandwidth interconnects.",
+          "bullets": [
+            "Consumer GPUs top out around 24GB VRAM — nowhere near enough for a 284B-753B parameter model",
+            "Naive CPU offload is bottlenecked by PCIe, which is an order of magnitude slower than GPU-to-GPU NVLink",
+            "Most local-inference tooling assumes the whole model fits on the device it runs on"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null,
+          "id": "98c75b40-e78e-40c6-8906-b0e1d120991b"
+        },
+        {
+          "kind": "solution",
+          "title": "Treat cold experts as a caching problem, not a loading problem",
+          "body": "FreeToken keeps 'hot' experts resident in GPU VRAM and streams 'cold' ones from host RAM over PCIe on demand, overlapping that transfer with compute instead of stalling on it.",
+          "bullets": [
+            "Bandwidth-adaptive CPU-GPU co-execution splits token routing between VRAM-resident and RAM-resident experts based on live PCIe throughput",
+            "A global LRU cache keeps frequently-activated experts on the GPU and evicts cold ones automatically",
+            "Double-buffered prefill streams the next layer's weights in while the current layer is still computing",
+            "Dynamic VRAM reallocation moves memory between the expert cache and the KV cache without restarting the engine"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "dd076279-548e-4ede-8f2f-95103d51139c"
+        },
+        {
+          "kind": "architecture",
+          "title": "Semantic caching cuts the agentic tax too",
+          "body": "Long agent loops re-send overlapping context on every turn. FreeToken adds semantic-aware caching for KV states across recurring context, so a multi-turn coding-agent session doesn't pay full prefill cost on every round trip — on top of quantized formats (MXFP4, NVFP4, FP8, BF16) that shrink the weights it has to move in the first place.",
+          "bullets": [
+            "Built on lessons from mini-sglang, extended for consumer hardware constraints",
+            "Supports 20+ open MoE families: DeepSeek-V4, GLM-5.3-Flash/5.2/4.7, Qwen3.8/3.6 MoE and dense, gpt-oss, Gemma-4, MiniMax-M2.5, and more",
+            "Apache 2.0 licensed, with a CLI and desktop app for local serving"
+          ],
+          "symbol": "memorychip",
+          "table": null,
+          "id": "2a2152ab-051b-4026-a645-930e1f24455e"
+        },
+        {
+          "kind": "comparison",
+          "title": "What hardware tier gets you which model size",
+          "body": "The paper's headline numbers are about scale-per-device, not raw tokens/sec — the achievement is making these sizes runnable locally at all.",
+          "bullets": [],
+          "symbol": "chart.bar",
+          "table": {
+            "headers": [
+              "Hardware tier",
+              "Demonstrated model size",
+              "Notes"
+            ],
+            "rows": [
+              [
+                "8GB laptop GPU",
+                "Smaller open MoE checkpoints",
+                "Minimum supported configuration"
+              ],
+              [
+                "Gaming desktop GPU",
+                "284B parameters",
+                "Single RTX 30/40/50-series card"
+              ],
+              [
+                "Workstation GPU",
+                "753B parameters (GLM-5.2)",
+                "Largest model demonstrated in the paper"
+              ]
+            ]
+          },
+          "id": "f98d40c9-f35c-4f41-8fd8-fb06d8c5aa2a"
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: serving Qwen3.6-35B-A3B locally",
+          "body": "The '-A3B' suffix is Qwen's own naming convention for its MoE line: 35B total parameters, but only about 3B active per token. Point FreeToken's CLI at the checkpoint and it starts a local HTTP server on 127.0.0.1:1919 that accepts standard chat-completion requests — the routing between resident and streamed experts happens transparently underneath.",
+          "bullets": [
+            "Because only ~3B params are active per token, most of the 35B never has to leave host RAM for a given request",
+            "The engine decides per-token which experts are worth keeping hot based on recent activation history",
+            "From the caller's side, it looks like any other local OpenAI-compatible endpoint"
+          ],
+          "symbol": "terminal",
+          "table": null,
+          "id": "d98e9ff6-8e55-4516-94a6-aca493c87f36"
+        },
+        {
+          "kind": "problem",
+          "title": "The tradeoffs that don't disappear",
+          "body": "Bandwidth adaptation narrows the gap to datacenter serving — it doesn't close it. Some models carry real memory taxes even with the optimizations.",
+          "bullets": [
+            "PCIe is still the ceiling: single-user interactive latency, not high-throughput multi-user serving",
+            "Qwen3.8-Flash-Next alone pins a 47.7 GiB n-gram table in host RAM — some models have model-specific costs beyond raw parameter count",
+            "The README is explicit that only certain checkpoints are 'known-good' — kernels are tuned for specific architectures, and other checkpoints of the same family may run but aren't guaranteed"
+          ],
+          "symbol": "exclamationmark.circle",
+          "table": null,
+          "id": "ada1a1b8-abcb-4ebf-82c6-6ee3f10f7d4b"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "FreeToken's contribution isn't a new model — it's proof that the assumption 'frontier MoE needs a datacenter' is a serving-engine limitation, not a fundamental one.",
+          "bullets": [
+            "MoE sparsity means most parameters are cold for any given token — that's a caching problem, and caching problems have caching solutions",
+            "Bandwidth-adaptive CPU-GPU co-execution + an LRU expert cache lets a 753B model run on one workstation GPU",
+            "It's best suited to single-user, interactive local use — not a drop-in replacement for datacenter-scale multi-tenant serving",
+            "Real, open code (Apache 2.0, 20+ supported models) — not just a paper result"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null,
+          "id": "9bed9174-5f00-4373-83aa-729442dee4fb"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why can a 753B-parameter MoE model run on a single consumer GPU at all?",
+            "options": [
+              "The model is fully quantized to 1-bit precision",
+              "Only a small fraction of experts activate per token, so most parameters can stay off-GPU until needed",
+              "FreeToken deletes unused experts permanently",
+              "Consumer GPUs now have as much VRAM as datacenter GPUs"
+            ],
+            "correctIndex": 1,
+            "explanation": "MoE sparsity means a token only routes through a handful of experts. FreeToken exploits that by keeping hot experts in VRAM and streaming cold ones from host RAM on demand, instead of requiring the entire model resident at once.",
+            "id": "43598c76-091a-43d4-9541-58e12e4615aa"
+          },
+          {
+            "prompt": "What is the main bottleneck FreeToken is designed around?",
+            "options": [
+              "GPU compute (FLOPs)",
+              "Model accuracy loss from quantization",
+              "PCIe bandwidth between host RAM and the GPU",
+              "Network latency to a remote API"
+            ],
+            "correctIndex": 2,
+            "explanation": "Once experts have to be streamed from CPU RAM instead of sitting in VRAM, PCIe bandwidth — far slower than GPU-to-GPU NVLink in datacenters — becomes the limiting factor. FreeToken's bandwidth-adaptive execution and double-buffered streaming exist specifically to hide that latency.",
+            "id": "bdb60108-fd69-4f87-80ad-5162edefd192"
+          },
+          {
+            "prompt": "What kind of workload is FreeToken best suited for, according to its own tradeoffs?",
+            "options": [
+              "High-throughput serving for thousands of concurrent users",
+              "Single-user, interactive local inference",
+              "Training new models from scratch",
+              "Replacing datacenter clusters for enterprise API serving"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because it's still bounded by PCIe bandwidth rather than NVLink, FreeToken trades multi-tenant throughput for the ability to run a huge model locally for one user — a fundamentally different use case than datacenter serving.",
+            "id": "23644e20-1800-4064-bef0-672d651d1500"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "FreeToken: Efficient Edge-Native MoE Serving with Bandwidth-Adaptive Execution (arXiv 2608.16157)",
+          "url": "https://arxiv.org/abs/2608.16157",
+          "id": "d7422826-37b6-45be-9639-f30c559f37a2"
+        },
+        {
+          "title": "FreeToken — official GitHub repository",
+          "url": "https://github.com/FlashML-org/FreeToken",
+          "id": "38f3d59a-dd03-42f7-8bcd-dc05412c6abe"
+        }
+      ],
+      "id": "ec6d895d-5e45-4182-ac6c-45832011e1f4",
+      "publishedDate": "2026-09-05T18:42:46Z",
+      "heroImageURL": null
+    },
+    {
       "id": "d6df2934-e6d6-468b-9f70-6b4a33d5ac40",
       "title": "Test-Time Compute: Making Models Think Longer, Not Bigger",
       "subtitle": "Why spending more compute at answer-time — not just training-time — is now how top models get smarter.",
@@ -10826,423 +11214,6 @@
           "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/roots"
         }
       ]
-    },
-    {
-      "id": "f9081efd-2d92-4d7e-a7c5-393c186be24b",
-      "title": "LongHorizon-Harness: Trust No Round Until It's Verified",
-      "subtitle": "Three roles, one loop — why an agent that grades its own homework stops scaling past a few steps",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "agents",
-        "long-horizon",
-        "evaluation",
-        "benchmarks",
-        "computer-use"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "LongHorizon-Harness wraps existing coding agents in a Manager/Executor/Auditor loop that keeps verified task state outside the model's own context, so an agent's self-reported \"done\" is never trusted without independent inspection. Across WeaveBench, OSWorld 2.0, and Terminal-Bench 2.1, the same backbone model and execution backend post large, measured gains purely from restructuring the loop around it.",
-      "body": null,
-      "slides": [
-        {
-          "id": "96084316-17a7-4909-94b2-c162fbf648fb",
-          "kind": "cover",
-          "title": "The model didn't get smarter — the loop did",
-          "body": "LongHorizon-Harness (Alibaba's AMAP-ML, arXiv 2608.01964) wraps Claude Code, Codex, OpenCode, or DeepSeek Harness in a three-role loop that never trusts an agent's claim of success without checking it against the real environment.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "8e0be569-18be-49df-8c08-c608d18f1d6f",
-          "kind": "problem",
-          "title": "Self-assessment breaks down over long horizons",
-          "body": "A single agent that plans, acts, and judges its own results in one growing context lets bad self-assessment compound.",
-          "bullets": [
-            "Standard agent harnesses keep task execution, task state, and completion judgment inside one continuously-growing context",
-            "That makes state hard to track over dozens of rounds, and lets an incorrect self-assessment (\"tests pass\") propagate uncorrected into every later decision",
-            "The paper reframes the problem: long-horizon execution is fundamentally a task-state management problem, not just a bigger context window",
-            "Fix: keep task state explicitly outside the execution loop, and update it only with facts independently verified from the environment — not from what the executor claims"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "8ffc7c12-e733-4d76-8e31-c273a556b926",
-          "kind": "solution",
-          "title": "The Manage-Execute-Audit (MEA) loop",
-          "body": "Three roles, three separate jobs, deliberately not shared context.",
-          "bullets": [
-            "Manager: rebuilds each round from the original goal, verified progress, and prior failure evidence — decides the next bounded step",
-            "Executor: starts with a fresh context and performs exactly that one step in a desktop app or the CLI",
-            "Auditor: independently inspects the actual files, UI state, logs, and tests in the real environment — it does not trust the Executor's own claim",
-            "Only results that pass independent audit become trusted task state; a rejected result is kept as evidence for the next round's Manager, not discarded"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "0a8adfe0-a4f6-4bd9-a0bf-395343931c0a",
-          "kind": "architecture",
-          "title": "Model-agnostic by design",
-          "body": "The harness doesn't train a new model — it's an execution loop wrapped around whichever agent you already run.",
-          "bullets": [
-            "Works with Claude Code, Codex CLI, OpenCode, or DeepSeek Harness as the underlying agent backend, mixed per role if you want a stronger model just for the Auditor",
-            "Manager, Executor, and Auditor can each use a different model or backend, letting you pay for quality only where it matters",
-            "A capped max_rounds (default 30) bounds how long the Manage-Execute-Audit cycle can run before stopping",
-            "Supports both GUI computer-use (clicking, typing, spreadsheets, design tools) and CLI-only work in the same continuous task"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "15a1f502-5365-4eaf-b99b-ae33682445ae",
-          "kind": "comparison",
-          "title": "Same model, same backend — only the loop changed",
-          "body": "All rows use Qwen 3.7-Plus as the backbone and Claude Code as the execution backend; the only variable is whether LongHorizon-Harness manages the loop.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Baseline (Claude Code)",
-              "LongHorizon-Harness",
-              "Gain"
-            ],
-            "rows": [
-              [
-                "WeaveBench (114 tasks, PassRate)",
-                "51.8",
-                "80.7",
-                "+28.9"
-              ],
-              [
-                "OSWorld 2.0 (108 tasks, Binary)",
-                "2.8",
-                "8.3",
-                "3.0×"
-              ],
-              [
-                "Terminal-Bench 2.1 (Success rate)",
-                "69.7",
-                "77.2",
-                "+7.5, 24% fewer tokens"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "13c52950-a512-4e77-8c78-8e201b76d32f",
-          "kind": "example",
-          "title": "Worked example: catching a false \"done\"",
-          "body": "The Auditor's independence is the mechanism that actually prevents error propagation.",
-          "bullets": [
-            "Task: migrate a repo's test suite to a new framework and confirm everything still passes",
-            "Round 12: the Executor edits the config and reports the suite is green — but its fresh context never actually re-ran the tests, it inferred success from the edit alone",
-            "The Auditor independently runs the test command and inspects the real output, finds 3 failing tests the Executor missed, and rejects the claim",
-            "That failure evidence — not a vague \"try again\" — feeds the next Manager round, which plans a targeted fix instead of restarting the whole task"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "6b3342fd-07e9-437d-aaab-3ba905656c99",
-          "kind": "problem",
-          "title": "Tradeoffs: when the loop costs more than it saves",
-          "body": "Three-role verification is not free, and it isn't a substitute for a better base model.",
-          "bullets": [
-            "Every round pays for a Manager call, an Executor call, and an Auditor call — 3x+ the raw token and latency cost of a single agent turn for simple, short tasks",
-            "The Auditor still trusts the environment signals it can observe; if a test itself is broken or a log can be spoofed, independent auditing doesn't catch a lie baked into the evidence",
-            "It's loop engineering, not training — a weak backbone model still writes weak code and plans weak steps; the harness only stops bad self-assessment from compounding, it doesn't fix bad judgment",
-            "For a one-shot, single-file edit, the manage/execute/audit overhead is pure waste — the gains show up on long, multi-round, verifiable tasks"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "e85bd4cd-0d18-4958-8e42-46dee5020155",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "LongHorizon-Harness treats long-horizon agent failure as a state-management problem: keep verified state outside the model, update it only from independently-audited facts",
-            "The Manage-Execute-Audit loop splits planning, fresh-context execution, and read-only auditing into separate roles that don't share the same growing context",
-            "On identical backbone (Qwen 3.7-Plus) and execution backend (Claude Code), the loop alone took WeaveBench PassRate from 51.8% to 80.7% and roughly 3×'d OSWorld 2.0 binary success",
-            "It's a wrapper, not a new model — the gains come from never trusting an agent's self-report, which costs extra rounds and only pays off on tasks long enough to actually drift"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6899f030-8bfb-419b-a52e-3dd5d3c11a64",
-            "prompt": "What core problem does LongHorizon-Harness reframe long-horizon agent failure as?",
-            "options": [
-              "A context-window size problem, solved by a bigger context",
-              "A task-state management problem, solved by keeping verified state outside the execution loop",
-              "A pure model-capability problem, solved by fine-tuning",
-              "A UI problem, solved by a better dashboard"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper's core move is treating long-horizon execution as task-state management: keep state explicit and outside the model's growing context, updating it only from independently verified facts rather than the agent's own claims."
-          },
-          {
-            "id": "cf8d0299-989b-4e24-9e95-cf91bd1ad9ce",
-            "prompt": "In the Manage-Execute-Audit loop, why does the Executor start each step with a fresh context instead of continuing the Manager's context?",
-            "options": [
-              "To save on API costs by using a cheaper model",
-              "Fresh context keeps the Executor focused on one bounded step, while the Manager (not the Executor) carries the accumulated task history",
-              "Because the Executor and Manager must always be different models",
-              "It's a technical limitation of the underlying agent CLIs"
-            ],
-            "correctIndex": 1,
-            "explanation": "The roles are implementation boundaries, not three agents each growing their own version of history. The Executor gets a fresh context to perform one clearly defined step; the Manager alone is responsible for carrying forward verified state and failure evidence across rounds."
-          },
-          {
-            "id": "a7dfb123-a10b-4692-8579-2dedc439bf62",
-            "prompt": "On WeaveBench, OSWorld 2.0, and Terminal-Bench 2.1, what was held constant between the baseline and the LongHorizon-Harness result?",
-            "options": [
-              "Nothing — a stronger model and backend were used for the harness results",
-              "The same backbone model (Qwen 3.7-Plus) and the same execution backend (Claude Code); only the loop around them changed",
-              "Only the benchmark task set was held constant, not the model",
-              "The harness results used no model at all, only scripted actions"
-            ],
-            "correctIndex": 1,
-            "explanation": "All reported rows use identical backbone (Qwen 3.7-Plus) and execution backend (Claude Code) for both the baseline and the harness condition, isolating the loop itself as the source of the measured gains rather than a stronger underlying model."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "8ccefb25-7757-4c7f-b74b-36b0bb7271fb",
-          "title": "LongHorizon-Harness: Advancing Long-Horizon Agents for Real-World Tasks (arXiv:2608.01964)",
-          "url": "https://arxiv.org/abs/2608.01964"
-        },
-        {
-          "id": "4efed31f-370a-4930-ac25-fb99664b4ff9",
-          "title": "AMAP-ML/LongHorizon-Harness (GitHub)",
-          "url": "https://github.com/AMAP-ML/LongHorizon-Harness"
-        }
-      ],
-      "publishedDate": "2026-08-28T12:43:03Z"
-    },
-    {
-      "id": "7f40d160-a7cc-47d4-a343-0627b5a2c25e",
-      "title": "Qwen3.8-Max: Alibaba's First Open-Weight Flagship",
-      "subtitle": "A 2.4T-parameter Max-class MoE, plus a 27B dense sibling, both landing on Hugging Face the same month",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "qwen",
-        "alibaba",
-        "open-weight",
-        "mixture-of-experts",
-        "coding-agent"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Alibaba's Qwen team open-sourced Qwen3.8-2.4T-A95B — a 2.4-trillion-parameter Mixture-of-Experts model with 95B active per token — marking the first time a Qwen-Max-class flagship has shipped as open weights, alongside a smaller Qwen3.8-27B dense sibling. Both build on the Qwen3.5 architecture and target coding, professional work, and long-horizon agentic reliability.",
-      "body": null,
-      "slides": [
-        {
-          "id": "16946f3c-e683-47c2-8bdf-b7f478407e73",
-          "kind": "cover",
-          "title": "The flagship-class weights, not just the API",
-          "body": "Qwen3.8-2.4T-A95B is the first Qwen-Max-class model Alibaba has released as open weights, landing on Hugging Face and ModelScope in August 2026 alongside a dense Qwen3.8-27B.",
-          "bullets": [],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "ae2bcb72-7b55-4121-9316-336694b3cbd0",
-          "kind": "problem",
-          "title": "Max-class models had stayed API-only",
-          "body": "The open-weight community had strong mid-size models, but the true flagship tier stayed behind an API.",
-          "bullets": [
-            "Qwen's own naming split \"Max\" (flagship, historically closed/API) from the numbered open-weight line (Qwen3, Qwen3.5, Qwen3.6)",
-            "Open developers could self-host strong 27B–397B models, but not a model built to Max-class scale — that meant no local fine-tuning, no private deployment, no weight inspection for the top tier",
-            "Qwen3.8 closes that gap by open-releasing a Max-class model for the first time, built on the Qwen3.5 architectural foundation"
-          ],
-          "symbol": "lock.open.fill",
-          "table": null
-        },
-        {
-          "id": "608de964-2ac9-4493-be70-cb6043cec29f",
-          "kind": "solution",
-          "title": "What actually shipped",
-          "body": "Two open-weight releases, roughly a week apart, both under the Qwen3.8 name.",
-          "bullets": [
-            "Qwen3.8-2.4T-A95B: Mixture-of-Experts, 2.4 trillion total parameters, 95B active per token — released on Hugging Face Hub and ModelScope August 12, 2026",
-            "Qwen3.8-27B: a dense sibling, released August 14, 2026 for teams that can't host a multi-trillion-parameter MoE",
-            "Both add flexible thinking control: a tunable reasoning_effort parameter, and preserve_thinking to retain reasoning context across conversation history instead of discarding it each turn",
-            "Focus areas per the official repo: coding, professional work, research, and long-horizon agentic task completion — not just raw benchmark scores"
-          ],
-          "symbol": "shippingbox.fill",
-          "table": null
-        },
-        {
-          "id": "3bd1dd20-9c91-4902-89f2-2d5dee88854c",
-          "kind": "architecture",
-          "title": "How teams actually run it",
-          "body": "Open weights mean self-hosting is real, alongside Alibaba's own hosted options.",
-          "bullets": [
-            "Self-host with SGLang, vLLM, or TokenSpeed — e.g. `vllm serve Qwen/Qwen3.8-27B --tensor-parallel-size 4 --max-model-len 262144 --reasoning-parser qwen3 --tool-call-parser qwen3_coder`",
-            "QwenCloud offers first-class hosted access, with API compatibility for both OpenAI- and Anthropic-style request formats — a drop-in swap for existing agent code",
-            "Ships integrated into Alibaba's own tooling: Qwen Code (terminal coding agent), Qoder (agentic coding platform), and QwenWork",
-            "Quantized/local paths exist too: llama.cpp and MLX support the Qwen3.5-family architecture, and Unsloth documents running Qwen3.8 quants directly"
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "8cc83a5f-4d5d-4030-a447-188f007be40e",
-          "kind": "comparison",
-          "title": "Qwen's open-weight line, by scale",
-          "body": "Qwen3.8 is the first entry in this lineage to reach Max-class parameter counts as open weights.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Model",
-              "Parameters",
-              "Type",
-              "Released"
-            ],
-            "rows": [
-              [
-                "Qwen3.5-397B-A17B",
-                "397B total / 17B active",
-                "MoE",
-                "Feb 2026"
-              ],
-              [
-                "Qwen3.6-27B",
-                "27B",
-                "Dense",
-                "Apr 2026"
-              ],
-              [
-                "Qwen3.6-35B-A3B",
-                "35B total / 3B active",
-                "MoE",
-                "Apr 2026"
-              ],
-              [
-                "Qwen3.8-27B",
-                "27B",
-                "Dense",
-                "Aug 14, 2026"
-              ],
-              [
-                "Qwen3.8-2.4T-A95B",
-                "2.4T total / 95B active",
-                "MoE",
-                "Aug 12, 2026"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "d11ea84a-ca48-44c9-9eb8-729664f69ac6",
-          "kind": "example",
-          "title": "Worked example: a private, self-hosted coding agent",
-          "body": "The open weights make a scenario possible that the API-only Max tier never allowed.",
-          "bullets": [
-            "A team with strict data-residency requirements can't send a codebase to any external API, closed or not",
-            "Before Qwen3.8, their realistic self-hosted ceiling was a mid-size open model — noticeably behind flagship-tier coding quality",
-            "Now they can run Qwen3.8-27B dense on their own GPUs behind Qwen Code, or stand up Qwen3.8-2.4T-A95B on a multi-node cluster if they have the hardware, with full weight access for audit or fine-tuning",
-            "Either way, nothing about the model call leaves their infrastructure — the tradeoff is entirely theirs to make between hosting cost and capability"
-          ],
-          "symbol": "lock.laptopcomputer",
-          "table": null
-        },
-        {
-          "id": "bb022898-2cba-4e3d-8c46-780912c0c047",
-          "kind": "problem",
-          "title": "Tradeoffs: open weights aren't a free lunch",
-          "body": "\"Open\" and \"easy to run\" are different claims — read the fine print before betting infrastructure on either variant.",
-          "bullets": [
-            "95B active parameters per token is efficient relative to 2.4T total, but a MoE still needs the full expert set resident in memory to serve any request — this is not a model a single consumer GPU can host",
-            "Qwen3.8-27B dense is the realistic self-host option for smaller teams; it trades some of the Max-class ceiling for something that actually fits achievable hardware",
-            "Weights ship under a custom Qwen license (posted alongside the weights on Hugging Face/ModelScope), not a blanket MIT/Apache grant — check it before redistributing or building a commercial product on top",
-            "Qwen3.8 is explicitly built on the Qwen3.5 architectural foundation rather than a ground-up redesign — gains are targeted (coding, agentic reliability), not a wholesale architecture shift"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "24754b16-9fb2-4629-8ef9-eb249018b244",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Qwen3.8-2.4T-A95B is Alibaba's first Max-class model released as open weights: 2.4T total parameters, 95B active per token, on Hugging Face/ModelScope since August 12, 2026",
-            "A dense Qwen3.8-27B sibling shipped two days later for teams that can't host a multi-trillion-parameter MoE",
-            "Both add tunable reasoning_effort and preserve_thinking, and are compatible with OpenAI-/Anthropic-style APIs via QwenCloud, or fully self-hostable via vLLM/SGLang/TokenSpeed",
-            "Open weights ≠ easy hosting: the 2.4T MoE needs serious multi-GPU infrastructure, and the license is custom — check both before committing an architecture decision to it"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "40611bca-d24f-40ec-8199-4af5548d5a7f",
-            "prompt": "What makes Qwen3.8-2.4T-A95B's release notable beyond just being a new model?",
-            "options": [
-              "It's the first model Alibaba has ever released with any open weights",
-              "It's the first time a Qwen-Max-class flagship model has been released as open weights, not just via API",
-              "It's the first Qwen model to support coding tasks",
-              "It's the smallest model Alibaba has ever released"
-            ],
-            "correctIndex": 1,
-            "explanation": "Qwen had previously kept its \"Max\"-class flagship tier API-only, with open weights reserved for the numbered line (Qwen3, 3.5, 3.6). Qwen3.8-2.4T-A95B is the first time that flagship tier shipped as open weights."
-          },
-          {
-            "id": "f947536e-b138-4363-9f4c-04eb186b91ba",
-            "prompt": "Why can't a single consumer GPU realistically host Qwen3.8-2.4T-A95B, even though only 95B parameters are active per token?",
-            "options": [
-              "Active parameters are recomputed from scratch on every token, which is slow on consumer hardware",
-              "A Mixture-of-Experts model must keep its full expert set resident in memory to serve any request, regardless of how few experts activate per token",
-              "The model requires a specialized TPU and cannot run on GPUs at all",
-              "Only the 27B dense variant was released with usable weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE reduces compute per token, not memory footprint — every expert must be loaded so any token can route to any expert. 2.4T total parameters need to fit across a multi-GPU cluster even though a given forward pass only computes through 95B of them."
-          },
-          {
-            "id": "71db0be1-cde1-4b3c-ad8b-236d4e654897",
-            "prompt": "For a team wanting a realistic self-hosted deployment without a large GPU cluster, what does Qwen3.8 offer?",
-            "options": [
-              "Nothing — only the 2.4T MoE variant was released",
-              "The Qwen3.8-27B dense sibling, released alongside the MoE flagship for smaller-scale self-hosting",
-              "A cloud-only API with no self-hosting option whatsoever",
-              "A 7B distilled version is the only self-hostable option"
-            ],
-            "correctIndex": 1,
-            "explanation": "Alongside the 2.4T-A95B MoE flagship, Alibaba released a dense Qwen3.8-27B two days later specifically sized for teams that can't host a multi-trillion-parameter MoE cluster."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "07e7c9bf-9498-4dde-8966-0f113d2e0539",
-          "title": "QwenLM/Qwen3.8 — Official Model Repository (GitHub)",
-          "url": "https://github.com/QwenLM/Qwen3.8"
-        },
-        {
-          "id": "930981b8-0764-4d16-84ce-9cba7491b613",
-          "title": "Qwen3.8-Max: A New Bar for Coding and Cowork (official blog)",
-          "url": "https://qwen.ai/blog?id=qwen3.8"
-        }
-      ],
-      "publishedDate": "2026-08-28T12:43:03Z"
     }
   ]
 }
