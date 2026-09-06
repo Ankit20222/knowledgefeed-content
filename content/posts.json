@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "title": "Agentic RAG: Retrieval as a Loop, Not a Single Lookup",
+      "subtitle": "When one search isn't enough, the model decides to search again — reasoning about what it still doesn't know.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "agentic-rag",
+        "retrieval",
+        "multi-hop",
+        "llm-agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Naive RAG embeds a query once, retrieves top-k chunks, and generates — with no way to recover if the first retrieval misses. Agentic RAG wraps retrieval in a reasoning loop: the model checks whether what it retrieved actually answers the question, and if not, reformulates the query and retrieves again. It costs more calls and latency, but it's the difference between answering multi-hop questions and silently getting them wrong.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "One Search Rarely Answers a Real Question",
+          "body": null,
+          "bullets": [
+            "Naive RAG: embed query → fetch top-k chunks → generate. One shot, no recovery.",
+            "Agentic RAG: retrieve → reason about sufficiency → retrieve again if needed → generate",
+            "The gap between the two shows up hardest on multi-hop and comparative questions"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "9c5255af-c142-4de0-baf9-d810832c552e"
+        },
+        {
+          "kind": "problem",
+          "title": "Naive RAG Has No Idea When It's Wrong",
+          "body": "A single embedding-similarity search assumes the question maps cleanly to one region of vector space. Multi-hop or comparative questions rarely do.",
+          "bullets": [
+            "Top-k retrieval is fixed and blind — the pipeline never checks whether the chunks it grabbed are actually sufficient",
+            "When retrieval misses, the LLM either hallucinates a plausible answer or refuses, with no path to recover mid-answer",
+            "Query and answer can live in different neighborhoods of the embedding space — 'who founded X' retrieves biography chunks, not the one sentence with the founding date"
+          ],
+          "symbol": "questionmark.diamond.fill",
+          "table": null,
+          "id": "5625d1f4-854c-4bf6-a61c-e3c62e5ab5ee"
+        },
+        {
+          "kind": "solution",
+          "title": "Wrap Retrieval in a Reason-Act Loop",
+          "body": "Agentic RAG treats retrieval as a tool the model can call more than once, deciding after each call whether it now has enough to answer.",
+          "bullets": [
+            "Step 1: read the question, issue an initial retrieval query",
+            "Step 2: inspect the retrieved chunks and judge — can this fully and correctly answer the question?",
+            "Step 3: if not, reformulate — a narrower term, a sub-question, a different source — and retrieve again",
+            "Step 4: stop when confident or when a hop limit is hit (typically 2-4 hops in practice)"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "9c12d87d-ec8c-43c0-a12b-e61fc04f5380"
+        },
+        {
+          "kind": "architecture",
+          "title": "It's a Router With a Stopping Condition",
+          "body": "The 'agentic' part isn't a new retrieval algorithm — it's a decision node wrapped around whatever retriever already exists.",
+          "bullets": [
+            "A decision node runs after every retrieval: sufficient / insufficient / wrong source entirely",
+            "It can route across tools — vector search for semantic recall, BM25/keyword for exact terms, SQL for structured facts",
+            "A hop limit and per-hop timeout are mandatory — without them, an unanswerable question spins the loop indefinitely",
+            "State carries between hops: retrieved chunks so far plus which sub-questions were already asked, so hop 3 doesn't repeat hop 1's query"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null,
+          "id": "8760a04d-450e-41d5-b6ff-e5e717b9ed6c"
+        },
+        {
+          "kind": "comparison",
+          "title": "Naive RAG vs. Agentic RAG",
+          "body": "The extra cost buys recoverability, not automatic correctness — a badly tuned loop just fails slower and more expensively.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "Naive RAG",
+              "Agentic RAG"
+            ],
+            "rows": [
+              [
+                "Retrieval calls per question",
+                "Exactly 1",
+                "Typically 2-4, capped by a hop limit"
+              ],
+              [
+                "Multi-hop / comparative questions",
+                "Poor — no recovery path",
+                "Better — can chase the missing piece"
+              ],
+              [
+                "Latency",
+                "Lowest (1 retrieval + 1 generation)",
+                "Higher — each hop adds retrieval + reasoning"
+              ],
+              [
+                "Cost per answer",
+                "Baseline",
+                "Roughly 2-4x baseline in LLM calls"
+              ],
+              [
+                "Failure mode",
+                "Confident wrong answer from bad top-k",
+                "Can hit hop limit and still fail — but visibly"
+              ]
+            ]
+          },
+          "id": "d3eca935-d05a-465c-9309-35f4fe40dd07"
+        },
+        {
+          "kind": "example",
+          "title": "Example: 'Which of our two Q3 vendors had the worse SLA breach rate?'",
+          "body": "A single embedding search for this sentence tends to retrieve generic vendor-overview chunks — the actual breach numbers live in a different section entirely.",
+          "bullets": [
+            "Hop 1: retrieve on the full question → gets a chunk naming 'Vendor A' and 'Vendor B' but no breach numbers",
+            "Reasoning step: model notices it has names but no metric — marks retrieval insufficient",
+            "Hop 2: reformulates to 'Vendor A SLA breach rate Q3' → retrieves the specific stat",
+            "Hop 3: reformulates to 'Vendor B SLA breach rate Q3' → retrieves the comparison figure",
+            "Only after 3 targeted retrievals can the model correctly compare — naive RAG would have answered off hop 1's chunk alone, and likely gotten it wrong"
+          ],
+          "symbol": "chart.bar.doc.horizontal.fill",
+          "table": null,
+          "id": "f8810480-a7ab-475c-8dbf-13d7647616dd"
+        },
+        {
+          "kind": "concept",
+          "title": "When Agentic RAG Is the Wrong Tool",
+          "body": "The loop adds real latency and cost — pay for it only when the question actually needs multiple hops.",
+          "bullets": [
+            "Single-fact lookups ('what's our refund policy?') gain nothing from a loop — naive RAG is faster and just as correct",
+            "Without a hard hop limit, an unanswerable or ambiguous question can burn many retrieval calls before giving up",
+            "The 'sufficiency' judgment is itself an LLM call and can be wrong — the model can stop early when it hasn't actually got the answer, or loop needlessly when it already does",
+            "Route by query type: keep naive RAG as the default path, and escalate to the agentic loop only when a classifier flags multi-hop or comparative phrasing"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "7cd2fdca-1f54-4a0e-a2c3-d4568c0215ca"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Naive RAG: one embed, one retrieve, one generate — fast, but blind to whether retrieval actually succeeded",
+            "Agentic RAG adds a reasoning checkpoint after retrieval that can trigger a reformulated re-search",
+            "Cap hops (2-4) and track what's already been searched, or the loop won't know when to stop",
+            "Reserve it for multi-hop, comparative, or ambiguous queries — it's a targeted upgrade, not a default replacement for naive RAG"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "c53aeea6-fd15-4a49-b44c-485d42690e7f"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What's the key difference between naive RAG and agentic RAG?",
+            "options": [
+              "Agentic RAG uses a bigger embedding model",
+              "Agentic RAG adds a reasoning step after retrieval that can trigger another, reformulated retrieval",
+              "Agentic RAG skips retrieval and generates from parametric memory only",
+              "Naive RAG uses keyword search while agentic RAG only uses vector search"
+            ],
+            "correctIndex": 1,
+            "explanation": "The core addition is a decision checkpoint: after retrieving, the model asks whether it has enough to answer, and if not, issues a new, more targeted query.",
+            "id": "5433a174-8f49-42d3-84cb-eaca2630452d"
+          },
+          {
+            "prompt": "Why does agentic RAG typically cost more per answer than naive RAG?",
+            "options": [
+              "It requires a larger vector database",
+              "Each hop adds both a retrieval call and an LLM reasoning pass, and one question can take 2-4 hops",
+              "It always re-embeds the entire document corpus",
+              "It requires fine-tuning a custom retriever model"
+            ],
+            "correctIndex": 1,
+            "explanation": "The cost comes from repetition: every hop re-runs retrieval plus a reasoning pass, so a 3-hop question costs roughly 3x a single-shot naive RAG call.",
+            "id": "9481063e-380b-440f-b8df-75d13b32447b"
+          },
+          {
+            "prompt": "A knowledge base gets mostly single-fact questions like 'what's our PTO policy?'. Should every query route through the agentic RAG loop?",
+            "options": [
+              "Yes, always — more retrieval steps can only improve accuracy",
+              "No — single-fact lookups gain nothing from the extra hops and just pay the latency/cost tax; reserve the loop for multi-hop or comparative queries",
+              "No — agentic RAG can only handle structured SQL data",
+              "Yes, but only if the vector database is very large"
+            ],
+            "correctIndex": 1,
+            "explanation": "Agentic RAG's benefit is recoverability on questions that need more than one retrieval to answer. For single-fact lookups, naive RAG already succeeds on hop 1, so the extra reasoning pass is pure overhead.",
+            "id": "feb6b450-be34-4421-b296-c917c5d7bfac"
+          }
+        ]
+      },
+      "references": [],
+      "id": "f025645d-4bd0-4d8f-aba6-b34b358776a9",
+      "publishedDate": "2026-09-06T12:39:56Z"
+    },
+    {
       "title": "DPO: Skipping the Reward Model Entirely",
       "subtitle": "Direct Preference Optimization turns RLHF's two-stage pipeline into one classification-style loss on preference pairs.",
       "category": "LLMs",
@@ -11027,201 +11228,6 @@
           "id": "75810603-20f4-4166-b470-d780d5436f43",
           "title": "How we built our multi-agent research system -- Anthropic",
           "url": "https://www.anthropic.com/engineering/multi-agent-research-system"
-        }
-      ]
-    },
-    {
-      "id": "641ab5cc-fc60-4778-aed8-6e04a4a6c106",
-      "title": "MCP Elicitation: When the Server Needs to Ask You Something",
-      "subtitle": "Mid-task, structured, and never for secrets",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "elicitation",
-        "human-in-the-loop",
-        "json schema",
-        "ai agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "questionmark.bubble",
-      "heroImageURL": null,
-      "summary": "Elicitation is the MCP primitive that lets a server pause mid-execution and ask the user a structured question through the client, instead of guessing or failing. It fills the gap left by MCP's other primitives — tools, resources, prompts, sampling — none of which handle 'I need one more piece of information from a human before I can finish.'",
-      "publishedDate": "2026-08-29T12:40:58Z",
-      "slides": [
-        {
-          "id": "e29cae23-7abc-4d05-8f10-d3b88f32aacc",
-          "kind": "cover",
-          "title": "The primitive for 'wait, I need to ask you something'",
-          "body": "MCP gives servers tools to call, resources to expose, prompts to template, and sampling to request completions from the model. Elicitation, added in the 2025-06-18 spec, is the missing piece: a way for a server to request structured input from the human user, mid-task.",
-          "bullets": [],
-          "symbol": "questionmark.bubble",
-          "table": null
-        },
-        {
-          "id": "0dc562f4-8998-4a7e-87ce-7a3216c284bd",
-          "kind": "problem",
-          "title": "Without it, servers either guess or crash",
-          "body": "A booking tool that needs a departure city the user forgot to mention has two bad options without elicitation: guess (and risk being wrong) or throw an error and force the user to restart the whole request with more detail.",
-          "bullets": [
-            "Tool calls are one-shot: no built-in way to ask a follow-up mid-call",
-            "Forcing users to front-load every possible parameter makes prompts brittle",
-            "Failing and restarting loses all the context already gathered"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "4fea69f3-dc12-4f42-875e-1e9cc38044e6",
-          "kind": "solution",
-          "title": "elicitation/create: a request with a JSON Schema attached",
-          "body": "A server sends an elicitation/create request carrying a message and a requestedSchema. The client renders a form (or equivalent UI) from that schema, collects the user's answer, and returns it — all before the server's original task resumes.",
-          "bullets": [
-            "requestedSchema uses a restricted subset of JSON Schema — flat fields, not deeply nested objects",
-            "The client, not the server, controls how the prompt is actually shown to the user",
-            "The server pauses and waits; execution resumes once the client responds"
-          ],
-          "symbol": "curlybraces",
-          "table": null
-        },
-        {
-          "id": "e7317cf0-8e79-44e3-8873-4e3ba3ab07c7",
-          "kind": "architecture",
-          "title": "Where it fits among MCP's primitives",
-          "body": "Elicitation is client-side capability, like sampling — the server can only use it if the client declares support during initialization. That keeps clients in control of what user-facing interruptions are allowed to happen.",
-          "bullets": [
-            "Tools: server exposes actions the model can invoke",
-            "Resources: server exposes data the client can read",
-            "Sampling: server asks the client's model for a completion",
-            "Elicitation: server asks the client's human user for input"
-          ],
-          "symbol": "square.stack.3d.up",
-          "table": null
-        },
-        {
-          "id": "402f8a59-fe8f-4fe7-881f-9cf07bc497e6",
-          "kind": "example",
-          "title": "Worked example: a flight-booking server",
-          "body": "User: 'Book me a flight to Tokyo next week.' The server has enough to search flights but not enough to book — it doesn't know the user's seat preference or which of three matching flights they want. Instead of erroring out, it elicits: sends a schema with an enum of the three flight options and a seat-preference field, the client renders it as a picker, and the user's answer flows straight back into the same booking call.",
-          "bullets": [
-            "No restart: the search results already gathered aren't thrown away",
-            "The schema constrains the answer to valid choices, not free text the server has to re-parse",
-            "One elicitation round-trip instead of an entire new conversational turn"
-          ],
-          "symbol": "airplane",
-          "table": null
-        },
-        {
-          "id": "d9ef4cbb-3563-414d-8c54-db6bb144d991",
-          "kind": "problem",
-          "title": "The rule the spec is explicit about: never for secrets",
-          "body": "The MCP spec states servers MUST NOT use elicitation to request sensitive information — no passwords, API keys, or payment details through this channel. For anything sensitive, the correct pattern is to direct the user to an external URL that bypasses the MCP client entirely.",
-          "bullets": [
-            "Elicitation payloads pass through the client and potentially the model's context",
-            "Sensitive data belongs in an out-of-band flow (OAuth redirect, hosted checkout page), not a schema field",
-            "Clients are expected to show users exactly what's being asked and let them decline"
-          ],
-          "symbol": "lock.shield",
-          "table": null
-        },
-        {
-          "id": "2bf333c7-17c0-4978-9d0f-1030fe787242",
-          "kind": "comparison",
-          "title": "Elicitation vs. just asking the model to ask a clarifying question",
-          "body": "You could get similar behavior by having the model itself ask a clarifying question in chat — but that's unstructured and easy for the model to skip or mis-parse. Elicitation makes the ask structured and enforced by schema.",
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "",
-              "Model asks in chat",
-              "Server elicits via MCP"
-            ],
-            "rows": [
-              [
-                "Answer format",
-                "Free text, may be ambiguous",
-                "Constrained by JSON Schema"
-              ],
-              [
-                "Guaranteed to happen",
-                "No — model can skip it",
-                "Yes — server blocks until answered"
-              ],
-              [
-                "Client UI control",
-                "None — it's just chat text",
-                "Client renders its own form/UI"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "3b9438d9-7e39-4557-81c5-cb5ceee301df",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Elicitation closes MCP's last gap between 'server has almost enough to finish' and 'server actually finishes' — without falling back to guesswork or a hard failure.",
-          "bullets": [
-            "Use it for missing non-sensitive parameters a tool call needs mid-execution",
-            "Never use it for credentials or payment data — route those out-of-band",
-            "It's a client-declared capability: servers must check support before relying on it",
-            "The restricted JSON Schema subset trades expressiveness for guaranteed-renderable UI"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6518f193-edd4-45d5-ba2b-23c371eb3cbd",
-            "prompt": "What problem does MCP elicitation solve that tools, resources, and sampling don't?",
-            "options": [
-              "Letting a server expose static data files",
-              "Letting a server request a model completion",
-              "Letting a server pause mid-task and request structured input directly from the human user",
-              "Letting a server cache previous responses"
-            ],
-            "correctIndex": 2,
-            "explanation": "Tools, resources, and sampling cover actions, data, and model completions respectively. Elicitation is specifically for when the server needs something only the human user can supply, mid-execution."
-          },
-          {
-            "id": "c13c5c8a-0505-4bbb-943f-f47be113eaaf",
-            "prompt": "What does the MCP spec explicitly forbid servers from doing with elicitation?",
-            "options": [
-              "Asking for a seat preference",
-              "Requesting sensitive information like passwords or payment details",
-              "Using a JSON Schema to constrain the answer",
-              "Pausing execution while waiting for a response"
-            ],
-            "correctIndex": 1,
-            "explanation": "The spec states servers MUST NOT use elicitation for sensitive information. Anything sensitive should go through an out-of-band flow, like a redirect to an external URL, that doesn't pass through the MCP client."
-          },
-          {
-            "id": "04bad003-23f9-43bb-9d94-bfcd88d316e1",
-            "prompt": "Why is elicitation a client-declared capability rather than something a server can always assume is available?",
-            "options": [
-              "Because it requires a paid MCP tier",
-              "Because it only works with certain models",
-              "Because the client controls whether and how user-facing interruptions are allowed, so it must opt in during initialization",
-              "Because it's deprecated in favor of tools"
-            ],
-            "correctIndex": 2,
-            "explanation": "Like sampling, elicitation depends on the client agreeing to handle it — the client is the one rendering UI and mediating access to the human user, so it declares support up front rather than servers assuming it exists."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1b91095c-667e-4974-b5c5-300a8a712d86",
-          "title": "Elicitation — Model Context Protocol Specification (2025-06-18)",
-          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/client/elicitation.mdx"
-        },
-        {
-          "id": "2c2f534a-0384-4714-be66-7d867d5bbeb8",
-          "title": "Elicitation — modelcontextprotocol.io",
-          "url": "https://modelcontextprotocol.io/specification/draft/client/elicitation"
         }
       ]
     }
