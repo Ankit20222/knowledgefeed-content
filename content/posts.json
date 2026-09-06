@@ -1,6 +1,619 @@
 {
   "posts": [
     {
+      "title": "DPO: Skipping the Reward Model Entirely",
+      "subtitle": "Direct Preference Optimization turns RLHF's two-stage pipeline into one classification-style loss on preference pairs.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "alignment",
+        "preference-optimization",
+        "fine-tuning"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.left.arrow.right.circle.fill",
+      "summary": "Direct Preference Optimization (DPO) replaces RLHF's reward-model-plus-PPO pipeline with a single loss computed directly from pairs of preferred and rejected responses, using the language model itself as an implicit reward function. It's simpler and more stable to train than PPO, but it's fully offline — it can't inject a verifier signal the way GRPO can, so it trades exploration for simplicity.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Your Language Model Is Secretly a Reward Model",
+          "body": null,
+          "bullets": [
+            "Introduced by Rafailov et al., 2023 (arXiv:2305.18290)",
+            "Short for Direct Preference Optimization",
+            "Collapses reward modeling + PPO into one supervised-style loss"
+          ],
+          "symbol": "arrow.left.arrow.right.circle.fill",
+          "table": null,
+          "id": "ce81e241-e87d-4ce0-8587-b5bd30e807da"
+        },
+        {
+          "kind": "problem",
+          "title": "RLHF Is a Two-Stage, Three-Model Pipeline",
+          "body": "Standard RLHF first trains a separate reward model on human preference pairs, then uses PPO to fine-tune the policy against that reward model — with a frozen reference model in the loop too.",
+          "bullets": [
+            "Three models in play: policy, reward model, reference model — plus a critic if using vanilla PPO",
+            "The reward model can be exploited (reward hacking) if the policy finds responses that score well but aren't actually better",
+            "PPO's online sampling loop (generate, score, update) is finicky to tune and easy to destabilize"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "c9b99a30-2385-4735-be6e-6eefca00255b"
+        },
+        {
+          "kind": "solution",
+          "title": "Reparameterize the Reward Out of the Loss",
+          "body": "DPO's key move: under the standard RLHF objective, the optimal policy has a closed-form relationship to the reward function. Substituting that relationship into the Bradley-Terry preference model produces a loss expressed purely in terms of the policy itself.",
+          "bullets": [
+            "Loss: -log σ( β · [ log(π_θ(y_w|x)/π_ref(y_w|x)) − log(π_θ(y_l|x)/π_ref(y_l|x)) ] ), where y_w is the chosen response and y_l the rejected one",
+            "β controls how far the policy is allowed to drift from the frozen reference model — same role as PPO's KL penalty, folded directly into the loss",
+            "No reward model is trained at all — the policy's own log-probabilities implicitly define the reward"
+          ],
+          "symbol": "function",
+          "table": null,
+          "id": "bc8014e5-ed1c-4a4e-be35-dfc822a9c37a"
+        },
+        {
+          "kind": "comparison",
+          "title": "DPO vs. PPO vs. GRPO",
+          "body": null,
+          "bullets": [
+            "DPO trades PPO's and GRPO's online sampling for a fixed, pre-collected dataset of preference pairs — cheaper per step, but no fresh exploration during training"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "PPO",
+              "DPO",
+              "GRPO"
+            ],
+            "rows": [
+              [
+                "Needs a trained reward model",
+                "Yes",
+                "No",
+                "No (needs a verifier/reward function)"
+              ],
+              [
+                "Sampling during training",
+                "Online (fresh rollouts)",
+                "Offline (fixed dataset)",
+                "Online (group rollouts)"
+              ],
+              [
+                "Data required",
+                "Reward model + prompts",
+                "(prompt, chosen, rejected) pairs",
+                "Prompts + a scoring function"
+              ],
+              [
+                "Models in memory",
+                "3 (policy, critic, reference)",
+                "2 (policy, reference)",
+                "2 (policy, reference)"
+              ]
+            ]
+          },
+          "id": "3c14aea3-0c5e-4838-a5f0-9cb85da93572"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Two Answers, One Update",
+          "body": "Prompt: 'Explain why the sky is blue.' You have a chosen answer (accurate, well-explained) and a rejected one (vague, partially wrong).",
+          "bullets": [
+            "Before training: policy assigns similar log-probabilities to both, say -12 (chosen) and -14 (rejected) — the gap is small",
+            "The DPO loss pushes log π_θ(chosen)/π_ref(chosen) up relative to log π_θ(rejected)/π_ref(rejected), widening that gap",
+            "After enough updates, the policy assigns meaningfully higher relative likelihood to the accurate explanation — without ever computing a scalar reward for either"
+          ],
+          "symbol": "arrow.up.arrow.down.circle.fill",
+          "table": null,
+          "id": "77ca3580-78a2-45d4-961f-8b336573299f"
+        },
+        {
+          "kind": "concept",
+          "title": "Why the Reference Model Still Matters",
+          "body": "Even with no explicit RL loop, DPO still needs a frozen reference policy — usually the SFT checkpoint before preference tuning.",
+          "bullets": [
+            "The reference model anchors the log-ratio terms in the loss, playing the same regularizing role PPO's KL penalty plays",
+            "Without it, the loss would only care about relative ranking, not how far the policy has moved from a sane starting point",
+            "β is the practical knob: too low and the policy barely moves; too high and it overfits the preference pairs and drifts too far from the reference"
+          ],
+          "symbol": "scale.3d",
+          "table": null,
+          "id": "b937f507-703c-404d-ab82-bda0fab69c23"
+        },
+        {
+          "kind": "concept",
+          "title": "Tradeoffs and When Not to Reach for It",
+          "body": "DPO's simplicity comes from giving up exactly what online RL methods keep: fresh exploration and a reward signal that can be verified rather than just preferred.",
+          "bullets": [
+            "Fully offline: quality is capped by the fixed preference dataset — no way to sample new completions and re-score them mid-training",
+            "Known failure mode is likelihood displacement, where both chosen and rejected log-probabilities can drop together, not just move apart",
+            "Poor fit for domains with a cheap, reliable verifier (math, code correctness) — that's exactly where GRPO's online, reward-function-driven approach tends to win instead"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null,
+          "id": "87962534-cdb4-4198-9bc3-728e08f173e1"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "DPO replaces RLHF's reward model + PPO pipeline with one loss computed directly from (chosen, rejected) pairs",
+            "The trick is reparameterizing the RLHF objective's optimal policy so the reward term cancels out algebraically",
+            "It needs a frozen reference model and a fixed preference dataset — no online sampling, unlike PPO or GRPO",
+            "Best for offline preference data (human or AI-labeled pairs); reach for GRPO instead when you have a cheap, verifiable reward signal"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "c701df45-f9c5-46a1-9d51-e857913b00bf"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does DPO eliminate compared to standard RLHF with PPO?",
+            "options": [
+              "The frozen reference model",
+              "The separately trained reward model and PPO's online sampling loop",
+              "The language model's tokenizer",
+              "The concept of preference data entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO reparameterizes the RLHF objective so the reward model is never explicitly trained — the loss is computed directly from the policy's log-probabilities on preference pairs.",
+            "id": "ba77d26a-9eea-4936-a657-c0c2a910e0aa"
+          },
+          {
+            "prompt": "What role does the reference model (π_ref) play in the DPO loss?",
+            "options": [
+              "It generates the training prompts",
+              "It anchors the log-ratio terms, regularizing how far the policy can drift — the same role PPO's KL penalty plays",
+              "It scores which response is chosen vs rejected",
+              "It has no effect on training"
+            ],
+            "correctIndex": 1,
+            "explanation": "The reference model (typically the SFT checkpoint) keeps the log-ratio terms meaningful and prevents the policy from drifting arbitrarily far just to satisfy the pairwise ranking.",
+            "id": "b65b792b-df0c-4152-9fec-700f3d8bbe43"
+          },
+          {
+            "prompt": "When would GRPO likely outperform DPO?",
+            "options": [
+              "When you only have a static dataset of human preference pairs and no way to sample new completions",
+              "When you have a cheap, reliable verifier (e.g., checking a math answer or running unit tests) and want online exploration",
+              "When you want to avoid using any reference model",
+              "When compute budget is extremely limited"
+            ],
+            "correctIndex": 1,
+            "explanation": "GRPO's online sampling and verifiable reward function let it keep exploring and scoring new completions during training — an advantage DPO's fixed offline dataset can't offer.",
+            "id": "3519af00-54c8-4a76-b37e-23b740448d2c"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model",
+          "url": "https://arxiv.org/abs/2305.18290",
+          "id": "8f31595b-c2f7-4b12-829e-96256f9ba209"
+        }
+      ],
+      "id": "0929b401-173f-4195-bc0d-1bd8342c53c6",
+      "publishedDate": "2026-09-06T06:43:42Z"
+    },
+    {
+      "title": "GLM-5.3-Flash: A Multimodal MoE Under MIT License",
+      "subtitle": "Z.ai's 320B-parameter model runs at 18B-active cost, reads images natively, and ships fully open weights.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "glm",
+        "mixture-of-experts",
+        "open-weights",
+        "multimodal",
+        "z-ai"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "cpu.fill",
+      "summary": "Z.ai released GLM-5.3-Flash on August 26, 2026: a 320B-total/18B-active mixture-of-experts model that's natively multimodal, supports a 1M-token context window, and ships under an unmodified MIT license — while scoring sharply higher than its predecessor on coding benchmarks at roughly a tenth of the price.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A Big Model That Runs Like a Small One",
+          "body": null,
+          "bullets": [
+            "Released August 26, 2026 by Z.ai (Zhipu AI)",
+            "320B total parameters, only 18B active per forward pass (MoE)",
+            "First natively multimodal model in the GLM-5 line, MIT-licensed"
+          ],
+          "symbol": "cpu.fill",
+          "table": null,
+          "id": "d54493c7-0452-4bb6-99e1-6dae8c6cb169"
+        },
+        {
+          "kind": "problem",
+          "title": "Multimodal Usually Means Expensive",
+          "body": "Adding vision to a language model, and stretching context to a million tokens, typically multiplies inference cost — pushing teams toward either a small, cheap, text-only model or a large, expensive, multimodal one.",
+          "bullets": [
+            "Bolted-on vision adapters often need a separate encoder and extra serving complexity",
+            "Long context windows are usually gated behind the largest, priciest tier of a model family",
+            "Permissive licensing (no revenue-threshold clauses, no usage restrictions) is often reserved for smaller, weaker open models"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "4d25d36d-dbea-4f80-8bf8-2a734b2159dd"
+        },
+        {
+          "kind": "solution",
+          "title": "MoE Sparsity Plus Hybrid Attention",
+          "body": "GLM-5.3-Flash keeps a large total parameter budget for capacity while activating only a fraction of it per token, and pairs that with an attention design built for long context.",
+          "bullets": [
+            "Mixture-of-experts routing activates 18B of the model's 320B total parameters per forward pass",
+            "A hybrid sparse-and-linear attention architecture keeps a 1M-token context window computationally affordable",
+            "Vision is native rather than adapter-bolted — this is the first GLM-5-series checkpoint trained as multimodal from the start"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null,
+          "id": "9406d968-926b-4842-813b-b5d8981bd1aa"
+        },
+        {
+          "kind": "comparison",
+          "title": "GLM-5.3-Flash vs. GLM-5.2",
+          "body": null,
+          "bullets": [
+            "Z.ai reports GLM-5.3-Flash beats GLM-5.2 across its evaluations while operating at roughly one-tenth the price"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "GLM-5.2",
+              "GLM-5.3-Flash"
+            ],
+            "rows": [
+              [
+                "DeepSWE v1.1 score",
+                "46.2",
+                "63.4"
+              ],
+              [
+                "Terminal-Bench 2.1",
+                "Not reported here",
+                "84.3"
+              ],
+              [
+                "Context window",
+                "Smaller",
+                "1,000,000 tokens"
+              ],
+              [
+                "Modality",
+                "Text-centric",
+                "Natively multimodal"
+              ],
+              [
+                "Output price (per 1M tokens)",
+                "Higher",
+                "$0.50"
+              ]
+            ]
+          },
+          "id": "614afb61-c4a0-458c-a664-85ba35ccfc60"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: A Coding Agent on a Real Repo",
+          "body": "A coding agent needs to review a repository with 400K tokens of source plus a handful of UI screenshots in the same task.",
+          "bullets": [
+            "GLM-5.3-Flash's 1M-token window fits the whole repo and the screenshots in one context, no chunking or re-embedding pass required",
+            "Because vision is native, the model can reason about a screenshot and the code that renders it in the same forward pass",
+            "At $0.15/M input and $0.03/M cached input, repeatedly re-sending that repo context across a multi-turn debugging session stays cheap"
+          ],
+          "symbol": "terminal.fill",
+          "table": null,
+          "id": "2094a007-e07e-47d3-8c49-b9de3dfff0b8"
+        },
+        {
+          "kind": "concept",
+          "title": "One Name, Two Licenses — Don't Conflate Them",
+          "body": "Z.ai shipped two different GLM-5.3 models within a week, under two different licenses.",
+          "bullets": [
+            "GLM-5.3-Flash (320B/18B, this release) is MIT-licensed — unrestricted commercial use, no revenue threshold",
+            "The larger 753B-total GLM-5.3 flagship followed two days later under a separate, bespoke license that requires a Z.ai security review above an undisclosed revenue threshold before commercial hosting",
+            "Check the specific model card before assuming license terms carry across a model family"
+          ],
+          "symbol": "lock.shield.fill",
+          "table": null,
+          "id": "06b9059c-50c3-45c4-823e-49a672692974"
+        },
+        {
+          "kind": "concept",
+          "title": "Tradeoffs and What to Verify Yourself",
+          "body": "The headline numbers come from Z.ai's own evaluation, as is standard for a launch announcement.",
+          "bullets": [
+            "DeepSWE and Terminal-Bench scores are self-reported using a specific harness (mini-swe-agent, temperature 0.95) — results can shift under a different eval setup",
+            "320B total parameters still means a large memory footprint to host, even though only 18B are active per token — MoE saves compute, not storage",
+            "\"One-tenth the price\" is a vendor comparison against GLM-5.2's list price, not an independent cost audit — validate against your own workload before committing"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null,
+          "id": "4e0f1b53-b6fd-4c36-9d48-0c529f7fb4f8"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "GLM-5.3-Flash activates 18B of 320B total parameters per token, keeping a large-capacity model cheap to run",
+            "It's the first natively multimodal GLM-5 model, with a 1M-token context via hybrid sparse/linear attention",
+            "DeepSWE jumped from 46.2 (GLM-5.2) to 63.4 under Z.ai's own harness",
+            "It ships MIT-licensed — but the larger 753B GLM-5.3 flagship does not, so check the specific model card"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "504576a7-21cf-40cc-a03e-2c5d2cbc93d7"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why does GLM-5.3-Flash stay cheap to run despite having 320B total parameters?",
+            "options": [
+              "It quantizes all weights to 4-bit",
+              "Mixture-of-experts routing activates only 18B parameters per forward pass",
+              "It caches every response permanently",
+              "It runs entirely on CPU"
+            ],
+            "correctIndex": 1,
+            "explanation": "MoE sparsity means only a subset of the model's total parameters (18B of 320B) does work on any given token, cutting compute cost without cutting total capacity.",
+            "id": "fc26665b-5bfc-41ff-8bd8-035a456d562e"
+          },
+          {
+            "prompt": "What licensing detail should you check before deploying a GLM-5.3 model commercially?",
+            "options": [
+              "Whether you picked GLM-5.3-Flash (MIT) or the larger 753B GLM-5.3 flagship (bespoke license with a security-review clause)",
+              "GLM models have no license restrictions of any kind",
+              "All GLM-5.3 models require a paid subscription",
+              "License terms are identical across the entire GLM-5 family"
+            ],
+            "correctIndex": 0,
+            "explanation": "Z.ai used two different licenses within the same week — MIT for the 320B/18B Flash model, a bespoke license for the larger 753B flagship. The name alone doesn't tell you which applies.",
+            "id": "e65d243e-d91b-47a8-8ba3-fab17ddd5372"
+          },
+          {
+            "prompt": "What should you keep in mind about the DeepSWE and Terminal-Bench scores in the launch announcement?",
+            "options": [
+              "They are independently audited by a third party",
+              "They are self-reported by Z.ai under a specific evaluation harness, and may shift under different settings",
+              "They measure image quality, not coding ability",
+              "They come from a completely different model"
+            ],
+            "correctIndex": 1,
+            "explanation": "Launch benchmarks are typically vendor-reported under a chosen harness and configuration — useful as a signal, but worth validating on your own workload before relying on them.",
+            "id": "f911e6b5-27e0-4609-be8c-6e919269eed6"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GLM-5.3-Flash model card (zai-org)",
+          "url": "https://huggingface.co/zai-org/GLM-5.3-Flash",
+          "id": "41a4d5db-076a-4dd5-a1b9-4b1501686ef5"
+        },
+        {
+          "title": "Z.ai Releases GLM-5.3-Flash: A 320B-A18B Natively Multimodal MoE With a 1M-Token Context",
+          "url": "https://www.marktechpost.com/2026/08/26/z-ai-releases-glm-5-3-flash-a-320b-a18b-natively-multimodal-moe-with-a-1m-token-context/",
+          "id": "e2978deb-ddb3-4e32-8584-e6a28028a047"
+        }
+      ],
+      "id": "d366e1a1-ba36-468e-805d-87e8fac07bbe",
+      "publishedDate": "2026-09-06T06:43:42Z"
+    },
+    {
+      "title": "LLaDA-Image: An Open Recipe for Image Generation",
+      "subtitle": "A 6B diffusion transformer that learns to see before it learns to draw — and ships every line of the recipe.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "diffusion-models",
+        "image-generation",
+        "open-source",
+        "multimodal",
+        "vision-language"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "paintbrush.pointed.fill",
+      "summary": "LLaDA-Image pairs a 6B diffusion transformer with a frozen vision-language backbone and trains it in stages — image-only first, text-paired second — to reach state-of-the-art results among open-source image generators on Qwen-Image-Bench, while publishing the full weights, code, and training recipe.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "An Open Recipe for a Closed-Source Race",
+          "body": null,
+          "bullets": [
+            "Published September 2026 (arXiv:2609.03796)",
+            "A 6B-parameter Diffusion Transformer (DiT) for text-to-image generation and instruction-guided editing",
+            "Ships as a fully open release: weights, training code, and the recipe itself"
+          ],
+          "symbol": "paintbrush.pointed.fill",
+          "table": null,
+          "id": "cc694426-58f5-45b6-b525-20fb9da30feb"
+        },
+        {
+          "kind": "problem",
+          "title": "Frontier Image Models Publish Results, Not Recipes",
+          "body": "The strongest text-to-image systems are proprietary or only partially documented — the model card says what the system can do, not how the training curriculum, data mix, or optimizer choices got it there.",
+          "bullets": [
+            "Open replications routinely underperform because the hard-won details (data curriculum, loss balancing) never make it into a paper",
+            "Most open image models bolt a diffusion decoder onto a vision-language model that was never trained to generate images at all",
+            "That mismatch shows up as weaker instruction-following and weaker text rendering than the closed frontier"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "37cce080-744e-4171-925a-03d32288bf70"
+        },
+        {
+          "kind": "solution",
+          "title": "Learn to See, Then Learn to Draw",
+          "body": "LLaDA-Image separates the problem into a generative visual prior and a language-grounded understanding module, then trains the two in a deliberate order instead of jointly from scratch.",
+          "bullets": [
+            "A 6B DiT is pretrained image-only (no captions) to build a strong generative prior before any text pairing begins",
+            "Only after that does it move to text-image pairs, drawing on a frozen vision-language understanding module built on the LLaDA2.0-Mini diffusion language model",
+            "Optimization uses parameter-free RMSNorm throughout the DiT plus the Muon optimizer, chosen for scaling stability over standard AdamW"
+          ],
+          "symbol": "cpu.fill",
+          "table": null,
+          "id": "94b78316-6d65-44d8-8562-333023c04631"
+        },
+        {
+          "kind": "comparison",
+          "title": "Two Models, One Recipe",
+          "body": "The release ships two checkpoints from the same recipe, trading sampling steps for speed.",
+          "bullets": [
+            "Base reaches state-of-the-art scores among open-source models on Qwen-Image-Bench: 53.53 (English track) and 53.38 (Chinese track)",
+            "Turbo distills that down to 4 steps for fast interactive generation and editing, versus Base's 50-step sampling"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "LLaDA-Image (Base)",
+              "LLaDA-Image-Turbo"
+            ],
+            "rows": [
+              [
+                "Sampling steps",
+                "50",
+                "4"
+              ],
+              [
+                "Target use",
+                "Highest-quality generation & editing",
+                "Fast interactive generation & editing"
+              ],
+              [
+                "Qwen-Image-Bench (EN)",
+                "53.53 (open-source SOTA)",
+                "Not separately reported"
+              ]
+            ]
+          },
+          "id": "8c5731e5-7944-4abd-ab0e-21f54c64f63d"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Instruction-Guided Editing",
+          "body": "Because the same architecture handles generation and editing, a single prompt can both understand and modify an existing image.",
+          "bullets": [
+            "Input: a product photo plus the instruction 'put this bottle on a marble countertop with soft morning light'",
+            "The frozen vision-language module first localizes the bottle and reads the scene; the DiT then re-renders only the background and lighting consistent with that understanding",
+            "No separate segmentation or inpainting mask is needed — the instruction alone drives what changes and what stays fixed"
+          ],
+          "symbol": "wand.and.stars",
+          "table": null,
+          "id": "3c398610-cd18-4bc3-a211-e75adfdad249"
+        },
+        {
+          "kind": "concept",
+          "title": "Why Training Order Matters",
+          "body": "The image-only pretraining stage runs on roughly 220 million images, the large majority of them real photographs rather than synthetic renders.",
+          "bullets": [
+            "Training on real images first teaches natural statistics (texture, lighting, geometry) before the model is asked to follow language at all",
+            "Pairing with text only in a later stage lets the model reuse that visual prior instead of learning to see and to read instructions at the same time",
+            "This staged curriculum is presented as the main lever behind the model's quality, more than raw parameter count"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null,
+          "id": "c820464e-f373-4de9-bc3f-07463612222a"
+        },
+        {
+          "kind": "concept",
+          "title": "Tradeoffs and When Not to Reach for It",
+          "body": "A fully open, mid-sized model is not a drop-in replacement for the closed frontier.",
+          "bullets": [
+            "6B parameters is modest next to the largest closed systems — expect it to lag on the hardest prompts (dense text rendering, complex multi-subject composition)",
+            "The vision-language understanding module is frozen during image training, so gains in the base language backbone don't automatically improve image quality",
+            "If you need the absolute highest fidelity for production creative work, a closed frontier model may still win; if you need a reproducible, fine-tunable, fully-documented base to build on, this is the stronger choice"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null,
+          "id": "edf7a3c8-affb-41db-90e9-2655447f5765"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "LLaDA-Image trains a 6B DiT image-only first, then pairs it with a frozen vision-language backbone — visual competence before language grounding",
+            "It sets a new state-of-the-art among open-source models on Qwen-Image-Bench (53.53 EN / 53.38 CN)",
+            "The Turbo variant trades 50 steps for 4, sacrificing some headroom for interactive speed",
+            "The real contribution is the recipe itself — data curriculum and optimizer choices are published, not just the weights"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "4366f063-509f-417d-8006-980a2c446a35"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does LLaDA-Image train first, before pairing images with text?",
+            "options": [
+              "A reward model for human preferences",
+              "A generative visual prior via image-only pretraining",
+              "A text-only language model",
+              "A separate segmentation network"
+            ],
+            "correctIndex": 1,
+            "explanation": "The DiT is pretrained on images alone to build a strong generative prior before any text-image pairing begins — visual competence comes before language grounding.",
+            "id": "b74307ee-271f-4fd8-9c45-b05ee3093c2e"
+          },
+          {
+            "prompt": "What is the main difference between the Base and Turbo checkpoints?",
+            "options": [
+              "Turbo is a larger model trained on more data",
+              "Base only generates images, Turbo only edits them",
+              "Turbo distills sampling down to 4 steps for speed, versus Base's 50",
+              "They use different optimizers"
+            ],
+            "correctIndex": 2,
+            "explanation": "Both come from the same recipe; Turbo is a distilled 4-step variant traded for interactive speed, while Base uses 50 sampling steps for maximum quality.",
+            "id": "1866aad8-e5ef-47b8-a6da-83b5ca8d1fe7"
+          },
+          {
+            "prompt": "Why does LLaDA-Image's paper matter beyond its benchmark scores?",
+            "options": [
+              "It's the first image generator ever released",
+              "It publishes the training recipe (data curriculum, optimizer choices), not just weights, closing a gap open replications usually hit",
+              "It requires no GPU to run",
+              "It replaces the need for vision-language models entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Most open image models lag because the training details that matter never get published. LLaDA-Image's contribution is releasing that recipe alongside the weights.",
+            "id": "d4b18d11-932f-407b-b336-6a6cebfdc6cb"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "LLaDA-Image: Building Strong Image Generators with Fully Open Training Recipes",
+          "url": "https://arxiv.org/abs/2609.03796",
+          "id": "6ead1c83-e45e-4a85-958a-36bd9aaa939c"
+        },
+        {
+          "title": "LLaDA-Image model card (inclusionAI)",
+          "url": "https://huggingface.co/inclusionAI/LLaDA-Image",
+          "id": "05bfa8f6-d8f0-4a10-9861-ee47f330fe09"
+        }
+      ],
+      "id": "30540af6-2593-4cb8-a802-ba6080461894",
+      "publishedDate": "2026-09-06T06:43:42Z"
+    },
+    {
       "title": "Tool Calling: How LLMs Reach Outside the Model",
       "subtitle": "The structured JSON contract that turns a text predictor into something that can act.",
       "category": "AI Agents",
@@ -10611,572 +11224,6 @@
           "url": "https://modelcontextprotocol.io/specification/draft/client/elicitation"
         }
       ]
-    },
-    {
-      "id": "68cfb7a0-82c7-467b-967e-c8d2a4bbe191",
-      "title": "Anthropic's Model Hardware Standard: USB-C for AI Agents",
-      "subtitle": "Letting Claude run a microscope the same way it queries a database",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "ai agents",
-        "hardware",
-        "mcp",
-        "robotics",
-        "anthropic"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu",
-      "heroImageURL": null,
-      "summary": "On August 27, 2026, Anthropic previewed the Model Hardware Standard (MHS), a shared, model-agnostic specification that lets AI agents operate physical lab and manufacturing equipment — microscopes, liquid handlers, robotic arms — the way MCP already lets them call software tools. It's in limited research preview with partners like AWS, Genentech, Universal Robots, and Danaher, with open-sourcing planned once safety work matures.",
-      "publishedDate": "2026-08-29T12:39:58Z",
-      "slides": [
-        {
-          "id": "803c8f30-464c-42d5-a788-1ad8c8704e81",
-          "kind": "cover",
-          "title": "MCP connected agents to software. MHS connects them to machines.",
-          "body": "Anthropic previewed the Model Hardware Standard on August 27, 2026 — an open specification for AI agents to operate physical devices, reachable over the Model Context Protocol, aimed first at scientific research and manufacturing hardware.",
-          "bullets": [],
-          "symbol": "cpu",
-          "table": null
-        },
-        {
-          "id": "755f832c-639b-4681-8e8c-8d01d8368543",
-          "kind": "problem",
-          "title": "Every lab instrument speaks its own dialect",
-          "body": "Before MHS, a microscope, a liquid handler, and a robotic arm each shipped with proprietary control software that didn't talk to the others — the same fragmentation MCP solved for software tools, but for physical devices.",
-          "bullets": [
-            "No shared interface meant custom integration work per device, per vendor",
-            "Agents couldn't chain multiple instruments into one autonomous workflow",
-            "Anthropic frames it with the USB-C analogy: one connector standard instead of one per manufacturer"
-          ],
-          "symbol": "cable.connector",
-          "table": null
-        },
-        {
-          "id": "56f3cd9d-9459-446a-ace6-59adbb4c237d",
-          "kind": "solution",
-          "title": "A model-agnostic hardware layer, over MCP",
-          "body": "MHS is delivered as a specification, not a proprietary API — it's reachable over the Model Context Protocol and explicitly designed to work with any model, not just Claude, so labs aren't locked into one vendor's AI to use their own equipment.",
-          "bullets": [
-            "Works with any device exposing a programmable interface",
-            "Supported device classes: liquid handlers, robotic arms, plate readers, microscopes, lasers, cameras, qPCR machines, centrifuges, incubators, sensors, and boards like Raspberry Pi",
-            "Currently a limited research preview; Anthropic plans to open-source it once further safety evaluation is complete"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "d5c4a1bf-7f5e-444a-9575-673781578598",
-          "kind": "example",
-          "title": "What early partners actually did with it",
-          "body": "A Claude-based agent recalibrated a $700,000 laser on a QuEra quantum computer with 99.3% success across 700 trials. Genentech ran a protein assay without human intervention. The University of Washington connected six instruments in under a week. Carnegie Mellon set up a dose-response experiment from scratch in eight hours — about three times faster than the manual process.",
-          "bullets": [
-            "QuEra: 99.3% success across 700 laser-calibration trials",
-            "Genentech: unattended protein assay execution",
-            "UW: six instruments wired together in under a week",
-            "CMU: dose-response experiment built from scratch in 8 hours, ~3x faster than manual"
-          ],
-          "symbol": "atom",
-          "table": null
-        },
-        {
-          "id": "8d2fb537-c712-4660-aff5-88e35216e451",
-          "kind": "comparison",
-          "title": "MHS vs. MCP: same idea, different layer",
-          "body": "The two specs share a design philosophy but target different resources.",
-          "bullets": [],
-          "symbol": "square.on.square",
-          "table": {
-            "headers": [
-              "",
-              "MCP",
-              "MHS"
-            ],
-            "rows": [
-              [
-                "What it standardizes",
-                "Software tools, data, prompts",
-                "Physical device control"
-              ],
-              [
-                "Transport",
-                "Its own protocol",
-                "Runs over MCP"
-              ],
-              [
-                "Status (Aug 2026)",
-                "Open standard, widely adopted",
-                "Limited research preview"
-              ],
-              [
-                "Model-agnostic",
-                "Yes",
-                "Yes"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "dc7fae56-1e81-4476-8507-5c2cca53a8f8",
-          "kind": "problem",
-          "title": "Why this is riskier than software tool-calling",
-          "body": "A misfired API call can corrupt data; a misfired robotic arm or laser can damage six-figure equipment or injure someone. That's why MHS is shipping as a narrow research preview to vetted scientific and manufacturing partners rather than a public open-source release.",
-          "bullets": [
-            "Physical actions are harder to undo than software actions",
-            "Preview partners are selected labs and manufacturers, not the general public",
-            "Open-sourcing is explicitly gated on further safety evaluation, not a fixed date"
-          ],
-          "symbol": "exclamationmark.shield",
-          "table": null
-        },
-        {
-          "id": "70526f35-c528-4d4a-b6bc-0261bb1d7f7b",
-          "kind": "takeaways",
-          "title": "The bigger picture",
-          "body": "MHS is Anthropic's clearest move yet from agents-that-write-code to agents-that-operate-things. If MCP's history is a guide — from Anthropic-only spec to industry-wide standard — MHS's real test is whether other labs and hardware vendors adopt it once it's public.",
-          "bullets": [
-            "Physical-world agent control is the new frontier after software tool-calling",
-            "Model-agnostic design is a deliberate bet on broad adoption, not lock-in",
-            "Safety gating before open-sourcing sets a more cautious precedent than MCP's own launch"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e1b84b59-5eb6-4f33-af7c-53ee89eb2d53",
-            "prompt": "What does the Model Hardware Standard (MHS) let AI agents do that MCP alone does not?",
-            "options": [
-              "Call REST APIs more efficiently",
-              "Operate physical devices like microscopes, liquid handlers, and robotic arms",
-              "Fine-tune models on private data",
-              "Generate images faster"
-            ],
-            "correctIndex": 1,
-            "explanation": "MHS standardizes control of physical instruments — the hardware equivalent of what MCP already does for software tools — and runs over MCP as its transport."
-          },
-          {
-            "id": "8d10aceb-dd1f-44a6-932a-e69bf1f12e99",
-            "prompt": "As of its August 2026 preview, how is MHS being distributed?",
-            "options": [
-              "Fully open-sourced on day one",
-              "Sold as a paid enterprise product",
-              "A limited research preview to selected scientific/manufacturing partners, with open-sourcing planned later",
-              "Bundled exclusively into Claude's consumer app"
-            ],
-            "correctIndex": 2,
-            "explanation": "Anthropic opened MHS to a first group of partners (including AWS, Genentech, Universal Robots, and Danaher) for safety evaluation, with a public open-source release planned once that work matures."
-          },
-          {
-            "id": "763c2782-5e10-4875-b882-a1d10bce9bca",
-            "prompt": "Why does Anthropic gate MHS behind safety evaluation before open-sourcing it, unlike a typical software SDK release?",
-            "options": [
-              "To charge licensing fees first",
-              "Because physical actions (like moving a robotic arm or calibrating a laser) are far harder to safely undo than software actions",
-              "Because the hardware doesn't work yet",
-              "To keep it exclusive to Anthropic's own hardware"
-            ],
-            "correctIndex": 1,
-            "explanation": "A bad software tool call is usually recoverable; a bad physical-device action can damage expensive equipment or cause real-world harm, which is why the rollout is deliberately narrower and slower than a typical spec launch."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "a1b01ae7-1a9c-47f8-9f05-f2bfa94d3463",
-          "title": "Previewing the Model Hardware Standard — Anthropic",
-          "url": "https://www.anthropic.com/news/model-hardware-standard-research-preview"
-        },
-        {
-          "id": "823632ba-fa31-444c-a9a2-0362fa08788a",
-          "title": "Anthropic pushes into physical world with new standard to help AI agents operate machines — CNBC",
-          "url": "https://www.cnbc.com/2026/08/27/anthropic-pushes-into-physical-world-with-new-standard-to-help-ai-agents-operate-machines.html"
-        }
-      ]
-    },
-    {
-      "id": "715379b8-373a-4f8e-9a5e-8f97088127c4",
-      "title": "StreamPI: Robot Vision Without the Frame-by-Frame Reset",
-      "subtitle": "One instruction, many frames, constant-cost inference",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "robotics",
-        "vision-language-action",
-        "streaming inference",
-        "kv cache",
-        "attention"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "camera.metering.multispot",
-      "heroImageURL": null,
-      "summary": "StreamPI adds temporal reasoning to single-frame vision-language-action robot models without adding a single new parameter, by caching past frames' key/value representations and anchoring attention to the language instruction. On real-robot tasks and the LIBERO benchmark it beats its base model, π0.5, on exactly the tasks single-frame models struggle with: precision and memory-dependent manipulation.",
-      "publishedDate": "2026-08-29T12:38:58Z",
-      "slides": [
-        {
-          "id": "c02b495c-dc5f-4e26-b603-f81cb0715ee3",
-          "kind": "cover",
-          "title": "A robot policy that forgets everything every frame",
-          "body": "Most vision-language-action (VLA) models process one camera frame at a time. Each frame is a fresh inference call with no memory of the frame before it — fine for reflexive tasks, brittle for anything that needs continuity.",
-          "bullets": [],
-          "symbol": "camera.metering.multispot",
-          "table": null
-        },
-        {
-          "id": "b1808f05-7042-4acb-9bfc-568b24330a0e",
-          "kind": "problem",
-          "title": "Single-frame models can't do memory-dependent tasks",
-          "body": "Picking up a cup you can currently see is easy for a single-frame policy. Picking up a cup that briefly left the frame, or tracking which of two similar objects you already grasped, requires remembering what happened a few steps ago — something a stateless per-frame model structurally cannot do.",
-          "bullets": [
-            "Spatial-precision tasks suffer when a single glimpse is ambiguous",
-            "Memory-dependent tasks fail outright with no cross-frame state",
-            "Naively feeding a whole video window blows up inference cost per step"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "24e8fd98-cd51-484f-bb7e-7ac88f9d86f7",
-          "kind": "solution",
-          "title": "Instruction-anchored attention, cached across time",
-          "body": "StreamPI treats each (camera frame, language instruction) pair as one atomic unit: bidirectional attention fuses vision and language inside that pair, while causal attention runs across pairs over time — so the instruction stays a persistent semantic anchor as frames stream in.",
-          "bullets": [
-            "Past frames' key/value tensors are cached, not recomputed",
-            "Inference cost per new frame stays constant regardless of episode length",
-            "Zero new parameters — it's a training/attention scheme, not a bigger model"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "b123925e-4bb8-495f-b48a-18117c6e2795",
-          "kind": "architecture",
-          "title": "Random-interval training closes the sim-to-real timing gap",
-          "body": "Training on perfectly regular frame intervals teaches a policy timing assumptions that real robots break — camera jitter, variable control loop latency, and network delay all desynchronize frame arrival on real hardware.",
-          "bullets": [
-            "Random-interval streaming training exposes the model to irregular frame timing during training",
-            "This closes the gap between synchronous training and asynchronous real-robot deployment",
-            "StreamPI inherits π0.5's pretrained weights directly via LLM length extrapolation — no retraining from scratch"
-          ],
-          "symbol": "timer",
-          "table": null
-        },
-        {
-          "id": "a6ed6c17-718c-4862-86d0-343da41c03fc",
-          "kind": "example",
-          "title": "Worked example: a two-cup swap task",
-          "body": "Instruction: 'put the red cup where the blue cup was, and the blue cup where the red cup was.' A single-frame policy re-reads the scene every step and can lose track of which cup already moved. StreamPI's cached KV state carries the swap's progress forward, so the policy doesn't have to re-infer intent from a single ambiguous frame.",
-          "bullets": [
-            "Single-frame π0.5: prone to repeating or skipping a step when objects look similar",
-            "StreamPI: attention over cached past frames disambiguates 'already moved' from 'not yet moved'",
-            "Same underlying weights — the difference is purely the streaming attention scheme"
-          ],
-          "symbol": "arrow.triangle.swap",
-          "table": null
-        },
-        {
-          "id": "d56a8f82-84bc-419e-9592-4353e8329523",
-          "kind": "comparison",
-          "title": "StreamPI vs. its single-frame base model",
-          "body": "Reported on real-robot manipulation and the LIBERO simulation benchmark, StreamPI consistently outperforms π0.5 on the task categories that need temporal context, while matching it on purely reactive tasks.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Property",
-              "π0.5 (single-frame)",
-              "StreamPI"
-            ],
-            "rows": [
-              [
-                "New parameters",
-                "—",
-                "0 (attention scheme only)"
-              ],
-              [
-                "Per-frame inference cost",
-                "Constant",
-                "Constant (KV cache)"
-              ],
-              [
-                "Memory-dependent tasks",
-                "Weak",
-                "Consistently stronger"
-              ],
-              [
-                "Spatial-precision tasks",
-                "Baseline",
-                "Consistently stronger"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "676d22c3-1703-4e2b-a07d-0e8f1401de9b",
-          "kind": "takeaways",
-          "title": "Why this matters beyond robotics",
-          "body": "The core trick — cache what you've already attended to instead of recomputing it, and use random timing perturbation to make training match deployment reality — is a pattern that shows up anywhere a model has to reason over a live, irregular stream rather than a fixed batch.",
-          "bullets": [
-            "Streaming KV caching turns a per-frame model into a temporally-aware one for free",
-            "Instruction-anchoring keeps long-horizon intent stable across many attention steps",
-            "Training-time timing noise is a cheap way to buy real-world robustness"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "d16dc843-b04d-475e-a1d7-924c524fe351",
-            "prompt": "What does StreamPI add to a single-frame VLA model to give it temporal reasoning?",
-            "options": [
-              "A larger transformer with more layers",
-              "A streaming attention scheme that caches past frames' key/value representations, with zero new parameters",
-              "A separate memory network trained from scratch",
-              "A longer context window filled with raw pixel history"
-            ],
-            "correctIndex": 1,
-            "explanation": "StreamPI's core idea is architectural, not a bigger model: it caches KV representations from past timesteps and uses instruction-anchored attention across them, adding no new parameters."
-          },
-          {
-            "id": "31592f0f-bc60-4cdf-a07b-a92f46da4138",
-            "prompt": "Why does StreamPI use random-interval streaming training instead of fixed, regular frame intervals?",
-            "options": [
-              "To reduce the total number of training examples needed",
-              "To make the model robot-brand agnostic",
-              "To close the gap between synchronous training and the irregular frame timing of real-robot deployment",
-              "To compress the model for edge devices"
-            ],
-            "correctIndex": 2,
-            "explanation": "Real robots deliver frames at irregular intervals due to jitter and latency. Training with randomized intervals exposes the model to that irregularity ahead of time, instead of assuming a perfectly regular schedule it won't see at deployment."
-          },
-          {
-            "id": "4e176ecd-91fd-4e19-a81d-c9294e65e581",
-            "prompt": "On which kind of task does StreamPI show the clearest advantage over its single-frame base model π0.5?",
-            "options": [
-              "Purely reactive tasks with no history dependence",
-              "Tasks that require spatial precision or remembering earlier steps",
-              "Tasks with no camera input",
-              "Text-only instruction following"
-            ],
-            "correctIndex": 1,
-            "explanation": "StreamPI's gains show up specifically on spatial-precision and memory-dependent manipulation — exactly the cases where a stateless single-frame policy has no way to carry context forward."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "5c78120f-8a50-46f9-837d-e7663d8e10b8",
-          "title": "StreamPI: Streaming Multimodal Temporal Modeling for Vision-Language-Action Models (arXiv:2608.26067)",
-          "url": "https://arxiv.org/abs/2608.26067"
-        },
-        {
-          "id": "14858fad-de8d-45ca-842a-27ce68b4a60b",
-          "title": "StreamPI code release",
-          "url": "https://github.com/hku-sail/StreamPI"
-        }
-      ]
-    },
-    {
-      "id": "c5508daa-3ff8-4967-8471-080d22d00a8d",
-      "title": "Contextual Retrieval: Fixing RAG's Broken Chunks",
-      "subtitle": "Prepend a sentence of context to every chunk before embedding — cache away the cost.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "embeddings",
-        "retrieval",
-        "chunking",
-        "prompt-caching"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "text.magnifyingglass",
-      "summary": "RAG chunks lose the surrounding context that gave them meaning, which is why retrieval so often misses the right passage. Contextual Retrieval fixes this by having an LLM write a short situating blurb for each chunk before it's embedded and indexed — and uses prompt caching to keep that step cheap. Stacked with hybrid BM25 and reranking, measured failure rates dropped from 12.85% to 4.74%.",
-      "body": null,
-      "table": null,
-      "explanation": null,
-      "slides": [
-        {
-          "id": "e81011e6-eb68-4fe5-b995-0f11b071782c",
-          "kind": "cover",
-          "title": "Why RAG misses the answer that's sitting right in the doc",
-          "body": "Split a document into chunks and each chunk loses the surrounding context that told the reader what it was about. The embedding never learns what it never saw.",
-          "bullets": [],
-          "symbol": "text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "4e8ab6ff-3fd0-4c9b-b7a9-d0f5613965aa",
-          "kind": "problem",
-          "title": "A chunk torn out of its document loses meaning",
-          "body": null,
-          "bullets": [
-            "A 200-token chunk that says \"the company's revenue grew 3% over the previous quarter\" doesn't say which company or which quarter once it's separated from the rest of the filing.",
-            "The embedding model only ever sees that one chunk's text — it can't infer what's sitting a page earlier or later.",
-            "The result: semantically relevant chunks rank low because the vector representing them is under-specified, not because the search is broken."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "61ad45a9-4548-4385-9365-035e6d0f259a",
-          "kind": "solution",
-          "title": "The fix: have an LLM situate each chunk before it's embedded",
-          "body": "For every chunk, feed the whole document plus that one chunk to an LLM and ask for a short blurb explaining what the chunk covers and where it sits in the document. Prepend that blurb to the chunk, then embed and index the combined text instead of the raw chunk.",
-          "bullets": [
-            "Prompt pattern: \"give a short succinct context to situate this chunk within the overall document, for the purposes of improving search retrieval.\"",
-            "The generated context (roughly 50-100 tokens) is prepended before both embedding and keyword indexing — it's a preprocessing step, not a new embedding model.",
-            "Works with any embedding model or vector store already in use."
-          ],
-          "symbol": "wand.and.stars",
-          "table": null
-        },
-        {
-          "id": "d38d37ad-f6d2-4d2e-81d1-f9361776677b",
-          "kind": "concept",
-          "title": "The trick that makes it affordable: prompt caching",
-          "body": null,
-          "bullets": [
-            "Naively, contextualizing every chunk means resending the FULL document once per chunk — a 100-chunk document means paying for that document 100 times over.",
-            "Process chunks document-by-document instead of in random order: the first chunk pays full price to write the document into a prompt cache, every later chunk from that same document reads it back at a steep discount.",
-            "Measured on 737 chunks across 9 codebases: $9.20 in input tokens without caching vs. $2.85 with it — a 69% cost cut for identical output.",
-            "The cache window only needs to last a few minutes — just long enough to walk through one document's chunks before moving to the next."
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "2a1a0153-ab87-45cc-88fd-88a06598af5f",
-          "kind": "comparison",
-          "title": "Each layer stacks on top of the last",
-          "body": null,
-          "bullets": [
-            "Contextual embeddings alone cut the failure rate roughly 40%; adding hybrid BM25 search on top brings it to about 47%; reranking on top of both reaches roughly 63% fewer failed retrievals than plain baseline RAG."
-          ],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Setup",
-              "Pass@10",
-              "Failure rate"
-            ],
-            "rows": [
-              [
-                "Baseline RAG",
-                "87.15%",
-                "12.85%"
-              ],
-              [
-                "+ Contextual embeddings",
-                "92.34%",
-                "7.66%"
-              ],
-              [
-                "+ Hybrid BM25 (contextual)",
-                "93.21%",
-                "6.79%"
-              ],
-              [
-                "+ Reranking",
-                "95.26%",
-                "4.74%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "b6ad687d-7310-4771-b4d4-bc3a8b22aea1",
-          "kind": "example",
-          "title": "What a generated context blurb actually looks like",
-          "body": "For a chunk pulled from a differential-fuzzing codebase, the situating step produced: \"This chunk contains the module documentation and initial struct definition for a differential fuzzing executor. It introduces the DiffExecutor struct that wraps two executors (primary and secondary) to run them sequentially with the same input, comparing their behavior for differential testing.\" That ~100-token blurb gets prepended before embedding — so a query like \"how does the differential fuzzer compare two executors\" now matches on words the raw chunk never contained.",
-          "bullets": [],
-          "symbol": "chevron.left.forwardslash.chevron.right",
-          "table": null
-        },
-        {
-          "id": "43661dae-2a2d-4731-b48f-e5d074c47fb3",
-          "kind": "concept",
-          "title": "When it's not worth the extra LLM calls",
-          "body": null,
-          "bullets": [
-            "It's an extra LLM call per chunk at index time — for a corpus of atomic records with no natural document boundary (a flat FAQ list, a product catalog), the caching trick doesn't apply and cost climbs fast.",
-            "If chunks are already self-contained and short, the added context is just extra tokens diluting the embedding rather than helping it.",
-            "Hybrid search adds latency (roughly 50ms) and reranking adds more (roughly 100-200ms) per query — fine for a chat interface, tight for a sub-100ms budget.",
-            "Contextual chunks aren't a one-time cost: re-embedding is required every time the chunking strategy or the underlying documents change."
-          ],
-          "symbol": "hand.raised.fill",
-          "table": null
-        },
-        {
-          "id": "bd003119-4234-48a5-860e-e7f674c73034",
-          "kind": "takeaways",
-          "title": "The pattern in one sentence",
-          "body": null,
-          "bullets": [
-            "Chunks fail retrieval because they're read out of context — give the embedding a sentence of context back, and failures drop by roughly half.",
-            "Process document-by-document and lean on prompt caching, or the fix costs more than the problem it solves.",
-            "Stack it: contextual embeddings, then hybrid BM25, then reranking — each layer adds a real gain for a fraction of the previous layer's cost."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "243394dc-00c8-48b2-a61a-262f67b1485a",
-            "prompt": "Why does prepending document-level context to a chunk before embedding help retrieval?",
-            "options": [
-              "It makes the chunk shorter and faster to embed",
-              "It restores information the chunk lost when it was split out of its document, so the embedding captures what the chunk is actually about",
-              "It replaces the need for a vector database",
-              "It removes the need for keyword search entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "A chunk's own text often doesn't say what company, document, or section it belongs to. The generated context fills that gap before the text becomes a vector — it isn't about speed or replacing other components."
-          },
-          {
-            "id": "f5bbb39a-62d8-4dc4-8c6a-705fdccc6223",
-            "prompt": "Why does processing chunks document-by-document (instead of in random order) matter for cost?",
-            "options": [
-              "It's required by the embedding model's API",
-              "It lets multiple documents get batched into one LLM call",
-              "It lets the full document stay in a prompt cache so only the first chunk from a document pays full price, while later chunks from the same document read it back at a steep discount",
-              "It avoids hitting rate limits on the vector database"
-            ],
-            "correctIndex": 2,
-            "explanation": "Prompt caching keys off repeated prefix content. Running through one document's chunks back-to-back means that document body is served from cache instead of resent, which is what turned $9.20 into $2.85 in the measured example."
-          },
-          {
-            "id": "e06df9f9-0a05-4144-ba94-7b8362dd84f5",
-            "prompt": "In the measured Pass@10 results, which single addition took the failure rate from 12.85% to 7.66%?",
-            "options": [
-              "Switching to a larger embedding model",
-              "Contextual embeddings alone",
-              "Increasing the chunk size",
-              "Adding more chunks per query"
-            ],
-            "correctIndex": 1,
-            "explanation": "Contextual embeddings alone accounted for that drop, roughly 40% fewer failures, before hybrid BM25 or reranking were even added on top."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "26b6d0b9-7612-45ff-a014-2c0def4195ca",
-          "title": "Enhancing RAG with Contextual Retrieval — Claude Cookbook",
-          "url": "https://platform.claude.com/cookbook/capabilities-contextual-embeddings-guide"
-        }
-      ],
-      "publishedDate": "2026-08-29T06:46:31Z"
     }
   ]
 }
