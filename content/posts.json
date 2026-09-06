@@ -1,6 +1,221 @@
 {
   "posts": [
     {
+      "title": "Structured Outputs: Forcing an LLM to Always Emit Valid JSON",
+      "subtitle": "Prompting for JSON gets you close most of the time. Constrained decoding gets you a parser that never fails.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "structured-outputs",
+        "constrained-decoding",
+        "json-schema",
+        "function-calling",
+        "llm-serving"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "curlybraces",
+      "summary": "Asking a model nicely to 'return JSON' still leaves room for trailing commas, wrapped markdown fences, or a field that silently drifts from your schema. Constrained (grammar-guided) decoding fixes this at the token level: the schema is compiled into a finite-state machine, and at every generation step the sampler masks out any token that would violate it. The output is syntactically guaranteed to match the schema — though not guaranteed to be semantically correct.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "\"Return Only JSON\" Is a Request, Not a Guarantee",
+          "body": null,
+          "bullets": [
+            "Prompt-only JSON mode: the model is free to generate any token — it just usually chooses valid ones",
+            "Constrained decoding: the sampler is mechanically forbidden from generating an invalid token in the first place",
+            "The difference matters most at scale — a 1-in-200 parse failure is a shrug in a demo and a paging alert in production"
+          ],
+          "symbol": "curlybraces",
+          "table": null,
+          "id": "4c6f0cc0-adab-4bf4-8a79-de8ab9ab4ab0"
+        },
+        {
+          "kind": "problem",
+          "title": "Free-Form Generation Breaks Downstream Parsers",
+          "body": "An LLM samples one token at a time from a probability distribution over the entire vocabulary. Nothing about that process knows what 'valid JSON' means.",
+          "bullets": [
+            "Common failures: a trailing comma, an unescaped quote inside a string, ```json fences wrapped around the object, a numeric field returned as \"42\" instead of 42",
+            "Few-shot examples and 'you MUST return valid JSON' instructions reduce failures but don't eliminate them — the model can still drift under an unusual input",
+            "Retrying on parse failure adds latency and cost, and still isn't a guarantee — you're just resampling from the same imperfect distribution",
+            "Nested optional fields and enums are where prompting fails hardest: the model has to remember every allowed value with no structural help"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "1113cbf9-5f17-46ab-bac8-32083c5a3897"
+        },
+        {
+          "kind": "solution",
+          "title": "Compile the Schema Into a Grammar, Then Mask Tokens",
+          "body": "Constrained decoding moves validity out of the prompt and into the sampler itself.",
+          "bullets": [
+            "Step 1: compile the JSON Schema (or a regex, or a context-free grammar) into a finite-state machine — one state per valid position in the structure",
+            "Step 2: before each token is sampled, compute which tokens are legal transitions from the current state",
+            "Step 3: set the logits of every illegal token to −∞ (mask them out), then sample normally from what remains",
+            "Step 4: advance the FSM state by whichever token was chosen, repeat until the schema reaches an accepting state",
+            "The model never 'chooses' to break the schema — an invalid token simply has zero probability of being picked"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "ac0e744e-8ed9-4f58-a0ba-1938c25d9665"
+        },
+        {
+          "kind": "architecture",
+          "title": "Where the FSM Lives in the Serving Stack",
+          "body": "This runs inside the inference server, on the same forward pass — it isn't a separate validation step after generation.",
+          "bullets": [
+            "Libraries: Outlines, NVIDIA's XGrammar, and llama.cpp's GBNF grammars all implement this pattern; vLLM and TGI expose it as 'guided decoding'",
+            "Per-token mask computation has to be fast — XGrammar-style engines precompute most of the FSM transition table so masking adds low single-digit-percent overhead, not a second forward pass",
+            "Regex and simple grammars compile in milliseconds; deeply nested schemas with many optional branches take longer to compile and can blow up FSM state count",
+            "Because masking happens at the logits, it composes with normal sampling (temperature, top-p) — you still get output diversity within the allowed structure"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null,
+          "id": "e5069008-5ca7-4433-966f-cfc95df4c97d"
+        },
+        {
+          "kind": "comparison",
+          "title": "Three Ways to Get JSON Out of a Model",
+          "body": "Each rung trades effort and flexibility for a stronger guarantee.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "Prompt-only",
+              "Post-hoc repair",
+              "Constrained decoding"
+            ],
+            "rows": [
+              [
+                "Validity guarantee",
+                "None — best effort",
+                "Fixes common breakage, not all",
+                "Structural guarantee, every time"
+              ],
+              [
+                "Extra latency",
+                "None",
+                "Retry/repair round-trip on failure",
+                "Small per-token masking overhead"
+              ],
+              [
+                "Handles enums/required fields",
+                "Model must remember correctly",
+                "Can coerce after the fact",
+                "Enforced by the FSM directly"
+              ],
+              [
+                "Semantic correctness",
+                "Not addressed",
+                "Not addressed",
+                "Not addressed — still a separate problem"
+              ],
+              [
+                "Setup cost",
+                "None",
+                "Write a repair layer",
+                "Compile schema → grammar once"
+              ]
+            ]
+          },
+          "id": "a463d40c-eea4-4309-bed1-3a5349323a56"
+        },
+        {
+          "kind": "example",
+          "title": "Example: Extracting a Support Ticket Into a Fixed Schema",
+          "body": "Schema: { \"priority\": \"low\"|\"medium\"|\"high\", \"category\": string, \"needs_escalation\": boolean }",
+          "bullets": [
+            "Prompt-only: on an ambiguous ticket the model sometimes writes \"priority\": \"High\" (wrong case) or omits needs_escalation entirely — both break a strict parser",
+            "With constrained decoding: after generating '\"priority\": \"', the FSM only allows the tokens that spell low, medium, or high followed by a closing quote — capitalization drift and hallucinated categories become structurally impossible",
+            "The FSM still can't stop the model from picking the wrong enum value for the wrong reason — it guarantees the field is one of the three strings, not that it's the correct one",
+            "This is why teams pair constrained decoding with eval sets that check semantic accuracy, not just parse success"
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null,
+          "id": "9a5c8338-3b54-4b62-89c3-6cb01ded3a1f"
+        },
+        {
+          "kind": "concept",
+          "title": "Where It Falls Short — and When to Skip It",
+          "body": "Constrained decoding solves syntax, not meaning, and it isn't free.",
+          "bullets": [
+            "It cannot fix hallucinated content — a perfectly-shaped JSON object can still contain a fabricated field value",
+            "Overly rigid grammars can hurt quality: forcing a specific field order or an unnatural schema can make the model 'fight' the constraint and produce worse content within the valid shape",
+            "Very large or deeply recursive schemas increase FSM compile time and memory — not a good fit for schemas that change on every request",
+            "If you just need a rough structure for a low-stakes internal tool, prompting plus a lenient JSON parser (like handling trailing commas) is often good enough and much simpler",
+            "Constrained decoding is table stakes when a downstream system will crash or silently corrupt data on a malformed field — agent tool-calling, structured data pipelines, anything machine-parsed with no human in the loop"
+          ],
+          "symbol": "wrench.and.screwdriver.fill",
+          "table": null,
+          "id": "7fb8d4e2-77ef-4bff-a73b-89551e04240f"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Prompting for JSON is probabilistic; constrained decoding is structural — it masks illegal tokens so the output can't leave the schema",
+            "The mechanism: compile the schema to a finite-state machine, mask logits at every step, advance the FSM as tokens are chosen",
+            "It guarantees syntax, never semantics — a valid-shaped object can still be factually wrong, so you still need accuracy evals",
+            "Reach for it whenever a machine, not a human, is the one reading the output — agent tool calls, extraction pipelines, anything a parser crash would break"
+          ],
+          "symbol": "flag.checkered",
+          "table": null,
+          "id": "6fbda8b2-1b41-4b52-b515-1b7dd82108e3"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does constrained (grammar-guided) decoding actually change about generation?",
+            "options": [
+              "It runs the model twice and picks the better output",
+              "It masks the logits of tokens that would violate the schema, so only legal tokens can be sampled",
+              "It fine-tunes the model on JSON examples before serving",
+              "It asks a second, smaller model to validate the output after generation"
+            ],
+            "correctIndex": 1,
+            "explanation": "The schema is compiled into a finite-state machine; at each step, illegal tokens get their logits set to −∞ before sampling, so an invalid token can never be chosen in the first place.",
+            "id": "e7834d14-955a-4178-9e22-a7ae6d446807"
+          },
+          {
+            "prompt": "A ticket-extraction pipeline using constrained decoding returns { \"priority\": \"high\", \"category\": \"refund\", \"needs_escalation\": true } for a ticket that's actually about a login bug. What does this tell you?",
+            "options": [
+              "Constrained decoding failed — this should be impossible",
+              "The schema was compiled incorrectly",
+              "The output is syntactically valid but semantically wrong — constrained decoding never guaranteed content accuracy",
+              "The FSM needs a larger vocabulary"
+            ],
+            "correctIndex": 2,
+            "explanation": "Constrained decoding only guarantees the output matches the schema's shape and allowed values. It has no mechanism to check whether 'refund' is the factually correct category — that's a separate accuracy problem, checked with evals.",
+            "id": "ca3e9fa1-9482-480d-be47-e95fbe897e61"
+          },
+          {
+            "prompt": "When is prompt-only JSON generation (no constrained decoding) the more sensible choice?",
+            "options": [
+              "Whenever an autonomous agent will parse the output with no human review",
+              "Whenever the schema is simple, the stakes are low, and a lenient parser can absorb minor formatting slips",
+              "Whenever the schema has strict enums that must never be wrong",
+              "Never — constrained decoding has no real downsides"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding adds setup cost (compiling a grammar) and can slightly constrain output quality on rigid schemas. For low-stakes, simple-schema cases where a forgiving parser is fine, plain prompting is simpler and often sufficient.",
+            "id": "cc6caedd-31ac-4309-9fd8-2f26469dc6f2"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Outlines — Structured Outputs for LLMs",
+          "url": "https://github.com/dottxt-ai/outlines",
+          "id": "934bc957-c635-4818-bbc9-c58c6d0154be"
+        }
+      ],
+      "id": "cb6ceaf7-4fce-41c0-aece-82722e00fae7",
+      "publishedDate": "2026-09-06T18:40:19Z"
+    },
+    {
       "title": "Agentic RAG: Retrieval as a Loop, Not a Single Lookup",
       "subtitle": "When one search isn't enough, the model decides to search again — reasoning about what it still doesn't know.",
       "category": "RAG",
@@ -11047,187 +11262,6 @@
           "id": "d637635d-1610-4a7f-a4fe-21fbf85ddbc5",
           "title": "OpenAI's 700W Jalapeño ASIC outpaces 1,400W Nvidia flagship GPU -- Tom's Hardware",
           "url": "https://www.tomshardware.com/tech-industry/semiconductors/openai-says-its-jalapeno-chip-beats-nvidias-gb300-in-first-published-benchmarks"
-        }
-      ]
-    },
-    {
-      "id": "f61ffa70-d08f-4d49-9ddd-ce26d9fe0ce3",
-      "title": "Orchestrator-Worker: One Agent Plans, Many Execute",
-      "subtitle": "Anthropic's pattern for tasks you can't pre-plan",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "multi-agent",
-        "orchestrator-worker",
-        "agent architecture",
-        "context engineering",
-        "claude"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "person.3.fill",
-      "heroImageURL": null,
-      "summary": "The orchestrator-worker pattern is one of Anthropic's core agent workflows: a lead agent dynamically decomposes a task, delegates pieces to parallel subagents it spins up on the fly, and synthesizes their results. Anthropic's own multi-agent research system uses exactly this pattern and reports a 90.2% improvement over a single-agent baseline -- at the cost of roughly 15x more tokens.",
-      "publishedDate": "2026-08-29T18:43:05Z",
-      "slides": [
-        {
-          "id": "2cbd1619-3c65-4343-8d74-6c5cd706834a",
-          "kind": "cover",
-          "title": "When you can't predict the subtasks in advance",
-          "body": "Parallelization workflows split a task into subtasks you define ahead of time. Orchestrator-worker is for the harder case: a lead agent looks at the input and decides, on the fly, what the subtasks even are.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "d860b385-b2eb-4bbe-b22e-ad4b536ded31",
-          "kind": "problem",
-          "title": "A single agent's context window is the bottleneck",
-          "body": "Open-ended research or broad exploration tasks can require reading far more source material than fits in one context window, and the branches worth exploring aren't known until you're partway through.",
-          "bullets": [
-            "One agent chasing every lead sequentially burns time and loses earlier context to compaction",
-            "Pre-defining subtasks, like a fixed parallelization split, doesn't work when the right subtasks depend on what's found",
-            "Some domains -- breadth-first research, competitive analysis, literature review -- are naturally made of independent, parallel threads"
-          ],
-          "symbol": "exclamationmark.square",
-          "table": null
-        },
-        {
-          "id": "3a72b2bb-056b-49ad-802c-7d3662ca996c",
-          "kind": "solution",
-          "title": "A lead agent plans, spins up subagents, and synthesizes",
-          "body": "The orchestrator (lead agent) reads the task, decomposes it into a number of independent subtasks it decides in the moment, and dispatches each to a fresh subagent running in parallel with its own context window.",
-          "bullets": [
-            "Each subagent needs an explicit objective, expected output format, tool/source guidance, and clear task boundaries",
-            "Subagents work simultaneously, not one after another -- wall-clock time doesn't scale with subtask count",
-            "The orchestrator collects every subagent's output and synthesizes a single final answer, often through a separate citation/verification pass"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "e9bbfc88-2895-4fda-ad49-31fbf4d2ff31",
-          "kind": "example",
-          "title": "Anthropic's own research system, in numbers",
-          "body": "Anthropic's multi-agent Research feature is built exactly this way: a lead agent coordinates 3-5 subagents that each explore a different angle of the query in parallel.",
-          "bullets": [
-            "Measured 90.2% better performance than a single-agent Claude baseline on internal research evaluations",
-            "Token usage alone explained about 80% of the variance in performance across configurations",
-            "But it uses roughly 15x more tokens than a single chat turn to get there"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "table": null
-        },
-        {
-          "id": "8a123089-7984-49b2-a723-a5180e98805d",
-          "kind": "comparison",
-          "title": "Orchestrator-worker vs. plain parallelization",
-          "body": "",
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "",
-              "Parallelization",
-              "Orchestrator-Worker"
-            ],
-            "rows": [
-              [
-                "Subtasks decided",
-                "Upfront, by the developer",
-                "Dynamically, by the lead agent"
-              ],
-              [
-                "Best fit",
-                "Task shape is known ahead of time",
-                "Task shape only emerges while working"
-              ],
-              [
-                "Coordination",
-                "None needed between branches",
-                "Lead agent synthesizes all subagent outputs"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "ec2343bd-f94a-4fcc-8711-21532e1a7bfd",
-          "kind": "problem",
-          "title": "It's expensive, and it's a bad fit for tightly coupled work",
-          "body": "Anthropic is explicit that this pattern is not for every task. Multi-agent systems excel at problems that split into independent, parallel strands -- they're a poor fit for anything where the work is tightly interdependent.",
-          "bullets": [
-            "Most coding tasks fail here: file A's changes usually depend on what the agent working on file B just did",
-            "The ~15x token multiplier only pays off when the task's value clearly exceeds that extra cost -- legal due diligence, competitive intel, literature review",
-            "Debugging is harder: a wrong final answer could trace back to any of several parallel subagents"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "f9bda9d9-6ccb-4146-b250-f85cb13903e0",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Orchestrator-worker trades tokens and coordination complexity for the ability to tackle tasks whose shape you can't know in advance.",
-          "bullets": [
-            "Use it for breadth-first, independent-strand work: research, competitive analysis, broad literature review",
-            "Give every subagent an explicit objective, output format, tool guidance, and boundaries -- vague delegation compounds errors",
-            "Skip it for tightly interdependent work like most coding, where shared real-time context matters more than parallelism",
-            "Budget for roughly an order of magnitude more tokens than a single-agent approach, and confirm the task's value justifies it"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "803e69ba-fb9d-401e-b0ea-cebde016ab23",
-            "prompt": "What distinguishes orchestrator-worker from plain parallelization?",
-            "options": [
-              "Orchestrator-worker never runs subagents at the same time",
-              "In orchestrator-worker, the lead agent decides subtasks dynamically rather than the developer defining them upfront",
-              "Parallelization requires more tokens",
-              "Orchestrator-worker has no lead agent"
-            ],
-            "correctIndex": 1,
-            "explanation": "Parallelization splits a task into pre-defined subtasks. Orchestrator-worker's lead agent decides what the subtasks are on the fly, based on what the input actually requires."
-          },
-          {
-            "id": "968cf55e-d64e-427e-992d-ef0fbcf749f4",
-            "prompt": "In Anthropic's internal evaluation, roughly how many more tokens did the multi-agent research system use compared to a single chat interaction?",
-            "options": [
-              "About 2x",
-              "About 15x",
-              "About 100x",
-              "The same amount"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic reported multi-agent systems use roughly 15x more tokens than a single chat turn -- a real cost that only pays off when the task's value clearly exceeds it."
-          },
-          {
-            "id": "df1a72c3-afd5-4305-8db5-8c62fa53f9ab",
-            "prompt": "Why does Anthropic say most coding tasks are a poor fit for the orchestrator-worker pattern?",
-            "options": [
-              "Coding agents can't use tools",
-              "Code files are usually too small to justify multiple agents",
-              "Coding tasks are typically tightly interdependent, requiring shared real-time context between changes",
-              "Orchestrator-worker only works with non-code text"
-            ],
-            "correctIndex": 2,
-            "explanation": "The pattern works best on independent, parallel strands of work. Most coding tasks are tightly coupled -- a change in one file often depends on what's happening in another -- which needs shared context, not isolated parallel subagents."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "09c162ed-91c0-442a-8ff1-276fba3d2740",
-          "title": "Building Effective Agents -- Anthropic",
-          "url": "https://www.anthropic.com/engineering/building-effective-agents"
-        },
-        {
-          "id": "75810603-20f4-4166-b470-d780d5436f43",
-          "title": "How we built our multi-agent research system -- Anthropic",
-          "url": "https://www.anthropic.com/engineering/multi-agent-research-system"
         }
       ]
     }
