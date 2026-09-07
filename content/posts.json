@@ -1,6 +1,195 @@
 {
   "posts": [
     {
+      "title": "Model Quantization: Shrinking Weights Without Losing Accuracy",
+      "subtitle": "A model doesn't get smaller by deleting parameters — it gets smaller by describing each one with fewer bits.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "inference optimization",
+        "gptq",
+        "awq",
+        "gguf",
+        "llms"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.stack.3d.down.right.fill",
+      "summary": "Quantization stores each weight with fewer bits (int8, int4) instead of the fp16/fp32 a model trains in, cutting memory 2-4x with surprisingly little accuracy loss — but only if you protect the handful of weight channels that carry disproportionate signal. Methods like GPTQ and AWQ do exactly that, which is why a 70B model can run on a single GPU instead of a rack of them.",
+      "id": "5711b753-7ca3-4d67-b646-cb517624b51c",
+      "publishedDate": "2026-09-07T06:40:41Z",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Same Weights, Fewer Bits Per Number",
+          "body": "Quantization doesn't remove parameters or change the architecture — it changes how precisely each weight is stored, trading numeric precision for a much smaller memory footprint.",
+          "bullets": [],
+          "symbol": "square.stack.3d.down.right.fill",
+          "table": null,
+          "id": "73910a29-f0ed-4d9b-a833-2be31481bc5a"
+        },
+        {
+          "kind": "problem",
+          "title": "A 70B Model Doesn't Fit Where You Want It To",
+          "body": "Training and inference default to 16-bit floats, and that precision has a direct memory cost.",
+          "bullets": [
+            "fp16/bf16 weights cost 2 bytes per parameter — a 70B model is ~140GB of weights alone, before the KV cache or activations",
+            "That's more than a single 80GB H100 can hold, forcing multi-GPU serving just to load the weights",
+            "Even a 'small' 7B model at fp16 is ~14GB — too tight for a 16GB consumer GPU once you add context"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null,
+          "id": "8dfb8a76-f722-42d1-b60d-745c9595f8ea"
+        },
+        {
+          "kind": "solution",
+          "title": "Store Each Weight in Fewer Bits",
+          "body": "Quantization maps a tensor's float range onto a small integer range using a scale (and often a zero-point), then stores integers instead of floats.",
+          "bullets": [
+            "int8 = 1 byte/param → roughly half the fp16 footprint",
+            "int4 = 0.5 byte/param → roughly a quarter of the fp16 footprint",
+            "Dequantize on the fly during matmul (scale * int_value), so the model still computes in a higher-precision space where it matters"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null,
+          "id": "d0edeb76-9fcd-4b6c-a728-e26553f3045e"
+        },
+        {
+          "kind": "architecture",
+          "title": "Why Naive Rounding Breaks the Model",
+          "body": "Rounding every weight to the nearest int4 value uniformly wrecks accuracy, because a small set of 'salient' weight channels carries disproportionate influence on the output.",
+          "bullets": [
+            "GPTQ: quantizes one column at a time, using approximate second-order (Hessian) information to adjust the remaining unquantized weights and cancel out the rounding error it just introduced",
+            "AWQ (Activation-aware Weight Quantization): profiles activations on a small calibration set to find which weight channels matter most, then keeps those effectively higher-precision (via per-channel scaling) while quantizing the rest aggressively",
+            "Both need only a small calibration dataset, not retraining — this is 'post-training quantization' (PTQ)"
+          ],
+          "symbol": "chart.xyaxis.line",
+          "table": null,
+          "id": "b3a992ce-3e4b-4d26-a112-c7134c20dcbc"
+        },
+        {
+          "kind": "comparison",
+          "title": "Precision vs. Footprint",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Precision",
+              "Bytes/Param",
+              "Typical Use"
+            ],
+            "rows": [
+              [
+                "fp16 / bf16",
+                "2.0",
+                "Training, and serving when memory isn't the bottleneck"
+              ],
+              [
+                "int8 (e.g. LLM.int8())",
+                "1.0",
+                "Safe default speedup with minimal measured quality loss"
+              ],
+              [
+                "int4 (GPTQ / AWQ / GGUF Q4)",
+                "0.5",
+                "Consumer-GPU / edge serving; small, measurable quality dip"
+              ],
+              [
+                "int2 / sub-4-bit (research)",
+                "~0.25",
+                "Usually needs quantization-aware training to stay usable"
+              ]
+            ]
+          },
+          "id": "64c6b262-4f6b-4738-a6fa-cf7e6c51fffc"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Fitting 7B on a Single Consumer GPU",
+          "body": "Same model, three precisions, one 24GB card.",
+          "bullets": [
+            "fp16: ~14GB just for weights, leaving little room for KV cache — long-context prompts OOM",
+            "int8: ~7GB for weights, comfortably leaves headroom for a bigger KV cache and longer context",
+            "int4 (GGUF Q4_K_M via llama.cpp): ~4GB for weights, enough to run alongside other apps or serve a much longer context window on the same card"
+          ],
+          "symbol": "desktopcomputer",
+          "table": null,
+          "id": "38ea9767-a100-4ec4-8b94-274b2044f678"
+        },
+        {
+          "kind": "problem",
+          "title": "When Quantization Isn't the Right Call",
+          "body": "The memory savings are real, but they aren't free.",
+          "bullets": [
+            "Tasks needing precise numeric or multi-step exact reasoning (arithmetic, exact code output) are more sensitive to quantization error than open-ended text generation",
+            "Below 4-bit, quality tends to degrade sharply without quantization-aware training (QAT) — a 2-bit PTQ model can look fluent but be subtly wrong more often",
+            "Gains aren't guaranteed to transfer: always re-evaluate a quantized model on your own task/eval set, not just a generic perplexity number",
+            "Fine-tuning a quantized model directly is awkward — this is exactly why QLoRA fine-tunes small adapters in higher precision on top of frozen 4-bit weights instead"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "a9d01f70-29e3-48f3-9925-424e95f2e72a"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Quantization changes numeric precision per weight, not parameter count or architecture",
+            "Naive uniform rounding fails because a small set of channels carries outsized influence — GPTQ and AWQ exist to protect exactly those",
+            "int8 is close to a free lunch; int4 is the sweet spot for consumer hardware; sub-4-bit usually needs QAT to stay usable",
+            "Always re-validate a quantized model on your actual task — generic benchmarks don't guarantee your use case survives the compression"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "447fcca5-ec56-4920-bc67-5554782c87f5"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does quantization actually change about a trained model?",
+            "options": [
+              "The number of parameters in the model",
+              "The numeric precision (bit-width) used to store each weight",
+              "The model's architecture (layers, attention heads)",
+              "The tokenizer's vocabulary size"
+            ],
+            "correctIndex": 1,
+            "explanation": "Quantization keeps the same parameters and architecture — it just stores each weight with fewer bits (e.g. int4 instead of fp16), which is why it shrinks memory without retraining.",
+            "id": "406029cc-9495-46fc-8042-23bdac402a91"
+          },
+          {
+            "prompt": "Why do methods like AWQ deliberately protect a small subset of 'salient' weight channels instead of quantizing every weight the same way?",
+            "options": [
+              "Because those channels are always located in the first layer of the network",
+              "Because a small number of channels, identified from activation statistics, carry disproportionate influence on the output — rounding them the same as everything else causes most of the accuracy loss",
+              "Because GPU hardware can only quantize even-numbered channels",
+              "Because it makes the resulting file format compatible with GGUF"
+            ],
+            "correctIndex": 1,
+            "explanation": "AWQ profiles activations on a calibration set to find which weight channels matter most for the outputs, then effectively keeps those higher-precision (via scaling) while quantizing the rest hard. Uniform rounding ignores this and loses much more accuracy for the same bit-width.",
+            "id": "29d8a151-dfd5-4932-a68a-534c497417d0"
+          },
+          {
+            "prompt": "What's the main risk of pushing quantization to 2-bit without extra techniques like quantization-aware training (QAT)?",
+            "options": [
+              "Inference becomes slower than running the full fp16 model",
+              "The model file becomes unreadable by any inference engine",
+              "Accuracy tends to degrade sharply — the model can stay fluent while being subtly wrong more often",
+              "The model loses the ability to run on GPUs entirely"
+            ],
+            "correctIndex": 2,
+            "explanation": "Below roughly 4-bit, post-training quantization alone usually isn't enough to preserve quality — errors compound and the model degrades noticeably unless it was trained (or fine-tuned) with quantization baked into the process, i.e. QAT.",
+            "id": "03ec0e22-cdc7-4278-8064-3edc5ddf8448"
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "Agent Guardrails: Constraining a Tool-Using Model",
       "subtitle": "Letting a model call tools is the easy part. Making sure it can't do something catastrophic is the hard part.",
       "category": "AI Agents",
@@ -11053,180 +11242,6 @@
           "url": "https://mistral.ai/news/agentic-search/"
         }
       ]
-    },
-    {
-      "id": "88718f1d-6cf7-42b1-a829-8f4eed1c3b23",
-      "title": "Mixture of Experts: Capacity Without the Compute Bill",
-      "subtitle": "Why the biggest open models route instead of running everything",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mixture of experts",
-        "moe",
-        "sparse models",
-        "inference",
-        "model architecture"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.branch",
-      "heroImageURL": null,
-      "summary": "Mixture of Experts (MoE) replaces a transformer's dense feed-forward layer with many smaller expert networks and a router that activates only a few per token. That decouples total model capacity from per-token compute, letting models like Mixtral and today's largest open-weight releases scale parameters far past what a dense model could afford to run -- at the cost of holding every expert in memory and solving a genuinely hard load-balancing problem.",
-      "publishedDate": "2026-08-30T06:43:10Z",
-      "slides": [
-        {
-          "id": "29a055f7-9efa-4b18-af4b-2a3dcf2ea249",
-          "kind": "cover",
-          "title": "MoE: Bigger Model, Same Compute Per Token",
-          "body": "Dense transformers spend every parameter on every token. Mixture of Experts swaps the single feed-forward block for many specialized experts plus a router that activates only a handful -- so total capacity can grow 10x while compute per token barely moves.",
-          "bullets": [],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "2a6a4c3c-1bf7-4f58-b9fd-7f9687041bf8",
-          "kind": "problem",
-          "title": "Dense scaling means every extra parameter costs FLOPs",
-          "body": "In a standard dense transformer, doubling the parameter count roughly doubles the FLOPs needed per token, at both training and inference time -- there's no way to add capacity without paying for it on every single forward pass.",
-          "bullets": [
-            "Most of what a given token needs is probably encoded in a small slice of a huge parameter set",
-            "But a dense layer runs 100% of its weights on 100% of tokens regardless",
-            "That coupling between total capacity and per-token cost is the thing MoE breaks"
-          ],
-          "symbol": "flame.fill",
-          "table": null
-        },
-        {
-          "id": "208e8019-404b-4e36-b13c-8a0853db7475",
-          "kind": "solution",
-          "title": "A router picks k experts out of N, per token",
-          "body": "Replace the dense feed-forward layer with N smaller expert FFNs and a lightweight router (a linear layer plus softmax) trained end-to-end with the rest of the model. For each token, the router selects the top-k experts, runs only those, and combines their outputs.",
-          "bullets": [
-            "Total parameters = the sum of all N experts (the model's capacity)",
-            "Active parameters per token = just the k selected experts, typically k=1 or k=2",
-            "Mixtral 8x7B, for example, uses 8 experts with top-2 routing -- 2 of 8 run per token"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "855bf7eb-8cf1-4ca0-8fcc-21171eb9325f",
-          "kind": "comparison",
-          "title": "Capacity of a big dense model, compute of a small one",
-          "body": "Mixtral 8x7B has roughly 47B total parameters split across 8 experts, but only about 13B are active for any given token (2 experts plus shared attention and embedding layers) -- inference cost tracks the smaller number.",
-          "bullets": [
-            "The gap between total and active parameters is exactly what MoE buys you"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Model",
-              "Total params",
-              "Active params/token"
-            ],
-            "rows": [
-              [
-                "Mixtral 8x7B (MoE)",
-                "~47B",
-                "~13B"
-              ],
-              [
-                "Dense 47B (hypothetical)",
-                "~47B",
-                "~47B"
-              ],
-              [
-                "Dense 13B",
-                "~13B",
-                "~13B"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "bbc8d2ab-f9c6-4a4f-b3f7-3d485b80b801",
-          "kind": "example",
-          "title": "Watching one token get routed",
-          "body": "A batch mixes a line of Python with a sentence of English prose. Neither token type was hand-assigned to an expert -- specialization emerges from training because it lowers the loss.",
-          "bullets": [
-            "The token embedding hits the router, which outputs a score for each of the N experts",
-            "Softmax over those scores picks the top-k -- say, the code token routes to experts 3 and 6, the prose token to experts 1 and 4",
-            "Each selected expert runs its own FFN; their outputs are combined, weighted by the router's own probabilities",
-            "Over training, expert 3 or 6 may drift toward handling syntax-heavy tokens simply because that reduced loss more often"
-          ],
-          "symbol": "doc.plaintext.fill",
-          "table": null
-        },
-        {
-          "id": "05490992-af7c-4897-885d-1c8400b1aa30",
-          "kind": "problem",
-          "title": "You save compute, not memory -- and routing can collapse",
-          "body": "MoE's savings are specifically in FLOPs per token. Every expert still has to be loaded somewhere, so total memory footprint tracks the full parameter count, not the active subset.",
-          "bullets": [
-            "Without an auxiliary load-balancing loss, the router can collapse onto using just a few experts, wasting the rest of the model's capacity",
-            "Serving needs expert parallelism across GPUs with all-to-all communication to route tokens -- real infrastructure complexity",
-            "Batch efficiency drops when tokens in a batch scatter across many different experts, hurting hardware utilization versus dense models at small batch sizes",
-            "Gains concentrate at high-throughput, well-batched serving -- less compelling for single-request, low-latency use"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "b3610890-e2aa-4c41-9daa-a0a47d7237fb",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "MoE is the architectural trick behind why today's largest open-weight models can pack far more parameters than a dense model could ever afford to run.",
-          "bullets": [
-            "A router activates only k of N experts per token, decoupling total capacity from per-token compute",
-            "You pay in memory (every expert must be resident) and serving complexity (routing, load balancing, expert parallelism), not in FLOPs per token",
-            "Load-balancing losses are essential -- without them, routing collapses onto a handful of experts",
-            "Best fit: large-scale, high-throughput serving where you can batch well and shard experts across enough devices to hold them all"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "7891a20d-b562-44c3-b311-27f431380b17",
-            "prompt": "What does a Mixture-of-Experts router actually decide?",
-            "options": [
-              "Which transformer layer to skip entirely",
-              "Which k experts process a given token",
-              "How many tokens the model will generate",
-              "Which GPU a request gets scheduled on"
-            ],
-            "correctIndex": 1,
-            "explanation": "The router is a small learned gate that scores every expert for a given token and selects the top-k to actually run -- that's the core mechanism that separates MoE from a dense feed-forward layer."
-          },
-          {
-            "id": "c8318088-6ca0-4c86-95f2-bbd298ebd7b6",
-            "prompt": "In Mixtral 8x7B (8 experts, top-2 routing, ~47B total parameters), roughly how many parameters are active per token?",
-            "options": [
-              "~47B -- all of them run every time",
-              "~13B -- only 2 experts plus shared layers run",
-              "~7B -- exactly one expert's worth",
-              "~1B -- just the router itself"
-            ],
-            "correctIndex": 1,
-            "explanation": "Only 2 of the 8 experts run per token, plus shared attention and embedding layers, so active compute lands around 13B parameters even though total capacity is roughly 47B."
-          },
-          {
-            "id": "59ff9d9b-fd1a-4951-b732-a9058d08cfbe",
-            "prompt": "What's the main hidden cost of MoE that a dense model of the same active size doesn't have?",
-            "options": [
-              "It requires far more training data than any dense model",
-              "Every expert must still be held in memory even though only a few run per token, plus routing and load-balancing complexity",
-              "It cannot run on GPUs at all",
-              "It only works for image and video models"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE saves FLOPs per token, not memory -- all experts must be resident somewhere, and serving requires expert-parallel infrastructure plus a load-balancing loss to keep the router from collapsing onto a handful of experts."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
