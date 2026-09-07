@@ -1,6 +1,378 @@
 {
   "posts": [
     {
+      "id": "f9a2ceab-0b37-489e-b4b9-a8bfd3887870",
+      "title": "Mixture of Experts: Bigger Models, Same Compute",
+      "subtitle": "Route each token to a handful of experts instead of the whole network.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "moe",
+        "mixture-of-experts",
+        "routing",
+        "sparse-models",
+        "llms"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "Mixture-of-Experts (MoE) replaces one dense feed-forward layer with many smaller expert networks plus a router that activates only a few per token. It's how models like Mixtral and DeepSeek-V3 scale total parameters far beyond what they actually compute per token — at the cost of needing every expert resident in memory.",
+      "slides": [
+        {
+          "id": "f6b6b45c-c114-48f0-95bb-519a3392b5ba",
+          "kind": "cover",
+          "title": "One Model, Many Specialists",
+          "body": "Mixture-of-Experts (MoE) swaps a single dense feed-forward block for many smaller 'expert' blocks — and a router that sends each token to only a few of them.",
+          "bullets": [],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "43738c83-01e0-4ac4-ab70-c82217e5cefa",
+          "kind": "problem",
+          "title": "Dense Models Waste Compute on Every Token",
+          "body": null,
+          "bullets": [
+            "A dense transformer runs ALL of its parameters for EVERY token — a simple word like 'the' gets the same full pass as a hard reasoning step.",
+            "Scaling a dense model means every added parameter multiplies the FLOPs for every single token, at both training and inference time.",
+            "A 70B dense model activates all 70B weights per token — cost scales linearly with total capacity, so bigger always means slower."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d0c3f7ec-b12b-4643-9430-8aee9df8de1c",
+          "kind": "solution",
+          "title": "A Router Picks Which Experts Run",
+          "body": null,
+          "bullets": [
+            "Replace one big feed-forward layer with N smaller 'expert' feed-forward networks (8, 16, 64, or more).",
+            "A lightweight router (a single linear layer + softmax) scores every token against each expert, then picks the top-k — usually top-1 or top-2.",
+            "Only the selected experts' weights actually run for that token; the rest sit idle, so compute stays roughly constant even as total parameter count grows.",
+            "Mixtral 8x7B: 8 experts per layer, top-2 routing — 46.7B total parameters but only ~12.9B active per token."
+          ],
+          "symbol": "point.3.filled.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "61ea2d20-674c-4f38-8129-f0ccd1db88ae",
+          "kind": "comparison",
+          "title": "Dense vs Sparse: Same Quality, Fraction of the Compute",
+          "body": "Total parameters and active parameters diverge sharply once you go sparse — that gap is the entire point of MoE.",
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Model type",
+              "Total params",
+              "Active per token"
+            ],
+            "rows": [
+              [
+                "Dense (Llama-2 70B)",
+                "70B",
+                "70B"
+              ],
+              [
+                "MoE (Mixtral 8x7B)",
+                "46.7B",
+                "~12.9B"
+              ],
+              [
+                "MoE (DeepSeek-V3)",
+                "671B",
+                "37B"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "21e44b3e-bd83-452d-b2b9-9087c5c240ff",
+          "kind": "example",
+          "title": "Tracing One Token Through the Router",
+          "body": "Take the sentence 'The mitochondria is the powerhouse of the cell.' Each token gets scored against every expert; the router might send 'mitochondria' to a science-leaning expert and 'the' to a generic syntax expert — both computed in the same forward pass, without ever running the other experts.",
+          "bullets": [
+            "Token 'mitochondria' -> router scores all 8 experts -> top-2 picks a biology-leaning expert and a rare-token expert.",
+            "Token 'the' -> top-2 picks the two most common-syntax experts, reused by nearly every token in the sequence.",
+            "Different tokens in the SAME sequence activate DIFFERENT expert pairs — that's what keeps compute sparse."
+          ],
+          "symbol": "text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "63fd2dd0-69dc-4251-8f93-376861a2ff53",
+          "kind": "concept",
+          "title": "The Catch: Routing Collapse and Memory Overhead",
+          "body": null,
+          "bullets": [
+            "Load imbalance: without a balancing signal, the router can collapse onto a few 'favorite' experts, leaving others undertrained — DeepSeek-V3 uses an auxiliary-loss-free bias term instead of a classic load-balancing loss to fix this.",
+            "Memory, not compute, becomes the bottleneck: ALL expert weights must stay resident in memory even though only a few run per token — Mixtral's 46.7B params still need well over 90GB in fp16 despite the ~12.9B active compute.",
+            "Top-k routing is discontinuous (not differentiable), so training leans on soft balancing losses and can be unstable at low precision.",
+            "MoE shines at scale; for small models (under ~1B params) the router overhead and expert underutilization usually aren't worth it — a dense model is simpler and often just as good."
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "82dec8f9-ad31-476f-95b9-7d9439f55d75",
+          "kind": "architecture",
+          "title": "Serving MoE: Expert Parallelism Across GPUs",
+          "body": null,
+          "bullets": [
+            "Experts are typically sharded one-or-few-per-GPU ('expert parallelism'), so a token's activations get routed over the network to whichever GPU holds its chosen expert.",
+            "That cross-GPU routing adds real latency and all-to-all communication cost — a major reason serving frameworks invest heavily in optimized MoE kernels.",
+            "Each expert has a fixed token 'capacity' per batch; tokens that overflow get dropped or sent to a fallback expert, which can hurt quality under skewed routing."
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "6ac2947a-8e89-494f-aee7-c5a606c573e6",
+          "kind": "takeaways",
+          "title": "Key Takeaways",
+          "body": null,
+          "bullets": [
+            "MoE decouples total parameter count from per-token compute — a bigger, more capable model without a proportional inference-cost hit.",
+            "The router (top-1 or top-2 gating) is the whole trick — everything else is just running N smaller feed-forward networks instead of one big one.",
+            "The tradeoff moves from compute to memory and communication — you need enough VRAM to hold every expert, even the idle ones.",
+            "Most frontier open-weight models today (DeepSeek, Mixtral, Qwen-MoE, GLM lines) are MoE — it's the default way to scale, not an exotic choice."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "0ea5c065-adf5-465d-858f-009a14abdee9",
+            "prompt": "In a Mixtral 8x7B forward pass, how many of the 8 experts actually run for a given token (with top-2 routing)?",
+            "options": [
+              "All 8",
+              "Exactly 2",
+              "Exactly 1",
+              "A random number each time"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-2 routing means the router picks the 2 highest-scoring experts per token — the other 6 sit idle for that token, which is why total parameters (46.7B) can be far higher than active compute (~12.9B)."
+          },
+          {
+            "id": "bc4d8dcc-20cd-4dda-a480-fce77d064974",
+            "prompt": "What is the main reason MoE models need more memory than a dense model with the same active-parameter count?",
+            "options": [
+              "MoE models use larger embedding tables",
+              "Every expert's weights must stay resident in memory even though only a few run per token",
+              "MoE models require higher precision (fp32) to train",
+              "The router itself is extremely large"
+            ],
+            "correctIndex": 1,
+            "explanation": "Compute is sparse (only top-k experts run), but memory isn't — all experts must be loaded so any token can reach any expert, which is why MoE trades memory for compute."
+          },
+          {
+            "id": "7da4d879-191d-4cfc-86e9-e02bc5ef9587",
+            "prompt": "What problem does a load-balancing (or bias-based) term solve in MoE training?",
+            "options": [
+              "It speeds up attention computation",
+              "It prevents the router from collapsing onto a few favorite experts, leaving others undertrained",
+              "It reduces the total number of parameters",
+              "It removes the need for a router entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without a balancing signal, training can create a rich-get-richer effect where a few experts get most of the tokens and gradient updates while others starve — wasting the extra capacity MoE is supposed to buy."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "3d31bc99-5f48-4796-bb3e-fcccc3fae2ec",
+          "title": "Mixtral of Experts — Mistral AI",
+          "url": "https://mistral.ai/news/mixtral-of-experts/"
+        },
+        {
+          "id": "0abf0845-fc86-4e58-b042-288b13e70db9",
+          "title": "DeepSeek-V3 Technical Report",
+          "url": "https://arxiv.org/abs/2412.19437"
+        }
+      ],
+      "publishedDate": "2026-09-07T18:41:13Z"
+    },
+    {
+      "id": "f4ebd3c1-f1ed-48cf-8a4f-86c84f4cd1a6",
+      "title": "MCP Elicitation: When a Server Needs to Ask You",
+      "subtitle": "Not every tool call has enough information up front — elicitation lets a server pause and ask.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "model-context-protocol",
+        "elicitation",
+        "ai-agents",
+        "tool-use"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "questionmark.bubble.fill",
+      "summary": "MCP elicitation lets a server pause mid-tool-call and request structured input directly from the human user through the client's UI, instead of routing every missing detail back through the LLM. It's the third leg of MCP's request directions, alongside tools and sampling.",
+      "slides": [
+        {
+          "id": "32fc71aa-0db6-465a-9b4e-69a5cf494952",
+          "kind": "cover",
+          "title": "When the Server Doesn't Know Enough",
+          "body": "MCP elicitation lets a server pause mid-request and ask the human a question — rendered by the client's UI — instead of guessing or failing outright.",
+          "bullets": [],
+          "symbol": "questionmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "5f256789-a87c-4d54-a4ef-dfb473d7adb9",
+          "kind": "problem",
+          "title": "Tools Fail Silently When Inputs Are Missing",
+          "body": null,
+          "bullets": [
+            "A tool call arrives with a required parameter left out — say, 'book_flight' with no return date — and the server has two bad options: guess, or throw an error.",
+            "Before elicitation, the only fix was pushing the question back up through the LLM: it has to infer info is missing, phrase a question, wait for a reply, then re-issue the tool call — a full extra round trip.",
+            "For sensitive actions (deleting a record, spending money), silently guessing is actively dangerous — the server needs a real human decision, not a model's best guess."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9b7f373e-08f1-4aee-9530-d0c1aac9a8a1",
+          "kind": "solution",
+          "title": "The Server Asks, the Client Renders, the User Answers",
+          "body": null,
+          "bullets": [
+            "A tool handler can send an elicitation request back to the client mid-call, with a prompt and a JSON schema describing exactly what it needs — a date, a confirm/cancel choice, a short free-text reason.",
+            "The client is responsible for rendering that request as a real UI element — a form field, a dialog, a confirm button — not the model improvising text.",
+            "The user's response comes back as one of three outcomes: accept (with filled-in data), decline, or cancel — the server branches on which one it got.",
+            "This is a distinct MCP capability from sampling (asking the client's LLM to generate something) and from tools (the LLM asking the server to do something) — elicitation is server asking human."
+          ],
+          "symbol": "point.3.filled.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "172bbd83-9158-4723-9c45-258c4f1b9b09",
+          "kind": "comparison",
+          "title": "Elicitation vs Sampling vs Tools",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Capability",
+              "Who initiates",
+              "What comes back"
+            ],
+            "rows": [
+              [
+                "Tools",
+                "Client/LLM calls server",
+                "A result the tool computed"
+              ],
+              [
+                "Sampling",
+                "Server asks client",
+                "Text generated by the client's LLM"
+              ],
+              [
+                "Elicitation",
+                "Server asks client",
+                "Structured input from the human user"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "dd9870ad-c95c-4f05-93aa-e75a47a1c863",
+          "kind": "example",
+          "title": "A Concrete Round Trip",
+          "body": "An agent calls a 'delete_project' tool. Instead of executing immediately, the server sends an elicitation request: 'This will permanently delete 47 files. Type the project name to confirm.' The client shows a real text input; the user types the name or hits cancel. Only on a matching accept does the server actually delete.",
+          "bullets": [
+            "Requested schema: an object with one required string field, 'confirmation'.",
+            "The server compares the typed value against the real project name before proceeding — the LLM never sees or fabricates the confirmation step.",
+            "If the user cancels, the server returns a normal tool result saying the action was aborted — no error, no retry loop."
+          ],
+          "symbol": "trash.fill",
+          "table": null
+        },
+        {
+          "id": "1f6cb1f8-8e15-4b6e-87e8-969ed8847889",
+          "kind": "concept",
+          "title": "Where Elicitation Breaks Down",
+          "body": null,
+          "bullets": [
+            "It assumes a human is actually present and attentive — in a fully autonomous or headless agent run, an elicitation request can hang forever with nobody to answer it.",
+            "Servers should never request secrets (passwords, API keys) through elicitation — the client UI and transport aren't guaranteed to be a secure input surface.",
+            "Overusing elicitation for things the model could reasonably infer turns a smooth agent flow into a chain of interruptions — reserve it for genuinely ambiguous, risky, or human-judgment-only decisions.",
+            "Not every client implements elicitation yet — a server that depends on it needs a clear fallback for clients that don't support the capability."
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "10972a41-e7f9-40c9-92f9-1d5b0addac38",
+          "kind": "takeaways",
+          "title": "Key Takeaways",
+          "body": null,
+          "bullets": [
+            "Elicitation puts a human decision point directly inside a tool call, instead of routing everything through the LLM's guesswork.",
+            "It's structured and schema-driven, with three clean outcomes: accept, decline, cancel — not free-form chat.",
+            "Use it for missing required data and for confirming risky or destructive actions — never for secrets, and sparingly in fully autonomous pipelines.",
+            "It sits alongside tools (LLM to server) and sampling (server to client's LLM) as the third leg of MCP's request directions: server to human."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "213cf6b0-729e-43d8-b9c7-a02a939edbc1",
+            "prompt": "What does an MCP server receive back when it sends an elicitation request and the user declines?",
+            "options": [
+              "The server crashes",
+              "A response indicating the user declined, with no data",
+              "The client's LLM generates a guess instead",
+              "The request is automatically retried"
+            ],
+            "correctIndex": 1,
+            "explanation": "Elicitation responses come back as accept (with data), decline, or cancel — a decline tells the server the user explicitly said no, so it can stop cleanly instead of guessing or erroring."
+          },
+          {
+            "id": "c588f8cc-d26f-4d68-9ebd-28b529d22196",
+            "prompt": "Why shouldn't a server request a password through MCP elicitation?",
+            "options": [
+              "Elicitation only supports numeric input",
+              "The client UI and transport aren't guaranteed to be a secure surface for secrets",
+              "Passwords can't be represented in JSON schema",
+              "Elicitation requests time out too quickly for typing"
+            ],
+            "correctIndex": 1,
+            "explanation": "Elicitation is built for structured, non-sensitive input like confirmations and missing parameters — it should never be used for secrets since the rendering surface isn't guaranteed to be secure."
+          },
+          {
+            "id": "9bdb6298-b8aa-4b33-a456-9cd7bdea5830",
+            "prompt": "How is elicitation different from MCP sampling?",
+            "options": [
+              "They are the same capability with different names",
+              "Elicitation asks the human user for input; sampling asks the client's LLM to generate a completion",
+              "Sampling asks the human user for input; elicitation asks the client's LLM to generate a completion",
+              "Elicitation only works with local models"
+            ],
+            "correctIndex": 1,
+            "explanation": "Both are server-initiated requests to the client, but they ask for fundamentally different things: elicitation wants a human decision or data point, sampling wants a model-generated completion."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "5d549e33-5b57-4ed9-b5e9-bf4ab8b22fde",
+          "title": "Model Context Protocol — Specification",
+          "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation"
+        }
+      ],
+      "publishedDate": "2026-09-07T18:41:13Z"
+    },
+    {
       "title": "Multi-Agent Orchestration: Picking the Right Pattern",
       "subtitle": "Supervisor, pipeline, or blackboard — the pattern you choose sets your cost, latency, and how far one failure spreads.",
       "category": "AI Agents",
@@ -10908,354 +11280,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "id": "eb4614df-3e60-435b-be0f-a7f36ec24a98",
-      "title": "Hybrid Search: When Keyword Beats a Perfect Embedding",
-      "subtitle": "Why every serious RAG stack still runs BM25 next to the vector index",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "hybrid search",
-        "bm25",
-        "vector search",
-        "reciprocal rank fusion",
-        "rag",
-        "retrieval"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.merge",
-      "heroImageURL": null,
-      "summary": "Dense vector search is great at meaning but bad at exact tokens -- SKUs, error codes, acronyms, rare proper nouns -- because embeddings compress them into the same neighborhood as similar-sounding words. Hybrid search fixes this by running a sparse keyword ranker (BM25) alongside the dense retriever and fusing the two rankings, typically with Reciprocal Rank Fusion, so exact matches and semantic matches both surface.",
-      "publishedDate": "2026-08-30T12:39:32Z",
-      "slides": [
-        {
-          "id": "a12ea97f-99cb-400b-a641-906557d4d904",
-          "kind": "cover",
-          "title": "Two Retrievers Are Better Than One",
-          "body": "Pure vector search quietly fails on the exact strings people actually search for -- part numbers, error codes, names. Hybrid search runs a keyword ranker alongside the embedding search and merges the results.",
-          "bullets": [],
-          "symbol": "arrow.triangle.merge",
-          "table": null
-        },
-        {
-          "id": "a2ccc543-f469-495f-bba1-6d194a4c947f",
-          "kind": "problem",
-          "title": "Embeddings blur the tokens that matter most",
-          "body": "A dense embedding model maps text into a continuous space optimized for semantic similarity. That's exactly the property that breaks exact-match retrieval.",
-          "bullets": [
-            "Query 'error E4021' can rank a doc about 'error E4029' above the one that actually contains E4021 -- the embedding sees them as nearly identical",
-            "Rare proper nouns, product SKUs, and acronyms often collapse into the same neighborhood as unrelated but stylistically similar text",
-            "Embedding models are trained on general semantic similarity, not on your domain's exact-identifier vocabulary"
-          ],
-          "symbol": "questionmark.diamond.fill",
-          "table": null
-        },
-        {
-          "id": "367139a8-1ce7-460f-88f9-61c8a8c00c81",
-          "kind": "solution",
-          "title": "Run a sparse ranker in parallel, then fuse",
-          "body": "BM25 (a term-frequency / inverse-document-frequency ranking function) scores documents by exact and near-exact term overlap -- the opposite failure mode of dense embeddings. Hybrid search runs both retrievers on the same query and merges their result lists.",
-          "bullets": [
-            "BM25 rewards documents where the query's exact terms appear, weighted by how rare those terms are across the corpus",
-            "The two rankers produce scores on incompatible scales, so you can't just add them -- you need a fusion step",
-            "Reciprocal Rank Fusion (RRF) sidesteps the scaling problem entirely by fusing on RANK, not raw score: score(d) = sum over rankers of 1 / (k + rank(d)), with k commonly set around 60"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "c97e2ab0-4210-43e6-909f-63d90656199d",
-          "kind": "example",
-          "title": "Walking through one query",
-          "body": "Query: 'reset procedure for E4021'. The corpus has a runbook titled 'E4021 Reset Procedure' and a semantically similar but wrong doc titled 'E4029 Recovery Steps'.",
-          "bullets": [
-            "Dense retriever: ranks 'E4029 Recovery Steps' #1 (semantically close: both are error-reset docs) and buries the correct E4021 doc at #6",
-            "BM25: ranks the correct 'E4021 Reset Procedure' #1 because the exact token 'E4021' matches, and ranks the E4029 doc much lower",
-            "RRF fusion: the correct doc gets 1/(60+1) from BM25 plus a smaller contribution from dense, pushing it back to the top of the merged list"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "de2e0188-fa56-4a80-92fc-220977ce211e",
-          "kind": "comparison",
-          "title": "Each retriever covers the other's blind spot",
-          "body": "Neither ranker is strictly better -- they fail on different query shapes, which is exactly why fusing them helps instead of just picking the stronger one.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Query shape",
-              "Dense vector",
-              "BM25 keyword"
-            ],
-            "rows": [
-              [
-                "Exact IDs / codes / SKUs",
-                "Weak -- blurs into neighbors",
-                "Strong -- exact token match"
-              ],
-              [
-                "Paraphrased / conceptual",
-                "Strong -- captures meaning",
-                "Weak -- needs shared words"
-              ],
-              [
-                "Rare proper nouns",
-                "Weak -- undertrained embedding",
-                "Strong -- high IDF weight"
-              ],
-              [
-                "Synonyms, no shared words",
-                "Strong",
-                "Weak"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e2e15e85-58ac-47c1-b970-33b260319a82",
-          "kind": "problem",
-          "title": "Where hybrid search bites back",
-          "body": "Fusion isn't free -- it adds infrastructure, latency, and a new tuning surface.",
-          "bullets": [
-            "You now run and maintain two indexes (inverted index + vector index) instead of one, doubling storage and indexing pipelines",
-            "Query latency is the max of two retrieval calls plus the fusion step, not just one -- matters under tight p99 budgets",
-            "RRF's k constant and any per-ranker weighting still need tuning per corpus; a k tuned for short product docs may hurt on long-form technical text",
-            "For small corpora (a few thousand docs) where BM25 alone already gets near-perfect recall, the added complexity may not pay for itself"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "3cb0a763-05e0-4be4-8539-451b1e333e20",
-          "kind": "takeaways",
-          "title": "Default to hybrid unless you've measured otherwise",
-          "body": "Most production RAG systems that handle real user queries -- not just clean benchmark questions -- end up needing both signal types.",
-          "bullets": [
-            "Pure dense search silently loses exact-match queries; pure keyword search silently loses paraphrased queries -- hybrid loses neither",
-            "Reciprocal Rank Fusion is the default fusion method because it needs no score normalization, only rank position",
-            "Pair hybrid retrieval with a reranker (cross-encoder) as a second-stage filter for best precision on the fused candidate set",
-            "Skip the complexity only when your corpus and query patterns are narrow enough that one retriever already covers both cases"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8c6bb61d-03d8-4082-b224-eef2ea00229f",
-            "prompt": "Why can't you just add raw BM25 and vector similarity scores together?",
-            "options": [
-              "BM25 only works on English text",
-              "The two scores live on different, incompatible scales",
-              "Vector databases don't return numeric scores",
-              "BM25 scores are always higher than cosine similarity"
-            ],
-            "correctIndex": 1,
-            "explanation": "BM25 scores are unbounded term-weighted sums while cosine similarity is bounded roughly [-1,1] -- adding them directly lets whichever scale is numerically larger dominate. That's why rank-based fusion methods like RRF are used instead of raw score addition."
-          },
-          {
-            "id": "75c28af5-0ef7-4dc4-b1bd-64754cfd0d3e",
-            "prompt": "A user searches for an exact error code like 'E4021'. Which retriever is most likely to surface the right document?",
-            "options": [
-              "Dense vector search, because it understands meaning",
-              "BM25 keyword search, because it rewards exact rare-term matches",
-              "Neither -- exact codes can't be retrieved by either method",
-              "Only a reranker can find exact codes"
-            ],
-            "correctIndex": 1,
-            "explanation": "BM25's IDF weighting gives rare exact tokens like error codes a very high score when they match, while dense embeddings tend to blur near-identical codes into the same neighborhood. This is the core failure mode hybrid search is built to fix."
-          },
-          {
-            "id": "8e811d94-2326-4ea0-8b81-0f20ce2a5533",
-            "prompt": "What does Reciprocal Rank Fusion actually fuse on?",
-            "options": [
-              "The raw similarity scores from each retriever",
-              "The document's position (rank) in each retriever's result list",
-              "The length of the document",
-              "The embedding vectors directly, via averaging"
-            ],
-            "correctIndex": 1,
-            "explanation": "RRF computes score(d) = sum of 1/(k + rank(d)) across each ranker's result list, using only rank position -- never the raw score. That's what makes it robust to two rankers whose scores are on completely different scales."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "98e32df0-75ab-4096-be43-9ae83130ac87",
-      "title": "Demystifying Agent Skills: Why They Work—Until They Don't",
-      "subtitle": "8,135 trials say skills anchor behavior, not inject facts",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "agent skills",
-        "llm agents",
-        "procedural memory",
-        "in-context learning",
-        "tool use"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "puzzlepiece.extension.fill",
-      "heroImageURL": null,
-      "summary": "A Princeton/Stanford/USC/Johns Hopkins team open-coded 8,135 agent trial records to answer a question nobody had actually tested: do 'skills' -- packaged procedures agents load at inference time -- help by teaching the model facts, or by stabilizing how it acts? The answer is procedural anchoring 65.7% of the time versus explicit knowledge injection only 4.5% of the time, and a real retrieval bottleneck emerges once skill libraries grow past a handful of entries.",
-      "publishedDate": "2026-08-30T06:43:10Z",
-      "slides": [
-        {
-          "id": "6df2d3fe-0842-4256-b8b2-412ee6b4ea8b",
-          "kind": "cover",
-          "title": "Skills Work by Anchoring Behavior, Not Injecting Facts",
-          "body": "Agent 'skills' -- SKILL.md-style procedures loaded at inference time -- have quietly become the default way to make LLM agents more reliable. This paper is the first large-scale, evidence-based look at why they actually work, and where they quietly stop.",
-          "bullets": [],
-          "symbol": "puzzlepiece.extension.fill",
-          "table": null
-        },
-        {
-          "id": "f9ae8657-03e2-424e-870d-181f33e91c57",
-          "kind": "problem",
-          "title": "The default assumption was never actually tested",
-          "body": "Most teams write skills assuming they work like a mini fine-tune: they teach the agent something it didn't know. Nobody had systematically checked whether that's true across real trials.",
-          "bullets": [
-            "Skills are usually pitched as knowledge injection -- filling gaps in what the base model knows",
-            "Practitioners write increasingly detailed SKILL.md files on that assumption, without evidence it's the right one",
-            "The authors normalized 8,135 trial records from controlled agent experiments to open-code what a skill actually changed"
-          ],
-          "symbol": "questionmark.diamond.fill",
-          "table": null
-        },
-        {
-          "id": "84c3722f-890c-4f65-8181-55074f2d90ad",
-          "kind": "solution",
-          "title": "Open-coding thousands of trials into a taxonomy",
-          "body": "From 8,135 normalized trial records, the authors retained 240 open-coded records that reduced to 238 valid unique labels, then built a taxonomy of 3 high-level categories and 12 concrete skill-use modes describing exactly how a skill changed agent behavior in each trial.",
-          "bullets": [
-            "Categories span things like procedural anchoring, explicit knowledge injection, and error-recovery guidance",
-            "Each trial pairs a 'skill on' and 'skill off' run so the effect is directly attributable",
-            "The taxonomy lets them quantify which mechanism actually drives the measured improvement"
-          ],
-          "symbol": "list.bullet.clipboard.fill",
-          "table": null
-        },
-        {
-          "id": "5c36e318-9637-4b81-b1a4-7d1c3ab6908c",
-          "kind": "comparison",
-          "title": "Anchoring dominates -- by more than 14x",
-          "body": "Across the labeled trials, procedural anchoring (the skill locks in a fixed sequence of steps) explains most of the wins. Explicit knowledge injection (the skill teaches a fact the model lacked) is rare by comparison.",
-          "bullets": [
-            "A distilled SKILL.md procedure beat keeping the full raw trajectory (Workflow Memory) by 6.06 points in matched comparisons",
-            "That gap holds even though Workflow Memory contains strictly more information -- compression into a clean procedure is what helps"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Mechanism",
-              "Share of helpful cases"
-            ],
-            "rows": [
-              [
-                "Procedural anchoring",
-                "65.7%"
-              ],
-              [
-                "Explicit knowledge injection",
-                "4.5%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "05f56651-b14d-475c-abbc-cefeb5062fad",
-          "kind": "example",
-          "title": "A deploy checklist beats a deploy explanation",
-          "body": "Picture two versions of the same skill for a 'deploy this service' task. One is a paragraph explaining the deployment architecture. The other is a numbered checklist: build, run tests, health-check, promote, verify.",
-          "bullets": [
-            "Without any skill, the agent improvises the order and skips steps like the health check inconsistently across runs",
-            "The paragraph-style skill (knowledge injection) barely changes the failure rate -- the model already 'knew' the architecture",
-            "The checklist-style skill (procedural anchoring) makes the agent follow the same steps every run, which is where the reliability gain actually comes from"
-          ],
-          "symbol": "doc.plaintext.fill",
-          "table": null
-        },
-        {
-          "id": "814c0b2f-3883-43f0-880b-2bbdbe923b76",
-          "kind": "problem",
-          "title": "The library gets bigger, the right skill gets harder to find",
-          "body": "The paper's second major finding is a retrieval bottleneck: even a perfect skill is useless if the agent can't reliably retrieve and actually use it once the library grows.",
-          "bullets": [
-            "Actual-use precision falls from 29.6% (pool of 5 skills) to 3.3% (pool of 100 skills)",
-            "Skills also fail outright under brittle assumptions, incompatible contexts, or when the situation needs adaptation the fixed procedure doesn't cover",
-            "Bigger skill libraries aren't free -- they trade coverage for a much harder retrieval problem"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "eb46b6d4-ce05-411f-8499-951b22b3a8f6",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Skills aren't a knowledge-injection trick -- they're a behavior-stabilization trick, and that changes how you should write and manage them.",
-          "bullets": [
-            "Write skills as procedures/checklists, not explanations -- that's the mechanism doing the actual work",
-            "Distill trajectories into clean SKILL.md files rather than dumping raw execution history",
-            "Keep libraries small and curated: retrieval precision collapses well before 100 skills",
-            "Test each skill across contexts before trusting it broadly -- brittle assumptions are the main failure mode"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "d72ebf4d-e8a2-46e0-a536-40d7a8c9d893",
-            "prompt": "According to the paper, what's the dominant mechanism by which skills help agents succeed?",
-            "options": [
-              "Injecting facts the base model didn't already know",
-              "Procedural anchoring -- stabilizing the sequence of actions taken",
-              "Increasing the model's effective context window",
-              "Fine-tuning the base model's weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "Procedural anchoring accounted for 65.7% of cases where a skill helped, versus just 4.5% for explicit knowledge injection -- skills mostly work by locking in a reliable sequence of steps, not by teaching new facts."
-          },
-          {
-            "id": "42398c6f-ece6-4894-ac02-d3b91ec04601",
-            "prompt": "What happened to actual-use retrieval precision as the skill library grew from 5 to 100 skills?",
-            "options": [
-              "It stayed roughly flat",
-              "It fell from 29.6% to 3.3%",
-              "It rose from 3.3% to 29.6%",
-              "It doubled"
-            ],
-            "correctIndex": 1,
-            "explanation": "Precision collapsed from 29.6% at a pool of 5 skills to 3.3% at a pool of 100 -- a real scaling bottleneck: bigger libraries make it much harder for the agent to actually find and use the right skill."
-          },
-          {
-            "id": "835bb3c7-cbba-4669-b8de-75ec27199d27",
-            "prompt": "How did a distilled SKILL.md procedure compare to keeping the full raw trajectory (Workflow Memory)?",
-            "options": [
-              "It underperformed by 6.06 points",
-              "It outperformed by 6.06 points, despite containing less raw detail",
-              "The two were statistically identical",
-              "Workflow Memory isn't a valid comparison"
-            ],
-            "correctIndex": 1,
-            "explanation": "The distilled skill beat Workflow Memory by 6.06 points in matched comparisons -- evidence that compressing a trajectory into a clean procedure helps more than preserving every execution detail."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1927e195-566d-4c91-98ab-2fa2f4742e34",
-          "title": "Demystifying Agent Skills: Why They Work—Until They Don't (arXiv:2608.14036)",
-          "url": "https://arxiv.org/abs/2608.14036"
-        }
-      ]
     }
   ]
 }
