@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "title": "Speculative Decoding: Guess Ahead, Verify in Parallel",
+      "subtitle": "A cheap draft model proposes tokens; the big model checks them all in one pass.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "speculative decoding",
+        "llm inference",
+        "inference optimization",
+        "decoding",
+        "serving"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding speeds up LLM generation by having a small draft model propose several tokens ahead, then verifying them all in one parallel pass through the target model — with a rejection-sampling scheme that guarantees the output distribution never changes.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Speculative Decoding: Guess Ahead, Verify in Parallel",
+          "body": "Autoregressive LLMs generate one token per forward pass. Speculative decoding lets a small draft model propose several tokens at once, then the big model checks them all in a single pass — same output distribution, fewer expensive passes.",
+          "bullets": [],
+          "symbol": "hare.fill",
+          "table": null,
+          "id": "8c5e392d-2477-4231-81ed-53d78b279072"
+        },
+        {
+          "kind": "problem",
+          "title": "Decoding Is Memory-Bound, Not Compute-Bound",
+          "body": null,
+          "bullets": [
+            "Generating each token requires a full forward pass through every layer of the target model — for a 70B model that means tens of GB of weights streamed from HBM per single token.",
+            "At small batch sizes the GPU spends most of that pass waiting on memory bandwidth, not doing math — its arithmetic units sit mostly idle.",
+            "The sequential dependency between tokens means you can't start token N+1 until token N is sampled, so passes can't just be pipelined away."
+          ],
+          "symbol": "hourglass",
+          "table": null,
+          "id": "c310cdce-d8bb-4157-9b4d-c0dc943d5798"
+        },
+        {
+          "kind": "solution",
+          "title": "A Cheap Draft Model Proposes, the Big Model Verifies",
+          "body": "Run a small, fast 'draft' model autoregressively for k steps to propose k candidate tokens. Then run the large 'target' model ONCE on all k+1 positions in parallel — one memory-bound pass instead of k.",
+          "bullets": [
+            "Draft model: a much smaller model from the same family (e.g., a ~1B model drafting for a 70B target), or the target itself with an early exit.",
+            "The target checks every draft token's probability under its own distribution in a single batched forward pass covering all k positions.",
+            "Accepted tokens are free wins; the first rejected token is resampled from a corrected distribution — never accepted from something the target disagrees with."
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "8b9ba694-ae2f-4236-b8fc-c3eef756a74e"
+        },
+        {
+          "kind": "architecture",
+          "title": "Rejection Sampling Keeps the Output Provably Identical",
+          "body": "The math guarantees the sampled sequence has exactly the same distribution as sampling from the target model alone — this is a lossless speedup, not an approximation.",
+          "bullets": [
+            "For each draft token, accept it with probability min(1, p_target(token) / p_draft(token)).",
+            "If rejected, resample from the residual distribution max(0, p_target − p_draft), renormalized — this exactly cancels the draft model's bias.",
+            "If all k draft tokens are accepted, sample one bonus token for free from the target's distribution at position k+1."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "589c25f1-09c5-45d3-9732-2a53d2c1aa89"
+        },
+        {
+          "kind": "example",
+          "title": "Walking Through One Verification Step",
+          "body": "Suppose k=4 and a draft model is completing 'The capital of France is ___'. The target model checks all draft positions in one pass.",
+          "bullets": [
+            "Draft proposes: 'The', 'capital', 'of', 'Spain' — the target agrees on the first three but assigns near-zero probability to 'Spain' given the earlier context.",
+            "The first 3 tokens are accepted for the cost of ONE target forward pass; the 4th is rejected and correctly resampled as 'France'.",
+            "Net result: 4 tokens advance (3 accepted + 1 resampled) using 1 expensive target pass plus 4 cheap draft passes, instead of 4 expensive target passes."
+          ],
+          "symbol": "text.magnifyingglass",
+          "table": null,
+          "id": "e12c0ec8-571d-4275-bce8-b4bc790990d6"
+        },
+        {
+          "kind": "comparison",
+          "title": "Acceptance Rate Decides the Real-World Speedup",
+          "body": null,
+          "bullets": [
+            "Speedup scales with acceptance rate — predictable text like code or boilerplate accepts far more draft tokens than creative or highly technical writing.",
+            "Real gains also depend on how much cheaper the draft pass is relative to the target pass, and how large k is set."
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Method",
+              "Draft strategy",
+              "Reported speedup"
+            ],
+            "rows": [
+              [
+                "Speculative decoding (Leviathan et al. 2023)",
+                "Separate small LM drafting for a larger target",
+                "~2-3x on translation/summarization"
+              ],
+              [
+                "Speculative sampling (Chen et al. 2023)",
+                "Small separate LM (e.g., 70M) drafting for a much larger target",
+                "~2x wall-clock, exact output match"
+              ],
+              [
+                "Medusa",
+                "Extra prediction heads bolted onto the target model itself",
+                "~2-3x, no separate model to host"
+              ],
+              [
+                "EAGLE",
+                "Drafts in the target's feature space one layer up, not raw tokens",
+                "Higher acceptance rate than vanilla drafting"
+              ]
+            ]
+          },
+          "id": "4cdee8c7-c36d-4930-99c0-a06d05b01fba"
+        },
+        {
+          "kind": "concept",
+          "title": "When It Doesn't Pay Off",
+          "body": null,
+          "bullets": [
+            "Low-acceptance domains (highly creative or out-of-distribution text) mean most draft tokens get rejected — you pay for the draft passes without saving target passes.",
+            "It needs a second model resident in memory (or extra heads/layers) — added VRAM and engineering complexity, and the draft model must stay well-aligned as the target is updated.",
+            "Large-batch serving dilutes the win: the technique helps most at low batch sizes where the target pass is memory-bound and underutilized; at high batch sizes the pass is already compute-bound.",
+            "Setting k too high wastes draft compute on tokens that get rejected anyway; too low caps the ceiling on speedup — it needs tuning per workload."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "a0dcdb7b-0c26-490f-bc03-1a4ffdb1800e"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Same Output, Fewer Expensive Passes",
+          "body": null,
+          "bullets": [
+            "Speculative decoding is lossless: it changes wall-clock time, not what the model would have said.",
+            "The core trick is trading many cheap draft passes for fewer expensive target passes, exploiting idle GPU capacity during memory-bound decoding.",
+            "Acceptance rate is the number that matters most — it's set by how well the draft model's distribution matches the target's on your actual traffic."
+          ],
+          "symbol": "flag.checkered",
+          "table": null,
+          "id": "a0181c09-d86b-4de2-a9fd-130a032c102d"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why doesn't speculative decoding change the model's output distribution?",
+            "options": [
+              "It always accepts the draft model's guess",
+              "Rejected tokens are corrected with a residual resampling step that exactly cancels the draft model's bias",
+              "It only works with deterministic (greedy) decoding",
+              "The target model is skipped entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "The accept/reject rule (min(1, p_target/p_draft)) plus resampling from the residual distribution on rejection is mathematically equivalent to sampling straight from the target model — that equivalence is what makes the speedup lossless.",
+            "id": "b53cde67-45d1-46bf-8f18-bb29182d728f"
+          },
+          {
+            "prompt": "What actually makes standard autoregressive decoding slow on a GPU?",
+            "options": [
+              "The GPU runs out of arithmetic throughput",
+              "Each token requires a full memory-bound pass through the model's weights, and tokens must be generated sequentially",
+              "Tokenization is CPU-bound and dominates latency",
+              "Attention cost grows so fast it dominates every step"
+            ],
+            "correctIndex": 1,
+            "explanation": "At small batch sizes, decoding is bottlenecked on streaming weights from memory rather than on compute, and the sequential dependency between tokens prevents batching multiple steps together — exactly the idle capacity speculative decoding exploits.",
+            "id": "ee1f3e32-2d63-4a3c-9614-76b7aa9a9ca0"
+          },
+          {
+            "prompt": "When does speculative decoding help the LEAST?",
+            "options": [
+              "Low batch size, predictable text like code",
+              "High batch size serving, where the target's pass is already compute-bound",
+              "Long documents with repetitive structure",
+              "When the draft model closely matches the target's style"
+            ],
+            "correctIndex": 1,
+            "explanation": "At high batch sizes the target model's forward pass is already compute-bound rather than memory-bound, so there's little idle GPU capacity left for speculative decoding to soak up — the technique shines most at low batch sizes.",
+            "id": "37c53c34-fdc3-41dc-a560-224088be1b95"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Fast Inference from Transformers via Speculative Decoding",
+          "url": "https://arxiv.org/abs/2211.17192",
+          "id": "f8756833-2958-4d19-82de-96aadc91aff9"
+        },
+        {
+          "title": "Accelerating Large Language Model Decoding with Speculative Sampling",
+          "url": "https://arxiv.org/abs/2302.01318",
+          "id": "316cfabb-7a00-4dd8-bd0a-33dc26c771ee"
+        }
+      ],
+      "id": "df89c71b-3e93-4284-9f12-4e73f2309e1c",
+      "publishedDate": "2026-09-08T18:40:45Z"
+    },
+    {
       "title": "Orchard: An Open Framework for Scaling Agentic AI",
       "subtitle": "Microsoft's open-source stack trains agents inside the same Kubernetes sandboxes they later deploy in.",
       "category": "AI News",
@@ -11163,193 +11364,6 @@
       "references": [],
       "id": "94e63984-d9b5-4264-8f82-f90772dc7094",
       "publishedDate": "2026-09-01T06:42:33Z"
-    },
-    {
-      "title": "Agent Memory: What Survives Between Turns",
-      "subtitle": "Why long-running agents need more than a bigger context window.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "agents",
-        "memory",
-        "context-window",
-        "retrieval",
-        "llm-agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "clock.arrow.circlepath",
-      "summary": "Long-running agents outgrow their context window fast. This post breaks down the three-tier memory model — working, episodic, and long-term — the write/read/compaction loop that keeps it running, and the real tradeoffs (cost, staleness, retrieval noise) that decide when memory helps and when it's dead weight.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Agent Memory: What Survives Between Turns",
-          "body": "A long-running agent's context window is a whiteboard, not a filing cabinet — every eviction risks losing something it still needed.",
-          "bullets": [],
-          "symbol": "clock.arrow.circlepath",
-          "id": "546b1353-6ef2-4084-b330-d2d008a85965"
-        },
-        {
-          "kind": "problem",
-          "title": "The Context Window Is a Leaky Bucket",
-          "body": "Even a large window fills fast once tool results, file diffs, and stack traces get appended verbatim turn after turn.",
-          "bullets": [
-            "A 200K-token window (~150K words) sounds huge until every tool result and file diff is appended in full.",
-            "The naive fix — drop the oldest messages first — deletes exactly where the user's original constraints usually live.",
-            "Result: an agent that confidently violates a rule it was told 40 turns ago, not out of carelessness but because it literally can't see it anymore."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "7705dfe9-7d8c-42dd-89dc-58d2828b0cb4"
-        },
-        {
-          "kind": "solution",
-          "title": "Three Tiers, Not One Memory",
-          "body": "MemGPT's framing is useful: treat the context window like RAM and an external store like disk, paging facts in and out instead of hoping everything fits.",
-          "bullets": [
-            "Working memory: the live context window — fast to read, free, but capacity-limited.",
-            "Episodic memory: a running summary of what happened, written after each task and compacted over time.",
-            "Long-term / semantic memory: durable facts and preferences stored outside the window (vector store or key-value profile), pulled back in only when relevant."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "id": "8803513f-2335-4859-86ce-1729ffbb6653"
-        },
-        {
-          "kind": "architecture",
-          "title": "Two Paths: Write and Read",
-          "body": "The system does real work on both ends of a turn, not just at read time.",
-          "bullets": [
-            "Write path: after each turn, an extraction call pulls out durable facts ('DB is Postgres, not MySQL') and appends them to storage — not the raw transcript.",
-            "Read path: before the next turn, retrieve the top-k relevant memories by embedding similarity or keyword match and inject only those into the prompt.",
-            "Compaction loop: periodically summarize older episodic entries into fewer, denser ones so storage doesn't grow without bound."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "id": "5458ba84-24ce-4af2-95f7-bab82214fb7c"
-        },
-        {
-          "kind": "comparison",
-          "title": "Picking a Strategy",
-          "body": "No single strategy wins everywhere — the right one depends on session length and how sparse the useful facts are.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Strategy",
-              "Recall",
-              "Cost per Turn",
-              "Best For"
-            ],
-            "rows": [
-              [
-                "Full history in context",
-                "Perfect until full",
-                "Grows unbounded",
-                "Short sessions, under ~50 turns"
-              ],
-              [
-                "Sliding window (last N)",
-                "Recent-only",
-                "Flat",
-                "Chat where old context rarely matters"
-              ],
-              [
-                "Summarization",
-                "Lossy but dense",
-                "One extra LLM call per compaction",
-                "Long tasks with evolving state"
-              ],
-              [
-                "Vector retrieval",
-                "Selective, can miss context",
-                "Embedding + search per turn",
-                "Large fact stores, sparse relevance"
-              ]
-            ]
-          },
-          "id": "a6b78ad2-5e62-4bf2-97cd-bd40bf1f146a"
-        },
-        {
-          "kind": "example",
-          "title": "A Coding Agent Hits Its Limit",
-          "body": "The difference between memory tiers shows up exactly when the window is under pressure.",
-          "bullets": [
-            "Turn 3: the user says, 'don't touch the /legacy endpoint, other teams depend on it.'",
-            "Turn 180: context is 90% full of test output and diffs; that original sentence has long since scrolled out of the window.",
-            "With memory: the instruction was extracted as a durable fact at turn 3, stored externally, and retrieved again at turn 180 because the next edit touches a file that imports /legacy.",
-            "Without memory: the agent refactors /legacy anyway — not from carelessness, but because it can no longer read what it was told."
-          ],
-          "symbol": "terminal.fill",
-          "id": "2ee730d8-dc24-4fd3-82b1-69880744b23c"
-        },
-        {
-          "kind": "concept",
-          "title": "When Memory Makes Things Worse",
-          "body": "Memory is a tradeoff, not a free upgrade — it adds failure modes of its own.",
-          "bullets": [
-            "Stale facts: a preference from three weeks ago can be actively wrong today; memory needs expiry or versioning, not just accumulation.",
-            "Retrieval noise: pulling back ten 'relevant' memories for a simple question adds tokens and can distract the model more than it helps.",
-            "Extra latency and cost: every write path is another LLM call — for a one-shot Q&A agent, that overhead buys nothing.",
-            "Memory poisoning: a wrong fact written once gets faithfully retrieved and repeated until someone corrects it."
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "id": "cd18417c-f1c1-4387-92df-a241022f59e3"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "Working memory (the context window) is fast but finite — treat it as cache, not storage.",
-            "Write summaries and extracted facts to long-term memory, not raw transcripts.",
-            "Retrieve selectively: more memory injected isn't automatically better recall.",
-            "Skip long-term memory entirely for short, single-session tasks — the overhead isn't worth it there."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "0796c8fb-f3da-4bea-84af-bc8e10a25593"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What's the main risk of simply truncating the oldest messages when a context window fills up?",
-            "options": [
-              "It increases token cost",
-              "It can silently drop constraints or instructions the user gave earlier",
-              "It always improves latency",
-              "It corrupts the model's weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "Truncating oldest-first assumes old messages matter least, but early turns often carry the constraints (like 'don't touch this endpoint') that later turns depend on.",
-            "id": "c38c3721-76dd-4585-8a5f-38d79b523d77"
-          },
-          {
-            "prompt": "In the MemGPT-style OS-paging analogy, what does the external memory store correspond to?",
-            "options": [
-              "CPU cache",
-              "RAM",
-              "Disk in a virtual-memory system",
-              "A network socket"
-            ],
-            "correctIndex": 2,
-            "explanation": "MemGPT treats the LLM's limited context window like RAM and pages information in and out of a slower, larger external store — analogous to disk in OS virtual memory.",
-            "id": "d8b9cfd8-f0dd-4417-ac4a-d4023b427a0e"
-          },
-          {
-            "prompt": "Which task is the worst fit for bolting a long-term memory system onto an agent?",
-            "options": [
-              "A multi-day coding session across many files",
-              "A customer-support bot that should remember prior tickets",
-              "A one-shot question-answering call with no follow-up",
-              "A research agent tracking findings across dozens of searches"
-            ],
-            "correctIndex": 2,
-            "explanation": "A single-shot interaction has nothing to remember for later — the write/read overhead of a memory system only pays off across multiple turns or sessions.",
-            "id": "aca830c2-ee47-48b3-8814-9c9891dfeb4a"
-          }
-        ]
-      },
-      "references": [],
-      "id": "e018bc83-7e54-4061-b81b-c765b6bb0525",
-      "publishedDate": "2026-09-01T00:40:36Z"
     }
   ]
 }
