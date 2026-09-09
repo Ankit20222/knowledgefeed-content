@@ -1,6 +1,215 @@
 {
   "posts": [
     {
+      "title": "HNSW: Fast Approximate Search Over Millions of Vectors",
+      "subtitle": "A layered graph inspired by skip lists turns nearest-neighbor search from a linear scan into a handful of hops.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "hnsw",
+        "vector-search",
+        "ann",
+        "embeddings",
+        "vector-database"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind most production vector search — Faiss, hnswlib, Milvus, Weaviate, Qdrant, and pgvector all build on it. It arranges vectors into a multi-layer graph where sparse upper layers let a query take long jumps and the dense bottom layer refines the answer, turning search into roughly log(N) hops instead of a full scan. It trades a small, tunable amount of recall for that speed, and pays for it in RAM and slow deletes.",
+      "slides": [
+        {
+          "id": "9e68f65d-da01-453c-9928-937f17e51fa8",
+          "kind": "cover",
+          "title": "A skip list, but for nearest neighbors",
+          "body": "HNSW (Malkov & Yashunin, 2016) is the graph structure most vector databases build under the hood — Faiss, hnswlib, Milvus, Weaviate, Qdrant, and pgvector's `hnsw` index all use it.",
+          "bullets": [
+            "Turns 'find the closest vector to this one' from a full scan into a handful of graph hops",
+            "No training step required — unlike clustering-based indexes, you just insert vectors one at a time",
+            "The default choice when you need high recall at low latency and can afford the RAM"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "74c1835c-72db-4573-ae37-3948a8356d55",
+          "kind": "problem",
+          "title": "Comparing a query to every vector doesn't scale",
+          "body": "Brute-force nearest-neighbor search is exact but linear — every added vector adds a fixed amount of work to every future query.",
+          "bullets": [
+            "A brute-force scan over 10 million 768-dim embeddings means 10 million distance computations per query",
+            "Even at roughly a microsecond per comparison, that's already single-digit milliseconds of pure compute per query, before reranking or generation even starts",
+            "High-dimensional distance doesn't compress with simple tricks like sorting or hashing — you need structure, not a shortcut"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "da7e5b43-1d07-4d11-8bff-068a7c57540a",
+          "kind": "concept",
+          "title": "Layers get sparser as you go up, like a skip list",
+          "body": "HNSW builds a graph where every vector lives on layer 0, but only a shrinking fraction also exists on higher layers.",
+          "bullets": [
+            "Each inserted point is randomly assigned a top layer, with the probability of reaching the next layer up decaying exponentially — layer 0 might hold 10M points while layer 4 holds a few hundred",
+            "On every layer, a node connects to roughly M of its nearest already-inserted neighbors (a common default is M=16)",
+            "Higher layers act like highways for long jumps across the vector space; layer 0 is the dense, fine-grained local map"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "1eb01559-8232-4ddf-9e6a-b15a71366e9b",
+          "kind": "solution",
+          "title": "Search greedily descends, then runs a local beam search",
+          "body": "A query starts at a fixed entry point on the top layer and works its way down.",
+          "bullets": [
+            "At each layer, greedily hop to whichever neighbor is closest to the query until no neighbor is closer — that local minimum becomes the entry point for the layer below",
+            "At layer 0, instead of stopping at one point, HNSW keeps a candidate list of size ef (efSearch) and keeps expanding the best unexplored candidates — this beam search is what makes results approximate rather than purely greedy",
+            "Total hops scale roughly with log(N): doubling the dataset adds about one more layer to cross, not double the work"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "d4edbfd9-4c99-4f34-83b5-0a790dfb789b",
+          "kind": "comparison",
+          "title": "HNSW vs. brute-force vs. IVF",
+          "body": "IVF (Inverted File Index) clusters vectors with k-means and only searches the nprobe closest clusters; HNSW skips training entirely but pays for it in RAM.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Brute-force",
+              "IVF",
+              "HNSW"
+            ],
+            "rows": [
+              [
+                "Query cost",
+                "O(N)",
+                "O(N/nlist × nprobe)",
+                "~O(log N)"
+              ],
+              [
+                "Needs a training step?",
+                "No",
+                "Yes (k-means)",
+                "No"
+              ],
+              [
+                "Typical recall@10",
+                "100% (exact)",
+                "85-95% (tunable)",
+                "95-99% (tunable)"
+              ],
+              [
+                "Memory vs. raw vectors",
+                "1x",
+                "~1.1x",
+                "~1.5-2x (stores graph edges)"
+              ],
+              [
+                "Fast deletes?",
+                "Yes",
+                "Yes",
+                "No — tombstones or rebuild"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "a1f53dd6-8487-40db-8d04-085e500ce8ed",
+          "kind": "example",
+          "title": "A RAG retriever answering under 20ms",
+          "body": "Concrete setup: 5 million document chunks embedded at 1536 dimensions, stored in an HNSW index with M=16, efConstruction=200.",
+          "bullets": [
+            "Brute-force: ~5M distance computations per query — tens of milliseconds of pure math before reranking even starts",
+            "HNSW with efSearch=50: a few hundred distance computations spread across roughly 4-5 layers — typically single-digit milliseconds",
+            "Raise efSearch to 200 for a hard query that needs higher recall — it's a per-query knob you tune live, not something that requires rebuilding the index"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "50dbdbe5-457a-42ac-9026-e8db49a5dd1f",
+          "kind": "problem",
+          "title": "The RAM bill and the missing delete button",
+          "body": "HNSW's speed comes from a graph that has to live in memory, and that graph doesn't like being edited.",
+          "bullets": [
+            "Index size typically runs 1.5-2x the raw vector data, since every node stores M+ neighbor pointers per layer on top of the vector itself",
+            "Deleting a vector doesn't remove it from other nodes' neighbor lists — implementations usually tombstone it and filter at query time, or require a periodic rebuild",
+            "Recall is probabilistic, not guaranteed: a query can genuinely miss the true nearest neighbor, so HNSW is the wrong tool when you need exact results (e.g. deduplication) instead of 'close enough'",
+            "When data won't fit in RAM, a disk-oriented index like DiskANN trades some latency for handling billions of vectors off SSD"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "3cd6a519-b370-48b4-b8cf-ea5c60584da4",
+          "kind": "takeaways",
+          "title": "What to remember about HNSW",
+          "body": null,
+          "bullets": [
+            "It's a layered graph — sparse on top for long jumps, dense at the bottom for fine-grained search, like a skip list for vectors",
+            "Three knobs matter: M (graph density/memory), efConstruction (build-time quality), efSearch (query-time recall vs. speed)",
+            "It trades a small, tunable amount of recall for roughly logarithmic query time and zero training step",
+            "Watch the RAM budget, and avoid it when you need exact results or a workload with heavy deletes/updates"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "5b326bf9-99b1-440c-ba8f-bb94c4f2cd19",
+            "prompt": "What does the parameter efSearch control in HNSW?",
+            "options": [
+              "The number of layers in the graph",
+              "The size of the candidate list explored at query time, trading speed for recall",
+              "The dimensionality of the stored vectors",
+              "The number of vectors removed per rebuild"
+            ],
+            "correctIndex": 1,
+            "explanation": "efSearch sets how many candidates HNSW keeps open while searching layer 0. A larger efSearch explores more of the graph, raising recall at the cost of more distance computations per query — and it's tunable per query, with no rebuild needed."
+          },
+          {
+            "id": "df2849d5-1912-42bb-80e3-7658d1f4b74d",
+            "prompt": "Why does HNSW use a hierarchy of layers instead of one flat graph?",
+            "options": [
+              "To store redundant copies of each vector for fault tolerance",
+              "To let long-distance jumps happen on sparse upper layers before fine-grained search on the dense bottom layer",
+              "To support multiple distance metrics at once",
+              "To reduce the dimensionality of vectors before comparison"
+            ],
+            "correctIndex": 1,
+            "explanation": "The layered structure mirrors a skip list: sparse upper layers let a search cross the vector space in a few big hops, then progressively denser layers refine the answer — that's what keeps search close to logarithmic instead of linear in the number of vectors."
+          },
+          {
+            "id": "3849d8b9-1433-424c-8c1c-82eaa776517b",
+            "prompt": "Which workload is HNSW a poor fit for?",
+            "options": [
+              "Powering a RAG retriever over a mostly-static document set",
+              "Semantic search over a few million product descriptions",
+              "A dataset with heavy continuous deletes and updates",
+              "A recommendation system doing lookups on stable embeddings"
+            ],
+            "correctIndex": 2,
+            "explanation": "HNSW graphs don't support cheap deletes — removing a node still leaves dangling references in its neighbors' edge lists, so implementations typically tombstone entries and periodically rebuild. Workloads with constant churn pay for that maintenance repeatedly."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "fdc9facb-0e33-40b7-9494-217a070e8859",
+          "title": "Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs (Malkov & Yashunin, 2016)",
+          "url": "https://arxiv.org/abs/1603.09320"
+        }
+      ],
+      "id": "48e38db7-8a3b-45fc-8960-c170f3baaec3",
+      "publishedDate": "2026-09-09T06:40:27Z"
+    },
+    {
       "id": "b9debb07-0699-47dd-95c4-25c9bc9df768",
       "title": "Mamba: Ditching Attention for a Constant-Size State",
       "subtitle": "Selective state space models process sequences in linear time with a fixed-size memory — no KV cache required.",
@@ -11171,199 +11380,6 @@
         }
       ],
       "id": "ca3c9af1-d32a-4b1f-b3bc-6115b00ec2e6",
-      "publishedDate": "2026-09-01T06:42:33Z"
-    },
-    {
-      "title": "DeepSeek-V4-Pro-0813: Preview Graduates to Flagship",
-      "subtitle": "Selectable reasoning effort, a bolted-on speculative decoder, and native support for OpenAI's Responses API.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "deepseek",
-        "llm-release",
-        "reasoning-effort",
-        "speculative-decoding",
-        "agentic-coding"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "DeepSeek shipped V4-Pro-0813, the official production release superseding the V4-Pro preview: three selectable reasoning-effort levels replace the old fixed thinking budget, a new DSpark speculative decoding module speeds up generation, and the model now natively supports OpenAI's Responses API — all on the same 1M-token, unchanged-parameter base.",
-      "slides": [
-        {
-          "id": "2b1a8c09-dadc-4548-b180-8eaa93fa85c4",
-          "kind": "cover",
-          "title": "DeepSeek's Flagship Leaves Preview",
-          "body": "After roughly four months in preview, DeepSeek-V4-Pro-0813 is the official production release — same base model, several production-focused upgrades bolted on.",
-          "bullets": [],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "9d3c31ef-c8a8-4679-a14f-37d2235f2727",
-          "kind": "problem",
-          "title": "A Preview Tag Doesn't Survive Contact With Production",
-          "body": null,
-          "bullets": [
-            "DeepSeek-V4-Pro had been running as a preview build for months while frontier competitors kept shipping — a preview label makes teams hesitant to build production agents on top of it.",
-            "The preview shipped with a single fixed thinking budget, which is a blunt instrument: the same reasoning depth for a one-line autocomplete and a multi-file refactor.",
-            "Agentic and tool-calling workloads exposed rough edges that only show up under real production traffic, not static benchmarks."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "3fbc9a70-dd94-430c-9c9c-262f98d7f918",
-          "kind": "solution",
-          "title": "What 0813 Actually Changes",
-          "body": null,
-          "bullets": [
-            "Replaces the single fixed thinking budget with three selectable reasoning-effort levels — low, high, and max — so callers pick depth per request.",
-            "Adds a DSpark speculative decoding module attached to the existing V4-Pro-preview model structure, aimed at faster token generation without changing the base weights.",
-            "Adds native support for OpenAI's Responses API, easing integration for teams already building against that interface.",
-            "Model name, parameter count, and the 1-million-token context window are unchanged from the preview."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "99660e44-9417-4da8-9c8b-42017a91f3a6",
-          "kind": "architecture",
-          "title": "Speculative Decoding, Bolted On Rather Than Retrained",
-          "body": null,
-          "bullets": [
-            "Speculative decoding works by having a cheap draft step propose several tokens ahead, which the full model then verifies in parallel — accepted tokens are 'free', rejected ones fall back to normal generation.",
-            "DSpark is attached to the same V4-Pro-preview weights rather than requiring a retrained base model, which is why the released parameter count and context window didn't move.",
-            "This mirrors a broader industry pattern: ship a speculative-decoding layer as an add-on to cut latency/cost on an already-trained model instead of re-training for speed."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "246fe8f9-e9b7-44f6-9a42-3708414da2fd",
-          "kind": "comparison",
-          "title": "Preview vs. 0813",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Feature",
-              "V4-Pro (Preview)",
-              "V4-Pro-0813"
-            ],
-            "rows": [
-              [
-                "Reasoning control",
-                "Single fixed thinking budget",
-                "Selectable low / high / max effort"
-              ],
-              [
-                "Decoding",
-                "Standard",
-                "DSpark speculative decoding module"
-              ],
-              [
-                "API compatibility",
-                "DeepSeek API only",
-                "Adds native OpenAI Responses API support"
-              ],
-              [
-                "Params / context",
-                "Unchanged",
-                "Unchanged"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "ce8adaa9-418f-4473-aba8-393485dda930",
-          "kind": "example",
-          "title": "Picking Effort Per Request",
-          "body": "A team running a coding agent harness can now route work by task shape instead of paying one fixed reasoning cost for everything.",
-          "bullets": [
-            "Quick autocomplete-style edits get routed at 'low' effort — fast, cheap, good enough for a single-file change.",
-            "A gnarly multi-file refactor or a failing-test debugging loop gets routed at 'max' effort, trading latency and cost for deeper reasoning.",
-            "Official pricing starts at $0.435 / $0.87 per 1M input/output tokens on a cache miss, with peak/off-peak rates added a few days after launch — worth checking the current rate card before committing usage at scale."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "e61e3e4e-e044-4006-9043-03cf6919e969",
-          "kind": "concept",
-          "title": "Read the Benchmark Fine Print",
-          "body": null,
-          "bullets": [
-            "Third-party benchmark write-ups on 0813's exact SWE-bench Verified score don't fully agree with each other — treat any single quoted percentage with some skepticism until you've checked the eval harness it came from.",
-            "Independent agentic-coding leaderboards that score full open-ended agent loops (not just single-patch generation) place it further from the top than patch-style benchmarks suggest — strong at some task shapes, weaker at others.",
-            "Pricing tiers (peak/off-peak) were introduced shortly after launch, so a quoted price from launch day can already be stale."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "f8b01845-bbc9-48e3-a1be-b8869b6ea0e7",
-          "kind": "takeaways",
-          "title": "The Big Idea",
-          "body": null,
-          "bullets": [
-            "'Preview to GA' upgrades are often about production ergonomics (effort controls, API compatibility, latency) more than raw capability — the base model here didn't even change size.",
-            "Speculative decoding modules like DSpark are a cheap way to cut latency/cost on an already-trained model without a full retrain.",
-            "Always sanity-check third-party benchmark claims against multiple sources — coding-agent evaluations especially disagree depending on harness setup."
-          ],
-          "symbol": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "495b6452-8170-47a8-ac40-7e9673247c50",
-            "prompt": "What replaced the single fixed thinking budget in DeepSeek-V4-Pro-0813?",
-            "options": [
-              "A larger parameter count",
-              "Three selectable reasoning-effort levels (low, high, max)",
-              "A longer context window",
-              "A separate model for each task type"
-            ],
-            "correctIndex": 1,
-            "explanation": "0813 lets callers pick low/high/max reasoning effort per request instead of paying one fixed thinking budget for every call."
-          },
-          {
-            "id": "ba287358-0b59-446e-a9b4-86cbd6d2d007",
-            "prompt": "What does the DSpark module added in 0813 actually do?",
-            "options": [
-              "Retrains the base model on new data",
-              "Increases the context window to 1M tokens",
-              "Speculative decoding — draft tokens proposed cheaply, verified in parallel by the full model",
-              "Adds a new vision encoder"
-            ],
-            "correctIndex": 2,
-            "explanation": "DSpark is a speculative decoding module attached to the existing preview weights: a cheap draft step proposes tokens ahead, and the full model verifies them in parallel to speed up generation without retraining."
-          },
-          {
-            "id": "1855568f-3bb5-4147-9a93-66f76d2d44a4",
-            "prompt": "Why does the post caution against trusting a single quoted SWE-bench score for V4-Pro-0813?",
-            "options": [
-              "Because DeepSeek has not published any benchmark numbers",
-              "Because independent write-ups report differing scores, and full agentic-loop leaderboards rank it differently than patch-style benchmarks",
-              "Because SWE-bench does not evaluate coding models",
-              "Because the model changes its score every day"
-            ],
-            "correctIndex": 1,
-            "explanation": "Different third-party sources quote different SWE-bench Verified numbers for the same release, and separate leaderboards that score full agent loops (not just single patches) place it differently — a reminder to check the eval setup behind any single number."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "6aac0603-9b65-4625-9c38-7c62987778e2",
-          "title": "DeepSeek-V4-Pro-0813 model card (Hugging Face)",
-          "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813"
-        }
-      ],
-      "id": "ede06eed-9084-4a91-905b-ecc059cbe3d2",
       "publishedDate": "2026-09-01T06:42:33Z"
     }
   ]
