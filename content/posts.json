@@ -1,6 +1,205 @@
 {
   "posts": [
     {
+      "id": "b9debb07-0699-47dd-95c4-25c9bc9df768",
+      "title": "Mamba: Ditching Attention for a Constant-Size State",
+      "subtitle": "Selective state space models process sequences in linear time with a fixed-size memory — no KV cache required.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mamba",
+        "state-space-models",
+        "ssm",
+        "linear-attention",
+        "sequence-modeling"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "waveform.path",
+      "summary": "Mamba replaces self-attention with a selective state space model: a recurrence whose update rule depends on the current token, computed via a hardware-aware parallel scan. It runs in linear time with a constant-size hidden state instead of a growing KV cache, trading some precise long-range recall for far cheaper long-sequence inference.",
+      "publishedDate": "2026-09-09T00:41:26Z",
+      "slides": [
+        {
+          "id": "a2bfebcd-0e23-4169-a997-6b2a71b06b52",
+          "kind": "cover",
+          "title": "Attention scales quadratically. Mamba doesn't.",
+          "body": "Mamba (Albert Gu and Tri Dao, December 2023) replaces self-attention with a selective state space model — a recurrence that updates a fixed-size hidden state instead of attending over every past token.",
+          "bullets": [
+            "No attention, no KV cache — just a hidden state that updates one token at a time",
+            "Runs in linear time and constant memory per generated token",
+            "Now the backbone (often mixed with attention) of long-context and on-device models"
+          ],
+          "symbol": "waveform.path",
+          "table": null
+        },
+        {
+          "id": "47b35e0e-1330-44c7-b21f-6066328d01e8",
+          "kind": "problem",
+          "title": "Every generated token costs more than the last one did",
+          "body": "Self-attention's cost and memory both grow with how much context the model has already seen.",
+          "bullets": [
+            "Self-attention compares every token to every other token: O(n^2) compute over a sequence of length n",
+            "Autoregressive decoding keeps a KV cache — one key and value vector per past token — that grows linearly with the conversation",
+            "Past a few hundred thousand tokens, that KV cache can occupy more GPU memory than the model's own weights"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "353e7c24-cf26-4ea9-8e55-f3c38a3362ac",
+          "kind": "concept",
+          "title": "A state space model keeps a summary, not a list",
+          "body": "The idea predates deep learning: control theory describes a system by a hidden state that evolves over time.",
+          "bullets": [
+            "A continuous-time SSM updates a hidden state h via matrices A, B, C, then reads it out through C — discretized into a step-by-step recurrence for use on sequences",
+            "Earlier structured SSMs (S4, 2021) kept A, B, C fixed for the entire sequence, which let the recurrence be rewritten as one big convolution — fast, but the same fixed matrices had to work for every input",
+            "That fixed-parameter constraint made S4 efficient but weak at content-based behavior like 'copy this token' or 'ignore that one'"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "c1fbb5f7-800b-4ed8-a4b6-50ca4f5ea098",
+          "kind": "solution",
+          "title": "Mamba makes the update depend on the input",
+          "body": "Mamba's fix: let the SSM's parameters change based on what token it's currently looking at.",
+          "bullets": [
+            "B, C, and the timestep Delta become functions of the current token, so the model can choose what to remember or forget based on content — this is the 'selective' in selective SSM",
+            "That breaks the fixed-kernel convolution trick S4 relied on, so Mamba instead computes the recurrence with a hardware-aware parallel scan",
+            "The scan keeps the large intermediate state in fast GPU SRAM instead of spilling it to slower HBM — the same IO-awareness idea behind FlashAttention",
+            "Net effect: a genuinely input-dependent recurrent model that still trains at near-Transformer speed on GPUs"
+          ],
+          "symbol": "cpu",
+          "table": null
+        },
+        {
+          "id": "68b03b3b-e245-4919-a5c0-499f4749b648",
+          "kind": "comparison",
+          "title": "Where each architecture wins on paper",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Property",
+              "Transformer (attention)",
+              "Mamba (selective SSM)"
+            ],
+            "rows": [
+              [
+                "Compute per generated token",
+                "Grows with total context length",
+                "Constant, independent of context length"
+              ],
+              [
+                "Memory during generation",
+                "KV cache grows linearly with tokens seen",
+                "Fixed-size hidden state that never grows"
+              ],
+              [
+                "Training parallelism",
+                "Fully parallel across the sequence",
+                "Parallel via the hardware-aware scan"
+              ],
+              [
+                "Precise long-range recall",
+                "Strong — any past token stays directly addressable",
+                "Weaker — history is compressed into the fixed state"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "1845a4f6-2e38-4413-9815-89b353d3ee33",
+          "kind": "example",
+          "title": "Reading a 400,000-token document on one GPU",
+          "body": "The constant-memory property is easiest to see with a concrete scale.",
+          "bullets": [
+            "A Transformer reading that document keeps a growing KV cache entry for every one of those 400,000 tokens",
+            "A Mamba-based model updates the same fixed-size hidden state the whole way through — memory use at token 400,000 looks identical to memory use at token 400",
+            "This is why SSM and hybrid layers show up specifically in models built for very long context or on-device deployment, where KV-cache memory — not raw FLOPs — is the actual limit"
+          ],
+          "symbol": "doc.plaintext",
+          "table": null
+        },
+        {
+          "id": "e3f0740f-5c65-4b82-be54-28e802cf70ee",
+          "kind": "concept",
+          "title": "Compression has a cost: exact recall gets harder",
+          "body": "Squeezing the whole history into one fixed-size state is not free.",
+          "bullets": [
+            "Retrieving one exact fact from far back ('needle in a haystack') is harder for a compressed state than for attention, which can look at any individual past token directly",
+            "Follow-up work on in-context recall benchmarks shows pure SSMs specifically lag attention on tasks needing exact copying or lookup, even when they match it on general language modeling loss",
+            "The practical fix is hybrid architectures: interleave a handful of attention layers among mostly-SSM layers — Mistral's Codestral Mamba and AI21's Jamba both ship this way",
+            "Don't reach for a pure SSM when the task is dominated by precise long-document retrieval — that's still attention's or RAG's strength. Reach for it when raw sequence length and serving memory are the bottleneck"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "fe72285c-4420-4995-9e03-c1fe4df2b555",
+          "kind": "takeaways",
+          "title": "What to actually take from this",
+          "body": null,
+          "bullets": [
+            "Mamba swaps attention for a selective state space model: a recurrence whose update matrices depend on the current input",
+            "The payoff is O(n) compute and a constant-size state, instead of O(n^2) attention and an ever-growing KV cache",
+            "The cost is weaker exact long-range recall, which is why hybrid attention+SSM architectures exist",
+            "It matters most for very long sequences or memory-constrained serving — not as a universal attention replacement"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "e3a9109b-a8a8-4841-b38c-bc2ca12e7bb3",
+            "prompt": "What is the core architectural change Mamba makes compared to earlier structured state space models like S4?",
+            "options": [
+              "It removes the hidden state entirely",
+              "It makes the SSM's B, C, and timestep parameters depend on the current input (selective) instead of holding them fixed",
+              "It replaces the state space model with an LSTM",
+              "It adds more attention heads to the model"
+            ],
+            "correctIndex": 1,
+            "explanation": "S4 held its A, B, C matrices fixed across the whole sequence, which enabled a fast convolution but limited it to input-independent behavior. Mamba makes B, C, and the timestep depend on the current token, letting it selectively remember or forget content — at the cost of that convolution shortcut, which is why it needs a hardware-aware parallel scan instead."
+          },
+          {
+            "id": "fd3ab667-2a66-443f-b85a-b5c2919272c5",
+            "prompt": "Why doesn't Mamba's memory usage grow as it generates more tokens, unlike a Transformer's KV cache?",
+            "options": [
+              "It only keeps the last 10 tokens in memory",
+              "It stores every past token's key and value vectors, just compressed",
+              "It updates a single fixed-size hidden state at each step instead of appending to a growing cache",
+              "It offloads memory to disk automatically"
+            ],
+            "correctIndex": 2,
+            "explanation": "Mamba's recurrence updates one fixed-size hidden state per step. That state's size doesn't depend on how many tokens came before it, unlike a Transformer's KV cache, which stores a vector per past token and keeps growing."
+          },
+          {
+            "id": "74132d7c-104b-4aea-ac7a-cc2455b82428",
+            "prompt": "What is the main tradeoff of Mamba's fixed-size state compared to attention?",
+            "options": [
+              "It cannot be trained on GPUs",
+              "It requires far more parameters than a Transformer of similar quality",
+              "Precise recall of one exact fact from far back in the sequence is harder, since history gets compressed rather than kept token-by-token",
+              "It cannot process sequences longer than 4,096 tokens"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because the entire history is compressed into one fixed-size state, exact lookup of a specific past detail is harder than for attention, which can address any individual past token directly. This is why hybrid architectures mix in a few attention layers to patch the recall gap."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "52221494-aa2f-40e3-a67e-13c123747c62",
+          "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+          "url": "https://arxiv.org/abs/2312.00752"
+        }
+      ]
+    },
+    {
       "title": "Speculative Decoding: Guess Ahead, Verify in Parallel",
       "subtitle": "A cheap draft model proposes tokens; the big model checks them all in one pass.",
       "category": "LLMs",
@@ -11165,204 +11364,6 @@
         }
       ],
       "id": "ede06eed-9084-4a91-905b-ecc059cbe3d2",
-      "publishedDate": "2026-09-01T06:42:33Z"
-    },
-    {
-      "title": "HNSW: How Vector Search Skips Scanning Everything",
-      "subtitle": "A layered small-world graph trades a sliver of recall for enormous query speed.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "vector-search",
-        "hnsw",
-        "embeddings",
-        "ann",
-        "rag"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based index most vector databases use for approximate nearest-neighbor search. By stacking sparse-to-dense graph layers and greedily walking toward the query, it turns a linear scan over millions of embeddings into a handful of graph hops — at the cost of memory, exactness, and cheap deletes.",
-      "slides": [
-        {
-          "id": "64069ced-7156-4548-91be-471e87a58eb9",
-          "kind": "cover",
-          "title": "Nobody Scans 10 Million Embeddings Per Query",
-          "body": "Exact nearest-neighbor search over embeddings costs O(N) per query. HNSW is the graph structure most vector databases use to get sub-linear search instead.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "0c44d00d-f4b2-41c2-a76a-b7c78521679e",
-          "kind": "problem",
-          "title": "Brute-Force kNN Doesn't Scale",
-          "body": null,
-          "bullets": [
-            "Exact k-nearest-neighbor search compares the query vector against every stored vector — cost grows linearly with the number of embeddings.",
-            "A RAG system with 10M+ chunks and multiple queries per second can't afford a full scan per request and still feel interactive.",
-            "The fix is approximate nearest-neighbor (ANN) search: give up a small, tunable amount of recall in exchange for order-of-magnitude faster queries."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "e65cbc27-b56a-467d-894e-09bd7db1c73e",
-          "kind": "solution",
-          "title": "Small-World Graphs, Stacked Like a Skip List",
-          "body": null,
-          "bullets": [
-            "HNSW builds several graph layers stacked on top of each other; each vector is randomly assigned a top layer via an exponentially decaying probability, so higher layers have far fewer nodes.",
-            "A search starts at the sparse top layer and greedily walks toward whichever neighbor is closest to the query.",
-            "Once no neighbor at the current layer is closer, the search drops down one layer and keeps walking — narrowing in fast at the top, then refining at the bottom where the full graph lives.",
-            "It's the same idea as a skip list, but the 'sorted order' is replaced by vector similarity."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "c6448c5f-de45-490b-bd20-61a959f09055",
-          "kind": "architecture",
-          "title": "Three Knobs, One Recall/Speed/Memory Triangle",
-          "body": null,
-          "bullets": [
-            "M — the max number of neighbor edges per node per layer (commonly in the teens to tens). Higher M raises recall and memory use, and slows insertion.",
-            "efConstruction — the candidate list size used while building the graph. Higher gives a better-connected graph at slower build time.",
-            "efSearch — the candidate list size used at query time. Higher raises recall at the cost of query latency, and can be tuned per query without touching the index."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "90505363-d082-4a6a-abea-76f93acd8a0f",
-          "kind": "comparison",
-          "title": "HNSW vs. the Alternatives",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Method",
-              "Query cost",
-              "Recall",
-              "Memory",
-              "Notes"
-            ],
-            "rows": [
-              [
-                "Brute-force / flat",
-                "O(N) — scans everything",
-                "Exact (100%)",
-                "Low",
-                "Fine under roughly 100k vectors"
-              ],
-              [
-                "IVF (inverted file)",
-                "Sub-linear via coarse clusters",
-                "Good, tunable via nprobe",
-                "Medium",
-                "Needs a training/clustering step first"
-              ],
-              [
-                "HNSW",
-                "Sub-linear graph hops",
-                "Very good, tunable via efSearch",
-                "High — graph edges plus vectors, usually in RAM",
-                "No cheap delete; tends to need periodic rebuilds"
-              ],
-              [
-                "LSH",
-                "Sub-linear via hash buckets",
-                "Lower, hash-collision dependent",
-                "Medium",
-                "Simpler to build, generally weaker recall than HNSW"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "81e9540f-35eb-4bd6-a9d5-8497757453fd",
-          "kind": "example",
-          "title": "Walking a Query Through a 10M-Vector Index",
-          "body": "A RAG system has embedded 10 million document chunks at 768 dimensions and built an HNSW index with M=32, efConstruction=200.",
-          "bullets": [
-            "A user's query embedding arrives. Search enters at the top layer, which might hold only a few hundred nodes.",
-            "It greedily hops toward the query by vector distance, drops a layer once nothing closer is available, and repeats — layer by layer, down to layer 0 where every vector lives.",
-            "At the bottom layer it expands a candidate list of size efSearch (say, 100) and returns the top-10 nearest chunks — typically in single-digit milliseconds instead of scanning all 10 million vectors."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "024b305d-6b0c-431f-8079-adb35c6fa6f2",
-          "kind": "concept",
-          "title": "Where HNSW Bites You in Production",
-          "body": null,
-          "bullets": [
-            "Memory-hungry: the graph edges plus the full vectors normally need to sit in RAM for speed, so 10M x 768-dim floats already cost multiple gigabytes before graph overhead.",
-            "No cheap delete: removing a node breaks its neighbors' edges, so most implementations tombstone deleted vectors and periodically rebuild rather than delete in place.",
-            "Recall is probabilistic, not guaranteed: the greedy walk can get stuck in a local optimum and miss a true nearest neighbor, especially rare edge cases.",
-            "Aggressive metadata filtering that shrinks the candidate pool too much can tank recall — filtering interacts badly with a graph built for the unfiltered space."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "420e9464-5403-46e0-bed0-b4d3b109b432",
-          "kind": "takeaways",
-          "title": "The Big Idea",
-          "body": null,
-          "bullets": [
-            "HNSW replaces a linear scan with a layered graph walk — sparse layers narrow the search fast, dense layers refine it.",
-            "Three knobs (M, efConstruction, efSearch) let you trade recall, speed, and memory against each other — and efSearch is tunable per query.",
-            "It's the default ANN index in most vector databases today, but IVF and hybrid indexes still matter when memory or update-heavy workloads make HNSW's tradeoffs a bad fit."
-          ],
-          "symbol": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "60dbe989-4934-4d5e-9073-8b94bface610",
-            "prompt": "Why do vector databases use approximate nearest-neighbor (ANN) search instead of exact kNN at scale?",
-            "options": [
-              "Exact kNN is illegal to use in production systems",
-              "Exact kNN's cost grows linearly with the number of vectors, which is too slow for large, interactive workloads",
-              "ANN always returns more accurate results than exact search",
-              "Exact kNN can only be run on GPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Brute-force kNN compares the query against every stored vector — O(N) per query. ANN methods like HNSW trade a small amount of recall for far faster, sub-linear queries."
-          },
-          {
-            "id": "4365c6c3-8235-408c-bd70-f46ce60b2b6a",
-            "prompt": "In HNSW, what happens as a search moves from the top graph layer toward the bottom?",
-            "options": [
-              "The search restarts from scratch at each layer with no memory of progress",
-              "It greedily narrows in using sparse, long-range connections first, then refines with the denser bottom layer",
-              "It switches to a brute-force scan at the bottom layer",
-              "Layers are used only during index construction, not during search"
-            ],
-            "correctIndex": 1,
-            "explanation": "Top layers are sparse, so the walk covers large distances fast; the search drops a layer whenever it can't get closer, ending at the dense bottom layer for fine-grained refinement — similar to how a skip list narrows in on sorted data."
-          },
-          {
-            "id": "08920e7a-0269-41f8-ac4e-202c5874ee4a",
-            "prompt": "Which HNSW parameter can be changed per query, without rebuilding the index, to trade latency for recall?",
-            "options": [
-              "M",
-              "efConstruction",
-              "efSearch",
-              "Vector dimensionality"
-            ],
-            "correctIndex": 2,
-            "explanation": "efSearch controls the candidate list size used at query time and can be raised or lowered per query. M and efConstruction are baked into the graph at build time and require reindexing to change."
-          }
-        ]
-      },
-      "references": [],
-      "id": "94e63984-d9b5-4264-8f82-f90772dc7094",
       "publishedDate": "2026-09-01T06:42:33Z"
     }
   ]
