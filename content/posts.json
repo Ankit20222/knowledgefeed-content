@@ -1,6 +1,599 @@
 {
   "posts": [
     {
+      "title": "MaxKernel: Google's Agents That Write TPU Kernels",
+      "subtitle": "An LLM agent loop with real compiler feedback that beats hand-tuned kernels on production workloads.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "tpu",
+        "agentic-ai",
+        "kernel-optimization",
+        "compilers",
+        "llm-agents"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu.fill",
+      "summary": "MaxKernel (Google, Sept 2026) is a multi-agent system that writes and optimizes TPU kernels in JAX/Pallas by looping an LLM against real compiler output and hardware profiler traces instead of generating code once and hoping. On JAXBench's 50 tasks it hits a 1.58x geometric-mean speedup, and on 8 production kernels with existing human-written baselines, its agent-tuned kernels reach 2.32x versus the reference code — edging out the 2.02x that expert engineers achieved by hand.",
+      "slides": [
+        {
+          "id": "d1192846-aaed-4bf1-b532-71d730d407e6",
+          "kind": "cover",
+          "title": "The last mile of AI speed is still hand-written code",
+          "body": "Frameworks like JAX compile most operations well, but the highest-value kernels — the ones a model spends most of its time in — still get hand-tuned by a small number of engineers who understand the hardware.",
+          "bullets": [
+            "Custom TPU kernels are written in Pallas, a low-level language exposing memory tiling and the matrix unit directly",
+            "Google's MaxKernel (arXiv:2609.04523, Sept 3 2026) points LLM agents at this bottleneck instead of at chat"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "eb4ad872-b35b-409c-bd40-f2e8ea6d0d54",
+          "kind": "problem",
+          "title": "Kernel tuning is expert-scarce and slow",
+          "body": "Writing a fast Pallas kernel means reasoning about SRAM tile sizes, matrix-unit occupancy, and memory-vs-compute tradeoffs that don't show up until you run the thing on real silicon.",
+          "bullets": [
+            "A single kernel can take a specialist days of trial-and-error profiling to tune well",
+            "Most LLM code-generation setups ask a model for one shot of code and stop — no way to react to what the compiler or profiler actually reports",
+            "That one-shot pattern is exactly what earlier work (JAXBench) showed autonomous agents struggling with on TPUs"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "b6bd8a56-b36e-49e5-9dba-42898c299bc4",
+          "kind": "solution",
+          "title": "Three agent paradigms, one shared toolbox",
+          "body": "MaxKernel doesn't pick one workflow — it offers three, all built from the same pool of sub-agents.",
+          "bullets": [
+            "HITL (Human-in-the-Loop): the agent proposes an optimization plan, a person approves each step — best for learning Pallas or high-stakes kernels",
+            "Auto: a fully autonomous loop runs end-to-end without a human, driven by compiler and profiler metrics",
+            "Auto-Search: spins up multiple worker agents to explore the tuning space in parallel or via beam search, then keeps the best verified-correct candidate",
+            "Shared sub-agents handle planning, implementation, self-debugging, correctness testing, and hardware profiling across all three modes"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "9b7154ff-1ac2-41a0-af2e-fb85d8f561dc",
+          "kind": "architecture",
+          "title": "The loop runs on real hardware, not just static analysis",
+          "body": "What separates this from ordinary LLM code generation is that every candidate gets compiled and executed on an actual TPU before the next revision.",
+          "bullets": [
+            "Generate a candidate kernel → compile it → run it on hardware → capture the profiler trace → feed the trace back to the LLM as the next prompt",
+            "The self-debugging sub-agent handles compile errors and incorrect outputs before the profiling sub-agent even gets a turn",
+            "Because feedback is a real trace, not a guess, later revisions target the actual bottleneck (e.g. an underused matrix unit) instead of guessing"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "d5abb521-a18f-4c9c-b02f-c2383028572f",
+          "kind": "comparison",
+          "title": "Agent-tuned kernels vs. the human baseline",
+          "body": "The production-kernel comparison is the headline result: on the 8 kernels where a hand-written baseline exists, MaxKernel's agents came out ahead of the humans.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Geomean speedup vs. reference"
+            ],
+            "rows": [
+              [
+                "JAXBench (50 diverse tasks)",
+                "1.58x"
+              ],
+              [
+                "8 production kernels — human-written",
+                "2.02x"
+              ],
+              [
+                "8 production kernels — MaxKernel agents",
+                "2.32x"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "49bb7497-397f-4a23-9aa1-de8ebf303f13",
+          "kind": "example",
+          "title": "Auto-Search exploring one stubborn kernel",
+          "body": "Picture a fused matmul kernel that's underusing the TPU's matrix unit.",
+          "bullets": [
+            "Auto-Search launches several worker agents, each trying a different tile size and memory layout in parallel",
+            "Every candidate is compiled and profiled for real; a beam search keeps only the top performers and mutates them further",
+            "A candidate that fails correctness tests is discarded immediately, regardless of how fast its (wrong) output ran",
+            "The search converges on a kernel a human might reach only after days of manual profiling sessions"
+          ],
+          "symbol": "flowchart.fill",
+          "table": null
+        },
+        {
+          "id": "8180390b-51e3-43fe-b82c-23d81106a3d0",
+          "kind": "problem",
+          "title": "Where this approach costs you",
+          "body": "Running an agent loop against real hardware is not free, and the result is not a drop-in replacement for every situation.",
+          "bullets": [
+            "Each iteration needs a real TPU compile-and-run cycle — this is expensive and slow compared to a single LLM code-gen call",
+            "Auto-Search's parallel exploration multiplies that hardware cost by however many workers you run",
+            "Correctness testing is load-bearing: without a solid test harness, a fast-but-wrong kernel could pass unnoticed",
+            "Not worth it for a kernel you'll run once or for teams without spare TPU capacity to burn on search"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "ca2fece7-f987-41f0-b3f6-4c62d8f19101",
+          "kind": "takeaways",
+          "title": "What to remember about MaxKernel",
+          "body": null,
+          "bullets": [
+            "The trick isn't a smarter prompt — it's closing the loop with a real compiler and profiler on real hardware",
+            "Three modes (HITL, Auto, Auto-Search) trade human oversight for autonomy and search breadth",
+            "On production kernels with human baselines, agent-tuned code beat the humans: 2.32x vs. 2.02x",
+            "The cost is hardware time and a trustworthy correctness harness — this is an infrastructure investment, not a free lunch"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "996db50e-6a20-4603-85a3-994714ba8a9e",
+            "prompt": "What makes MaxKernel's approach different from a typical 'ask an LLM to write a kernel' setup?",
+            "options": [
+              "It only works with Python instead of Pallas",
+              "It closes the loop with real compiler output and hardware profiler traces across multiple iterations",
+              "It avoids testing kernels for correctness to save time",
+              "It replaces the TPU's matrix unit with a software emulator"
+            ],
+            "correctIndex": 1,
+            "explanation": "MaxKernel's core idea is iterative: generate, compile, run on real hardware, profile, and feed that trace back into the next LLM revision — not a single one-shot generation."
+          },
+          {
+            "id": "6e3c3246-34e4-472e-8ac9-36b1138839f4",
+            "prompt": "On the 8 production kernels with existing human-written baselines, how did MaxKernel's agents compare?",
+            "options": [
+              "They matched human performance exactly",
+              "They underperformed humans by roughly 15%",
+              "They outperformed the human baseline: 2.32x vs. 2.02x geomean speedup",
+              "They could not produce correct kernels for any of the 8 tasks"
+            ],
+            "correctIndex": 2,
+            "explanation": "This is the paper's headline number: on production kernels where expert engineers had already hand-tuned a baseline, MaxKernel's agent-generated kernels reached a higher geometric-mean speedup than the human-written versions."
+          },
+          {
+            "id": "c349a36a-f4c9-48cb-b34c-c350a5c1dd88",
+            "prompt": "What is the main practical cost of MaxKernel's Auto-Search mode?",
+            "options": [
+              "It requires no hardware at all, running purely in simulation",
+              "It multiplies real TPU compile-and-run cycles across many parallel workers, which is expensive",
+              "It cannot handle kernels larger than a few lines of code",
+              "It only works on GPUs, not TPUs"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because every candidate must actually compile and run on hardware to get a real profiler trace, running many workers in parallel (as Auto-Search does) multiplies that hardware cost — the tradeoff for a broader, faster search."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "a43fcaa1-6cd3-4c0b-a601-45651ab502a0",
+          "title": "MaxKernel: Agentic Kernel Generation for TPUs (arXiv:2609.04523)",
+          "url": "https://arxiv.org/abs/2609.04523"
+        },
+        {
+          "id": "7b8f1f7c-6f02-4f72-8b66-bd157ed4f8c1",
+          "title": "AI-Hypercomputer/accelerator-agents — MaxKernel (GitHub)",
+          "url": "https://github.com/AI-Hypercomputer/accelerator-agents/tree/main/MaxKernel"
+        }
+      ],
+      "id": "c7493731-cbe5-4149-9317-891f6327af10",
+      "publishedDate": "2026-09-09T12:44:59Z"
+    },
+    {
+      "title": "Mistral Agentic Search: Retrieval That Checks Its Own Work",
+      "subtitle": "Five operations replace a single embedding lookup — and correctness on dense docs triples.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "rag",
+        "agentic-search",
+        "mistral",
+        "retrieval",
+        "tool-use"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "Mistral's Agentic Search (2026) replaces classic one-shot embed-and-retrieve RAG with a multi-step loop where the model can search, open, navigate, read, and grep through documents until it has real evidence — closer to an analyst using find-in-page than a search engine. On FinanceBench it lifts correctness from 26.7% to 86%, and on the table-heavy OfficeQA Pro benchmark it gains 45.6 points (6.3% to 51.9%), at the cost of more tool calls and latency per query.",
+      "slides": [
+        {
+          "id": "2f98a684-e042-4dcf-b37d-c81ca0a3a094",
+          "kind": "cover",
+          "title": "RAG never gets to double-check itself",
+          "body": "Standard retrieval-augmented generation embeds a query, pulls the top-k chunks once, and hands them to the model — there's no step where the model can say 'that number looks off, let me look again.'",
+          "bullets": [
+            "Mistral shipped Agentic Search into its Search Toolkit, Libraries, Studio, and Vibe products in 2026",
+            "It's built for the documents one-shot RAG handles worst: dense filings, tables split across pages, multi-hop references"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "88613a24-e117-4843-ace6-aee0051294e8",
+          "kind": "problem",
+          "title": "Chunking breaks the documents that matter most",
+          "body": "Fixed-size chunking is a reasonable approximation for prose, but it mangles structure that spans page boundaries.",
+          "bullets": [
+            "A table split mid-row across two chunks loses the row's meaning to both halves",
+            "A footnote defining a term used three pages earlier lands in a chunk nowhere near where it's needed",
+            "On FinanceBench, traditional single-shot RAG scored only 26.7% correctness — dense financial filings are exactly this kind of document",
+            "Once the wrong chunk is retrieved, the model has no mechanism to go back and check"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "ec30847d-bbbe-4283-a22b-74223fa9c864",
+          "kind": "solution",
+          "title": "Five operations instead of one lookup",
+          "body": "Agentic Search gives the model a small toolkit and lets it keep working until it has enough evidence to answer.",
+          "bullets": [
+            "search — find candidate documents or sections across the corpus",
+            "open — load a specific document",
+            "navigate — move to a particular page or section within it",
+            "read — pull the exact content at that location",
+            "grep — search for a pattern inside the document, like confirming a figure doesn't appear elsewhere with a different value"
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "46f44309-1137-4f38-a3ac-7ebf646a2fef",
+          "kind": "architecture",
+          "title": "An orchestration layer, not a new retriever",
+          "body": "Agentic Search sits on top of existing retrieval primitives rather than replacing them.",
+          "bullets": [
+            "It adds navigation and iteration on top of standard search/embeddings, continuing the loop until the model judges it has enough evidence",
+            "Ships inside the Mistral Search Toolkit and is built into the Libraries feature, plus Studio and Vibe",
+            "Supports both cloud and on-premises deployment"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "53f4f51f-3c58-4ab2-bfa6-73b0f158e314",
+          "kind": "comparison",
+          "title": "Correctness gains on structure-heavy benchmarks",
+          "body": "Both benchmarks stress exactly the failure mode one-shot RAG has: dense tables and multi-document, multi-hop questions.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Traditional RAG",
+              "Agentic Search"
+            ],
+            "rows": [
+              [
+                "FinanceBench (financial filings)",
+                "26.7%",
+                "86%"
+              ],
+              [
+                "OfficeQA Pro (table-heavy, multi-doc)",
+                "6.3%",
+                "51.9%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8b18ef22-1602-4f09-a57a-55acaa10dc51",
+          "kind": "example",
+          "title": "Finding one footnote in a 200-page filing",
+          "body": "Task: locate the exact gross-margin footnote in a long 10-K where the relevant table spans a page break.",
+          "bullets": [
+            "search surfaces the filing as a likely candidate among the corpus",
+            "open loads the full document instead of a pre-cut chunk",
+            "navigate jumps to the financial-statements section rather than scanning linearly",
+            "read pulls the precise footnote text once located",
+            "grep checks the same figure doesn't appear elsewhere with a conflicting value before the model commits to an answer"
+          ],
+          "symbol": "text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "fb1f042c-de4b-4e1c-a379-2b3035730246",
+          "kind": "problem",
+          "title": "The loop isn't free",
+          "body": "Multiple tool calls per query is the price of the accuracy gain, and it isn't always worth paying.",
+          "bullets": [
+            "Every search/open/navigate/read/grep step is a round trip — latency and cost scale with how many steps a question needs",
+            "Simple lookups (a short FAQ, a single well-chunked paragraph) gain little and pay the overhead anyway",
+            "Still depends on a working index and navigable document structure underneath — it orchestrates retrieval, it doesn't replace the need for one",
+            "Not a fit for latency-critical paths where a single fast embedding lookup is good enough"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "896e6a08-544e-4325-b2fe-dac33fa9dff4",
+          "kind": "takeaways",
+          "title": "What to remember about Agentic Search",
+          "body": null,
+          "bullets": [
+            "It reframes retrieval as a loop the model drives, not a single embedding lookup",
+            "Five operations (search, open, navigate, read, grep) let it verify before answering, not just retrieve and hope",
+            "Biggest wins are on dense, structured, multi-hop documents — FinanceBench correctness roughly tripled",
+            "Reach for it when documents are messy and being wrong is costly; skip it for simple, latency-sensitive lookups"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "1321b4b0-5169-463b-a737-6a70434699f8",
+            "prompt": "What is the core difference between Agentic Search and traditional single-shot RAG?",
+            "options": [
+              "Agentic Search uses a bigger embedding model",
+              "Agentic Search lets the model iterate — searching, navigating, and verifying — instead of retrieving once and stopping",
+              "Agentic Search removes the need for any document index",
+              "Agentic Search only works on plain text, never tables"
+            ],
+            "correctIndex": 1,
+            "explanation": "Traditional RAG embeds a query and pulls top-k chunks once. Agentic Search gives the model five operations (search, open, navigate, read, grep) and lets it keep working until it has enough evidence — closer to an analyst than a one-shot lookup."
+          },
+          {
+            "id": "1c3874b7-300c-4128-a96f-2d5ad6c6d310",
+            "prompt": "On the FinanceBench benchmark, what correctness jump did Agentic Search show over traditional RAG?",
+            "options": [
+              "No meaningful change",
+              "From 26.7% to 86%",
+              "From 86% to 99%",
+              "From 50% to 60%"
+            ],
+            "correctIndex": 1,
+            "explanation": "Traditional single-shot RAG scored 26.7% correctness on FinanceBench's dense financial filings; Agentic Search reached 86% by letting the model navigate and verify instead of trusting the first retrieved chunk."
+          },
+          {
+            "id": "7c29b6d3-583b-4660-8559-d74b65b6be92",
+            "prompt": "When is Agentic Search's multi-step loop NOT worth using?",
+            "options": [
+              "When documents are large, dense filings with tables spanning pages",
+              "For a simple, well-chunked FAQ lookup where latency matters and one retrieval already suffices",
+              "When multi-hop reasoning across several documents is required",
+              "When the answer must be verified against conflicting figures in the same corpus"
+            ],
+            "correctIndex": 1,
+            "explanation": "Every step in the loop is a round trip that adds latency and cost. For simple lookups where a single embedding retrieval already gets the right chunk, the extra steps add overhead without a meaningful accuracy gain."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "e2deadb5-10de-4546-a868-8157765dc8b1",
+          "title": "Introducing Agentic Search — Mistral AI",
+          "url": "https://mistral.ai/news/agentic-search/"
+        },
+        {
+          "id": "7a35f328-33b1-45ec-94c4-057933a76b14",
+          "title": "Agentic Search — Mistral Docs",
+          "url": "https://docs.mistral.ai/studio/search/agentic-search"
+        }
+      ],
+      "id": "6e42da7e-1556-4de2-9598-58cd1a4979fe",
+      "publishedDate": "2026-09-09T12:30:00Z"
+    },
+    {
+      "title": "FlashAttention: Fast, Exact Attention on GPUs",
+      "subtitle": "Same math as standard attention, 2-4x faster, by never writing the full score matrix to slow memory.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "gpu",
+        "transformers",
+        "memory-bandwidth",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "bolt.fill",
+      "summary": "FlashAttention (Dao et al., 2022) speeds up transformer attention not by approximating it but by rethinking which memory it touches: it tiles the computation so the full N x N attention matrix never has to leave a GPU's fast on-chip SRAM. That IO-awareness delivers 2-4x speedups and linear instead of quadratic memory, with no change to the output. FlashAttention-2 pushed further, reaching up to 230 TFLOPs/s on an A100 (73% of peak) and a 1.3x end-to-end GPT-2 training speedup over the original.",
+      "slides": [
+        {
+          "id": "6abd09cf-91c4-498b-86e0-c1e34ce1ac98",
+          "kind": "cover",
+          "title": "The matrix nobody should have to build",
+          "body": "Standard attention computes QK^T, applies softmax, then multiplies by V — and in the middle, it materializes a full N x N matrix of attention scores.",
+          "bullets": [
+            "For a sequence of 8,000 tokens, that's a 8,000 x 8,000 matrix per attention head, per batch item",
+            "FlashAttention (Dao, Fu, Ermon, Rudra, Ré — arXiv:2205.14135) asks: what if that matrix never has to exist in slow memory at all?"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "896a639c-e67a-4b2c-8311-0003dd2b9c4f",
+          "kind": "problem",
+          "title": "The bottleneck is memory movement, not math",
+          "body": "GPUs have two very different kinds of memory, and attention's naive implementation abuses the slow one.",
+          "bullets": [
+            "On-chip SRAM: extremely fast (~19 TB/s) but tiny — tens of megabytes",
+            "Off-chip HBM: large (tens of gigabytes) but far slower (~1.5-2 TB/s) to move data through",
+            "Standard attention writes the full N x N score matrix to HBM after QK^T, reads it back for softmax, then reads it again for the final multiply by V",
+            "Attention looks compute-heavy but is actually memory-bound: the GPU spends more time waiting on data movement than doing arithmetic"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "8820f5a5-ffa3-49d8-9baf-4b69cabbe8c4",
+          "kind": "solution",
+          "title": "Tile the computation, keep it all in SRAM",
+          "body": "FlashAttention splits Q, K, and V into small blocks that fit inside SRAM, and fuses the whole QK^T → softmax → weighted-sum pipeline into a single GPU kernel.",
+          "bullets": [
+            "Each block of Q is compared against blocks of K and V one at a time, entirely inside fast on-chip memory",
+            "An 'online softmax' trick keeps a running max and running sum so partial results can be combined correctly without ever seeing the full row at once",
+            "The full N x N matrix is never written to HBM — only the final output and a small per-row statistic are"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "614d9275-4589-46df-aae5-9006e7636a01",
+          "kind": "architecture",
+          "title": "The backward pass recomputes instead of storing",
+          "body": "Training needs the attention matrix again during backpropagation — FlashAttention doesn't store it, it recomputes it on the fly.",
+          "bullets": [
+            "Only a small logsumexp statistic per row is kept from the forward pass, not the full matrix",
+            "During the backward pass, blocks of the attention matrix are recomputed from that statistic as needed — trading a bit of extra compute for a large memory saving",
+            "This 'recompute over store' choice is why the method is called IO-aware rather than an approximation — the output is mathematically identical to standard attention"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "88871ad8-7778-40fa-b002-71b759deecb7",
+          "kind": "comparison",
+          "title": "The numbers, v1 to v2",
+          "body": "FlashAttention-2 (2023) improved parallelism and work partitioning on top of the same core idea.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Metric",
+              "FlashAttention",
+              "FlashAttention-2"
+            ],
+            "rows": [
+              [
+                "Memory scaling",
+                "O(N) instead of O(N²)",
+                "O(N) instead of O(N²)"
+              ],
+              [
+                "Speedup vs. standard attention",
+                "2-4x",
+                "3-10x"
+              ],
+              [
+                "A100 throughput",
+                "—",
+                "up to 230 TFLOPs/s (73% of peak)"
+              ],
+              [
+                "End-to-end GPT-2 training speedup",
+                "baseline",
+                "1.3x over FlashAttention, 2.8x over no-FlashAttention"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e23ec1f1-bf10-4b10-9326-5833214e9b53",
+          "kind": "example",
+          "title": "Why this is what let context windows grow",
+          "body": "Training at an 8k context with standard attention means repeatedly moving a ~256MB (per head, fp32) score matrix through HBM — brutal on bandwidth, and often just not fitting in memory at all.",
+          "bullets": [
+            "FlashAttention instead processes, say, 128-row/128-column tiles that comfortably fit in a GPU SM's SRAM",
+            "Each tile does a small, fast matmul entirely on-chip before moving to the next one",
+            "This is a direct reason models could jump from low-thousands of tokens of context to tens of thousands without a proportional memory blowup"
+          ],
+          "symbol": "arrow.up.right.circle.fill",
+          "table": null
+        },
+        {
+          "id": "4518f33d-7937-4b8b-9d23-e8453ae73242",
+          "kind": "problem",
+          "title": "Where it doesn't help, or needs redoing",
+          "body": "FlashAttention is not a universal free lunch.",
+          "bullets": [
+            "It reduces memory traffic, not the underlying O(N²) FLOP count — it doesn't fix attention's asymptotic scaling the way sub-quadratic methods (linear attention, Mamba) aim to",
+            "On short sequences (roughly under 512 tokens), tiling overhead eats into the gains — the wins compound with sequence length",
+            "It's tied to specific GPU architectures — Hopper's async instructions and FP8 support needed a dedicated FlashAttention-3 to exploit",
+            "It's exact, which is the point — don't reach for it expecting the further speedups that come from approximate/sparse attention variants"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "843a4373-74ef-4a63-9d42-e968affc2855",
+          "kind": "takeaways",
+          "title": "What to remember about FlashAttention",
+          "body": null,
+          "bullets": [
+            "The bottleneck it solves is memory bandwidth (SRAM vs. HBM traffic), not raw compute",
+            "Tiling plus online softmax means the full N x N score matrix never touches slow memory",
+            "It's mathematically exact — zero accuracy tradeoff, unlike sparse or linear attention approximations",
+            "FlashAttention-2 reached up to 230 TFLOPs/s on A100 (73% of peak) and a 1.3x end-to-end training speedup over v1",
+            "Gains grow with sequence length and are architecture-specific — newer GPUs need their own kernel version"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "bf600d1e-655d-490d-a61d-2feeb0579533",
+            "prompt": "What is the actual bottleneck FlashAttention targets in standard attention?",
+            "options": [
+              "The number of floating-point operations (FLOPs) required",
+              "Memory bandwidth — repeatedly moving the full attention matrix between slow HBM and fast SRAM",
+              "The number of attention heads in the model",
+              "The precision of the softmax function"
+            ],
+            "correctIndex": 1,
+            "explanation": "Standard attention looks compute-heavy but is memory-bound: it writes and reads the full N x N score matrix to slow HBM multiple times. FlashAttention's tiling keeps that traffic inside fast on-chip SRAM instead."
+          },
+          {
+            "id": "a74a56fc-bcaf-49ad-8aed-b1ae29705bce",
+            "prompt": "Is FlashAttention an approximation of standard attention?",
+            "options": [
+              "Yes, it drops small attention weights to save time",
+              "Yes, it uses a sparse pattern that skips some tokens",
+              "No — it produces mathematically identical output; only the memory access pattern changes",
+              "No, but it changes the softmax formula to a faster approximation"
+            ],
+            "correctIndex": 2,
+            "explanation": "FlashAttention is IO-aware, not approximate. Tiling plus the online softmax trick and recomputation in the backward pass produce exactly the same result as standard attention — the speedup comes purely from avoiding unnecessary memory movement."
+          },
+          {
+            "id": "e78c8613-cec9-404d-ad57-9a9b9ec886e2",
+            "prompt": "According to the FlashAttention-2 paper, roughly what throughput did it reach on an A100 GPU, and what was the end-to-end GPT-2 training speedup over the original FlashAttention?",
+            "options": [
+              "10 TFLOPs/s, and a 10x training speedup",
+              "Up to 230 TFLOPs/s (73% of peak), and a 1.3x end-to-end training speedup",
+              "500 TFLOPs/s, and no measurable training speedup",
+              "230 TFLOPs/s, but training became slower due to overhead"
+            ],
+            "correctIndex": 1,
+            "explanation": "FlashAttention-2 reached up to 230 TFLOPs/s on A100 (about 73% of the theoretical peak) and delivered a 1.3x end-to-end speedup training GPT-style models compared to the original FlashAttention, and 2.8x versus a baseline without it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "a813c310-729a-47c1-8037-ec108b0806ab",
+          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (arXiv:2205.14135)",
+          "url": "https://arxiv.org/abs/2205.14135"
+        },
+        {
+          "id": "6f4376f3-900a-4ed9-b52d-0963ba44fb73",
+          "title": "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning (arXiv:2307.08691)",
+          "url": "https://arxiv.org/abs/2307.08691"
+        }
+      ],
+      "id": "23b12596-31a8-4bd4-84cd-560e303a4386",
+      "publishedDate": "2026-09-09T12:15:00Z"
+    },
+    {
       "title": "HNSW: Fast Approximate Search Over Millions of Vectors",
       "subtitle": "A layered graph inspired by skip lists turns nearest-neighbor search from a linear scan into a handful of hops.",
       "category": "RAG",
@@ -10805,582 +11398,6 @@
       ],
       "id": "16290c35-cb9a-409f-a890-0bf2982f963d",
       "publishedDate": "2026-09-01T18:44:42Z"
-    },
-    {
-      "title": "DeepSeek Sparse Attention: Skipping Most of the Context",
-      "subtitle": "A cheap indexer picks the few thousand tokens actually worth attending to",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "sparse-attention",
-        "long-context",
-        "kv-cache",
-        "inference"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "scope",
-      "summary": "Full attention costs grow quadratically with context length, so at 100K+ tokens most of that compute scores tokens the model will barely use. Sparse attention schemes like DeepSeek's fix this with a cheap 'lightning indexer' that picks a small, relevant subset of past tokens before the expensive attention math ever runs.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Attention gets quadratically more expensive, not linearly",
-          "body": "Standard self-attention compares every token to every other token. Double the context length and you roughly quadruple the attention compute — the single biggest cost driver once contexts pass 100K tokens.",
-          "bullets": [
-            "Full attention cost scales as O(L²) in sequence length L",
-            "At long context, attention — not the feed-forward layers — dominates latency and cost",
-            "Most of those pairwise comparisons contribute almost nothing to the output"
-          ],
-          "symbol": "scope",
-          "id": "25e3a67f-61ce-4ad1-bd06-5c30fe210087",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Long context makes the waste obvious",
-          "body": "For any given query token, only a handful of past tokens are actually relevant to predicting the next word — a citation, a variable definition, a earlier turn in the conversation. Full attention still scores every single one.",
-          "bullets": [
-            "A 128K-token document might have only a few thousand tokens relevant to any one query",
-            "Dense attention pays full price to discover that most tokens don't matter",
-            "Naive fixes (fixed sliding windows, strided patterns) throw away tokens by position, not relevance"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "4baa929d-3ec7-4025-9150-4aa6de590f69",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "A lightning indexer scores relevance before attention runs",
-          "body": "DeepSeek Sparse Attention adds a small, cheap side-network — the 'lightning indexer' — that assigns each past token a lightweight relevance score against the current query. Only the top-scoring tokens are kept for the real, expensive attention computation.",
-          "bullets": [
-            "The indexer is deliberately lightweight — its own cost is a small fraction of full attention",
-            "Every past token gets scored, but only the top-k highest-scoring ones proceed to real attention",
-            "Real attention then runs over that small selected set, not the full context",
-            "Effective cost drops from O(L²) toward O(L·k), where k is fixed regardless of context length"
-          ],
-          "symbol": "line.3.horizontal.decrease.circle.fill",
-          "id": "844db7fa-76d1-4973-8e6a-f78ba7056b80",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "Trained by distillation, not bolted on after the fact",
-          "body": "A sparse selector trained from scratch tends to silently drop tokens the model actually needed. DeepSeek's approach instead warm-starts from a model that still uses dense attention, then trains the sparse student to match what the dense teacher would have attended to.",
-          "bullets": [
-            "Start from a checkpoint trained with ordinary dense attention",
-            "Train the indexer + sparse attention path to approximate the dense model's attention pattern",
-            "This keeps quality close to dense attention instead of degrading once tokens get dropped",
-            "The indexer effectively learns 'which tokens would dense attention have cared about?'"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "id": "d625c250-4d7c-41be-8779-47cde66d308c",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: a long document query",
-          "body": "Picture a 128K-token codebase pasted into context, and a query token asking about a function's behavior partway through generation.",
-          "bullets": [
-            "The indexer cheaply scores all prior tokens against that query — the function's own definition, its call sites, and nearby comments score high",
-            "Unrelated boilerplate elsewhere in the file scores low and gets skipped",
-            "Real attention then runs only over that small relevant subset — a fraction of the full 128K tokens",
-            "The output should look close to what full dense attention over all 128K tokens would have produced"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "id": "8be0174e-cb0b-42c5-8247-7ce404ac7405",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Three attention strategies at long context",
-          "body": null,
-          "bullets": [],
-          "symbol": "table",
-          "id": "7c61efc3-c3bc-40ac-b42b-98f72951c06b",
-          "table": {
-            "headers": [
-              "Approach",
-              "Compute per token",
-              "What it can see",
-              "Quality risk"
-            ],
-            "rows": [
-              [
-                "Full (dense) attention",
-                "O(L²) total",
-                "Every past token, always",
-                "None — it's the reference"
-              ],
-              [
-                "Fixed sliding window",
-                "O(L·w), w fixed",
-                "Only recent tokens by position",
-                "Misses relevant old context entirely"
-              ],
-              [
-                "Lightning-indexer sparse (DSA)",
-                "O(L·k), k fixed",
-                "Top-k tokens chosen by learned relevance",
-                "Depends on indexer quality; mitigated by distillation"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "concept",
-          "title": "Where this doesn't pay off",
-          "body": "Sparse attention isn't free — the indexer itself adds a pass over the whole sequence, and a poorly trained one can miss tokens the model genuinely needed, with failures that are easy to miss in normal evals.",
-          "bullets": [
-            "Below a certain context length, the indexer's overhead isn't worth the savings",
-            "An undertrained indexer creates a silent recall problem: dropped tokens the model needed but never got to see",
-            "Distillation quality against the dense teacher is what determines whether sparsity is safe to ship",
-            "It optimizes inference and long-context training cost — it doesn't reduce total parameter count"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "id": "4b1547ba-5ed4-4a64-95f6-841dfac0402f",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Full attention's O(L²) cost makes long context expensive — most token comparisons don't matter",
-            "A cheap lightning indexer scores every past token, then keeps only the top-k for real attention",
-            "Training the sparse path to imitate a dense-attention teacher (distillation) is what preserves quality",
-            "Below a length threshold, or with an undertrained indexer, sparsity isn't worth the tradeoff"
-          ],
-          "symbol": "checklist",
-          "id": "b81bf282-f179-4399-92fa-a5ddba1d1602",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does full self-attention become the dominant cost at long context lengths?",
-            "options": [
-              "Because feed-forward layers scale worse than attention",
-              "Because attention cost scales quadratically (O(L²)) with sequence length, while other layers scale roughly linearly",
-              "Because the tokenizer becomes slower on long inputs",
-              "Because KV cache memory doesn't affect compute cost"
-            ],
-            "correctIndex": 1,
-            "explanation": "Self-attention compares every token to every other token, so its cost grows as O(L²) in sequence length L. Feed-forward layers scale closer to linearly, so past a certain length, attention dominates total compute and latency.",
-            "id": "38ca1fa0-52e4-4965-be05-907bd6bbbb66"
-          },
-          {
-            "prompt": "What does the 'lightning indexer' do in DeepSeek Sparse Attention?",
-            "options": [
-              "It compresses the model's weights to reduce memory",
-              "It cheaply scores every past token's relevance to the current query, so only the top-k proceed to full attention",
-              "It replaces the tokenizer with a faster one",
-              "It reorders tokens by position before training"
-            ],
-            "correctIndex": 1,
-            "explanation": "The indexer is a lightweight side-network that assigns a relevance score to every past token for the current query. Only the highest-scoring top-k tokens go on to the expensive real attention computation, cutting effective cost from O(L²) toward O(L·k).",
-            "id": "7186cfd9-513a-49a8-ab5e-fd4dd85f2c11"
-          },
-          {
-            "prompt": "Why is the sparse attention path typically trained by distilling from a dense-attention model, rather than trained from scratch?",
-            "options": [
-              "Distillation is required by the Lean proof checker",
-              "It makes the model smaller in total parameter count",
-              "Training from scratch is impossible with mixture-of-experts layers",
-              "It teaches the indexer to approximate what a dense model would have attended to, avoiding silently dropped tokens that hurt quality"
-            ],
-            "correctIndex": 3,
-            "explanation": "An indexer trained from scratch risks silently dropping tokens the model actually needs, degrading quality in ways that are hard to catch. Warm-starting from a dense-attention checkpoint and distilling against it keeps the sparse selection close to what full attention would have chosen.",
-            "id": "f1ebaeb2-2c40-4c1e-b9e7-3fd4390ef40f"
-          }
-        ]
-      },
-      "references": [],
-      "id": "381eb985-0e74-4336-a06f-b21a87536283",
-      "publishedDate": "2026-09-01T18:44:42Z"
-    },
-    {
-      "title": "Attention Sinks: Why the First Few Tokens Hold a Cache Together",
-      "subtitle": "A streaming LLM trick that keeps perplexity from collapsing at any length",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "kv-cache",
-        "streaming",
-        "inference",
-        "long-context"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "tray.and.arrow.down.fill",
-      "summary": "Sliding-window KV caches keep memory bounded but collapse in quality the moment the very first tokens get evicted. Keeping a handful of those initial tokens permanently in the cache — as 'attention sinks' — fixes this with almost no extra cost, letting a model serve an effectively unbounded conversation.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Why can't a chatbot just run forever?",
-          "body": "Every transformer keeps a growing key/value cache for every token it has seen. Left alone, that cache eventually eats all your memory — so serving systems cap it. The naive fix for capping it quietly breaks the model.",
-          "bullets": [
-            "KV cache grows with every generated token",
-            "Production serving needs a hard memory ceiling",
-            "The obvious fix — a sliding window — has a hidden failure mode"
-          ],
-          "symbol": "tray.and.arrow.down.fill",
-          "id": "fd330d3e-44eb-4218-a303-11176af7f32e",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Sliding windows collapse the moment token 0 leaves",
-          "body": "The intuitive fix is to only keep the most recent N tokens in the KV cache and drop the rest, like a ring buffer. It works right up until the buffer wraps around and evicts the very first tokens of the sequence — at which point output quality falls apart.",
-          "bullets": [
-            "Drop oldest tokens once the cache hits its size limit",
-            "Fine as long as eviction hasn't reached the start of the sequence",
-            "The instant token 0 is evicted, perplexity spikes and generation degrades"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "409d093d-67e5-4443-91e4-0196c1d5be90",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "Softmax has nowhere to put 'no attention'",
-          "body": "Attention scores for every query must sum to 1 across whatever keys are visible. If a token has nothing useful to attend to, the softmax still has to spend its probability mass somewhere — and models learn to dump that leftover mass onto the first few tokens, regardless of their content.",
-          "bullets": [
-            "Softmax output always sums to 1 — there's no 'attend to nothing' option",
-            "Early tokens absorb huge attention scores unrelated to their meaning",
-            "Researchers call this an attention sink: a release valve baked in by training",
-            "Evicting the sink tokens removes that valve, and scores redistribute badly"
-          ],
-          "symbol": "brain.head.profile",
-          "id": "244104b8-f116-41e6-ad45-b0f3220d95a8",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Cache the sinks, slide the rest",
-          "body": "The fix keeps the KV cache split into two parts: a small fixed set of sink tokens from the very start of the sequence that are never evicted, plus a normal sliding window of the most recent tokens. Everything in between is dropped.",
-          "bullets": [
-            "Reserve a few slots (often just 4) for the first tokens — never evict them",
-            "Slide the remaining budget over the most recent tokens as normal",
-            "No retraining or architecture change needed on many existing models",
-            "Position indices are reassigned within the cache, not tied to original sequence position"
-          ],
-          "symbol": "rectangle.stack.badge.minus",
-          "id": "03942d03-f014-4410-9a4a-5785862cc3e4",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "A support bot running for 100,000 turns on a 2,048-token budget",
-          "body": "Imagine a chat agent with a hard 2,048-token KV cache, deployed for a support session that runs to 100,000 tokens over the day.",
-          "bullets": [
-            "Plain sliding window: stable until token 2,049 pushes out token 0-3, then quality visibly degrades for the rest of the session",
-            "Sink + window: tokens 0-3 stay pinned as sinks; tokens 2,044 onward slide normally; quality stays flat all day",
-            "The sink tokens don't need to be semantically special — even the BOS token works",
-            "Memory footprint is identical to the plain sliding window — the fix is where you evict from, not how much you keep"
-          ],
-          "symbol": "message.fill",
-          "id": "53d502df-fe91-4953-8246-ecffcef5aee7",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Three ways to bound a KV cache",
-          "table": {
-            "headers": [
-              "Approach",
-              "Max stream length",
-              "Quality over time",
-              "Extra cost"
-            ],
-            "rows": [
-              [
-                "Full attention, no cap",
-                "Bounded by GPU memory only",
-                "Stable",
-                "Memory grows without limit"
-              ],
-              [
-                "Plain sliding window",
-                "Unbounded",
-                "Collapses once start tokens evict",
-                "None"
-              ],
-              [
-                "Sink tokens + window",
-                "Unbounded",
-                "Stable",
-                "A few reserved cache slots"
-              ]
-            ]
-          },
-          "symbol": "table",
-          "id": "dbf8e403-92e1-4f2a-a58d-cdd19d25c3a6",
-          "body": null,
-          "bullets": []
-        },
-        {
-          "kind": "concept",
-          "title": "What this trick does not give you",
-          "body": "Attention sinks buy stability, not memory. It's easy to mistake a stable streaming session for a model that 'remembers' the whole conversation.",
-          "bullets": [
-            "Content from the evicted middle is genuinely gone — the model can't recall it",
-            "This is a stability fix, not a substitute for real long-context or retrieval",
-            "Too few sink tokens (e.g. just 1) can still be unstable; the right count is model-dependent",
-            "For tasks that truly need old context back, pair this with RAG or a summarization step, not sinks alone"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "id": "c63d1ff8-4c87-46c0-9c36-e809c132f58b",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Sliding-window KV caches cap memory but collapse when they evict the first tokens",
-            "Early tokens absorb disproportionate attention because softmax must sum to 1 — an 'attention sink'",
-            "Pinning a handful of sink tokens while sliding the rest restores stability at near-zero extra cost",
-            "It fixes generation quality for infinite streams — it does not restore lost mid-conversation memory"
-          ],
-          "symbol": "checklist",
-          "id": "0c30d83a-3b90-4296-a779-c6b2dd84e7ae",
-          "body": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does a plain sliding-window KV cache degrade once it evicts the first few tokens?",
-            "options": [
-              "Those tokens contain the model's system prompt",
-              "Softmax attention must sum to 1, and models learn to dump excess attention onto early tokens as a release valve",
-              "The tokenizer reassigns different IDs after eviction",
-              "GPU memory becomes fragmented at that point"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because softmax scores must sum to 1 across visible keys, models learn to route leftover attention mass to a few fixed early tokens regardless of content. Remove those tokens and the model has nowhere well-calibrated to put that mass, so outputs degrade.",
-            "id": "bc97b57d-a15b-4936-b839-b783c5bbe67d"
-          },
-          {
-            "prompt": "What's the key structural change attention sinks make to a sliding-window cache?",
-            "options": [
-              "It doubles the cache size to hold more recent tokens",
-              "It retrains the model with a new loss function",
-              "It permanently reserves a few slots for the earliest tokens while the rest of the cache slides normally",
-              "It compresses old tokens into a single summary vector"
-            ],
-            "correctIndex": 2,
-            "explanation": "The cache is split into a small fixed pool of never-evicted sink tokens plus a normal sliding window for recent tokens — no compression or retraining required.",
-            "id": "95a945d2-d4de-4924-a261-70fbfb0cb7fc"
-          },
-          {
-            "prompt": "What can attention sinks NOT do?",
-            "options": [
-              "Keep perplexity stable across very long streams",
-              "Work on existing models without fine-tuning",
-              "Restore information from tokens that were evicted from the middle of the conversation",
-              "Bound the KV cache to a fixed memory footprint"
-            ],
-            "correctIndex": 2,
-            "explanation": "Attention sinks fix generation stability, not memory — content evicted from the middle of the stream is genuinely gone. Recovering it requires retrieval or summarization, not sink tokens.",
-            "id": "4d30daee-d888-4c5f-99a3-25095941a229"
-          }
-        ]
-      },
-      "references": [],
-      "id": "86e0c359-c412-4713-a8ad-15a55f302805",
-      "publishedDate": "2026-09-01T12:56:50Z"
-    },
-    {
-      "title": "BDH-CQ: A 150M Model Breaks the ARC-AGI Cost Frontier",
-      "subtitle": "Recurrent latent reasoning beats verbalized chain-of-thought on cost per solved task.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "arc-agi",
-        "reasoning",
-        "efficiency",
-        "recurrent-networks",
-        "in-context-learning"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "Pathway's BDH-CQ solves ARC-AGI-1 puzzles by updating a fixed-size recurrent memory and iterating in latent space instead of writing out chain-of-thought text. At 150M parameters it hits 29.5% pass@2 for about $0.0007 per task, landing beyond the previously reported cost-accuracy frontier for the benchmark.",
-      "slides": [
-        {
-          "id": "6fc6b7d2-b337-4e57-b051-7bda0bddb4f2",
-          "kind": "cover",
-          "title": "A 150M-Parameter Model Just Broke a Cost Frontier",
-          "body": "Pathway's BDH-CQ reasons inside a recurrent latent state instead of writing out its thinking — and it's dramatically cheaper per solved ARC-AGI-1 task than anything reported before it.",
-          "bullets": [],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "627ebf76-d326-4390-99b4-56f1ffc2017b",
-          "kind": "problem",
-          "title": "Chain-of-Thought Reasoning Gets Expensive Fast",
-          "body": null,
-          "bullets": [
-            "Most reasoning models solve hard puzzles by verbalizing step-by-step thought — every extra token of reasoning is extra compute you pay for at inference time.",
-            "ARC-AGI-1 tests abstract visual pattern induction from a handful of examples; frontier LLMs have needed heavy scaling (bigger models, longer traces) to make real progress on it.",
-            "That leaves a cost-accuracy frontier: plot accuracy against $/task and most systems that get more accurate also get proportionally more expensive."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "7dfb486e-9729-4177-9d94-391614c49fb2",
-          "kind": "solution",
-          "title": "Think in a Recurrent Memory, Not in Text",
-          "body": null,
-          "bullets": [
-            "BDH-CQ is built on Dragon Hatchling (BDH), Pathway's post-transformer recurrent architecture where neuron-like units communicate through low-rank interactions.",
-            "Instead of a growing KV cache, it keeps a fixed-size recurrent associative state that gets updated as each in-context demonstration is read.",
-            "At query time it doesn't emit an intermediate chain-of-thought — it solves the task through iterative computation inside that latent state, then produces the answer directly."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "bf2cc417-6639-4fe7-8b7e-2bece056ca02",
-          "kind": "architecture",
-          "title": "An 'Effort' Knob That Adds Latent Iterations, Not Tokens",
-          "body": null,
-          "bullets": [
-            "The model exposes LOW vs. HIGH effort settings — more effort means more rounds of internal latent iteration on the same fixed-size memory, not longer written output.",
-            "Moving from LOW to HIGH effort raised pass@2 on ARC-AGI-1 from 21% to 29.5%.",
-            "Because the extra computation stays in latent space rather than generated tokens, the cost curve for more 'thinking' is far flatter than it is for verbalized chain-of-thought."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "cff15d62-e4ca-4f7c-9905-2252509246d7",
-          "kind": "comparison",
-          "title": "What More Effort Buys You",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Effort setting",
-              "Pass@2 on ARC-AGI-1",
-              "What changes"
-            ],
-            "rows": [
-              [
-                "LOW",
-                "21%",
-                "Fewer rounds of latent iteration"
-              ],
-              [
-                "HIGH",
-                "29.5%",
-                "More latent iterations; ~0.85 H200-GPU-seconds and ~$0.0007 per task"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "52e6d02f-b3ce-4567-86d8-c1e22cd063e4",
-          "kind": "example",
-          "title": "Solving a Grid-Transformation Puzzle",
-          "body": "An ARC-AGI task shows a handful of input/output grid pairs that share a hidden transformation rule, then asks the model to apply that rule to a new input grid.",
-          "bullets": [
-            "BDH-CQ reads each demonstration grid and folds it into its recurrent associative state — no text description of the rule is ever generated.",
-            "At the new query grid, it runs its latent iterations to converge on an answer grid directly from that compressed state.",
-            "A standard LLM attempting the same task would typically verbalize a hypothesis about the rule in text first ('the shape rotates 90° and recolors...'), burning output tokens whether or not that hypothesis is right."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "95070e49-0177-4e2e-8b83-e7a47428c2fe",
-          "kind": "concept",
-          "title": "Where This Approach Runs Into Limits",
-          "body": null,
-          "bullets": [
-            "No verbalized reasoning trace makes it harder to inspect why the model reached a given answer — there's no chain-of-thought to audit.",
-            "The result is demonstrated on ARC-AGI-1, not the harder ARC-AGI-2 successor or general open-domain reasoning — it's a specialist result, not a general-purpose reasoning replacement.",
-            "Training leans on a curated mixture of ARC-style data (RE-ARC, ConceptARC, ARC-Heavy and similar augmentations) — the efficiency gain is tied to a task family with that kind of structure.",
-            "At 150M parameters it isn't a general chat or knowledge model; it trades broad capability for narrow, cheap iterative reasoning."
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "d0b40d23-9dcf-4b25-9b2c-d5186dbb2153",
-          "kind": "takeaways",
-          "title": "The Big Idea",
-          "body": null,
-          "bullets": [
-            "Reasoning cost doesn't have to scale with output tokens — BDH-CQ moves the 'thinking' into a fixed-size recurrent latent state instead of generated text.",
-            "An effort knob that adds latent iterations (not tokens) gives a cheaper way to trade compute for accuracy than longer chain-of-thought.",
-            "It's a data point for a broader post-transformer direction (Dragon Hatchling) where memory and inference share the same computational fabric rather than being bolted together."
-          ],
-          "symbol": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "3284e258-f795-4bcf-825f-21c60b613d09",
-            "prompt": "What does BDH-CQ do instead of writing a verbalized chain-of-thought to solve an ARC-AGI-1 task?",
-            "options": [
-              "It iterates inside a fixed-size recurrent latent state and outputs the answer directly",
-              "It samples multiple text completions and votes on the majority answer",
-              "It retrieves the answer from a lookup table of past ARC solutions",
-              "It fine-tunes its weights on each new puzzle before answering"
-            ],
-            "correctIndex": 0,
-            "explanation": "BDH-CQ folds each demonstration into a recurrent associative memory and solves the query through iterative latent computation — never generating an intermediate text reasoning trace."
-          },
-          {
-            "id": "c1be05cd-4cb2-40d2-97e4-d6addbd54567",
-            "prompt": "Going from LOW to HIGH effort in BDH-CQ mainly changes what?",
-            "options": [
-              "The number of output tokens it generates",
-              "The number of latent iteration rounds on its fixed-size memory",
-              "The number of model parameters that get activated",
-              "The size of the training dataset used"
-            ],
-            "correctIndex": 1,
-            "explanation": "Effort in BDH-CQ controls how many rounds of internal latent iteration the model runs on its recurrent state — not how much text it writes, which is why the cost curve stays flat compared to verbalized reasoning."
-          },
-          {
-            "id": "8fc51fde-eb21-426a-9734-919975581005",
-            "prompt": "Why is BDH-CQ's result described as breaking a 'cost-accuracy frontier' rather than just a new accuracy record?",
-            "options": [
-              "It's the first system to ever solve any ARC-AGI-1 task",
-              "It reaches its accuracy at a lower reported cost per task than any prior plotted system at that accuracy or better",
-              "It has more parameters than any competing model",
-              "It was the first model trained without any ARC-style data"
-            ],
-            "correctIndex": 1,
-            "explanation": "A cost-accuracy frontier plots the best accuracy achieved at each price point; BDH-CQ's 29.5% pass@2 at roughly $0.0007/task lands beyond every previously reported point on that frontier, not just above one specific model's accuracy."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "a0e63bfa-7b89-4815-a884-5953f6ac4a3f",
-          "title": "BDH-CQ: In-Context Learning with Recurrent Latent Reasoning (arXiv:2608.09888)",
-          "url": "https://arxiv.org/abs/2608.09888"
-        },
-        {
-          "id": "806f5296-22a6-4cd2-8952-0c14d7e2b7c5",
-          "title": "Pathway — Introducing BDH-CQ",
-          "url": "https://pathway.com/research/introducing-bdh-cq"
-        }
-      ],
-      "id": "ca3c9af1-d32a-4b1f-b3bc-6115b00ec2e6",
-      "publishedDate": "2026-09-01T06:42:33Z"
     }
   ]
 }
