@@ -1,6 +1,203 @@
 {
   "posts": [
     {
+      "title": "Contextual Retrieval: Fixing RAG's Chunking Blind Spot",
+      "subtitle": "Give every chunk back the context it lost when you split the document",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "retrieval",
+        "embeddings",
+        "bm25",
+        "prompt-caching"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "Contextual Retrieval prepends an LLM-written summary of where a chunk sits in its source document before embedding and indexing it, fixing the ambiguity that plain chunking creates. Anthropic reported it cut top-20 retrieval failures by 35% alone, 49% combined with BM25, and 67% combined with reranking, made affordable by prompt caching the source document once.",
+      "slides": [
+        {
+          "id": "921420d9-206b-4d28-b43c-46ed64bbca8b",
+          "kind": "cover",
+          "title": "A chunk out of context is a chunk that can't be found",
+          "body": "Standard RAG splits documents into chunks and embeds each one alone. That works until a chunk needs the rest of the document to mean anything.",
+          "bullets": [],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "f1f04a0f-8687-4a49-9bff-3fe9a968911e",
+          "kind": "problem",
+          "title": "Chunking strips out the referent",
+          "body": "A 200-token chunk reads perfectly inside its source document and means almost nothing once it's isolated for embedding.",
+          "bullets": [
+            "Chunk text: \"The company's revenue grew 3% over the previous quarter.\" Which company? Which quarter?",
+            "The embedding model only sees that chunk — it has no way to recover the missing subject",
+            "A query for \"Acme Corp Q2 2026 revenue growth\" can rank this chunk low or miss it entirely",
+            "Bigger chunks reduce the problem but blow up embedding cost and dilute relevance"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "239692af-f3bb-444b-bdb5-cfba80121c41",
+          "kind": "solution",
+          "title": "Prepend context before you embed or index",
+          "body": "For each chunk, an LLM reads the whole source document and writes a short blurb placing that chunk in context — then the blurb is prepended to the chunk before it's embedded and indexed.",
+          "bullets": [
+            "Contextual Embeddings: prepend ~50-100 tokens of chunk-specific context, then embed as usual",
+            "Contextual BM25: index that same contextualized text in a keyword/BM25 store too, not just the vector store",
+            "Example context: \"This chunk is from Acme Corp's Q2 2026 10-Q, in the revenue section.\" + original chunk text",
+            "Retrieval still returns the original chunk to the model — the context is only there to make it findable"
+          ],
+          "symbol": "wand.and.stars",
+          "table": null
+        },
+        {
+          "id": "6d393288-848f-4379-9db0-ef0f4a9d7bb1",
+          "kind": "architecture",
+          "title": "Prompt caching is what makes this affordable",
+          "body": "Generating context for every chunk sounds like it means re-reading the whole document once per chunk — that would be brutally expensive at indexing time.",
+          "bullets": [
+            "Cache the full source document once, then reuse that cached context for every chunk's context-generation call",
+            "Anthropic reported the one-time cost at roughly $1.02 per million tokens of source documents using Claude prompt caching",
+            "Without caching, the same job costs on the order of 10x more — caching is what turns this from impractical to routine",
+            "It's an indexing-time cost, not a query-time one: it happens when you build the index, not when a user asks a question"
+          ],
+          "symbol": "bolt.badge.clock.fill",
+          "table": null
+        },
+        {
+          "id": "5ef64fea-f4d2-4d03-b329-b1f8e1cfb2ae",
+          "kind": "comparison",
+          "title": "Each layer compounds the retrieval gain",
+          "body": "Measured as the failure rate of the top-20 retrieved chunks on Anthropic's internal benchmark — lower is better, and the drop is cumulative.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Setup",
+              "Top-20 retrieval failure rate",
+              "Reduction vs. baseline"
+            ],
+            "rows": [
+              [
+                "Embeddings only (baseline)",
+                "5.7%",
+                "—"
+              ],
+              [
+                "+ Contextual Embeddings",
+                "3.7%",
+                "-35%"
+              ],
+              [
+                "+ Contextual Embeddings + Contextual BM25",
+                "2.9%",
+                "-49%"
+              ],
+              [
+                "+ reranking on top",
+                "1.9%",
+                "-67%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "ff6873f4-2920-4e6b-bed3-74453e8ac2f5",
+          "kind": "example",
+          "title": "Worked example: a contract review assistant",
+          "body": "A legal team indexes 400 vendor contracts. A user asks: \"What's the termination notice period in the Globex master services agreement?\"",
+          "bullets": [
+            "Raw chunk: \"Either party may terminate this Agreement upon 60 days' written notice.\" — no company name, no doc title in sight",
+            "With contextual retrieval, the indexed text becomes: \"From the Globex Master Services Agreement, Section 9 (Termination): Either party may terminate this Agreement upon 60 days' written notice.\"",
+            "Now both the embedding and the BM25 keyword match on \"Globex\" and \"Master Services Agreement\" pull this exact chunk into the top results",
+            "Without the added context, that chunk competes on identical generic termination language against dozens of other contracts and often loses"
+          ],
+          "symbol": "doc.text.fill",
+          "table": null
+        },
+        {
+          "id": "fcfc5e47-aff1-4b16-a48b-beb9572529af",
+          "kind": "concept",
+          "title": "When it's not worth it",
+          "body": "Contextual Retrieval adds a real indexing pipeline step — it's not free, and it's not the right fix for every RAG problem.",
+          "bullets": [
+            "Small corpora (a handful of short, self-contained docs) rarely have the ambiguity problem this solves — skip it",
+            "Keep the generated context short (50-100 tokens); a long context can dilute the chunk's own embedding signal",
+            "Requires a model/provider that supports prompt caching well, or the indexing cost estimate above no longer holds",
+            "It's additive with reranking, not a replacement for it — the biggest gain (67%) comes from combining both, not either alone"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "32e7c37f-6449-44c8-92f4-3e9f2907a984",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Chunking breaks the context a chunk needs to be found — Contextual Retrieval writes that context back in before indexing",
+            "It touches both the vector index (Contextual Embeddings) and the keyword index (Contextual BM25)",
+            "Prompt caching the source document is what keeps the one-time indexing cost low (~$1.02/M tokens)",
+            "Stack it with reranking for the largest measured improvement (67% fewer failed retrievals) rather than treating it as either/or"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "7585f3c3-f962-4a11-8825-3633ed9aabde",
+            "prompt": "What does Contextual Retrieval add to each chunk before it's embedded and indexed?",
+            "options": [
+              "A random unique identifier for deduplication",
+              "A short LLM-written blurb describing where the chunk sits in its source document",
+              "A summary of the user's query",
+              "A translation of the chunk into English"
+            ],
+            "correctIndex": 1,
+            "explanation": "The technique prepends chunk-specific context (e.g. which document and section a chunk came from) generated by reading the full document, so the chunk carries enough context to be matched correctly on its own."
+          },
+          {
+            "id": "43c66ff4-c751-4619-abab-0957b268394f",
+            "prompt": "Why does prompt caching matter for Contextual Retrieval?",
+            "options": [
+              "It speeds up the user's query at runtime",
+              "It lets the model skip generating context for short chunks",
+              "It avoids re-processing the entire source document from scratch for every chunk's context-generation call, keeping indexing cost low",
+              "It replaces the need for a vector database"
+            ],
+            "correctIndex": 2,
+            "explanation": "Without caching, generating context per chunk would mean repeatedly paying to process the whole document. Caching the document once and reusing it across chunk-context calls is what makes the one-time indexing cost (roughly $1.02 per million tokens) practical."
+          },
+          {
+            "id": "6d476c44-3a35-487d-a0c2-5033c9eb13bf",
+            "prompt": "In Anthropic's reported results, what combination produced the largest drop in failed top-20 retrievals?",
+            "options": [
+              "Contextual Embeddings alone (35% reduction)",
+              "Contextual BM25 alone",
+              "Contextual Embeddings + Contextual BM25 (49% reduction)",
+              "Contextual Embeddings + Contextual BM25 + reranking (67% reduction)"
+            ],
+            "correctIndex": 3,
+            "explanation": "Each layer compounds: contextual embeddings alone cut failures 35%, adding contextual BM25 reached 49%, and adding a reranking pass on top reached the reported 67% reduction — the gains are additive, not competing."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d4f31137-a9aa-45fb-aeca-0fc310f281dd",
+          "title": "Introducing Contextual Retrieval — Anthropic",
+          "url": "https://www.anthropic.com/engineering/contextual-retrieval"
+        }
+      ],
+      "id": "b67352aa-4d0b-4a09-b17e-decc7a52561c",
+      "publishedDate": "2026-09-09T18:40:06Z"
+    },
+    {
       "title": "MaxKernel: Google's Agents That Write TPU Kernels",
       "subtitle": "An LLM agent loop with real compiler feedback that beats hand-tuned kernels on production workloads.",
       "category": "AI Innovations",
@@ -11218,185 +11415,6 @@
         }
       ],
       "id": "5e0f7312-12ee-4c70-a302-850bb537dbd4",
-      "publishedDate": "2026-09-01T18:44:42Z"
-    },
-    {
-      "title": "Hy4 Preview: Tencent's 770B Open-Weight MoE Flagship",
-      "subtitle": "Apache-2.0 weights, a 1M-token window, and DeepSeek-style sparse attention",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "mixture-of-experts",
-        "open-weight",
-        "tencent",
-        "long-context",
-        "sparse-attention"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.stack.3d.up.fill",
-      "summary": "Tencent's Hunyuan team open-sourced Hy4 preview, a 770B-parameter mixture-of-experts model (49B active per token) with a 1M-token context window, released under Apache-2.0. It pairs DeepSeek-style sparse attention with a multi-token-prediction head, and ships with Tencent's own internal expert evaluations against GLM 5.3 and Kimi K3.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Tencent open-sources a 770B flagship, not a distilled sample",
-          "body": "Hy4 preview lands with full Apache-2.0 weights: 770B total parameters, 49B active per token, and a context window rated past 1M tokens. Most models at this scale stay behind an API.",
-          "bullets": [
-            "770B total / 49B active parameters (MoE)",
-            "1M-token context window",
-            "Apache-2.0 — weights, not just an API"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "id": "d51885a4-10bf-4048-ab97-dbd81f1a6d84",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Frontier scale and open weights rarely ship together",
-          "body": "The biggest MoE models are usually either fully closed behind an API, or open-sourced at a fraction of frontier scale. A 770B-parameter release under a permissive license, with a working 1M-token window, is unusual on both axes at once.",
-          "bullets": [
-            "Serving a model this large still requires multi-GPU infrastructure, even 'open'",
-            "1M-token context multiplies KV-cache memory pressure at inference time",
-            "Tencent ships it anyway — self-hosted, ModelScope, GitCode, and Hugging Face"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "38f0c94f-d94a-4f4d-a168-46fd368a6d46",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "78 layers, 256 routed experts, sparse attention throughout",
-          "body": "The backbone is 78 layers: the first is a dense feed-forward block, the remaining 77 replace it with MoE — 256 routed experts plus 1 always-on shared expert, with the top 8 routed experts activated per token.",
-          "bullets": [
-            "Attention: Gated DeepSeek Sparse Attention (Gated DSA) with IndexCache for cross-layer index reuse",
-            "iHC (identity Hyper-Connections) improves information flow between layers",
-            "Hidden size 6144, 64 attention heads, 120,832-token vocabulary",
-            "A multi-token-prediction (MTP) head adds 10B params (0.7B active) purely for speculative decoding"
-          ],
-          "symbol": "cpu.fill",
-          "id": "2fa83dff-77b6-4454-85d6-78abe341b310",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "What 'sparse' means for a single forward pass",
-          "body": "Of the 770B total parameters, only 49B are active for any given token — about 6.4% of the model. Attention doesn't scan the full context densely either: Gated DSA uses the IndexCache to select which past tokens matter before spending compute on them.",
-          "bullets": [
-            "49B / 770B ≈ 6.4% of parameters active per token",
-            "The MTP head predicts extra tokens ahead, letting the base model verify several at once",
-            "Net effect: frontier-scale capacity, inference cost closer to a much smaller dense model"
-          ],
-          "symbol": "bolt.fill",
-          "id": "ddb28d33-8e07-4c18-a3eb-5940dda7bc1a",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Tencent's own internal expert evaluation",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "id": "dbdcc505-fce9-4f40-b4e6-f84eda0c6d0d",
-          "table": {
-            "headers": [
-              "Matchup",
-              "Hy4 preview score",
-              "Opponent score",
-              "Win / tie / loss"
-            ],
-            "rows": [
-              [
-                "vs. GLM 5.3",
-                "2.99",
-                "2.92",
-                "46.8% / 12.8% / 40.4%"
-              ],
-              [
-                "vs. Kimi K3",
-                "2.99",
-                "2.94",
-                "51.2% / 7.9% / 40.9%"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "concept",
-          "title": "Read the internal eval for what it is",
-          "body": "The numbers above come from 163 internal experts rating outputs on 203 engineering tasks — Tencent's own methodology, not an independent third-party benchmark. That doesn't make them meaningless, but it does set the bar for how much weight to put on them.",
-          "bullets": [
-            "163 raters, 203 tasks, average score plus win/tie/loss split — a real, if self-run, eval",
-            "Tencent itself labels this release 'an early version' with room left in pre- and post-training",
-            "Independent benchmarks (public leaderboards, third-party evals) haven't landed yet at time of writing",
-            "Open weights mean the community can run its own comparisons directly"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "id": "99e5a892-9679-42e3-ab86-7c98fe3f9f85",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Hy4 preview: 770B total / 49B active MoE, 1M-token context, Apache-2.0 weights",
-            "Sparse attention (Gated DSA + IndexCache) and an MTP head both target inference cost, not just quality",
-            "Tencent's internal eval shows narrow wins over GLM 5.3 and Kimi K3 — self-reported, not third-party",
-            "It's explicitly a preview: Tencent says pre- and post-training both still have headroom"
-          ],
-          "symbol": "checklist",
-          "id": "503a509a-31f8-4850-a237-e9abded5d429",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Roughly what fraction of Hy4 preview's parameters are active for any given token?",
-            "options": [
-              "About 6.4%",
-              "About 25%",
-              "About 50%",
-              "100% — it's a dense model"
-            ],
-            "correctIndex": 0,
-            "explanation": "49B of the 770B total parameters are active per token (49/770 ≈ 6.4%), since only the top-8 routed experts plus the shared expert fire for each token — the rest of the 256 routed experts sit idle.",
-            "id": "6db98431-fcfb-4ed6-9ecc-5b72e3514eb0"
-          },
-          {
-            "prompt": "What should you keep in mind about the GLM 5.3 / Kimi K3 comparison numbers in the release?",
-            "options": [
-              "They come from a public, third-party leaderboard",
-              "They're from Tencent's own internal panel of 163 experts rating 203 tasks — not an independent benchmark",
-              "They were generated automatically by another LLM grader",
-              "They only cover coding tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "The win/tie/loss and average scores are Tencent's own internal evaluation methodology. That's a real, structured eval, but it isn't the same evidentiary bar as an independent third-party benchmark run by someone outside the company.",
-            "id": "e90edd42-30fc-418b-9d62-d2e114c63d39"
-          },
-          {
-            "prompt": "What is the multi-token-prediction (MTP) head in Hy4 preview for?",
-            "options": [
-              "Translating between languages",
-              "Increasing the model's total parameter count for benchmarks",
-              "Predicting several tokens ahead to support speculative decoding and speed up generation",
-              "Compressing the KV cache to save memory"
-            ],
-            "correctIndex": 2,
-            "explanation": "The MTP head (10B added params, 0.7B active) predicts extra tokens ahead of the main generation, which the base model can then verify in parallel — a form of self-speculative decoding that reduces the number of full forward passes needed per output token.",
-            "id": "121d25ea-d721-4d5b-a52d-ce247705afc4"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Tencent-Hunyuan/Hy4-preview on GitHub",
-          "url": "https://github.com/Tencent-Hunyuan/Hy4-preview",
-          "id": "a8002109-9eff-4e6a-a1e7-067b19173981"
-        }
-      ],
-      "id": "16290c35-cb9a-409f-a890-0bf2982f963d",
       "publishedDate": "2026-09-01T18:44:42Z"
     }
   ]
