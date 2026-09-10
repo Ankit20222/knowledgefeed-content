@@ -1,6 +1,524 @@
 {
   "posts": [
     {
+      "postKind": "paper",
+      "title": "Miles v0.1: Decoupling RL Rollout From Training",
+      "subtitle": "Why the fastest RL post-training loop is the one that never waits",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "tags": [
+        "reinforcement learning",
+        "post-training",
+        "sglang",
+        "megatron",
+        "rl infrastructure"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Miles v0.1, from RadixArk (the SGLang team's spinoff, built on Tsinghua's slime), redesigns the LLM RL post-training loop so rollout generation and training run fully asynchronously instead of lockstep, reporting 3x rollout throughput, 10x faster weight sync, and 30x faster weight conversion.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The RL Loop Has Three Stages. Most Frameworks Run Them in Lockstep.",
+          "body": "Generate rollouts, train on them, sync the updated weights back to the rollout engines. Miles v0.1 asks: what if none of these had to wait for the others?",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "8630b414-c246-4488-81b5-7423ec66ec01"
+        },
+        {
+          "kind": "problem",
+          "title": "Rollout Generation Dominates Wall-Clock Time — and Idles the Trainer",
+          "body": "In a synchronous RL loop, the trainer GPUs sit idle while the rollout engine generates trajectories, and the rollout engines sit idle while the trainer updates weights. Since rollout generation is the slowest stage, that idle time compounds every step.",
+          "bullets": [
+            "Lockstep scheduling: generate → train → sync, one stage at a time",
+            "Whichever stage is slowest sets the pace for both sets of GPUs",
+            "At frontier scale (MoE models, long trajectories), that waste is expensive hardware sitting idle"
+          ],
+          "symbol": "hourglass",
+          "id": "1af3b873-2d43-4772-a774-b8c40bf9a890"
+        },
+        {
+          "kind": "solution",
+          "title": "Fully Asynchronous RL: Generate and Train Concurrently",
+          "body": "Miles decouples rollout (built on SGLang) from training (Megatron-LM or PyTorch FSDP), orchestrated over Ray. In async mode, rollout engines keep generating trajectories continuously; the trainer consumes whichever trajectories are finished whenever it needs its next batch.",
+          "bullets": [
+            "Rollout engine: SGLang — keeps producing trajectories nonstop",
+            "Trainer: Megatron-LM or FSDP — pulls a batch whenever it's ready, no waiting",
+            "Three weight-sync transports, chosen per deployment topology (colocated vs. disaggregated GPU pools)"
+          ],
+          "symbol": "cpu.fill",
+          "id": "e165eb94-6eae-4294-9688-090f7692a124"
+        },
+        {
+          "kind": "comparison",
+          "title": "The Reported Gains: 3x, 10x, 30x",
+          "body": "Compared to the earlier lockstep design, RadixArk reports large, stage-specific speedups — the biggest gain is in weight conversion, the mechanical step of reshaping trained weights back into a format the rollout engine can load.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Stage",
+              "Improvement"
+            ],
+            "rows": [
+              [
+                "Rollout throughput",
+                "3x"
+              ],
+              [
+                "Weight synchronization",
+                "10x"
+              ],
+              [
+                "Weight conversion",
+                "30x"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "id": "5c596874-f859-4479-ab7f-c061a3f82001"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Training a MoE Model With GRPO",
+          "body": "Say you're running GRPO post-training on a large mixture-of-experts model. In the old lockstep design, the trainer finishes a step and then waits ~30-60s while weights get converted and pushed to every rollout worker before generation can resume.",
+          "bullets": [
+            "Async mode: rollout workers keep generating on the previous policy version while conversion happens in the background",
+            "The trainer immediately starts consuming newly-finished trajectories for its next batch — no dead time",
+            "Miles supports GRPO, GSPO, PPO, REINFORCE++, plus SFT and on-policy distillation, on the same stack"
+          ],
+          "symbol": "square.stack.3d.forward.dottedline.fill",
+          "id": "cc07b346-8f1f-46b3-805e-b16d8204f9e1"
+        },
+        {
+          "kind": "problem",
+          "title": "The Tradeoff: Staleness",
+          "body": "Async throughput isn't free. A rollout generated while the trainer was mid-update was sampled from a slightly older policy than the one it's eventually trained against — a staleness gap that grows if training falls behind generation.",
+          "bullets": [
+            "More staleness = faster throughput but a noisier training signal",
+            "Not worth the added system complexity for small-scale, single-GPU fine-tuning jobs",
+            "Runs on NVIDIA GB300/GB200/B300/B200/H200/H100/A100 and AMD MI300X/MI325/MI350/MI355X via ROCm — but tuning the async schedule per cluster is nontrivial"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "efe712f5-6788-40c7-8756-921ef7ba0015"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "The RL post-training loop has 3 stages: rollout, train, sync weights — Miles's core idea is decoupling them instead of running them in lockstep",
+            "SGLang handles rollout, Megatron-LM/FSDP handles training, Ray orchestrates — with 3 weight-sync transports for different cluster topologies",
+            "Reported gains: 3x rollout throughput, 10x weight sync, 30x weight conversion vs. the earlier synchronous design",
+            "The cost of async is policy staleness — a real tradeoff, not a free lunch",
+            "Miles descends from THUDM's slime, built jointly by RadixArk (the SGLang team's spinout), InfiXAI, and Ant Group's RL teams"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "653e3ee7-51a1-44db-8f86-3121d5e7e29a"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In a synchronous (lockstep) RL post-training loop, why do trainer GPUs sit idle?",
+            "options": [
+              "They're waiting for the rollout engine to finish generating trajectories before training can start",
+              "They run out of memory during rollout generation",
+              "Megatron-LM requires a manual restart between steps",
+              "SGLang blocks all GPU access during inference"
+            ],
+            "correctIndex": 0,
+            "explanation": "Lockstep scheduling means generate → train → sync happen one at a time; whichever stage is slowest (usually rollout generation) leaves the other stage's hardware idle while it waits.",
+            "id": "37978cc6-0965-4232-bbef-7ceb3bc5f19a"
+          },
+          {
+            "prompt": "What is the main tradeoff Miles's fully asynchronous mode introduces?",
+            "options": [
+              "Higher GPU memory usage across the board",
+              "Policy staleness — some rollouts are sampled from a slightly older policy version",
+              "Loss of support for GRPO and PPO",
+              "Inability to run on AMD hardware"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because rollout generation and training run concurrently, some trajectories are generated from a policy snapshot that's already been updated by the time training uses them — a staleness gap that trades signal freshness for throughput.",
+            "id": "064986fb-1978-41b8-bad1-acae1053be03"
+          },
+          {
+            "prompt": "Which reported improvement was the largest in Miles v0.1?",
+            "options": [
+              "Rollout throughput (3x)",
+              "Weight synchronization (10x)",
+              "Weight conversion (30x)",
+              "Model accuracy (2x)"
+            ],
+            "correctIndex": 2,
+            "explanation": "RadixArk reports weight conversion — reshaping trained weights into a format the rollout engine can load — improved 30x, the largest of the three reported gains.",
+            "id": "855d928e-19fb-43ea-9ca5-b5d2a6d4d5b8"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Miles v0.1: Production-Level Post-Training (arXiv:2609.08368)",
+          "url": "https://arxiv.org/abs/2609.08368",
+          "id": "d7d7da7c-6128-4cc3-9240-97d8947ac0dc"
+        },
+        {
+          "title": "Miles v0.1: Production-level Post-training — LMSYS Org blog",
+          "url": "https://www.lmsys.org/blog/2026-08-18-miles-v0-1/",
+          "id": "db5faea0-0c86-478d-a01e-63ec683a9342"
+        }
+      ],
+      "id": "58962ad7-df0c-4fd5-95c1-65365fc73c9e",
+      "publishedDate": "2026-09-10T06:41:49Z"
+    },
+    {
+      "postKind": "release",
+      "title": "Gemini Spark Can Now Act on Your Google Photos Library",
+      "subtitle": "From answering questions about your photos to editing, organizing, and sharing them for you",
+      "category": "AI News",
+      "difficulty": "Beginner",
+      "tags": [
+        "gemini spark",
+        "google photos",
+        "ai agents",
+        "product launch",
+        "permissions"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "photo.stack.fill",
+      "summary": "Google connected its Gemini Spark agent to Google Photos, letting Pro/Ultra subscribers ask it to search, edit, organize, share, and schedule actions across their photo library — with non-destructive edits and explicit permission prompts as the safety net.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Your Photo Library Just Got an Agent With Write Access",
+          "body": "Announced in early September 2026, Gemini Spark can now take multi-step actions inside Google Photos — not just answer questions about it.",
+          "bullets": [],
+          "symbol": "photo.stack.fill",
+          "id": "9ec378cd-06b0-4073-8121-cb8fdff79c71"
+        },
+        {
+          "kind": "problem",
+          "title": "Before: Search and Ask. Not Do.",
+          "body": "Photo libraries have grown into unsorted archives of tens of thousands of images. Prior AI features in Google Photos could answer a question about your library (\"find photos from the beach trip\") but couldn't act on the answer for you.",
+          "bullets": [
+            "Finding the right photos was still manual, then curating an album was still manual",
+            "Turning a photo of an event flyer into an actual calendar entry required you to do it by hand",
+            "Sharing meant you selecting photos, creating the album, and sending it yourself"
+          ],
+          "symbol": "magnifyingglass",
+          "id": "03a647c6-3df8-4800-9423-51b579e29759"
+        },
+        {
+          "kind": "solution",
+          "title": "What Changed: Spark Can Execute the Whole Workflow",
+          "body": "Once connected, Gemini Spark can search and curate by subject, location, date, or event; edit photos and build collages; create and organize albums; share albums via connected apps like Gmail and Messages; extract text from images; and schedule recurring automation tasks.",
+          "bullets": [
+            "One prompt can chain multiple steps: find → curate → album → share",
+            "Recurring workflows: e.g., auto-create a shared album every time you tag a new trip",
+            "Extracts text from images — a photographed flyer can become structured info"
+          ],
+          "symbol": "wand.and.stars",
+          "id": "06804245-5aa9-4b25-aa64-a5c51837a423"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: Concert Flyer → Calendar Entry",
+          "body": "You photograph a concert flyer at a coffee shop. Ask Spark to \"add this to my calendar\" — it reads the date/venue/time off the image and creates the calendar event, no manual data entry.",
+          "bullets": [
+            "Another real workflow: \"make a private album of every photo of my dog from this year and share it with mom\"",
+            "Spark plans the multi-step sequence, then asks for confirmation before the sharing step executes",
+            "Rolling out gradually: Google AI Pro/Ultra subscribers, US only, English only, 18+"
+          ],
+          "symbol": "calendar.badge.clock",
+          "id": "5f7c652b-c631-4495-acd7-c515d279bb81"
+        },
+        {
+          "kind": "comparison",
+          "title": "Old Assistant vs. Gemini Spark",
+          "body": "The jump is from a Q&A layer to an agent that plans and executes multi-step actions across the product.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Capability",
+              "Old Photos AI",
+              "Gemini Spark"
+            ],
+            "rows": [
+              [
+                "Search library",
+                "Yes",
+                "Yes"
+              ],
+              [
+                "Edit / create collages",
+                "Manual only",
+                "Yes, on request"
+              ],
+              [
+                "Create & organize albums",
+                "Manual only",
+                "Yes"
+              ],
+              [
+                "Share via Gmail/Messages",
+                "Manual only",
+                "Yes, with confirmation"
+              ],
+              [
+                "Recurring scheduled workflows",
+                "No",
+                "Yes"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "id": "23707ef1-5ed3-4e15-892f-b34eb1e22af0"
+        },
+        {
+          "kind": "problem",
+          "title": "The Trust Problem: An Agent With Write Access to Personal Memories",
+          "body": "Giving an agent the ability to edit and share your photos raises an obvious question: what happens when it gets it wrong? Google's mitigations are specific, not just a blanket \"trust us.\"",
+          "bullets": [
+            "Edits are written as a new copy — the original photo is never overwritten",
+            "New albums are private by default; nothing is shared without an explicit permission prompt",
+            "Scope is deliberately narrow at launch: Pro/Ultra tier only, US, English, 18+ — Google is rolling out gradually, not to everyone at once"
+          ],
+          "symbol": "lock.shield.fill",
+          "id": "b8a35856-3985-414b-8698-27e0b9c169c1"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Gemini Spark moved from answering questions about your Photos library to executing multi-step actions inside it",
+            "Core capabilities: search/curate, edit/collage, album creation, sharing via connected apps, recurring automation, text extraction from images",
+            "Safety model: non-destructive edits (copy, not overwrite), private-by-default albums, explicit confirmation before sharing/emailing",
+            "Rollout is intentionally narrow: Pro/Ultra subscribers, US, English, 18+, over the coming weeks",
+            "This is a preview of a broader pattern: consumer AI agents graduating from read-only assistants to write-access agents on personal data"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "9902f384-fc45-43ac-ae80-5290f27d2a79"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the key difference between Gemini Spark's new Google Photos integration and the prior AI features in Photos?",
+            "options": [
+              "Spark can now take multi-step actions (edit, organize, share) instead of only answering questions",
+              "Spark replaces Google Photos entirely with a new app",
+              "Spark only works on videos, not photos",
+              "Spark requires no subscription at all"
+            ],
+            "correctIndex": 0,
+            "explanation": "The prior AI layer in Photos could answer questions about your library; Gemini Spark can now execute the workflow — search, edit, organize, and share — as connected multi-step actions.",
+            "id": "38f16b6e-1b7c-4283-9cb0-2584ce9a4230"
+          },
+          {
+            "prompt": "How does Google prevent Gemini Spark from destroying an original photo during an edit?",
+            "options": [
+              "It doesn't allow any edits at all",
+              "It writes edits to a new copy, leaving the original untouched",
+              "It requires a paid add-on for edit protection",
+              "It only allows edits on photos older than a year"
+            ],
+            "correctIndex": 1,
+            "explanation": "Edits are written as a new copy rather than overwriting the original — a non-destructive-by-design safeguard against agent mistakes.",
+            "id": "fd5992dd-f9f4-4bd1-934b-60a77436d8c4"
+          },
+          {
+            "prompt": "Which of these is true about the initial rollout of Gemini Spark for Google Photos?",
+            "options": [
+              "It's available worldwide to all Google Photos users immediately",
+              "It's limited to Google AI Pro/Ultra subscribers in the US, English only, 18+",
+              "It only works for business/enterprise accounts",
+              "It requires downloading a separate app"
+            ],
+            "correctIndex": 1,
+            "explanation": "Google scoped the initial rollout narrowly — Pro/Ultra subscribers, US, English, adults 18+ — rolling out gradually rather than to everyone at once.",
+            "id": "87dcef17-97fd-40aa-a303-b65e5f873e60"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Google's Gemini Spark can now manage your Google Photos library — TechCrunch",
+          "url": "https://techcrunch.com/2026/09/04/googles-gemini-spark-can-now-manage-your-google-photos-library/",
+          "id": "da50ebd9-203e-49a1-946a-8cdcfaaf566e"
+        },
+        {
+          "title": "Gemini Spark rolling out Google Photos control for automated editing, sharing, & more — 9to5Google",
+          "url": "https://9to5google.com/2026/09/03/gemini-spark-google-photos/",
+          "id": "32c67e73-7228-481b-a0d7-60b6a0992e92"
+        }
+      ],
+      "id": "517b8bb9-1438-48f2-852e-6599b2bf9131",
+      "publishedDate": "2026-09-10T06:41:49Z"
+    },
+    {
+      "postKind": "concept",
+      "title": "Idempotency Keys: Making Retries Safe",
+      "subtitle": "How to retry a network call without accidentally charging someone twice",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "tags": [
+        "idempotency",
+        "distributed systems",
+        "api design",
+        "retries",
+        "backend"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "key.fill",
+      "summary": "An idempotency key lets a client safely retry a request that may or may not have already succeeded, by giving the server a way to recognize \"this is the same operation\" and return the original result instead of executing it again.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Idempotency Keys: Making Retries Safe",
+          "body": "A network timeout doesn't tell you whether the server processed your request or not. Retrying blindly can be dangerous — idempotency keys make it safe.",
+          "bullets": [],
+          "symbol": "key.fill",
+          "id": "a2cc6f57-73dd-4936-b5cd-e665b0cbf245"
+        },
+        {
+          "kind": "problem",
+          "title": "The Ambiguity Every Retry Faces",
+          "body": "You call POST /charge, the connection drops before the response arrives. Did the charge go through? You genuinely don't know — the request could have failed before reaching the server, or succeeded and only the response got lost.",
+          "bullets": [
+            "Retrying is the obvious fix for transient failures — but if the original request actually succeeded, retrying re-executes it",
+            "For a payment, that means charging the customer twice",
+            "For an inventory decrement, that means double-counting a sale"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "54a525ea-f5f5-4f63-b20d-f192fe43068a"
+        },
+        {
+          "kind": "solution",
+          "title": "The Mechanism: A Key That Deduplicates Intent",
+          "body": "The client generates a unique key (typically a UUID) once per logical operation and sends it with every attempt, including retries. The server stores the key alongside the operation's result, atomically with the operation itself.",
+          "bullets": [
+            "First request with a new key: server executes it, stores result keyed by that ID",
+            "Retry with the same key: server sees it's already been handled and returns the stored result — no re-execution",
+            "The key must be generated once per intent and reused across retries, never regenerated per attempt"
+          ],
+          "symbol": "arrow.clockwise",
+          "id": "1e0ba709-e326-4405-8057-e2789be2e68c"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: A Payment API Under Timeout",
+          "body": "A client calls POST /v1/charges with header Idempotency-Key: 7e9a...-4b2. The request times out client-side after 5s, but the server actually finished processing it in 6s. The client retries with the SAME key.",
+          "bullets": [
+            "Server checks its idempotency table: key already exists with status=completed → returns the stored charge result immediately, doesn't charge again",
+            "Race condition: two retries arrive concurrently before the first finishes. A unique constraint on the key column plus a status=pending row (inserted before execution starts) makes the second request see a conflict and wait or return \"in progress\"",
+            "This pattern is exactly how Stripe's Idempotency-Key header works in production"
+          ],
+          "symbol": "creditcard.fill",
+          "id": "d0667db6-6aec-4f2b-a008-083f73714beb"
+        },
+        {
+          "kind": "comparison",
+          "title": "Naive Retry vs. Idempotency-Key Retry",
+          "body": "The difference shows up exactly when it matters: the request that ambiguously \"maybe succeeded.\"",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Scenario",
+              "Naive retry",
+              "With idempotency key"
+            ],
+            "rows": [
+              [
+                "Request never reached server",
+                "Safe — executes once",
+                "Safe — executes once"
+              ],
+              [
+                "Request succeeded, response lost",
+                "Executes AGAIN (duplicate charge)",
+                "Returns stored result — no duplicate"
+              ],
+              [
+                "Two retries race concurrently",
+                "Both may execute",
+                "Unique constraint blocks the second"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "id": "4960e54f-95e6-4523-988b-05e41cabaf0e"
+        },
+        {
+          "kind": "problem",
+          "title": "Pitfalls to Watch For",
+          "body": "Idempotency keys aren't a free safety net — they need deliberate handling at the edges.",
+          "bullets": [
+            "Key reused with a DIFFERENT request body: the server should reject this (or hash the body and compare) rather than silently returning a mismatched cached result",
+            "Unbounded key storage grows forever — keys need a TTL (e.g., 24h) after which they're purged and can be reused",
+            "GET requests are naturally idempotent already — idempotency keys matter for POST/PATCH/DELETE with side effects, not reads",
+            "Doesn't help across different logical operations — it only protects retries of the SAME operation, not overall business-logic consistency"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "b1fa1192-2d53-4b0b-ab5b-5533c80edf34"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "A network failure means \"unknown outcome,\" not \"failed\" — safe retries need a way to detect duplicate intent",
+            "Client generates one key per logical operation; server stores key → result atomically with the side effect",
+            "Retry with the same key returns the stored result instead of re-executing — this is what makes it safe to retry payments and other side-effecting calls",
+            "Guard the edges: reject mismatched bodies on key reuse, use a unique constraint to close the concurrent-retry race, and expire keys with a TTL",
+            "This is exactly the mechanism behind Stripe's and most payment APIs' Idempotency-Key header"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "e1084681-9483-4bc0-9570-20a3602c1f69"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why is blindly retrying a failed POST /charge request risky?",
+            "options": [
+              "POST requests are always rejected by servers on retry",
+              "The original request may have actually succeeded before the response was lost, so retrying could charge the customer twice",
+              "Retries always take longer than the original request",
+              "It only works over HTTP/1.1, not HTTP/2"
+            ],
+            "correctIndex": 1,
+            "explanation": "A timeout or dropped connection is ambiguous — the server may have already processed the request. Retrying without a deduplication mechanism can re-execute a side effect that already happened.",
+            "id": "223ed004-dcd3-4394-844a-c73e392cda9f"
+          },
+          {
+            "prompt": "How does an idempotency key prevent a duplicate charge on retry?",
+            "options": [
+              "It encrypts the request body so the server can't read it twice",
+              "The server stores the key with the operation's result; a retry with the same key returns the stored result instead of re-executing",
+              "It slows down the retry so the first request always finishes first",
+              "It converts the POST into a GET request"
+            ],
+            "correctIndex": 1,
+            "explanation": "The server atomically records the key alongside the executed operation's outcome. On a retry carrying the same key, it recognizes the duplicate intent and returns the cached result rather than running the operation again.",
+            "id": "7c91326e-3f15-41eb-9bf2-ec5af43bdf9e"
+          },
+          {
+            "prompt": "What should a server do if it receives the same idempotency key with a DIFFERENT request body?",
+            "options": [
+              "Execute the new body and overwrite the old cached result",
+              "Reject it (or detect the mismatch by hashing the body) instead of returning a cached result for an unrelated payload",
+              "Ignore the key entirely and always execute",
+              "Merge both request bodies into one operation"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reusing a key for a different payload is a client bug or an attempted key collision — the server should reject the mismatch rather than silently returning a cached result for the wrong operation.",
+            "id": "4c906188-4194-434e-9830-5a3573b5ab69"
+          }
+        ]
+      },
+      "references": [],
+      "id": "cd65720f-e54d-4a99-ab0b-40440f9ea1f4",
+      "publishedDate": "2026-09-10T06:41:49Z"
+    },
+    {
       "id": "4d730e05-bdaf-43f5-b35d-971274d44472",
       "title": "Ring Attention: Near-Infinite Context Across Many GPUs",
       "subtitle": "Split the sequence into blocks, rotate the key/value blocks around a ring, and hide the network transfer behind the compute.",
@@ -10851,582 +11369,6 @@
         }
       ],
       "publishedDate": "2026-09-02T12:41:21Z"
-    },
-    {
-      "id": "931a2d5d-0049-44fa-b27d-08d8cde509fa",
-      "title": "Grouped-Query Attention: Shrinking the KV Cache Without Losing Heads",
-      "subtitle": "The middle ground between full multi-head attention and the too-lossy multi-query shortcut",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "kv cache",
-        "inference optimization",
-        "transformers",
-        "llm serving"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.grid.3x2.fill",
-      "summary": "Grouped-Query Attention (GQA) splits the difference between multi-head attention's quality and multi-query attention's tiny memory footprint by letting clusters of query heads share a single key/value head. It's why models like Llama 2 70B can serve long contexts at a fraction of the KV-cache memory a full multi-head design would need.",
-      "artPrompt": null,
-      "slides": [
-        {
-          "id": "f71d5cd7-1e8f-4a74-8658-0fc5bf4c94fd",
-          "kind": "cover",
-          "title": "The KV Cache Is Usually the Real Memory Bottleneck, Not the Weights",
-          "body": "At inference time, every attention head keeps its own growing key/value cache per token generated. More heads and longer contexts mean that cache — not the model weights — is often what runs a GPU out of memory first.",
-          "bullets": [],
-          "symbol": "square.grid.3x2.fill",
-          "table": null
-        },
-        {
-          "id": "bf8fd29f-bbde-44fc-ac68-ac99d6cbdefb",
-          "kind": "problem",
-          "title": "Multi-Head Attention Pays for Every Head, Every Token",
-          "body": "In standard multi-head attention (MHA), each of the H heads has its own K and V projection, so the cache grows with the full head count.",
-          "bullets": [
-            "KV cache size per token = 2 (K and V) x num_layers x num_heads x head_dim x bytes",
-            "For a 70B-class model with 80 layers, 64 heads, head_dim 128, fp16: that's ~2.5 MB per token in cache",
-            "At long context and large batch size, this cache can dwarf the weights themselves in GPU memory"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "f2792765-6e3a-4ddf-bc5c-88c0f0806f85",
-          "kind": "solution",
-          "title": "GQA: Group Query Heads, Share Their Key/Value Heads",
-          "body": "GQA keeps all H query heads but splits them into G groups (G < H), where every query head in a group reads from one shared K/V head. Multi-query attention (MQA) is the extreme case, G=1: every query head shares a single K/V head.",
-          "bullets": [
-            "MHA: G = H (one K/V head per query head) — best quality, largest cache",
-            "GQA: 1 < G < H (query heads share K/V within a group) — the tunable middle ground",
-            "MQA: G = 1 (all query heads share one K/V head) — smallest cache, largest quality hit"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "3984d619-0f4f-45b2-872a-36516ee749b1",
-          "kind": "comparison",
-          "title": "Same 64 Query Heads, Very Different KV Cache",
-          "body": "Cache size scales directly with the number of KV heads (G), not the number of query heads — so GQA-8 gets most of MQA's memory win with much less quality loss.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Scheme",
-              "KV heads (G)",
-              "Relative KV cache",
-              "Quality vs. MHA"
-            ],
-            "rows": [
-              [
-                "MHA",
-                "64",
-                "1x (baseline)",
-                "Best"
-              ],
-              [
-                "GQA-8",
-                "8",
-                "1/8x",
-                "Close to MHA"
-              ],
-              [
-                "MQA",
-                "1",
-                "1/64x",
-                "Noticeably worse"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "5f0b9df5-2f92-407f-b8db-85f743de7b6f",
-          "kind": "architecture",
-          "title": "You Don't Have to Train From Scratch to Get GQA",
-          "body": "The GQA paper (Ainslie et al., 2023) showed existing MHA checkpoints can be converted via 'uptraining': mean-pool each group's key/value projections into one shared head, then continue training for a small slice of the original pretraining budget — roughly 5% in the paper's experiments — to recover most of the lost quality.",
-          "bullets": [
-            "Start from a trained MHA checkpoint, not random init",
-            "Mean-pool K/V weights within each group to initialize the shared head",
-            "A short uptraining run recovers quality close to full MHA at a fraction of GQA-from-scratch cost"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "bb6bdd45-ff93-4d11-9332-9fa1093dd261",
-          "kind": "example",
-          "title": "Worked Example: Serving at 4K Context, Batch of 32",
-          "body": "Take the 70B-class shape from earlier (80 layers, head_dim 128, fp16) at a 4,096-token context and a batch of 32 concurrent sequences.",
-          "bullets": [
-            "Hypothetical full MHA (64 KV heads): ~2.5 MB/token x 4,096 x 32 ≈ 327 GB of KV cache",
-            "GQA-8 (8 KV heads): ~0.31 MB/token x 4,096 x 32 ≈ 41 GB of KV cache — an 8x drop",
-            "That 8x is exactly num_heads / num_kv_heads (64/8) — the memory savings, not just a rough estimate"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "df0f30a5-f699-46a1-8361-d94b6c836232",
-          "kind": "concept",
-          "title": "When Not to Reach for GQA",
-          "body": "GQA trades a small amount of quality for memory and throughput — that trade isn't always worth making.",
-          "bullets": [
-            "Small models (a few hundred million to low single-digit billions of params) rarely have a KV-cache-bound serving problem — MHA's simplicity may not be worth giving up",
-            "Too few KV groups (pushing toward MQA) can visibly hurt quality on tasks needing fine-grained per-head specialization",
-            "GQA reduces cache size, not compute — it doesn't by itself fix a compute-bound (not memory-bound) inference workload"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "842efc9d-c3fd-42ba-9994-8a02858c8ec0",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "KV cache size scales with the number of KV heads, not query heads — that's the lever GQA pulls",
-            "GQA sits between MHA (best quality, biggest cache) and MQA (smallest cache, biggest quality hit)",
-            "Llama 2 70B popularized GQA-8: 64 query heads sharing just 8 KV heads",
-            "Existing MHA checkpoints can be 'uptrained' into GQA for a small fraction of full pretraining cost"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f8c92c0a-b545-43c9-b0fa-02a86e627e7a",
-            "prompt": "In Grouped-Query Attention, what determines the size of the KV cache?",
-            "options": [
-              "The number of query heads (H)",
-              "The number of KV head groups (G)",
-              "The total number of transformer layers only",
-              "The vocabulary size of the tokenizer"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every query head still exists in GQA, but query heads within a group share one K/V head, so the cache — which stores K and V, not queries — scales with G, the number of groups, not H, the number of query heads."
-          },
-          {
-            "id": "9aff0be7-7e34-4cff-b9f4-ce61e25dda55",
-            "prompt": "What is multi-query attention (MQA) in relation to GQA?",
-            "options": [
-              "A completely unrelated attention mechanism",
-              "The special case of GQA where G equals the number of query heads",
-              "The special case of GQA where G = 1, so all query heads share a single K/V head",
-              "A version of GQA used only during training, never at inference"
-            ],
-            "correctIndex": 2,
-            "explanation": "MQA is GQA taken to its extreme: one shared K/V head for every query head (G=1). It gives the smallest possible KV cache but the largest quality hit compared to full multi-head attention."
-          },
-          {
-            "id": "f7854b30-ebbe-438b-abe9-c2496be59cd8",
-            "prompt": "Why might a small language model skip GQA even though it works well for 70B-scale models?",
-            "options": [
-              "GQA only works with fp16, not fp32",
-              "Small models rarely hit a KV-cache memory bottleneck during serving, so the quality/memory trade isn't worth making",
-              "GQA requires more transformer layers than small models have",
-              "GQA cannot be implemented for models under 1B parameters"
-            ],
-            "correctIndex": 1,
-            "explanation": "GQA exists to solve a memory problem: KV cache growing too large at long context or high batch size. Small models often aren't memory-bound in the first place, so adopting GQA there mostly just adds a quality cost with little practical benefit."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3df73ec4-74ea-44fd-b31b-e52345b2dee0",
-          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)",
-          "url": "https://arxiv.org/abs/2305.13245"
-        }
-      ],
-      "publishedDate": "2026-09-02T12:41:21Z"
-    },
-    {
-      "title": "Prompt Caching: Reusing the KV-Cache You Already Paid For",
-      "subtitle": "Same prefix, same tokens — a fraction of the compute, but only if it matches exactly",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "llm-inference",
-        "kv-cache",
-        "prompt-caching",
-        "cost-optimization",
-        "latency"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "clock.arrow.circlepath",
-      "summary": "Prompt caching lets an LLM API skip recomputing the attention keys and values for a prompt prefix it has already processed, cutting both latency and cost on repeated context. It only pays off when a prefix is reused verbatim, often enough, and within a short time window — get any of those wrong and you pay a write premium for nothing.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The Same 30,000 Tokens, Sent Again and Again",
-          "body": "Every chat turn re-sends the system prompt, the tool schemas, the codebase context — and by default the model reprocesses all of it from scratch, every single time.",
-          "bullets": [],
-          "symbol": "clock.arrow.circlepath",
-          "id": "7b7071a0-24e6-4a76-9fc7-9213517ea337",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Attention Scales With Input Length — Even the Part That Never Changes",
-          "body": "Computing the keys and values for a transformer's attention layers costs compute proportional to input length. If 95% of a prompt is byte-for-byte identical to the last request, the model still redoes that work — full price, full latency, for tokens it has already seen.",
-          "bullets": [
-            "A 20K-token system prompt plus tool schema gets recomputed on every single turn",
-            "Time-to-first-token grows with prefix length, even when the prefix never changes",
-            "Cost scales with total input tokens, not with what's actually new in the request"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "23d98e03-bd8b-4aa7-811a-679c82e0d0b4",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Cache the KV Tensors, Not Just the Text",
-          "body": "Prompt caching stores the computed key/value tensors for a prompt prefix in fast memory after the first request. A later request with an identical prefix skips the forward pass for those tokens entirely and only computes attention for the new suffix.",
-          "bullets": [
-            "The cache key is the exact token sequence up to a declared breakpoint — not a semantic or fuzzy match",
-            "A single differing token anywhere before the breakpoint invalidates the cache for everything after it",
-            "Cached entries expire after a short TTL (commonly just minutes) if nothing reuses them"
-          ],
-          "symbol": "bolt.fill",
-          "id": "d9a3fccb-af2e-4392-98a7-ef3073fdd2df",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "Where You Put the Breakpoint Decides What Gets Reused",
-          "body": "Providers let a request mark one or more cache breakpoints — typically right after the system prompt, after tool definitions, or after a long shared document. Everything before the last breakpoint is a candidate for reuse; everything after it is computed fresh.",
-          "bullets": [
-            "Static content (system prompt, tool defs, RAG documents) belongs before the breakpoint",
-            "Volatile content (the user's latest turn) belongs after it",
-            "Reordering a prompt so static content comes first is often the only change needed to make caching pay off"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "id": "ddc6e0f4-9770-482f-87ae-8f8a416241d4",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Cache Reads Are Cheap; Cache Writes Are a Small Bet",
-          "body": null,
-          "bullets": [
-            "Exact multipliers vary by provider, but the shape is consistent across all of them",
-            "Break-even is typically just two or three reuses of the same prefix within the TTL window"
-          ],
-          "symbol": "tablecells",
-          "id": "454d7305-54ca-4263-aa9a-7c2750c886b0",
-          "table": {
-            "headers": [
-              "",
-              "Cache miss",
-              "Cache write (first hit)",
-              "Cache read (later hit)"
-            ],
-            "rows": [
-              [
-                "Prefix compute",
-                "Full forward pass",
-                "Full forward pass + store",
-                "Skipped"
-              ],
-              [
-                "Relative cost",
-                "1x baseline",
-                "Slightly above baseline",
-                "A small fraction of baseline"
-              ],
-              [
-                "Time-to-first-token",
-                "Scales with full prefix",
-                "Scales with full prefix",
-                "Scales with new suffix only"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "example",
-          "title": "A Coding Agent That Resends 30K Tokens of Context Every Turn",
-          "body": "An agent's system prompt plus the current repo's file tree and open files totals 30K tokens. The user asks five follow-up questions in a row. Without caching, all five requests reprocess the full 30K-token prefix. With a breakpoint placed right after that context, the first request pays a small write premium; the next four barely pay for the prefix at all.",
-          "bullets": [
-            "Turn 1: ~30K tokens computed in full, cache written",
-            "Turns 2-5: the 30K-token prefix is read from cache almost for free — only the new turn is computed fresh",
-            "Net effect: latency and cost on turns 2-5 track the size of the new message, not the size of the accumulated context"
-          ],
-          "symbol": "text.bubble.fill",
-          "id": "e8992299-2feb-4713-900f-1e2a329cf763",
-          "table": null
-        },
-        {
-          "kind": "concept",
-          "title": "When Prompt Caching Doesn't Help — or Backfires",
-          "body": null,
-          "bullets": [
-            "A prefix that changes on every call (e.g., a timestamp interpolated into the system prompt) never hits the cache — it just adds a write cost for nothing",
-            "Low-traffic prompts that go several minutes between calls expire before the next request arrives, so the write premium is a pure loss",
-            "Caching only covers tokens before the breakpoint — putting the volatile part first defeats the whole mechanism",
-            "It's a short-TTL cache, not a persistent store — don't design a product around it surviving hours or serving across accounts"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "id": "a34d1c8e-f558-4df5-b3a5-e4875946f974",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Put everything static and shared first, the volatile turn last, and mark the breakpoint between them",
-            "Prompt caching saves the most on long, repeated prefixes hit multiple times within the TTL — think agent loops and multi-turn chats, not one-off calls",
-            "It's an infrastructure optimization, not a correctness feature: the output is identical either way, just cheaper and faster on repeat hits",
-            "Check your provider's actual write/read multipliers and TTL before assuming it pays off — they vary and change over time"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "91a573eb-631e-4eca-8cde-1f9161a2685c",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What determines whether a request gets a prompt-cache hit?",
-            "options": [
-              "The semantic similarity of the new prompt to a previous one",
-              "An exact match of the token sequence up to the declared cache breakpoint",
-              "Whether the same user ID sent the request",
-              "The total length of the conversation so far"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prompt caching matches on the literal token sequence, not meaning — that's what makes it a different mechanism from semantic caching, which matches on similarity of an entire query.",
-            "id": "19108116-4d97-4603-82d0-cbf5c4ca133d"
-          },
-          {
-            "prompt": "Why does placing static content (system prompt, tools) before the volatile part of a prompt matter for caching?",
-            "options": [
-              "It doesn't — the model reads the whole prompt anyway",
-              "Everything after the cache breakpoint is recomputed fresh, so only content before it can benefit from caching",
-              "Static content must legally come first per API convention",
-              "It reduces the model's context window usage"
-            ],
-            "correctIndex": 1,
-            "explanation": "Only the prefix up to the breakpoint is cached; putting the part that changes every turn before that breakpoint means nothing ever gets reused.",
-            "id": "d28a4021-49fd-4a08-b673-bb141e6b1168"
-          },
-          {
-            "prompt": "A prompt is called once every 20 minutes with an identical 10K-token prefix, and the provider's cache TTL is 5 minutes. What happens?",
-            "options": [
-              "Every call is a cache write that never becomes a cache read — the TTL always expires first, so caching adds cost without ever paying it back",
-              "The cache extends its own TTL automatically whenever there's any traffic on the account",
-              "The 10K-token prefix is cached permanently after the first call",
-              "Caching still saves money because cost only depends on prefix length, not on timing"
-            ],
-            "correctIndex": 0,
-            "explanation": "If requests arrive less often than the TTL, the cache entry always expires before it can be reused — you pay the write premium on every call and never collect a cheap read.",
-            "id": "f7f6ffdb-91da-4136-ba3a-c7947bd78029"
-          }
-        ]
-      },
-      "references": [],
-      "id": "6447751c-dd5b-4bb6-9e20-f31dafb91961",
-      "publishedDate": "2026-09-02T06:39:50Z"
-    },
-    {
-      "title": "Continuous Batching: How LLM Servers Stop Wasting the GPU",
-      "subtitle": "Scheduling at the token level, not the request level, is what actually keeps GPUs fed",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "llm-serving",
-        "inference",
-        "batching",
-        "throughput",
-        "gpu-utilization"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "speedometer",
-      "summary": "Static batching wastes GPU capacity because a batch can't start its next round until its slowest sequence finishes. Continuous (iteration-level) batching reschedules the batch after every single decoding step, so finished requests are swapped out and new ones swapped in immediately — the technique behind the throughput jump in serving engines like vLLM and Orca-style schedulers.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A GPU running an LLM server is often idle — even under heavy load",
-          "body": "Batch several requests together and the batch is only as fast as its slowest member. If one sequence needs 300 tokens and its batchmates need 20, those 20-token slots sit empty for the rest of the round, burning GPU time on nothing.",
-          "bullets": [
-            "Naive batching groups requests once, then runs the whole batch to completion",
-            "Real traffic has wildly different output lengths — chat replies vs. long completions",
-            "The fix: reschedule the batch after every token, not after every request"
-          ],
-          "symbol": "speedometer",
-          "id": "3fa7230f-0ae5-4575-9855-77d9764cd916",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Static batching ties every request to the slowest one in its group",
-          "body": "In request-level (static) batching, the server picks N requests, runs the whole forward pass loop until every one of them emits an end token, and only then admits new work. The batch's wall-clock time is set by whichever sequence generates the most tokens.",
-          "bullets": [
-            "A batch of 20-token and 300-token requests takes as long as the 300-token one",
-            "Finished sequences still occupy a batch 'slot' doing nothing until the round ends",
-            "Under bursty traffic, new requests queue behind a batch that's mostly idle capacity"
-          ],
-          "symbol": "clock.fill",
-          "id": "5c04ca06-a45e-4a6c-b64f-90e1f8c28e96",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Continuous batching reschedules after every decoding step",
-          "body": "Also called iteration-level or in-flight batching. Instead of committing to a fixed batch until it fully finishes, the scheduler runs one forward pass (one new token for every active sequence), then immediately evicts anything that just hit its stop token and splices in queued requests to fill the freed slots — every single step.",
-          "bullets": [
-            "Scheduling granularity drops from 'whole request' to 'one token step'",
-            "A finished sequence's slot is reused on the very next iteration, not the next batch",
-            "Requires per-sequence KV cache state that can be attached/detached independently"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "id": "90654b51-a061-4d5b-9a64-15ccc77f07b0",
-          "table": null
-        },
-        {
-          "kind": "architecture",
-          "title": "It needs flexible KV cache management to actually work",
-          "body": "Splicing a new request into a running batch mid-flight means the server must allocate KV cache for it on the fly and free the departing sequence's cache immediately — which is why continuous batching is almost always paired with block-based KV cache allocators like PagedAttention rather than one contiguous buffer per batch slot.",
-          "bullets": [
-            "Scheduler runs once per forward pass, not once per request lifecycle",
-            "KV cache is allocated/freed per sequence, in small blocks, not per fixed batch slot",
-            "Long prompts (prefill) are often chunked so they don't stall in-flight decodes"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "id": "2d4372cb-1ac8-459a-8e09-f237a196c54d",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: three requests, one queue",
-          "body": "Requests A (20 tokens), B (200 tokens), and C (300 tokens) start together in a batch of size 3, and D is waiting in the queue.",
-          "bullets": [
-            "Static batching: A and B finish at steps 20 and 200 but their slots sit empty; D waits until step 300",
-            "Continuous batching: the instant A finishes at step 20, D is spliced into A's freed slot and starts generating",
-            "By step 200, B's slot is freed and the next queued request starts immediately — the GPU never drops back to running fewer than 3 sequences",
-            "Net effect: total tokens generated per second of GPU time goes up because idle slots are eliminated, not because any single request got faster"
-          ],
-          "symbol": "chart.bar.fill",
-          "id": "1e66240d-5850-4cc9-b343-6b4a070c8642",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Static vs. continuous batching",
-          "body": null,
-          "bullets": [],
-          "symbol": "table",
-          "id": "38c1b147-8a79-4a82-96c1-09115bb22cb3",
-          "table": {
-            "headers": [
-              "",
-              "Static (request-level)",
-              "Continuous (iteration-level)"
-            ],
-            "rows": [
-              [
-                "Scheduling granularity",
-                "Whole batch, once",
-                "Every single decode step"
-              ],
-              [
-                "Idle GPU slots",
-                "Common — bounded by slowest sequence",
-                "Near zero — refilled every step"
-              ],
-              [
-                "New request latency",
-                "Waits for the current batch to fully drain",
-                "Can join on the very next step"
-              ],
-              [
-                "Requires",
-                "Fixed-size batch buffer",
-                "Per-sequence KV cache + fast scheduler"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "concept",
-          "title": "What it doesn't fix",
-          "body": "Continuous batching removes decode-time idling, but it isn't a free lunch — it shifts the bottleneck elsewhere and introduces new scheduling questions.",
-          "bullets": [
-            "Prefill (processing a new prompt) is compute-bound, not slot-bound — a big prompt spliced in naively can stall every other sequence's next token, which is why chunked prefill exists",
-            "Without a fairness policy, a stream of short new requests can keep getting priority over one long-running sequence, starving it",
-            "You're still capped by total VRAM for KV cache — continuous batching fills slots faster, but can't admit a request there's no memory for",
-            "It optimizes throughput (tokens/sec across all users), not the latency of any one individual request"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "bec69739-6571-48ea-b5af-63fa1724f4a3",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Static batching wastes GPU time because a batch can't start its next round until its slowest member finishes",
-            "Continuous (iteration-level) batching reschedules after every single decode step, swapping finished sequences out and queued ones in immediately",
-            "It needs per-sequence KV cache that can be allocated and freed independently — usually paired with a block-based allocator like PagedAttention",
-            "It raises aggregate throughput, not individual request speed, and still needs chunked prefill and fairness policies to behave well under mixed workloads"
-          ],
-          "symbol": "checklist",
-          "id": "d2082d83-cba2-4f8d-9f5e-689eb980a607",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does static (request-level) batching waste GPU capacity?",
-            "options": [
-              "It uses too much memory per request",
-              "The whole batch runs until its slowest sequence finishes, leaving other slots idle in the meantime",
-              "It can only process one request at a time",
-              "It doesn't use a KV cache at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "A static batch is scheduled once and runs to completion as a unit. Sequences that finish early still hold a batch slot that does no useful work until the whole batch — bounded by its longest sequence — finally ends.",
-            "id": "f3d69da6-80fe-4767-a80f-3078d63ea423"
-          },
-          {
-            "prompt": "What has to be true about KV cache management for continuous batching to work?",
-            "options": [
-              "KV cache must be a single fixed-size buffer shared by the whole batch",
-              "KV cache isn't needed since tokens are generated one at a time anyway",
-              "Each sequence's KV cache must be allocatable and freeable independently, since sequences enter and leave the batch every step",
-              "KV cache must be recomputed from scratch on every decode step"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because sequences can join or leave on any given step, the server needs to attach and release per-sequence KV cache on the fly — which is why continuous batching is typically paired with block-based allocators like PagedAttention instead of one fixed buffer per slot.",
-            "id": "7171806c-f7cf-493b-8669-4b3614f00dec"
-          },
-          {
-            "prompt": "What is a real limitation continuous batching does NOT solve on its own?",
-            "options": [
-              "It can't reduce time-to-first-token for any request",
-              "It doesn't reduce GPU idle time at all",
-              "A large new prompt's compute-bound prefill can still stall other in-flight sequences unless prefill is chunked",
-              "It requires every request to have the same output length"
-            ],
-            "correctIndex": 2,
-            "explanation": "Continuous batching fixes idle decode slots, but prefill is a different, compute-bound phase — splicing in a big prompt naively can hog a whole forward pass and delay everyone else's next token, which is why serving engines add chunked prefill on top.",
-            "id": "5de8e7c9-8a0e-417e-9a3d-ce7d2a816705"
-          }
-        ]
-      },
-      "references": [],
-      "id": "bad2e30c-ce73-42d3-a607-54c871af8fcc",
-      "publishedDate": "2026-09-02T00:39:26Z"
     }
   ]
 }
