@@ -1,6 +1,199 @@
 {
   "posts": [
     {
+      "id": "4d730e05-bdaf-43f5-b35d-971274d44472",
+      "title": "Ring Attention: Near-Infinite Context Across Many GPUs",
+      "subtitle": "Split the sequence into blocks, rotate the key/value blocks around a ring, and hide the network transfer behind the compute.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "ring attention",
+        "long context",
+        "distributed training",
+        "flash attention",
+        "gpu memory"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Ring Attention arranges GPUs in a ring and rotates key/value blocks around it while each device keeps computing partial attention, so the maximum context length scales with the number of devices instead of any single GPU's memory. It reuses FlashAttention's blockwise, online-softmax trick and overlaps communication with compute so the ring adds little overhead when tuned correctly.",
+      "slides": [
+        {
+          "id": "2d0f831a-5de9-4e85-bfd0-ecca7235d5ca",
+          "kind": "cover",
+          "title": "One GPU's memory shouldn't cap how much context a model can use",
+          "body": "Ring Attention (Liu, Zaharia, Abbeel, UC Berkeley, 2023) arranges GPUs in a ring and rotates key/value blocks around it, so context length scales with the number of devices instead of any single device's memory.",
+          "bullets": [
+            "From \"Ring Attention with Blockwise Transformers for Near-Infinite Context\"",
+            "Builds on blockwise, memory-efficient attention — the same core idea behind FlashAttention",
+            "Used to train and serve models with context windows far beyond what fits on one GPU"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "bfe24d3c-a232-42f7-9128-2b06b54e106b",
+          "kind": "problem",
+          "title": "Self-attention's memory grows with the sequence, GPUs don't",
+          "body": "Every extra token in the context adds to the key/value state attention has to hold, but a GPU's HBM is fixed — so context length has always been capped by whatever fits on one device.",
+          "bullets": [
+            "Standard multi-head attention needs every query to see every key/value pair in the sequence",
+            "Data or tensor parallelism doesn't fix this — each device still needs the full sequence's K/V to compute attention correctly",
+            "Naively gathering all K/V onto one device to run attention defeats the point of spreading work across GPUs"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "4a10cd97-820c-47c7-b726-33c48c1bb7a0",
+          "kind": "solution",
+          "title": "Arrange devices in a ring, rotate the K/V blocks",
+          "body": "Ring Attention splits the sequence into blocks, gives each device one block's queries plus one block's keys/values, and passes K/V blocks around a ring of devices while every device keeps computing partial attention against whatever block just arrived.",
+          "bullets": [
+            "Device i starts holding query block i and key/value block i",
+            "Each step, every device sends its current K/V block to the next device in the ring and receives the previous device's block",
+            "After every device has rotated through all blocks once, each query block has attended to the entire sequence"
+          ],
+          "symbol": "repeat.circle.fill",
+          "table": null
+        },
+        {
+          "id": "40f4f4f6-4435-492f-806c-638d72a0913a",
+          "kind": "architecture",
+          "title": "Why the ring communication is (almost) free",
+          "body": "The trick is overlap: while a device waits for the next K/V block to arrive over the network, it's still finishing the attention math on the block it already has — so the transfer hides behind compute instead of stalling it.",
+          "bullets": [
+            "Block size is chosen so per-block compute time is comparable to, or longer than, the ring transfer time",
+            "Blockwise, online-softmax accumulation (FlashAttention's trick) lets each device update a running result instead of needing the full row of attention scores at once",
+            "Each device only ever holds one incoming and one outgoing K/V block — memory per device stays flat no matter how long the total sequence is"
+          ],
+          "symbol": "bolt.horizontal.circle",
+          "table": null
+        },
+        {
+          "id": "291c8fa0-694d-4ce9-a0d3-870301b806d8",
+          "kind": "comparison",
+          "title": "How this differs from other ways to split a long sequence",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Approach",
+              "What each device holds",
+              "What caps context length"
+            ],
+            "rows": [
+              [
+                "Single-GPU FlashAttention",
+                "The full sequence's K/V",
+                "That one GPU's memory"
+              ],
+              [
+                "Tensor parallelism",
+                "A slice of every layer's weights, but still the full sequence per device",
+                "Per-device memory — sharding the model doesn't shard the sequence"
+              ],
+              [
+                "Ring Attention",
+                "Just one rotating block of the sequence's K/V at a time",
+                "Total memory across the whole ring — grows as devices are added"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "c352025a-5aaa-4446-8d4b-d3afc1d7e35e",
+          "kind": "example",
+          "title": "A worked example: an 8-device ring on one long document",
+          "body": "Splitting one long context across 8 GPUs arranged in a ring.",
+          "bullets": [
+            "The document's tokens are split into 8 equal blocks; device i gets query block i, plus key/value block i to start",
+            "Over 8 rotation steps, device i's query block attends to key/value blocks i, i+1, i+2, ... wrapping around, until it has seen all 8",
+            "Each device only ever stores 1/8th of the sequence's K/V at a time — that's what lets total context size scale with the ring instead of any one card's HBM"
+          ],
+          "symbol": "square.grid.3x2",
+          "table": null
+        },
+        {
+          "id": "eb6eaba7-9932-40a5-92fb-7b9f89f428c1",
+          "kind": "concept",
+          "title": "Where Ring Attention stops paying off",
+          "body": null,
+          "bullets": [
+            "Needs fast interconnects (NVLink/InfiniBand) between ring neighbors — over a slow network the transfer no longer hides behind compute and the ring stalls",
+            "Latency accumulates: a query block still has to wait its turn through the whole ring, so very large rings add tail latency even as throughput scales",
+            "It's a training/prefill-time technique for one very long sequence — it doesn't speed up token-by-token decoding, which has its own bottlenecks (that's what PagedAttention and speculative decoding target)",
+            "For sequences that already fit comfortably on one GPU, the added communication and orchestration complexity isn't worth it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "c3bc5236-c289-40dd-b177-6cdab4bd1512",
+          "kind": "takeaways",
+          "title": "What to actually take from this",
+          "body": null,
+          "bullets": [
+            "Ring Attention turns context length into a function of total devices, not any single GPU's memory, by rotating K/V blocks around a ring",
+            "It reuses FlashAttention's blockwise, online-softmax trick so no device ever needs the full attention matrix at once",
+            "The whole design hinges on overlapping network transfer with compute — block size has to be tuned so communication hides behind computation",
+            "It's a tool for extending context at training/prefill time on multi-GPU clusters, not a decoding-speed optimization"
+          ],
+          "symbol": "checklist",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b90f52ce-9510-4f99-8b88-f8966af8512e",
+            "prompt": "At any point during Ring Attention, what does each device hold?",
+            "options": [
+              "The full sequence's entire K/V cache",
+              "Just one rotating block of the sequence's K/V, plus its own fixed query block",
+              "Only the model weights, no sequence data",
+              "A compressed summary of the entire sequence"
+            ],
+            "correctIndex": 1,
+            "explanation": "Ring Attention keeps memory per device flat by only ever holding one incoming/outgoing K/V block alongside a fixed query block — this is what lets context length scale with the number of devices instead of any single GPU's memory."
+          },
+          {
+            "id": "b606fdfc-9a27-49f6-b31d-55de59b71442",
+            "prompt": "Why doesn't the ring's network transfer stall the computation?",
+            "options": [
+              "It does stall — Ring Attention is slower than single-GPU attention on every workload",
+              "Devices skip most of the attention computation to save time",
+              "Block sizes are tuned so each device's compute time overlaps with the time it takes to receive the next K/V block",
+              "It only runs on a single GPU, so there is no network transfer involved"
+            ],
+            "correctIndex": 2,
+            "explanation": "The design overlaps the K/V block transfer with attention compute on the block already in hand, hiding communication behind compute as long as block size is tuned so compute time is at least as long as transfer time."
+          },
+          {
+            "id": "f6e41140-c84d-4924-87bd-57d5f561bdad",
+            "prompt": "When is Ring Attention the wrong tool to reach for?",
+            "options": [
+              "When training on sequences that already fit on one GPU, or when the interconnect between devices is slow",
+              "When you have exactly one GPU available and no long sequences",
+              "Whenever the model uses attention at all",
+              "Only when using Mixture-of-Experts models"
+            ],
+            "correctIndex": 0,
+            "explanation": "Ring Attention adds real communication and orchestration overhead that only pays off once the sequence doesn't fit on a single device and the ring has fast interconnects; on short sequences or slow networks it's a net loss over plain FlashAttention."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "678ecd6f-ab4c-45b7-b1ff-7657a1fbdb6d",
+          "title": "Ring Attention with Blockwise Transformers for Near-Infinite Context",
+          "url": "https://arxiv.org/abs/2310.01889"
+        }
+      ],
+      "publishedDate": "2026-09-10T00:40:28Z"
+    },
+    {
       "title": "Contextual Retrieval: Fixing RAG's Chunking Blind Spot",
       "subtitle": "Give every chunk back the context it lost when you split the document",
       "category": "RAG",
@@ -11234,188 +11427,6 @@
       "references": [],
       "id": "bad2e30c-ce73-42d3-a607-54c871af8fcc",
       "publishedDate": "2026-09-02T00:39:26Z"
-    },
-    {
-      "title": "OpenAI's Ten Proofs: Math You Can Verify Yourself",
-      "subtitle": "Ten decades-old open problems, each shipped as a Lean 4 certificate anyone can compile",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "formal-verification",
-        "lean4",
-        "mathematics",
-        "reasoning",
-        "openai"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "checkmark.seal.fill",
-      "summary": "OpenAI published ten proofs of previously open problems in math and theoretical computer science — not as benchmark scores, but as Lean 4 formalizations anyone can compile and check with the Lean kernel. The result is a rare AI capability claim that doesn't ask you to trust the lab, the model, or a grader.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A model claimed 10 math breakthroughs. So you can check its work.",
-          "body": "OpenAI says an internal research model — previewed as Astra — produced solutions to ten open problems spanning sphere packing, group theory, circuit complexity, and more. Instead of a leaderboard number, what shipped is a public GitHub repo of machine-checkable proofs.",
-          "bullets": [
-            "Ten problems, each unsolved for years in its field",
-            "Published as github.com/openai/ten-proofs under Apache-2.0",
-            "The claim isn't 'trust our eval' — it's 'run the checker yourself'"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "310b21a2-6328-4426-857b-7298e64cc588",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Most AI capability claims can't be checked, only believed",
-          "body": "Benchmark scores are graded by a rubric, a human, or another LLM — all of which can be gamed, mis-specified, or simply wrong. Math is different: a proof is either logically valid or it isn't, and that's a property a computer can check mechanically.",
-          "bullets": [
-            "LLM benchmarks are graded by fallible graders, not absolute truth",
-            "A stated 'SOTA score' still requires trusting the eval pipeline",
-            "Formal proof systems remove that trust requirement entirely"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "484b7c69-9187-49eb-ba51-216141efaef3",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Ten Lean 4 modules, one for each result",
-          "body": "Each of the ten results ships as its own Lean 4 file — NonSoficGroup.lean, ConnesRigidity.lean, SpherePacking.lean, Permanent.lean, and six more — built against the mathlib library with the Lake build system, alongside a research write-up and a separate document walking through the model's reasoning.",
-          "bullets": [
-            "10 named modules, each a self-contained formal proof",
-            "Built on Lean 4 + mathlib — the same toolchain professional formalizers use",
-            "A companion 'reasoning walkthroughs' document explains the approach in prose",
-            "Anyone can clone the repo and run Lake to verify every proof compiles"
-          ],
-          "symbol": "chevron.left.forwardslash.chevron.right",
-          "id": "34f0f821-10d2-47e4-95ba-31311cc06bdf",
-          "table": null
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: sphere packing bounds",
-          "body": "One of the ten, formalized in SpherePacking.lean, tightens the known asymptotic bounds on how densely spheres can pack high-dimensional space — a decades-old problem in discrete geometry with implications for coding theory.",
-          "bullets": [
-            "The Lean file encodes the improved bound as a formal theorem statement",
-            "Lean's kernel checks every inference step against that statement, not English prose",
-            "If the file compiles with zero unproven gaps, the bound is verified — full stop",
-            "The hard part was never checking the logic; it's finding a proof strategy that works"
-          ],
-          "symbol": "cube.transparent",
-          "id": "0a05db9b-be93-4d98-b971-ba123931f483",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Two ways to trust a capability claim",
-          "body": null,
-          "bullets": [],
-          "symbol": "table",
-          "id": "778219e4-0096-42dd-a587-235b1c6dd265",
-          "table": {
-            "headers": [
-              "",
-              "Benchmark score",
-              "Lean-verified proof"
-            ],
-            "rows": [
-              [
-                "What you're trusting",
-                "The eval design + grader",
-                "A small, well-studied proof kernel"
-              ],
-              [
-                "Can you check it yourself?",
-                "Only by re-running the same eval",
-                "Yes — compile the file, done"
-              ],
-              [
-                "Failure mode",
-                "Leaderboard gaming, grader bugs",
-                "A wrong theorem statement, correctly proved"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "concept",
-          "title": "What a green checkmark doesn't prove",
-          "body": "Lean verifies that the proof is logically valid for the statement as written. It says nothing about whether that statement is the theorem anyone actually cares about — a common way formalization efforts go wrong.",
-          "bullets": [
-            "A perfectly valid proof of a subtly mis-stated theorem is worthless",
-            "Formalizing the right statement is still a human (or model) judgment call",
-            "Ten wins say nothing about a general success rate — this isn't a benchmark pass rate",
-            "This is evidence of a capability, not proof the model can do unsupervised research"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "id": "a6aaa403-3ed3-48ed-b92b-fca741d916ee",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "OpenAI published 10 solutions to open math/TCS problems as Lean 4 proofs, not benchmark scores",
-            "Formal verification means the claim can be checked by a proof kernel, not just believed",
-            "The repo (github.com/openai/ten-proofs) is public, Apache-2.0, and runnable by anyone",
-            "Verified logic still depends on formalizing the right statement — that step stays a judgment call"
-          ],
-          "symbol": "checklist",
-          "id": "a298799f-1250-4166-b825-335fe6d118d1",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What makes this claim different from a typical LLM benchmark score?",
-            "options": [
-              "It was graded by a panel of human mathematicians",
-              "The proofs are formalized in Lean 4, so a proof kernel — not a grader — checks validity",
-              "It used a larger test set than usual",
-              "OpenAI published the model's raw weights alongside it"
-            ],
-            "correctIndex": 1,
-            "explanation": "Benchmark scores depend on trusting the eval and grader. Here, each result is a Lean 4 proof that anyone can compile — the Lean kernel mechanically checks validity, removing the need to trust the lab's grading.",
-            "id": "54be1f47-4cde-4fa2-a88f-9e71f4cd3a96"
-          },
-          {
-            "prompt": "Even with a Lean file that compiles cleanly, what risk remains?",
-            "options": [
-              "The proof might use too much GPU memory",
-              "Lean proofs can't be checked offline",
-              "The formalized theorem statement itself might not match the real-world claim being made",
-              "Mathlib doesn't support advanced number theory"
-            ],
-            "correctIndex": 2,
-            "explanation": "Lean guarantees the proof is logically valid for the statement as written — it can't tell you whether that statement correctly captures the theorem you actually care about. Mis-stating the theorem while proving it perfectly is a known failure mode in formalization work.",
-            "id": "5c05a594-ab4b-4635-ab14-5f8c56704347"
-          },
-          {
-            "prompt": "Where and under what license are the ten proofs published?",
-            "options": [
-              "A private OpenAI research portal, license unspecified",
-              "github.com/openai/ten-proofs, under Apache-2.0",
-              "Only as a PDF, with no runnable code",
-              "Behind the ChatGPT API as a paid tool"
-            ],
-            "correctIndex": 1,
-            "explanation": "The formal proofs, built on Lean 4 and mathlib, are published in a public GitHub repository under an Apache-2.0 license — anyone can clone it and run the Lake build to verify the results themselves.",
-            "id": "2dea6075-bc68-4efd-8d30-0f0f3b7d4d36"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "openai/ten-proofs — Lean 4 formalizations on GitHub",
-          "url": "https://github.com/openai/ten-proofs",
-          "id": "0dc87b99-a2b3-45b5-97a8-592646f7a568"
-        }
-      ],
-      "id": "5e0f7312-12ee-4c70-a302-850bb537dbd4",
-      "publishedDate": "2026-09-01T18:44:42Z"
     }
   ]
 }
