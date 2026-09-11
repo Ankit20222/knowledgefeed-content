@@ -1,6 +1,526 @@
 {
   "posts": [
     {
+      "title": "Random Attention: Deleting KV Cache Entries at Random",
+      "subtitle": "A signal-free eviction rule that matches learned selectors and serves faster.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "paper",
+      "tags": [
+        "kv-cache",
+        "inference-efficiency",
+        "reasoning-models",
+        "vllm",
+        "llm-serving"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Salesforce AI Research's Random Attention evicts KV cache entries uniformly at random instead of scoring them, matching learned selectors like SnapKV and TriAttention on reasoning benchmarks while serving 32-43% faster in vLLM.",
+      "slides": [
+        {
+          "id": "07508b67-66b3-4831-9ab1-9b8f02ed534f",
+          "kind": "cover",
+          "title": "The KV Cache Is Reasoning's New Bottleneck",
+          "body": "Reasoning models like Qwen3 and Phi-4-reasoning write chains of thought that run tens of thousands of tokens long before answering — and every one of those tokens has to stay in GPU memory as a key/value pair.",
+          "bullets": [
+            "A 32B model reasoning through a 32K-token chain of thought can burn more memory on its KV cache than on its own weights",
+            "That memory ceiling caps how many requests a server can batch at once"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "fa0e1c0f-ff11-40b8-9571-b67f708186bb",
+          "kind": "problem",
+          "title": "Existing Fixes All Try to Score Tokens First",
+          "body": "Prior KV-cache eviction methods (SnapKV, R-KV, VaSE, TriAttention) keep the cache small by scoring every token for predicted future importance and evicting the low scorers.",
+          "bullets": [
+            "Scoring means extra attention passes over the cache on every eviction round",
+            "Some methods (TriAttention) also need per-model calibration data collected in advance",
+            "None of that scoring machinery is free — it costs compute and latency exactly where you're trying to save both"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "66d8f0da-95fc-465c-9b8d-2b2de26d7858",
+          "kind": "solution",
+          "title": "Keep the Prompt, Evict the Rest Uniformly at Random",
+          "body": "Random Attention never evicts a single prompt token — the prompt is the one place unique information lives. For everything the model has generated since, it keeps a uniformly random subset per attention head up to a fixed budget, plus a short window of the most recent tokens.",
+          "bullets": [
+            "No attention scores computed, no calibration data collected — an eviction round costs only the memory compaction itself",
+            "The insight: a chain of thought re-derives and restates the same facts many times, so which repetitions survive matters less than how many tokens survive",
+            "Tested on Qwen3-4B/14B/32B and Phi-4-reasoning across MATH-500, GPQA-Diamond, AIME, HMMT, and LiveCodeBench"
+          ],
+          "symbol": "die.face.5.fill",
+          "table": null
+        },
+        {
+          "id": "53bb03a6-9380-4aed-ad4d-b6a617757b0f",
+          "kind": "comparison",
+          "title": "Matches Scored Selectors, Serves Meaningfully Faster",
+          "body": "At matched KV budgets, Random Attention's accuracy ties or beats every scored baseline the authors tested — and it's the fastest evictor in both their Hugging Face harness and a vLLM serving stack.",
+          "bullets": [
+            "Reported 32-43% higher throughput than the strongest scored evictor when served in vLLM"
+          ],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Method",
+              "Scores tokens?",
+              "Needs calibration?",
+              "Eviction cost"
+            ],
+            "rows": [
+              [
+                "Random Attention",
+                "No",
+                "No",
+                "Compaction only"
+              ],
+              [
+                "SnapKV / R-KV",
+                "Yes",
+                "No",
+                "Extra attention pass"
+              ],
+              [
+                "TriAttention",
+                "Yes",
+                "Yes",
+                "Calibration + scoring"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "239bd29b-1cb5-49f0-a832-208a030cb93c",
+          "kind": "example",
+          "title": "Worked Example: A 24K-Token Competition Math Problem",
+          "body": "Picture Qwen3-32B tackling an AIME-style problem. By token 20,000 of its chain of thought, the KV cache under a fixed budget holds: the entire original prompt, a random ~10% sample of everything reasoned so far, and a short window of the most recent tokens.",
+          "bullets": [
+            "No token was kept because it scored as 'important' — it survived by chance",
+            "The final answer still comes out right because the key algebraic steps got restated multiple times earlier in the trace, so losing any one restatement doesn't erase the fact from the cache"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "1a33a796-a33a-420b-a484-df664b0e0e05",
+          "kind": "concept",
+          "title": "When This Wouldn't Hold Up",
+          "body": "The result is specific to reasoning traces, where redundancy is the norm — it's not a general claim that scoring is useless.",
+          "bullets": [
+            "A single fact mentioned exactly once deep in a long context (classic 'needle in a haystack' retrieval) has no redundancy to fall back on if randomly evicted",
+            "The paper's guarantees are benchmarked on math/science/code reasoning tasks — not on long-document QA or multi-turn chat memory",
+            "The prompt itself is never evicted precisely because it isn't redundant like the generated trace is"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "a11716c6-1f23-4023-a96f-5bd089f1f835",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Before building a learned scorer, test whether a dumb random baseline already gets you most of the way there — here it matched or beat four scored methods",
+            "Removing the scoring step doesn't just simplify the system, it removes a real cost: 32-43% more throughput in vLLM serving",
+            "The trick only works because reasoning chains are redundant by nature — don't assume it transfers to tasks where information appears exactly once"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "27a080b6-969f-4ea7-891d-f96b91af7122",
+            "prompt": "What does Random Attention actually keep in the KV cache?",
+            "options": [
+              "Only the most recent N tokens",
+              "The full prompt, plus a uniformly random subset of generated tokens and a short recency window",
+              "Tokens with the highest attention scores",
+              "Tokens chosen by a small calibration model trained per-model"
+            ],
+            "correctIndex": 1,
+            "explanation": "Unlike scored evictors, it computes no importance scores at all. It always preserves the full prompt, then keeps a random per-head sample of the generated tokens plus a short window near the current position."
+          },
+          {
+            "id": "05e2b222-c4fb-4ff5-858b-c0c128624aa5",
+            "prompt": "Why does random eviction hold up almost as well as learned scoring specifically on reasoning traces?",
+            "options": [
+              "Reasoning chains restate and re-derive the same facts many times, so losing any single repetition rarely erases the information",
+              "Attention scores are mathematically incorrect",
+              "GPUs cannot compute attention scores fast enough to matter",
+              "The paper only tested traces shorter than 500 tokens"
+            ],
+            "correctIndex": 0,
+            "explanation": "Chain-of-thought text is redundant by nature — the same intermediate facts get restated as the model reasons forward. That redundancy is exactly what a needle-in-a-haystack task lacks, which is why this result doesn't automatically generalize there."
+          },
+          {
+            "id": "3e49026d-4d56-4034-9c33-6fe4a5584719",
+            "prompt": "What's the main efficiency win from skipping token scoring entirely?",
+            "options": [
+              "It needs no extra attention computation or calibration data, so an eviction round costs only compaction",
+              "It eliminates the need for a KV cache altogether",
+              "It reduces the model's parameter count",
+              "It guarantees higher accuracy on every task"
+            ],
+            "correctIndex": 0,
+            "explanation": "Scored evictors spend extra compute ranking cached tokens (and sometimes running calibration passes). Random Attention skips that step entirely, which the authors measured as 32-43% higher throughput than the strongest scored baseline in vLLM."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "a487e2a9-ae9c-46b5-9251-ea996feb7d7c",
+          "title": "Random Attention: Rethinking KV Cache Eviction for Efficient Reasoning (arXiv:2609.03430)",
+          "url": "https://arxiv.org/abs/2609.03430"
+        }
+      ],
+      "id": "ae02c348-10c9-48db-86a2-cf9caaa9f642",
+      "publishedDate": "2026-09-11T00:43:08Z"
+    },
+    {
+      "title": "Gemini 3.8 Flash: More Thinking, Same Sticker Price",
+      "subtitle": "Google's third Flash model in six weeks trades tokens for reliability, not size.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "gemini",
+        "google-deepmind",
+        "agentic-coding",
+        "model-release",
+        "llm-pricing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "Google's Gemini 3.8 Flash, released September 2, 2026, is the same base model as 3.7 Flash retrained to spend more compute per task — jumping from 81.6% to 90.8% on Terminal-Bench 2.1 at the same introductory price, alongside a safeguarded Cyber variant for vulnerability discovery.",
+      "slides": [
+        {
+          "id": "49d0b0ad-90b1-4870-9d82-aba209775e55",
+          "kind": "cover",
+          "title": "Google Ships Its Third Flash Model in Six Weeks",
+          "body": "Gemini 3.8 Flash launched September 2, 2026 — not a bigger model, but the same 3.7 Flash checkpoint lineage tuned to work harder on every request.",
+          "bullets": [
+            "Available immediately in the Gemini app, AI Mode, Google Sheets, Antigravity, AI Studio, and the Gemini API"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "a13a6747-0103-4c5b-aa8b-d5febebe3b6e",
+          "kind": "problem",
+          "title": "3.7 Flash Was Fast, But Shallow on Hard Tasks",
+          "body": "Flash models exist to trade some capability for speed and cost. That trade started showing on long-horizon software engineering, multi-step agentic work, and specialized-domain reasoning, where 3.7 Flash lagged frontier-tier models.",
+          "bullets": [
+            "Closing that gap by simply shipping a bigger model would break Flash's cost promise",
+            "Google needed a way to buy more reliability without changing the price tier"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "48942df7-0a6e-413c-9d83-dda99100bc8e",
+          "kind": "architecture",
+          "title": "Same Weights, Tuned to Spend More Effort",
+          "body": "Gemini 3.8 Flash is built on the same underlying model as 3.7 Flash, but trained to be more diligent: at higher 'effort' settings it runs extra reasoning steps and calls tools iteratively instead of stopping after the first pass.",
+          "bullets": [
+            "Effort level is a developer-facing dial, not a fixed behavior",
+            "This is an inference-time compute trade, not a bigger network"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "2ed4b940-9a8a-429d-a68c-8e80a9b46fa9",
+          "kind": "comparison",
+          "title": "The Terminal-Bench Jump Is the Headline Number",
+          "body": null,
+          "bullets": [
+            "Google also introduced Gemini 3.8 Flash Cyber, a safeguarded variant for trusted testers under a new 'Fairwind' access program, reported to find real vulnerabilities in a majority of Google's internal discovery evaluation cases"
+          ],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Benchmark",
+              "3.7 Flash",
+              "3.8 Flash"
+            ],
+            "rows": [
+              [
+                "Terminal-Bench 2.1 (agentic terminal tasks)",
+                "81.6%",
+                "90.8%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "ff0d6e67-a650-4ca5-bb9e-b3141170f074",
+          "kind": "example",
+          "title": "Worked Example: A Multi-File Refactor",
+          "body": "Ask an agent to refactor a feature spanning several files and fix whatever tests break. At a low effort setting, 3.8 Flash behaves like 3.7 Flash — one pass, done. Dial effort up, and it re-runs the test suite after its own edits, catches a regression, and iterates before returning control.",
+          "bullets": [
+            "That extra verification loop is the 'diligence' Google is describing, not a change in what the model knows"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "6a8b87be-14f9-452e-9afa-e98b3041c406",
+          "kind": "concept",
+          "title": "The Catch: Same Price Per Token, Not Same Cost Per Task",
+          "body": "Gemini 3.8 Flash matches 3.7 Flash's introductory price — $0.75 per million input tokens and $3.75 per million output tokens — through December 31, 2026, rising to $1.50/$7.50 after.",
+          "bullets": [
+            "Higher effort means more reasoning and tool-call tokens per request, so a workload's total bill can rise even though the per-token rate didn't",
+            "Teams should set effort deliberately: low for simple, high-volume tasks; high only where the extra verification is worth paying for"
+          ],
+          "symbol": "dollarsign.circle.fill",
+          "table": null
+        },
+        {
+          "id": "ce328048-96d7-486d-9f05-6566b11b9550",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "3.8 Flash is a 'try harder' upgrade to 3.7 Flash's same base model, not a new larger model",
+            "The reported jump — 81.6% to 90.8% on Terminal-Bench 2.1 — comes from extra reasoning and tool-call steps at higher effort, not new weights",
+            "Pricing per token is unchanged short-term, but real workload cost scales with effort level, so tune it per task rather than maxing it out by default",
+            "The gated Cyber variant signals a broader industry pattern: safety-critical model capabilities increasingly ship to a restricted access tier first, not a public API"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c60bafc7-3a34-402a-85bc-913138310923",
+            "prompt": "What is the core technical change from Gemini 3.7 Flash to 3.8 Flash?",
+            "options": [
+              "A much larger set of model weights",
+              "The same base model, tuned to spend more inference compute and effort per task",
+              "A switch from a transformer to a diffusion architecture",
+              "Removal of tool-calling support to cut latency"
+            ],
+            "correctIndex": 1,
+            "explanation": "Google describes 3.8 Flash as the same model lineage as 3.7 Flash, trained to execute more reasoning steps and call tools iteratively — especially at higher developer-set effort levels — rather than being a bigger network."
+          },
+          {
+            "id": "1a314adc-e9c1-4dc3-afb7-178052782971",
+            "prompt": "On which reported benchmark did Google highlight the largest jump, and by how much?",
+            "options": [
+              "Terminal-Bench 2.1, from 81.6% to 90.8%",
+              "ImageNet classification, from 50% to 90%",
+              "MMLU, from 99% to 100%",
+              "No benchmark showed improvement"
+            ],
+            "correctIndex": 0,
+            "explanation": "Terminal-Bench 2.1 evaluates agentic, terminal-based tasks — exactly the long-horizon, tool-using workloads 3.8 Flash was tuned to handle more diligently."
+          },
+          {
+            "id": "8f838f05-6fc9-46c1-9aa5-4a35af1e4816",
+            "prompt": "Why might a team's total inference bill rise even though 3.8 Flash's per-token price matches 3.7 Flash's introductory rate?",
+            "options": [
+              "Because 3.8 Flash spends more tokens per task at higher effort settings",
+              "Because Google doubled the context window limit",
+              "Because using the Cyber variant is now mandatory",
+              "Because pricing moved from per-token to per-request billing"
+            ],
+            "correctIndex": 0,
+            "explanation": "Effort is a dial, not a discount — running more reasoning steps and tool calls per request means more billed tokens per task, even at an unchanged per-token price."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "9cf2c5c1-0dde-4c31-b855-2360a0035801",
+          "title": "Introducing Gemini 3.8 Flash and 3.8 Flash Cyber",
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber/"
+        }
+      ],
+      "id": "54a3c264-2495-4839-bc26-c4b80591a6ad",
+      "publishedDate": "2026-09-11T00:43:08Z"
+    },
+    {
+      "title": "Agent Memory: Giving AI Agents a Past",
+      "subtitle": "A long context window is not the same thing as remembering anything.",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "ai-agents",
+        "memory",
+        "vector-store",
+        "agentic-workflows",
+        "context-engineering"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "brain.head.profile",
+      "summary": "Context windows are bounded and reset; memory is a separate system that persists facts and history across sessions. Splitting memory into working, episodic, and semantic layers lets agents recall what happened and what's currently true without re-reading everything, every time.",
+      "slides": [
+        {
+          "id": "a32f7133-7b48-4043-9978-863f89971e83",
+          "kind": "cover",
+          "title": "An Agent's Context Window Is Not Its Memory",
+          "body": "A coding agent that runs across days of work, or a support agent handling the same customer for months, needs state that survives well past any single context window.",
+          "bullets": [
+            "Even a 1M-token window is bounded, expensive to fill, and gone the moment a new session starts"
+          ],
+          "symbol": "brain.head.profile",
+          "table": null
+        },
+        {
+          "id": "a5457ba7-bcdc-46be-acce-7f7f81a710c8",
+          "kind": "problem",
+          "title": "Stuffing Everything Into the Prompt Doesn't Scale",
+          "body": "The naive fix — replay the full transcript every turn — breaks down well before you hit the token limit.",
+          "bullets": [
+            "Cost and latency grow every single turn as the transcript grows",
+            "Long prompts dilute attention: models reliably lose instructions buried in the middle of a long context",
+            "Some facts (a user's preferences, a codebase's conventions) need to persist across sessions entirely — they were never 'in' this session's transcript to replay"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "0ea39308-b2c1-42fd-b193-aedb3165894b",
+          "kind": "architecture",
+          "title": "Three Layers: Working, Episodic, Semantic",
+          "body": "A common pattern splits agent memory by how long it needs to live and how it's retrieved.",
+          "bullets": [
+            "Working memory — the live context window: the current task, recent turns, nothing more",
+            "Episodic memory — a log of what happened, usually in a vector store or structured file, retrieved by similarity or recency (a coding agent's own 'progress.md' between sessions is a simple version of this)",
+            "Semantic memory — distilled, standing facts extracted from episodes: a user profile, a project's house style, a persistent 'CLAUDE.md'-style conventions file"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "e0d47a6c-af40-43bf-b211-bab5c57bfe57",
+          "kind": "example",
+          "title": "Worked Example: A Refactor Spanning Three Sessions",
+          "body": "Session 1: the agent explores an unfamiliar codebase and writes its findings to a memory file. Session 2 starts with a completely empty context window, but reads that file first and skips re-exploring from scratch.",
+          "bullets": [
+            "In session 3 the user corrects a wrong assumption the agent made — the fix goes into the semantic memory, not just that session's transcript",
+            "Session 4 inherits the correction automatically, without anyone re-explaining it"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "c585f0fe-85e5-4657-b7f1-7c9c36d33bbf",
+          "kind": "comparison",
+          "title": "Picking a Strategy Trades Cost Against Persistence",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "Persists across sessions?",
+              "Per-turn cost",
+              "Common failure"
+            ],
+            "rows": [
+              [
+                "Full transcript replay",
+                "No",
+                "Grows every turn",
+                "Hits context limit, gets slow and expensive"
+              ],
+              [
+                "Episodic (vector retrieval)",
+                "Yes",
+                "Retrieval + rerank",
+                "Retrieves stale or irrelevant memories"
+              ],
+              [
+                "Semantic (distilled notes)",
+                "Yes",
+                "Nearly free to include",
+                "Distillation loses nuance or goes stale"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "843190c2-51c8-446b-8ecd-9cc42710b07b",
+          "kind": "concept",
+          "title": "When Memory Helps vs. When It Hurts",
+          "body": null,
+          "bullets": [
+            "Stale memory is worse than no memory: a 'fact' that was true last month but isn't now can mislead an agent with full confidence — memories need expiry or versioning, not just storage",
+            "Retrieval-based episodic memory adds latency and can inject irrelevant context — a smaller version of the same 'lost in the middle' problem",
+            "For short, single-session tasks, a memory system is pure overhead — plain context is simpler and just as effective",
+            "Long-term memory writes are an attack surface: a prompt injection that tricks an agent into writing a false 'fact' can persist and mislead every future session"
+          ],
+          "symbol": "exclamationmark.shield.fill",
+          "table": null
+        },
+        {
+          "id": "6bd321c4-a284-4ee1-9fe0-0b230f949779",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Memory is a separate storage-and-retrieval system with its own write/read/expiry policy — it is not 'a bigger context window'",
+            "Match the layer to the lifespan: working memory for the current task, episodic for what happened, semantic for what's now true",
+            "Always give memory a path to correction or expiry, or the agent will repeat old mistakes with total confidence"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "581ee836-cf8d-4998-904e-99bd04cace80",
+            "prompt": "What's the key difference between an agent's context window and its memory system?",
+            "options": [
+              "There is no real difference — they're the same mechanism",
+              "The context window is bounded, live working state for the current session; memory is separate storage designed to persist and be retrieved across sessions",
+              "Memory is always computed faster than reading the context window",
+              "Context windows can never run out of space"
+            ],
+            "correctIndex": 1,
+            "explanation": "The context window resets with every new session and is expensive to keep full. Memory systems exist precisely to carry state past that boundary."
+          },
+          {
+            "id": "77c7f254-f81d-4b27-97a9-78612ff0de72",
+            "prompt": "In the working/episodic/semantic memory model, what is 'semantic memory'?",
+            "options": [
+              "A raw, complete log of every past message",
+              "Distilled, compact facts or preferences pulled from past interactions, like a user profile or a project's conventions",
+              "The model's frozen weights",
+              "A cache that stores embeddings but is never read by the agent"
+            ],
+            "correctIndex": 1,
+            "explanation": "Semantic memory holds standing facts extracted from episodes — the kind of thing you'd write once into a conventions file rather than re-derive from a transcript every session."
+          },
+          {
+            "id": "bd5e35de-e033-40a3-b49a-fd3d66c01a2c",
+            "prompt": "Why can stale memory be worse than having no memory at all?",
+            "options": [
+              "It takes up extra disk space",
+              "It can silently and confidently mislead the agent with information that used to be true but no longer is",
+              "It always causes the agent to crash",
+              "It has no meaningful downside"
+            ],
+            "correctIndex": 1,
+            "explanation": "An agent with no memory has no false assumption to act on. An agent with a stale memory acts on outdated 'facts' with the same confidence as current ones — and that false confidence compounds across future turns."
+          }
+        ]
+      },
+      "references": [],
+      "id": "3c22fd10-3f51-42db-8f70-73ac0a80437a",
+      "publishedDate": "2026-09-11T00:43:08Z"
+    },
+    {
       "id": "3d027332-17ba-440c-8e35-50dd6bdacfb4",
       "title": "GigaPath-Flash: 50x Cheaper Pathology Foundation Models",
       "subtitle": "Distilling a billion-parameter pathology model into ~43M parameters keeps 97% of the accuracy at 1/50th the compute.",
@@ -10714,596 +11234,6 @@
       },
       "references": [],
       "publishedDate": "2026-09-03T12:40:01Z"
-    },
-    {
-      "id": "ded83bb2-3ca6-4838-887c-2e71d285be07",
-      "title": "LoRA: Fine-Tuning Billion-Parameter Models on a Single GPU",
-      "subtitle": "Freeze the weights, train a tiny low-rank patch instead — most of full fine-tuning's quality for a fraction of the memory.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "lora",
-        "fine-tuning",
-        "peft",
-        "qlora",
-        "llms"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cpu.fill",
-      "summary": "LoRA freezes a pretrained model's weights and learns a small low-rank correction matrix instead of updating every parameter. It cuts trainable parameters and optimizer memory by orders of magnitude, merges back into the base model for free at inference, and — combined with 4-bit quantization as QLoRA — lets a 65B model be fine-tuned on a single GPU.",
-      "slides": [
-        {
-          "id": "964db95a-be41-4855-a48c-c3c775619bfa",
-          "kind": "cover",
-          "title": "Fine-Tuning Without Touching Most of the Model",
-          "body": "LoRA (Low-Rank Adaptation) freezes a pretrained model's weights and trains a tiny add-on patch instead of the whole network.",
-          "bullets": [
-            "The base model's weights never change — a small correction matrix is learned alongside them",
-            "Trainable parameters typically drop to under 1% of the full model",
-            "The patch merges back into the base weights after training, adding zero inference latency"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "b7660c08-8ce4-490a-a297-8a5951ec2d4c",
-          "kind": "problem",
-          "title": "Full Fine-Tuning Costs 4x a Model's Weight Memory",
-          "body": "The Adam optimizer is the hidden cost: every trainable parameter needs its weight, its gradient, and two optimizer moment buffers held in memory simultaneously.",
-          "bullets": [
-            "A 7B-parameter model in fp16 is already about 14GB of weights alone",
-            "Full fine-tuning with Adam needs weights + gradients + 2 moment buffers — well over 100GB before a single batch loads",
-            "That memory bill rules out fine-tuning on a single consumer or even single-datacenter GPU"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "2b4fb943-9a88-4607-8b09-036cf50cf8e7",
-          "kind": "solution",
-          "title": "Freeze W, Learn a Low-Rank Update ΔW = B·A",
-          "body": "LoRA (Hu et al., 2021) replaces 'update every weight' with 'learn a small correction.' The original weight matrix W never moves.",
-          "bullets": [
-            "For a weight matrix W (size d×k), LoRA adds two small matrices B (d×r) and A (r×k), where rank r is often just 4-16",
-            "Only B and A get gradients — W stays frozen throughout training",
-            "B is initialized to all zeros, so ΔW = B·A = 0 on step one — training starts exactly at the base model's behavior",
-            "A scaling factor (alpha/r) controls how strongly the learned update is applied once training moves it away from zero"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "e229f671-43b4-481c-bb9c-78f80c4e24af",
-          "kind": "architecture",
-          "title": "Usually Bolted Onto the Attention Projections",
-          "body": "You choose which weight matrices get a LoRA adapter — adapting the whole model isn't required.",
-          "bullets": [
-            "Most setups target the query and value projections (Wq, Wv) in attention; some also adapt key/output projections and MLP layers",
-            "More target matrices means more adaptation capacity, but more trainable parameters and memory to train",
-            "Because ΔW = B·A merges algebraically into W, the adapter can be folded into the base weights after training with zero added inference cost",
-            "Unmerged adapters can also be kept separate and hot-swapped per task or customer without duplicating the full base model"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "3175d13e-72e0-4b3e-b5d6-2baf316e7187",
-          "kind": "example",
-          "title": "Worked Example: 7B Model, 24GB GPU",
-          "body": "The original LoRA paper fine-tuned GPT-3 175B with 10,000x fewer trainable parameters and 3x less GPU memory than full fine-tuning.",
-          "bullets": [
-            "Full fine-tune of a 7B model (fp16 weights + fp32 Adam states): well over 100GB of GPU memory, needing multiple GPUs",
-            "LoRA at rank r=8 on Wq/Wv across every layer: roughly 4-8M trainable parameters — under 0.1% of the 7B total",
-            "That collapse in optimizer-state memory is what makes fine-tuning fit on a single 24GB consumer GPU",
-            "QLoRA goes further: quantize the frozen base model to 4-bit (NF4) and train LoRA adapters on top of it — a 65B model fine-tunes on one 48GB GPU"
-          ],
-          "symbol": "desktopcomputer",
-          "table": null
-        },
-        {
-          "id": "ff7e751b-8f9f-4f88-a1bb-77a1a42ba266",
-          "kind": "comparison",
-          "title": "Trainable Parameters vs. Inference Cost",
-          "body": "These methods trade off differently — LoRA's specific advantage is paying almost nothing extra at inference time.",
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "Method",
-              "Trainable params",
-              "Extra inference cost"
-            ],
-            "rows": [
-              [
-                "Full fine-tune",
-                "100%",
-                "None"
-              ],
-              [
-                "Prompt / prefix tuning",
-                "<0.1% (soft tokens only)",
-                "Extra tokens on every forward pass"
-              ],
-              [
-                "LoRA",
-                "~0.01%-1% (rank-dependent)",
-                "None once merged"
-              ],
-              [
-                "QLoRA",
-                "Same as LoRA, on a 4-bit base",
-                "None once merged"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "b6ea6a83-3901-4f63-8cb6-35dc99dea9d6",
-          "kind": "concept",
-          "title": "Rank Is a Dial, Not a Free Lunch",
-          "body": "LoRA doesn't reduce training compute — the full forward and backward pass still runs through the frozen base model. It only shrinks trainable parameters and optimizer memory.",
-          "bullets": [
-            "Too small a rank (r=1-2) underfits tasks that need broad behavior change, like teaching a genuinely new skill or language",
-            "Forward/backward FLOPs through the frozen base model are unchanged — LoRA saves memory and storage, not training wall-clock",
-            "Serving many unmerged adapters per request adds latency and routing complexity versus one merged model",
-            "Catastrophic forgetting still happens, just less severely than full fine-tuning, since most of the network stays frozen"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "4efc5c9d-1046-4330-a7c4-f34e5474a33c",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "LoRA freezes the base weights and learns a low-rank correction B·A instead of updating every parameter",
-            "It cuts trainable parameters and optimizer memory by orders of magnitude — not training compute",
-            "The adapter merges back into the base model for free at inference; QLoRA adds 4-bit quantization for even bigger memory savings",
-            "Pick rank and target layers based on how much the task actually needs to change the model's behavior"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "36b4c020-4a7a-42c8-96ce-d9aa8de9fcfc",
-            "prompt": "What does LoRA actually train?",
-            "options": [
-              "Every weight in the model",
-              "A pair of small low-rank matrices added to selected weight matrices",
-              "Only the embedding layer",
-              "A separate reward model"
-            ],
-            "correctIndex": 1,
-            "explanation": "LoRA freezes the original weight matrix W and learns a low-rank decomposition B·A added to it — only B and A receive gradients."
-          },
-          {
-            "id": "d46f0832-b5e1-4b84-afa2-66c5f6012680",
-            "prompt": "Why is the B matrix initialized to all zeros?",
-            "options": [
-              "To save disk space",
-              "So the model matches the frozen base model's output exactly before any training happens",
-              "Because A is initialized to zero instead",
-              "It's an unrelated regularization trick"
-            ],
-            "correctIndex": 1,
-            "explanation": "With B=0, ΔW = B·A = 0 at step one, so training starts from the exact same behavior as the untouched base model and only diverges as B learns."
-          },
-          {
-            "id": "6c653cba-3dd3-4aed-acb6-72abd90fbd48",
-            "prompt": "What does LoRA NOT save you, compared to full fine-tuning?",
-            "options": [
-              "GPU memory for optimizer states",
-              "Disk space for storing many fine-tuned variants",
-              "Forward/backward compute through the frozen base model",
-              "Trainable parameter count"
-            ],
-            "correctIndex": 2,
-            "explanation": "LoRA still runs a full forward and backward pass through the frozen base model each step — it reduces trainable parameters and optimizer memory, not the FLOPs spent per training step."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "61799013-14db-41fb-a2b7-4a7d98c7f815",
-          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al. — arXiv:2106.09685)",
-          "url": "https://arxiv.org/abs/2106.09685"
-        },
-        {
-          "id": "d61484cb-8466-46b2-8d30-8312f5a85cfc",
-          "title": "QLoRA: Efficient Finetuning of Quantized LLMs (Dettmers et al. — arXiv:2305.14314)",
-          "url": "https://arxiv.org/abs/2305.14314"
-        }
-      ],
-      "publishedDate": "2026-09-03T06:41:59Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "8c2ac65b-d896-453a-8bf4-832e37fa8862",
-      "title": "Claude Mythos 5.1: The Model Anthropic Won't Hand You",
-      "subtitle": "Same weights as Fable 5.1, permissive safeguards — and access gated to vetted cyber and biology labs only.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "anthropic",
-        "claude",
-        "cybersecurity",
-        "biosecurity",
-        "model-access"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "lock.shield.fill",
-      "summary": "Anthropic released Claude Mythos 5.1 alongside Claude Fable 5.1 on September 1, 2026 — the same underlying model, but run with its cyber safeguards relaxed. It posts the strongest cyber benchmark of any Anthropic model (60.9% on Terminal-Bench 4.0) and designs high-affinity protein binders at nearly 5x the typical industry hit rate, but stays restricted to vetted professionals through two verification programs rather than shipping as a public API.",
-      "slides": [
-        {
-          "id": "787ddd66-3758-4a3f-936c-039d5902c9d8",
-          "kind": "cover",
-          "title": "One Model, Two Names, One Locked Door",
-          "body": null,
-          "bullets": [
-            "Released September 1, 2026 alongside the general-availability Claude Fable 5.1",
-            "Mythos 5.1 is the same weights as Fable 5.1, run with cyber safeguards deliberately relaxed",
-            "Access restricted to vetted organizations via Anthropic's Cyber and Life Sciences Verification Programs"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "e5bb2494-b92a-4938-b1e8-0839d9404ca0",
-          "kind": "problem",
-          "title": "Why Gate a Model Instead of Just Shipping It",
-          "body": "The same capability that lets a model find and patch a vulnerability, or design a novel protein, can just as easily be pointed the other way.",
-          "bullets": [
-            "Cyber offense and cyber defense draw on the same underlying skill — better vulnerability-finding helps both",
-            "A model that designs high-affinity protein binders for medicine can, in principle, be asked to design harmful ones instead",
-            "Anthropic's answer: keep one capability level, but gate who gets to run it with weaker guardrails"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "0687e96f-3833-4051-9b52-61f3224d8ed7",
-          "kind": "solution",
-          "title": "What Actually Changes Between Fable and Mythos",
-          "body": "Fable 5.1 ships generally available as claude-fable-5-1. Mythos 5.1 is the identical model, but evaluated and deployed with its cybersecurity intervention layer loosened for approved users.",
-          "bullets": [
-            "Cyber Verification Program: vets security researchers, red teams, and defenders before granting Mythos access",
-            "Life Sciences Verification Program: separately vets biology and biosecurity-adjacent researchers",
-            "Both programs sit under Anthropic's Frontier Compliance Framework, which classifies model risk tiers before release"
-          ],
-          "symbol": "key.fill",
-          "table": null
-        },
-        {
-          "id": "b5a21b6a-9569-44e5-894a-8835350bf94a",
-          "kind": "comparison",
-          "title": "The Numbers Behind the Gate",
-          "body": null,
-          "bullets": [
-            "The 5-point Terminal-Bench gap between Fable and Mythos is entirely the safeguard difference — same weights, same training run",
-            "Pricing didn't move for the capability jump: cache reads got cheaper, base rates held"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Fable 5.1",
-              "Mythos 5.1"
-            ],
-            "rows": [
-              [
-                "Terminal-Bench 4.0 (coding agent)",
-                "55.8%",
-                "60.9%"
-              ],
-              [
-                "Terminal-Bench-Science 0.1",
-                "52.6%",
-                "not separately reported"
-              ],
-              [
-                "Context window / max output",
-                "1M tokens / 128K",
-                "1M tokens / 128K"
-              ],
-              [
-                "Cache read price (per M tokens)",
-                "$0.25 (down from $1.00)",
-                "$0.25 (down from $1.00)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a08b0697-b58b-4d28-bff4-d80b01928f06",
-          "kind": "example",
-          "title": "Worked Case: Designing a Protein Binder",
-          "body": "In Adaptyv Bio's independent protein-design competitions, Anthropic tested Mythos on the kind of task a biosecurity-sensitive model needs to be good — and safe — at.",
-          "bullets": [
-            "Task: design a high-affinity binder molecule for a target protein, submitted blind against other entrants",
-            "Typical industry hit rate for a working high-affinity binder: 10-15%",
-            "Mythos 5.1's hit rate: nearly 50% — close to 5x the usual success rate",
-            "That same competence is exactly why access is vetted rather than public"
-          ],
-          "symbol": "testtube.2",
-          "table": null
-        },
-        {
-          "id": "acc6da09-3f8a-4b68-807f-be1ba3bff053",
-          "kind": "concept",
-          "title": "'Lower Risk' Is a Classification, Not a Guarantee",
-          "body": "Even with cyber safeguards off, Anthropic places Mythos 5.1 in the lower-risk tier of its own Frontier Compliance Framework — a self-assessment, not an independent audit.",
-          "bullets": [
-            "Anthropic states Mythos 5.1 shows the strongest cyber capabilities of any model it has released",
-            "The lower-risk classification comes from Anthropic's internal framework — no third-party audit of the risk tiering was disclosed",
-            "Verification-gated release (seen here and in Google's Gemini Cyber line) is becoming the default pattern for dual-use frontier capability, not a one-off"
-          ],
-          "symbol": "shield.lefthalf.filled",
-          "table": null
-        },
-        {
-          "id": "494f5d1d-8a0d-4fda-ae23-684f4e69c91d",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Mythos 5.1 and Fable 5.1 are the same model — the difference is which safeguards are switched on for whom",
-            "60.9% on Terminal-Bench 4.0 is the highest cyber-relevant score Anthropic has published for any of its models",
-            "Protein-binder design at ~50% hit rate (vs. 10-15% industry norm) shows the same jump shows up in biology, not just code",
-            "Expect verification-gated releases to become standard whenever a model's top capability is dual-use"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "29b4e88d-4f84-4d59-9d4a-38220fcd648b",
-            "prompt": "What is the core difference between Claude Fable 5.1 and Claude Mythos 5.1?",
-            "options": [
-              "Mythos 5.1 is a larger model trained on more data",
-              "They are the same underlying model; Mythos runs with cyber safeguards relaxed for vetted users",
-              "Mythos 5.1 only handles biology tasks, not code",
-              "Fable 5.1 is the restricted, gated version"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic confirms Fable and Mythos 5.1 share the same weights. The 55.8% vs 60.9% Terminal-Bench gap comes entirely from Mythos running with its cyber intervention layer loosened for verified users."
-          },
-          {
-            "id": "ecf9dc1f-afc0-46c3-8e0a-38b809823674",
-            "prompt": "Why is access to Mythos 5.1 restricted rather than sold as a public API?",
-            "options": [
-              "It's too expensive to serve at scale",
-              "It hasn't finished training yet",
-              "Its top capabilities — vulnerability discovery and protein design — are dual-use and could be misused if broadly available",
-              "Anthropic ran out of compute for public serving"
-            ],
-            "correctIndex": 2,
-            "explanation": "The same skill that lets Mythos find and reason about vulnerabilities or design protein binders for medicine can be redirected toward harm, so access goes through the Cyber and Life Sciences Verification Programs instead of a public endpoint."
-          },
-          {
-            "id": "e55e4a40-06aa-4c3b-96de-4a9a28634aa5",
-            "prompt": "What does Anthropic's 'lower risk' classification for Mythos 5.1 actually mean?",
-            "options": [
-              "An independent government audit confirmed the model is safe",
-              "It's a self-assessment from Anthropic's own Frontier Compliance Framework, not a third-party audit",
-              "The model has no cyber capabilities at all",
-              "It means the model can't be used for biology tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "The risk tier comes from Anthropic's internal Frontier Compliance Framework. No independent audit of that classification was disclosed alongside the release — worth keeping in mind when reading any lab's own risk labels."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3fde7bee-1dd5-4d57-a169-d3e50259cfe3",
-          "title": "Introducing Claude Fable 5.1 and Claude Mythos 5.1 — Anthropic",
-          "url": "https://www.anthropic.com/claude-fable-and-mythos-5-1"
-        },
-        {
-          "id": "b0667e2c-7093-40f5-a083-7b3aa8c743f4",
-          "title": "Anthropic Releases Claude Fable 5.1 and Claude Mythos 5.1 — MarkTechPost",
-          "url": "https://www.marktechpost.com/2026/09/01/anthropic-releases-claude-fable-5-1-and-claude-mythos-5-1-52-6-on-terminal-bench-science-and-75-cheaper-cache-reads/"
-        }
-      ],
-      "publishedDate": "2026-09-03T00:43:10Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "b7bceca8-1ca8-4b02-a25a-738a1a5f7ba0",
-      "title": "AlphaProof Nexus: Solving Erdős Problems for a Few Hundred Dollars",
-      "subtitle": "DeepMind pairs an LLM with the Lean proof checker and lets an agent loop grind on open math problems until Lean says yes.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "deepmind",
-        "formal-verification",
-        "lean",
-        "mathematics",
-        "agentic-search"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "function",
-      "summary": "Google DeepMind's AlphaProof Nexus fuses an LLM with the Lean formal proof assistant in an autonomous agent loop, resolving 9 of 353 open Erdős problems and 44 of 492 open OEIS conjectures at roughly $100-500 in inference cost per problem. Every proof is a machine-checked Lean certificate published on GitHub — a rare AI math result that doesn't require trusting the model's own claims.",
-      "slides": [
-        {
-          "id": "1c56dcfe-2f02-4ebb-ae62-9247ef8d57a5",
-          "kind": "cover",
-          "title": "An Agent That Has to Prove Its Work",
-          "body": null,
-          "bullets": [
-            "Google DeepMind, arXiv 2605.22763, submitted May 21 2026",
-            "Pairs an LLM (Gemini) with the Lean formal proof assistant in an autonomous agentic loop",
-            "Resolved 9/353 open Erdős problems and 44/492 open OEIS conjectures — each one a machine-checked proof"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "f7fa119c-54ef-450a-9139-867b4dfe08f6",
-          "kind": "problem",
-          "title": "LLMs Are Fluent at Math. That's the Problem.",
-          "body": "A model can write a proof that reads perfectly and is still wrong — natural-language 'proofs' have no automatic way to be checked.",
-          "bullets": [
-            "Grading LLM math output usually means trusting the model, a human reviewer, or another LLM as judge",
-            "Formal proof languages like Lean remove that trust problem — a proof either compiles against the Lean kernel or it doesn't",
-            "The catch: writing Lean by hand is slow, specialized work most researchers avoid for exploratory problems"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "5ecfdded-5afe-4bd3-ad05-50837feb670d",
-          "kind": "solution",
-          "title": "Generate, Compile, Retry",
-          "body": "AlphaProof Nexus isn't one-shot generation — it's a loop: the LLM proposes a proof step in Lean, the Lean kernel compiles or rejects it, and the failure feeds back into the next attempt.",
-          "bullets": [
-            "The kernel — not a grader model or a human — is the source of truth for every step",
-            "Four variants were compared to isolate what actually helps: a basic LLM+Lean loop, +AlphaProof search, +evolutionary search, and the full combined system",
-            "Stronger, more expensive models handle complex proof steps; cheaper models rank and filter draft candidates at high throughput"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "d45be74b-53a1-47a4-9ce7-038e34ae4059",
-          "kind": "comparison",
-          "title": "Which Component Actually Earns Its Cost",
-          "body": "The surprising finding: on easy problems, the stripped-down basic loop was the most cost-efficient — the extra machinery only pays off once problems get hard.",
-          "bullets": [
-            "The basic LLM+Lean loop alone solved all 9 Erdős problems in a post-hoc re-run",
-            "On the two hardest problems (Erdős #125 and #138), the full system was 2-5x more cost-efficient than the basic loop at the same solve rate"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Agent variant",
-              "What it adds",
-              "Where it wins"
-            ],
-            "rows": [
-              [
-                "Basic (LLM + Lean)",
-                "Nothing — pure generate/verify loop",
-                "Cheapest per solve on easy-to-medium problems"
-              ],
-              [
-                "+ Evolutionary search",
-                "Mutates and recombines partial proof attempts",
-                "Better survival on longer proof chains"
-              ],
-              [
-                "Full system",
-                "AlphaProof search + evolutionary search combined",
-                "2-5x more cost-efficient on the two hardest problems"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "62d3eaf9-6f0d-4f29-8e69-268548cfebe1",
-          "kind": "example",
-          "title": "What 9 Solved Problems Actually Looks Like",
-          "body": "The results weren't confined to Erdős's list — the same agent loop crossed into other open areas of math.",
-          "bullets": [
-            "Two of the Erdős problems had sat unresolved for 56 years before the agent cracked them",
-            "It resolved a 15-year-old open question in algebraic geometry involving Hilbert functions",
-            "It improved a known bound in convex optimization by discovering a novel algorithmic parameter schedule",
-            "It contributed to closing a problem from Ben Green's well-known list of open conjectures"
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "e76130d6-4e79-4cef-88b0-ddd97d3477c5",
-          "kind": "concept",
-          "title": "What It Can't Do — and Why the Cost Number Matters",
-          "body": "Each proof cost roughly $100-500 in inference — dramatically cheaper than the researcher-hours it would otherwise take, but the system is bounded by what Lean can check.",
-          "bullets": [
-            "It doesn't originate new conjectures — it searches for proofs of problems already stated in formal terms",
-            "A problem that can't be cleanly formalized in Lean is outside its reach entirely",
-            "Because every result compiles against the Lean kernel and is published on GitHub, no one has to trust DeepMind's claims — the proofs are independently, mechanically checkable"
-          ],
-          "symbol": "exclamationmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "206c6b64-5ffa-4be6-a21f-0fa836cc6d7f",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "AlphaProof Nexus = LLM proposal + Lean kernel verification, run as an iterative agent loop, not single-shot generation",
-            "9/353 Erdős problems and 44/492 OEIS conjectures solved, each backed by a machine-checked proof anyone can compile",
-            "Extra search machinery (AlphaProof + evolution) only pays for itself on the hardest problems — simpler is cheaper on easy ones",
-            "The real innovation isn't 'AI does math' — it's coupling generation to a checker that can't be fooled"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "d5d80e8f-88d8-4fc5-8391-0fc597e1c50d",
-            "prompt": "Why does AlphaProof Nexus use the Lean proof assistant instead of just trusting the LLM's own proof text?",
-            "options": [
-              "Lean makes the LLM run faster",
-              "Lean's kernel mechanically compiles or rejects each proof step, so correctness doesn't depend on trusting the model",
-              "Lean is required by arXiv for math papers",
-              "Lean generates the proofs itself, without an LLM"
-            ],
-            "correctIndex": 1,
-            "explanation": "A fluent natural-language 'proof' can be wrong with no automatic way to check it. Lean's kernel gives a ground truth: a proof either compiles against the target statement or it doesn't."
-          },
-          {
-            "id": "4fea7716-9e75-44ff-88eb-da6eee9fc182",
-            "prompt": "What did comparing the four agent variants (basic, +AlphaProof, +evolution, full) reveal?",
-            "options": [
-              "The full system was always the cheapest option, on every problem",
-              "The basic LLM+Lean loop alone solved all 9 Erdős problems and was cheapest on easy ones; the extra machinery only paid off on the hardest problems",
-              "Evolutionary search alone outperformed every other variant",
-              "None of the variants could solve more than 2 problems total"
-            ],
-            "correctIndex": 1,
-            "explanation": "The basic loop matched the full system's solve count on the 9 Erdős problems in post-hoc analysis and was more cost-efficient on easier ones. The full system's advantage — 2-5x better cost-efficiency — only showed up on the two hardest problems."
-          },
-          {
-            "id": "5a11608d-da49-47ca-b923-1b6c674d85af",
-            "prompt": "What is a real limitation of AlphaProof Nexus, according to the paper?",
-            "options": [
-              "It cannot run on any open-source Lean library",
-              "It can only search for proofs of problems already stated formally in Lean — it doesn't originate new conjectures",
-              "It requires a human to manually check every generated proof",
-              "It only works on algebra problems, not geometry or optimization"
-            ],
-            "correctIndex": 1,
-            "explanation": "The system searches a proof space Lean can verify for a problem someone has already formalized. It doesn't propose new open questions — a meaningfully different and still-unsolved capability."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1b357c96-30a3-4228-86db-625fb9896b7c",
-          "title": "Advancing Mathematics Research with AI-Driven Formal Proof Search (arXiv:2605.22763)",
-          "url": "https://arxiv.org/abs/2605.22763"
-        },
-        {
-          "id": "2e040b89-405f-476d-8487-5d50ff9d59e7",
-          "title": "Google DeepMind's AlphaProof Nexus solves decades-old math problems for a few hundred dollars — The Decoder",
-          "url": "https://the-decoder.com/google-deepminds-alphaproof-nexus-solves-decades-old-math-problems-for-a-few-hundred-dollars/"
-        }
-      ],
-      "publishedDate": "2026-09-03T00:43:10Z",
-      "heroImageURL": null
     }
   ]
 }
