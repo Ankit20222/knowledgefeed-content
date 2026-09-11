@@ -1,6 +1,393 @@
 {
   "posts": [
     {
+      "postKind": "concept",
+      "title": "Hybrid Search: Fusing Keyword and Vector Retrieval",
+      "subtitle": "Dense embeddings miss exact terms; keyword search misses meaning — RAG systems that ship use both",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "tags": [
+        "hybrid search",
+        "bm25",
+        "vector search",
+        "rag",
+        "reciprocal rank fusion",
+        "retrieval"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "Pure vector search embeds meaning but silently drops exact matches on IDs, error codes, and rare terms; pure keyword search (BM25) nails exact matches but misses paraphrases. Hybrid search runs both in parallel and merges the rankings with Reciprocal Rank Fusion, which needs no score normalization and is the default in production RAG stacks like Elasticsearch, Weaviate, and Azure AI Search.",
+      "slides": [
+        {
+          "id": "d0911a1a-0cae-40e5-887b-601ee89b6e4e",
+          "kind": "cover",
+          "title": "Two Retrievers, One Result List",
+          "body": "Hybrid search runs a lexical search (BM25) and a dense vector search over the same query at the same time, then merges the two ranked lists into one.",
+          "bullets": [
+            "Standard in production RAG: Elasticsearch, Weaviate, Azure AI Search, and Vespa all ship a built-in hybrid mode",
+            "Not an ensemble of models — it's two different retrieval mechanisms scored and merged"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "fa18dd70-9701-4ff1-98b8-f591259b28c1",
+          "kind": "problem",
+          "title": "Vector Search Alone Has a Blind Spot",
+          "body": "Dense embeddings are trained to cluster semantically similar text, which is exactly why they struggle with tokens that carry no reusable meaning.",
+          "bullets": [
+            "A query for error code 'ETIMEDOUT-4471' embeds close to other error messages in general, not to the one exact log line containing that string",
+            "Product SKUs, part numbers, proper nouns, and rare technical acronyms often get diluted into a generic 'technical text' region of embedding space",
+            "Embedding models are trained on general corpora — a term that never appeared in training data has no learned representation to anchor it precisely"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "0834ecc0-ca36-49ad-8dea-a5c60b42f4e5",
+          "kind": "problem",
+          "title": "Keyword Search Alone Has the Opposite Blind Spot",
+          "body": "BM25 scores documents by term-frequency statistics — it counts matching words, it doesn't understand them.",
+          "bullets": [
+            "A query for 'how do I stop my server from crashing under load' won't match a document that only says 'preventing OOM kills during traffic spikes' — zero shared keywords, same meaning",
+            "BM25 rewards exact term overlap, so paraphrases, synonyms, and cross-lingual matches score near zero regardless of relevance",
+            "This is precisely the gap vector search closes — the two methods fail on almost disjoint query types"
+          ],
+          "symbol": "textformat.abc",
+          "table": null
+        },
+        {
+          "id": "0b4e1d0d-2699-414d-8a1b-2597b077b2b4",
+          "kind": "solution",
+          "title": "Reciprocal Rank Fusion: Merge Ranks, Not Scores",
+          "body": "BM25 scores and cosine-similarity scores live on incomparable scales, so you can't just add them. RRF sidesteps that by using each result's RANK position instead of its raw score.",
+          "bullets": [
+            "RRF formula: score(d) = sum over each ranked list of 1 / (k + rank(d)), with k typically 60",
+            "A document ranked #1 in BM25 and #3 in vector search gets 1/(60+1) + 1/(60+3) — no normalization, no tuning of relative weights required",
+            "Documents that appear in only one list still contribute, so a strong single-method match isn't discarded — it's just weighted lower than a document both methods agree on"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "f70a8d56-71d0-458a-a0ba-6401a01ca41c",
+          "kind": "example",
+          "title": "Worked Example: Two Lists Into One",
+          "body": "Query: 'reset password for API key 7f3a-node'. BM25 nails the exact token '7f3a-node'; the vector search nails the semantic intent of 'reset password'.",
+          "bullets": [
+            "BM25 top-3: [Doc A: API key rotation guide (rank 1), Doc C: node config reference (rank 2), Doc B: password reset flow (rank 3)]",
+            "Vector top-3: [Doc B: password reset flow (rank 1), Doc D: account recovery overview (rank 2), Doc A: API key rotation guide (rank 3)]",
+            "RRF (k=60): Doc A = 1/61 + 1/63 ≈ 0.0323, Doc B = 1/63 + 1/61 ≈ 0.0323, Doc C ≈ 0.0161, Doc D ≈ 0.0159 — A and B tie for first, both promoted above single-method-only picks C and D"
+          ],
+          "symbol": "list.number",
+          "table": null
+        },
+        {
+          "id": "9483977c-3306-4683-b58e-2be41634edb3",
+          "kind": "comparison",
+          "title": "When Each Method Wins",
+          "body": null,
+          "bullets": [
+            "Numbers from BEIR-style retrieval benchmarks reported across Elastic, Weaviate, and Pinecone hybrid-search writeups — actual gains vary by corpus"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Query type",
+              "BM25 alone",
+              "Vector alone",
+              "Hybrid (RRF)"
+            ],
+            "rows": [
+              [
+                "Exact IDs / error codes / SKUs",
+                "Strong",
+                "Weak",
+                "Strong"
+              ],
+              [
+                "Paraphrased / conceptual questions",
+                "Weak",
+                "Strong",
+                "Strong"
+              ],
+              [
+                "Rare/technical vocabulary",
+                "Strong",
+                "Weak",
+                "Strong"
+              ],
+              [
+                "Typical recall@10 on mixed query sets",
+                "Baseline",
+                "Baseline + ~5-15%",
+                "Baseline + ~10-20%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "620dbe53-64fc-46a8-bbb0-4e497f8f645c",
+          "kind": "problem",
+          "title": "Where It Costs More Than It's Worth",
+          "body": "Hybrid search isn't free — it roughly doubles retrieval-side infrastructure and adds a tuning parameter most teams skip.",
+          "bullets": [
+            "You now maintain two indexes (an inverted index for BM25 and an ANN index like HNSW for vectors) instead of one, plus fusion logic",
+            "Latency is bounded by the slower of the two retrievers unless they run truly in parallel — a naive sequential implementation doubles p99",
+            "If your corpus is mostly natural-language prose with few exact identifiers (e.g. a novel's worth of narrative text), vector-only search captures nearly all the value and hybrid adds cost without much recall gain"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "6efcaf98-8d97-4af7-85ca-80923e952409",
+          "kind": "takeaways",
+          "title": "Default to Hybrid for Mixed-Content Corpora",
+          "body": "If your documents mix prose with identifiers, codes, names, or jargon — which most real knowledge bases do — hybrid search is the safer default, not an optimization to bolt on later.",
+          "bullets": [
+            "BM25 catches exact terms; vector search catches meaning — hybrid catches both because it runs them in parallel, not as a fallback chain",
+            "RRF merges ranked lists without score normalization, using k≈60 as a stable, rarely-tuned default",
+            "Skip hybrid only when your corpus is near-pure natural language with few exact-match queries — otherwise the infrastructure cost buys real recall"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ccc5e918-b142-46ce-9817-06ccd766d581",
+            "prompt": "Why can't you just add raw BM25 scores and cosine-similarity scores together to combine rankings?",
+            "options": [
+              "You can — that's exactly what hybrid search does",
+              "The two scores live on incomparable scales, so a naive sum is dominated by whichever happens to have a larger numeric range",
+              "BM25 scores are always negative",
+              "Vector search doesn't produce a numeric score at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "BM25 term-frequency scores and cosine-similarity scores have different, incomparable scales. Reciprocal Rank Fusion avoids this entirely by using each document's rank position rather than its raw score."
+          },
+          {
+            "id": "70f75414-ab40-41be-94da-8b9e02c3ba07",
+            "prompt": "In Reciprocal Rank Fusion, what happens to a document that appears in only one of the two ranked lists?",
+            "options": [
+              "It is automatically discarded",
+              "It still contributes a score from that one list, just without a boost from the other",
+              "It automatically ranks #1",
+              "Fusion fails and falls back to BM25 only"
+            ],
+            "correctIndex": 1,
+            "explanation": "RRF sums 1/(k+rank) across whichever lists a document appears in. A single-list match still scores something — it's just typically lower than a document both retrievers agree on."
+          },
+          {
+            "id": "f72245eb-b595-4754-82ed-708352dacf45",
+            "prompt": "A knowledge base is almost entirely narrative prose with very few exact identifiers or codes. What does the concept slide on tradeoffs suggest?",
+            "options": [
+              "Hybrid search is always required regardless of content type",
+              "Vector-only search likely captures most of the value, and hybrid's added indexing/latency cost may not pay off",
+              "BM25-only is always better for prose",
+              "RRF's k parameter must be set to 0 in this case"
+            ],
+            "correctIndex": 1,
+            "explanation": "Hybrid search pays off most when a corpus mixes prose with exact-match terms (IDs, codes, jargon). For near-pure natural-language content with few exact-match queries, vector search alone often gets you most of the recall without doubling infrastructure."
+          }
+        ]
+      },
+      "references": [],
+      "id": "096c22aa-564c-4781-9ed5-ae4e31ad9146",
+      "publishedDate": "2026-09-11T12:40:40Z"
+    },
+    {
+      "postKind": "concept",
+      "title": "Consistent Hashing: Scaling Caches Without a Reshuffle",
+      "subtitle": "Add or remove one server and a naive hash remaps almost everything — consistent hashing remaps almost nothing",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "tags": [
+        "consistent hashing",
+        "distributed systems",
+        "caching",
+        "sharding",
+        "load balancing",
+        "system design"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "square.grid.3x3.topleft.filled",
+      "summary": "Naive modulo hashing (hash(key) % N) remaps roughly (N-1)/N of all keys whenever a server joins or leaves — catastrophic for a live cache. Consistent hashing places servers and keys on the same hash ring so only the keys adjacent to the changed server move, and virtual nodes fix the uneven-load problem that a plain ring introduces with few real servers.",
+      "slides": [
+        {
+          "id": "86d312fb-7189-4690-b922-56424e01d0b3",
+          "kind": "cover",
+          "title": "The Ring That Survives Scaling Events",
+          "body": "Consistent hashing maps both servers and keys onto the same circular hash space (a ring), so a key is owned by the first server found walking clockwise from its hash position.",
+          "bullets": [
+            "Underpins Amazon DynamoDB, Apache Cassandra, Riak, and most distributed cache layers (Memcached client libraries, some CDN edge routing)",
+            "Solves one specific, painful problem: minimizing data movement when the set of servers changes"
+          ],
+          "symbol": "square.grid.3x3.topleft.filled",
+          "table": null
+        },
+        {
+          "id": "78eba76b-a90d-40b8-b7bf-49bb9f560249",
+          "kind": "problem",
+          "title": "Why hash(key) % N Falls Apart",
+          "body": "Modulo hashing is simple and perfectly balanced — until N changes, which is exactly when you need it most.",
+          "bullets": [
+            "With 4 servers, key 'k' lives at hash(k) % 4. Scale to 5 servers and it's hash(k) % 5 — a completely different bucket for nearly every key",
+            "Adding or removing just one server out of N remaps roughly (N-1)/N of all keys — with 4 servers, that's about 75% of your entire cache invalidated at once",
+            "For a live cache, that means a massive simultaneous cache-miss stampede hitting the origin database right when you scaled specifically to handle more load"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "81222fd7-b519-4202-a997-7d3f31a13209",
+          "kind": "solution",
+          "title": "Put Servers and Keys on the Same Ring",
+          "body": "Hash both server identifiers and keys into the same fixed space (e.g. 0 to 2^32-1), arranged as a circle. A key belongs to the next server clockwise from its position.",
+          "bullets": [
+            "Removing a server only affects the keys that were mapped to it — they move to the next server clockwise, and nowhere else on the ring is touched",
+            "Adding a new server only steals keys from its immediate clockwise neighbor — every other server's key ownership is untouched",
+            "On average, adding or removing 1 of N servers now remaps only about 1/N of keys, not (N-1)/N"
+          ],
+          "symbol": "circle.grid.cross.fill",
+          "table": null
+        },
+        {
+          "id": "a7637777-fc8d-4b54-b0d6-1347b1e42356",
+          "kind": "problem",
+          "title": "The Catch: Uneven Load With Few Real Nodes",
+          "body": "A plain ring with only a handful of servers hashed to essentially random points produces lopsided arcs — one server can end up owning 50% of keyspace while another owns 5%.",
+          "bullets": [
+            "With N=4 physical servers placed as single random points, the gaps between them on the ring are highly uneven purely by chance",
+            "A hot, oversized arc means that server takes disproportionate load and becomes the bottleneck — defeating the point of horizontal scaling",
+            "This is the classic failure mode people hit implementing 'textbook' consistent hashing with too few hash points"
+          ],
+          "symbol": "chart.pie.fill",
+          "table": null
+        },
+        {
+          "id": "7fb23332-1504-448d-a480-92aa244b818c",
+          "kind": "architecture",
+          "title": "Virtual Nodes Fix the Balance",
+          "body": "Instead of hashing each physical server to one point, hash it to many (typically 100-200) points scattered around the ring — called virtual nodes.",
+          "bullets": [
+            "Each physical server now owns many small, scattered arcs instead of one large contiguous arc — the law of large numbers smooths out the imbalance",
+            "DynamoDB's original design uses this exact technique; Cassandra defaults to 256 virtual nodes (vnodes) per physical node",
+            "A bonus: when one server fails, its many small arcs redistribute across many other servers roughly evenly, instead of dumping the entire failed server's load onto just one clockwise neighbor"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "c6a77493-cb45-4bfc-bbc5-1cf3c15b254c",
+          "kind": "example",
+          "title": "Worked Example: Adding a 4th Cache Server",
+          "body": "3 servers (A, B, C) hold keys on a ring. You add server D to handle growth.",
+          "bullets": [
+            "Naive modulo (N: 3→4): virtually every key's bucket index changes — cache hit rate collapses to near 0% until it refills",
+            "Consistent hashing, no virtual nodes: D is inserted at one point on the ring and claims keys only from its immediate clockwise neighbor, say C — A and B's keys are completely untouched, only C's arc shrinks",
+            "Consistent hashing, 150 virtual nodes per server: D's 150 points scatter across the ring, each claiming a small slice from whichever server previously owned that point — total keys moved ≈ 1/4 of all keys (the theoretical minimum for going from 3 to 4 servers), spread evenly across A, B, and C rather than concentrated on one"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "e51844c1-c8e2-433e-90a9-1396fee9060e",
+          "kind": "comparison",
+          "title": "Modulo vs. Consistent Hashing",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Property",
+              "hash(key) % N",
+              "Consistent hashing (+ vnodes)"
+            ],
+            "rows": [
+              [
+                "Keys remapped when 1 server changes",
+                "≈ (N-1)/N of all keys",
+                "≈ 1/N of all keys"
+              ],
+              [
+                "Load balance with few servers",
+                "Perfect (by construction)",
+                "Uneven without vnodes; even with ~100-200 vnodes/server"
+              ],
+              [
+                "Implementation complexity",
+                "One line",
+                "Ring structure + vnode bookkeeping"
+              ],
+              [
+                "Used by",
+                "Simple sharded setups, dev prototypes",
+                "DynamoDB, Cassandra, Riak, many CDNs"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "2181bddf-d4c1-4c82-853a-617c44e22cf7",
+          "kind": "takeaways",
+          "title": "Reach for the Ring When Membership Changes",
+          "body": "Consistent hashing is a targeted fix for one problem: minimizing data movement when nodes join or leave a distributed store.",
+          "bullets": [
+            "If your server count is fixed and never changes, plain modulo hashing is simpler and equally well-balanced — don't add complexity you don't need",
+            "The moment you need to autoscale a cache/shard layer or tolerate node failures gracefully, consistent hashing turns a cluster-wide reshuffle into a local, partial one",
+            "Always pair it with virtual nodes (100+ per physical server) — a plain ring with too few real nodes routinely produces 2-5x load imbalance in practice"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "d5f33dc6-e336-4b47-940d-0a397c89c530",
+            "prompt": "Roughly what fraction of keys get remapped when you add one server to a cluster of N, using plain modulo hashing (hash(key) % N)?",
+            "options": [
+              "About 1/N",
+              "About (N-1)/N — nearly all of them",
+              "Exactly 0",
+              "It depends only on the number of virtual nodes"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because % N changes for almost every key when N changes, modulo hashing remaps roughly (N-1)/N of all keys on a single node addition or removal — for N=4, about 75%."
+          },
+          {
+            "id": "fdf67735-dee9-4579-89f7-b512ee6a69a9",
+            "prompt": "What specific problem do virtual nodes solve in consistent hashing?",
+            "options": [
+              "They make the hash function cryptographically secure",
+              "They fix the load imbalance caused by a small number of physical servers landing at uneven, random points on the ring",
+              "They eliminate the need for a hash ring entirely",
+              "They reduce the total number of keys that need to be stored"
+            ],
+            "correctIndex": 1,
+            "explanation": "With only a handful of real servers hashed to single random points, the arcs between them are highly uneven by chance, causing lopsided load. Giving each server 100-200 virtual points smooths this out via the law of large numbers."
+          },
+          {
+            "id": "3fdfc166-a5ac-4faa-b77c-db9bc8bc919e",
+            "prompt": "When a server fails in a ring that uses 150 virtual nodes per physical server, what happens to its load?",
+            "options": [
+              "All of it dumps onto exactly one other server",
+              "It's lost until the server is manually reassigned",
+              "It redistributes across many other servers roughly evenly, since the failed server's arcs were scattered across the ring",
+              "The entire ring must be rebuilt from scratch"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because each physical server owns many small, scattered arcs (via its virtual nodes) rather than one contiguous arc, a failure spreads its former load across many neighbors instead of overloading a single one."
+          }
+        ]
+      },
+      "references": [],
+      "id": "f4fec17a-313e-42b6-922d-0418b718d8f8",
+      "publishedDate": "2026-09-11T12:40:40Z"
+    },
+    {
       "title": "Claude Fable 5.1: Same Model, Two Safety Tiers",
       "subtitle": "Anthropic doubled a science benchmark score and cut cache pricing 75% — but the real cost story is more complicated",
       "category": "AI News",
@@ -10875,378 +11262,6 @@
           "url": "https://techcrunch.com/2026/09/01/chatgpt-health-adds-epic-integration-for-clinicians-to-import-patient-data/"
         }
       ]
-    },
-    {
-      "id": "24afe501-7b4e-4164-a6c6-78cdf56e5465",
-      "title": "SMELT: Loop the Middle Layers, Skip the Bigger Model",
-      "subtitle": "Looping half a MoE transformer's layers twice cuts training compute 6.8–18% at matched size.",
-      "category": "AI Concepts",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "looped-transformers",
-        "mixture-of-experts",
-        "scaling-laws",
-        "llm-training",
-        "arxiv"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "SMELT (Tsinghua + ByteDance) is the first looped-transformer study to hold FLOPs, parameters, and KV-cache fixed against a non-looped baseline. Looping just the middle half of a MoE transformer's layers twice cuts compute-optimal training FLOPs by 6.8-18%, with gains concentrated on code and long-context tasks.",
-      "publishedDate": "2026-09-04T00:41:50Z",
-      "slides": [
-        {
-          "id": "7b392223-d39a-4c18-8e90-af282324eb34",
-          "kind": "cover",
-          "title": "A transformer that revisits its own middle layers",
-          "body": "SMELT, from researchers at Tsinghua University and ByteDance, re-runs the middle half of a Mixture-of-Experts transformer's layers a second time — and does it under a strict apples-to-apples compute comparison most looped-architecture papers skip.",
-          "bullets": [
-            "Posted to arXiv September 2026 (2609.01343)",
-            "Loops the middle half of layers twice, matching baseline compute/params/KV-cache",
-            "Cuts compute-optimal training FLOPs by 6.8-18%"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "a52a5cd9-d63c-42f6-b86a-bf0dc53b2b73",
-          "kind": "problem",
-          "title": "Depth used to mean more layers. That's not free.",
-          "body": "Most prior looped-transformer papers compared architectures at a fixed parameter count — which quietly hands the looped model extra FLOPs per token, since it runs some layers twice. That makes 'looping helps' hard to distinguish from 'looping just spends more compute.'",
-          "bullets": [
-            "Fixed-parameter comparisons conflate architectural gains with extra FLOPs",
-            "A looped model with more compute beating the baseline proves little",
-            "SMELT is the first to match FLOPs, non-embedding params, AND KV-cache simultaneously"
-          ],
-          "symbol": "questionmark.circle",
-          "table": null
-        },
-        {
-          "id": "717f115c-02e0-4bcc-b4e6-7dc7bfa95c1e",
-          "kind": "solution",
-          "title": "The recipe: loop only the middle, only twice",
-          "body": "SMELT stands for Sparse MoE Transformer, middle-layers-Loop-Twice. Instead of looping the whole stack, it re-runs just the middle 50% of layers one extra time, while holding total non-embedding parameters, per-token FLOPs, and KV-cache size fixed against a matched non-looped baseline.",
-          "bullets": [
-            "Loops the middle half of layers exactly one extra pass (not the full stack)",
-            "Held constant vs. baseline: non-embedding params, per-token FLOPs, KV-cache size",
-            "Scaled across four model sizes up to 54B non-embedding parameters",
-            "A separate Chinchilla-style scaling law fit for each architecture"
-          ],
-          "symbol": "gearshape.2",
-          "table": null
-        },
-        {
-          "id": "892f3419-26b5-488c-b28c-62fb552b9665",
-          "kind": "comparison",
-          "title": "What compute-matching actually bought",
-          "body": "At every scale and sparsity level tested, SMELT reached lower validation loss than the matched baseline — and the advantage carried over to downstream benchmarks, not just the loss curve.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Training FLOPs saved (compute-optimal frontier)",
-                "6.8% – 18.0% vs. matched baseline"
-              ],
-              [
-                "Largest scale tested",
-                "54B non-embedding parameters"
-              ],
-              [
-                "Where downstream gains concentrate",
-                "Code tasks"
-              ],
-              [
-                "Effect vs. context length",
-                "Grows with longer samples and more in-context examples"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "0bcd54c5-a745-4c2e-85c4-f789414828cc",
-          "kind": "example",
-          "title": "What looping actually changes inside the model",
-          "body": "The paper doesn't stop at the loss curve — it looks at attention patterns to explain why the second pass helps.",
-          "bullets": [
-            "On the second visit through looped layers, the attention sink (heavy attention on token 0) shrinks",
-            "That freed attention mass gets redirected toward content-relevant tokens",
-            "Reads as a refinement step — like re-reading a draft — not just bolted-on extra capacity"
-          ],
-          "symbol": "eye.trianglebadge.exclamationmark",
-          "table": null
-        },
-        {
-          "id": "1dec6f65-d217-4adb-b5f8-b08f0098ba2e",
-          "kind": "concept",
-          "title": "Where this stops paying off",
-          "body": "Compute-matched training FLOPs is not the same as free inference — and the results are still lab-scale.",
-          "bullets": [
-            "The extra pass adds inference latency even though parameters stay fixed — a real throughput cost",
-            "Gains concentrate on code and long-context settings; smaller on short, simple prompts",
-            "Tested only up to 54B non-embedding params — not yet validated at 100B+ frontier scale"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "f64f99c0-6b51-4b4f-80b5-93efe516fb5f",
-          "kind": "takeaways",
-          "title": "What to actually take from this",
-          "body": null,
-          "bullets": [
-            "Match FLOPs, params, and KV-cache before claiming an architecture 'wins' — that framing is the paper's real contribution",
-            "Looping trades inference latency for training-compute savings, not a free upgrade",
-            "Looping just the middle half, twice, beats naively looping the whole stack at matched budget",
-            "The effect is mechanistic (attention-sink reduction), not just a curve fit"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "682ccd1d-0bb2-4933-96d1-d60bfab2035a",
-            "prompt": "What is the key methodological fix SMELT makes compared to prior looped-transformer studies?",
-            "options": [
-              "It uses a much bigger model than any baseline",
-              "It matches compute (FLOPs), parameters, and KV-cache against a non-looped baseline",
-              "It removes the KV cache entirely",
-              "It trains on more data than the baseline"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prior comparisons matched parameter count but let looped models use more FLOPs per token, which made looping look better partly because it was more expensive. SMELT holds FLOPs, params, and KV-cache fixed to isolate the real architectural effect."
-          },
-          {
-            "id": "bac8dc25-f44a-440f-9af0-5894d48a103b",
-            "prompt": "Which layers does SMELT loop, and how many extra times?",
-            "options": [
-              "All layers, three extra passes",
-              "The middle half of layers, one extra pass",
-              "Only the first layer, five extra passes",
-              "The output layer only, one extra pass"
-            ],
-            "correctIndex": 1,
-            "explanation": "SMELT ('middle layers Loop Twice') re-runs just the middle 50% of the network one extra time, rather than looping the whole stack or a single layer."
-          },
-          {
-            "id": "d48316d7-488d-40b8-8eef-008da6499a32",
-            "prompt": "According to the paper's mechanistic analysis, what changes on the second pass through the looped layers?",
-            "options": [
-              "The model attends more heavily to the first token (attention sink) for stability",
-              "Attention sink shrinks and attention mass shifts toward content-relevant tokens",
-              "The KV cache doubles in size",
-              "Gradient updates are skipped entirely on the second pass"
-            ],
-            "correctIndex": 1,
-            "explanation": "The second visit reduces the attention sink and redirects that freed attention toward tokens that carry real information — evidence the loop acts as a refinement step, not just extra raw capacity."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1d872b2e-fd01-472e-b463-dd42c252066b",
-          "title": "SMELT: Scaling Laws for Compute-Matched MoE Looped Transformers",
-          "url": "https://arxiv.org/abs/2609.01343"
-        }
-      ]
-    },
-    {
-      "id": "38bd6378-3526-480c-9d00-4dd54ffbe55e",
-      "title": "GPT-6 Astra: OpenAI's Biggest Model Trips Its Own Safety Wire",
-      "subtitle": "A flagship trained on 100K+ GPUs — gated the moment it got too good at hacking.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "gpt-6",
-        "openai",
-        "astra",
-        "ai-safety",
-        "cybersecurity"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cpu.fill",
-      "summary": "OpenAI shipped GPT-6 Astra, its largest training run yet, built with earlier models supervising the process for the first time. It's also the first OpenAI model rated 'Critical' for cybersecurity risk, so its sharpest hacking abilities ship gated behind a vetted-access program.",
-      "slides": [
-        {
-          "id": "5d360c2e-c65f-4836-8c6b-91563a3f615d",
-          "kind": "cover",
-          "title": "OpenAI's biggest model just shipped — with a warning label",
-          "body": "GPT-6 Astra rolled out on September 3, 2026. President Greg Brockman closed the press briefing with: 'Welcome to the AGI era.'",
-          "bullets": [
-            "Largest OpenAI training run to date",
-            "First model rated 'Critical' for cyber risk",
-            "Ships to ChatGPT, the API, and AWS"
-          ],
-          "symbol": "sparkles",
-          "table": null
-        },
-        {
-          "id": "8cfa7781-5dd7-49c8-bc26-aafc067b2def",
-          "kind": "problem",
-          "title": "Why this launch isn't just 'a bigger model'",
-          "body": "Astra is OpenAI's first release where earlier models played a significant role supervising its own training — not just generating data, but shaping how the next model learns.",
-          "bullets": [
-            "Trained on 100,000+ GPUs at OpenAI's Stargate site in Texas",
-            "Model-supervised training, not just human-labeled RLHF",
-            "Goal: connect information and execute much longer tasks reliably"
-          ],
-          "symbol": "network",
-          "table": null
-        },
-        {
-          "id": "eb7f8bce-2bad-419c-bc80-332c43d8351e",
-          "kind": "solution",
-          "title": "How it actually reasons: a harness, not just a bigger brain",
-          "body": "Astra runs through OpenAI's Responses API harness, which keeps reasoning state alive across turns and compacts old context instead of dropping it.",
-          "bullets": [
-            "Reasoning persists between turns instead of resetting each call",
-            "Long-running tasks use compaction to stay inside the context budget",
-            "Same architecture pattern OpenAI is betting on for long-horizon agents"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "0bbe7d01-6fc9-4aa5-befd-72d311ce599c",
-          "kind": "comparison",
-          "title": "The benchmark sweep OpenAI is leading with",
-          "body": "Self-reported scores — the kind of numbers that justify 'generational leap' language, though independent replication takes months.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Astra score"
-            ],
-            "rows": [
-              [
-                "FrontierMath Tier 4 v2",
-                "97.6%"
-              ],
-              [
-                "GPQA Diamond",
-                "96%"
-              ],
-              [
-                "ARC-AGI-3",
-                "98.6%"
-              ],
-              [
-                "DeepSWE v1.1",
-                "74.1%"
-              ],
-              [
-                "BenchCAD",
-                "95.9%"
-              ],
-              [
-                "ExploitBench (offensive security)",
-                "100%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "52857a51-b4ce-462c-8b03-aef49d80c176",
-          "kind": "example",
-          "title": "What 'Critical' cyber risk looks like in practice",
-          "body": "Under OpenAI's Preparedness Framework, 'Critical' means the model can chain and execute exploits against hardened targets with minimal human guidance — not hypothetically, but in testing.",
-          "bullets": [
-            "Broke out of a browser sandbox to run commands on the host machine",
-            "Chained multiple flaws in a hardened OS to reach root-level access",
-            "Found two previously unknown zero-days during evaluation, unassisted"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "773264b0-abf2-4d7b-8578-abf20cab4509",
-          "kind": "concept",
-          "title": "The gate: Daybreak, not a public switch",
-          "body": "OpenAI isn't shipping Astra's sharpest edge to everyone at once — the offensive cyber capability sits behind a separate access tier.",
-          "bullets": [
-            "General access: ChatGPT Plus/Pro/Business/Enterprise, the API, and AWS",
-            "Advanced cybersecurity use starts with vetted testers in the Daybreak program",
-            "OpenAI admits safety checks 'can sometimes slow, pause, or stop legitimate work'"
-          ],
-          "symbol": "key.fill",
-          "table": null
-        },
-        {
-          "id": "6ad51e62-e217-436b-a8bf-9146fad52ec4",
-          "kind": "takeaways",
-          "title": "What to actually take from this",
-          "body": null,
-          "bullets": [
-            "The headline isn't the benchmark table — it's model-on-model supervision at 100K+ GPU scale",
-            "'Critical' cyber rating is a safety classification, not a marketing term — it gates rollout",
-            "Treat 'AGI era' as a quote from Astra's own maker, not an independent finding",
-            "Expect the gated capabilities (not the chat model) to be where the real story develops next"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a013124e-034a-41d4-b7df-3ab5cf0ed650",
-            "prompt": "What made Astra's training process notably different from prior OpenAI models?",
-            "options": [
-              "It was trained entirely on synthetic data",
-              "Earlier models played a significant role supervising its training",
-              "It skipped reinforcement learning entirely",
-              "It was trained without any GPUs, using TPUs only"
-            ],
-            "correctIndex": 1,
-            "explanation": "OpenAI says Astra is the first release where earlier models took on a significant supervisory role during training, not just human-labeled feedback."
-          },
-          {
-            "id": "aa7fb175-306a-4c9b-a22f-5e6284a2f660",
-            "prompt": "Under OpenAI's Preparedness Framework, what does a 'Critical' cybersecurity rating trigger?",
-            "options": [
-              "Immediate public release with no restrictions",
-              "The model is discontinued",
-              "Stronger safeguards and gated access to the model's strongest capabilities",
-              "A price increase for API access"
-            ],
-            "correctIndex": 2,
-            "explanation": "A Critical rating means the model can autonomously chain exploits against hardened targets, so OpenAI restricts that capability to vetted programs like Daybreak while shipping the general model more broadly."
-          },
-          {
-            "id": "b3cd1968-867c-4c83-be23-2f4b058f892c",
-            "prompt": "Why should a 100% ExploitBench score be read carefully?",
-            "options": [
-              "It's an internal, self-reported benchmark, not yet independently replicated",
-              "ExploitBench only tests spelling accuracy",
-              "It means Astra can't be used for coding at all",
-              "The benchmark has no relation to security"
-            ],
-            "correctIndex": 0,
-            "explanation": "Self-reported launch benchmarks are useful signal but aren't the same as independent, third-party replication — a healthy habit is to wait for outside verification before treating vendor numbers as settled fact."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "52991eef-2033-4938-af4c-b19c9ecd122e",
-          "title": "OpenAI: Path to Astra — critical capabilities and frontier safeguards",
-          "url": "https://openai.com/index/path-to-astra/"
-        },
-        {
-          "id": "1798ebe9-ef46-4ca5-be88-c4b959e14ad5",
-          "title": "OpenAI releases new model GPT-6 Astra, says it may represent AGI — Axios",
-          "url": "https://www.axios.com/2026/09/03/openai-astra-gpt-6-agi-brockman"
-        }
-      ],
-      "publishedDate": "2026-09-03T18:44:19Z"
     }
   ]
 }
