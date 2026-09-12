@@ -1,6 +1,193 @@
 {
   "posts": [
     {
+      "id": "9f015b49-836c-47d3-8c12-a4f791154ddb",
+      "title": "RoPE: Encoding Position by Rotating Vectors",
+      "subtitle": "How a rotation matrix taught transformers to feel relative distance",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "positional-encoding",
+        "transformers",
+        "context-length",
+        "attention"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rotate.3d",
+      "summary": "Rotary Position Embedding (RoPE) encodes token position by rotating query and key vectors in pairs of dimensions instead of adding a position vector. Because rotating both vectors makes their dot product depend only on the distance between them, attention naturally becomes relative-position-aware — and tweaking the rotation's base frequency is what lets modern LLMs stretch to much longer context windows.",
+      "slides": [
+        {
+          "id": "9689ab99-55fe-4d84-80c7-71000224d707",
+          "kind": "cover",
+          "title": "Transformers Have No Sense of Order — Unless You Give Them One",
+          "body": "Self-attention compares every token to every other token with no built-in notion of sequence. Without a positional signal, 'dog bites man' and 'man bites dog' look identical to the attention math.",
+          "bullets": [
+            "Attention scores are just dot products of query/key vectors",
+            "Swap two tokens' positions and the raw scores don't change",
+            "RoPE fixes this by rotating vectors instead of adding to them"
+          ],
+          "symbol": "arrow.up.arrow.down.circle"
+        },
+        {
+          "id": "b477efc8-d262-4537-840c-5208c69f4aa7",
+          "kind": "problem",
+          "title": "Absolute Position Embeddings Don't Generalize",
+          "body": "The original Transformer and early GPTs added a learned or sinusoidal position vector to each token embedding. That works for the trained sequence length, but breaks down past it.",
+          "bullets": [
+            "A learned position-100 vector is just untrained noise at position 4000",
+            "Adding position info to the embedding pollutes the content signal",
+            "No natural way to express 'these two tokens are 5 apart' — only 'token A is at slot 5'"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "c4aeefd3-ccc3-4720-8efc-f01ae4a83d8f",
+          "kind": "solution",
+          "title": "Rotate the Vector Instead of Shifting It",
+          "body": "RoPE splits each query/key vector into 2D pairs of dimensions and rotates each pair by an angle proportional to the token's position. Position becomes a rotation, not an addition.",
+          "bullets": [
+            "Pair (x1,x2) at position m rotates by angle m·θ, like a point spinning around the origin",
+            "Different dimension pairs rotate at different frequencies θ_i = base^(-2i/d) — low-index pairs spin fast, high-index pairs spin slow",
+            "Key property: rotating both q and k means q_m·k_n depends only on (m−n), the relative offset — not on m or n individually"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "64bfea52-b366-4127-8182-ecf79ddb28ba",
+          "kind": "concept",
+          "title": "Many Frequencies, One Clock Face",
+          "body": "Think of each dimension pair as a clock hand ticking at its own speed. Fast hands (low-index pairs) distinguish tokens that are close together; slow hands (high-index pairs) still agree on rough position after thousands of tokens.",
+          "bullets": [
+            "Original RoFormer paper used base θ=10000, same base as sinusoidal embeddings",
+            "Low frequencies encode fine-grained local order; high frequencies encode coarse long-range position",
+            "No extra parameters to learn — the rotation angles are fixed by position and dimension index"
+          ],
+          "symbol": "clock.arrow.2.circlepath"
+        },
+        {
+          "id": "3cf0fca2-c9c5-462c-9394-2d1059dc94ff",
+          "kind": "comparison",
+          "title": "RoPE vs. Learned Absolute vs. ALiBi",
+          "bullets": [
+            "RoPE: relative-position-aware, modest extrapolation, near-zero compute overhead",
+            "Learned absolute: no relative structure, fails hard past trained length",
+            "ALiBi: adds a fixed linear distance penalty to attention scores, extrapolates further with no rotation math at all"
+          ],
+          "table": {
+            "headers": [
+              "Scheme",
+              "Relative-position aware?",
+              "Extra params",
+              "Used by"
+            ],
+            "rows": [
+              [
+                "Learned absolute",
+                "No",
+                "Yes (position table)",
+                "Original GPT-2, BERT"
+              ],
+              [
+                "RoPE",
+                "Yes",
+                "None",
+                "LLaMA, Mistral, Qwen, GPT-NeoX"
+              ],
+              [
+                "ALiBi",
+                "Yes (via distance bias)",
+                "None",
+                "BLOOM, MPT"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis"
+        },
+        {
+          "id": "82e2bf6e-56cb-468e-9b57-f8a4923f2d9c",
+          "kind": "example",
+          "title": "Worked Example: Same Offset, Same Score Contribution",
+          "body": "Take two tokens at positions 5 and 100, and two more at positions 205 and 300. Both pairs are 95 tokens apart.",
+          "bullets": [
+            "Because rotation angles compose (rotating by mθ then comparing to nθ is the same as comparing by (m−n)θ), the attention contribution from position alone matches for both pairs",
+            "This is what lets a model trained mostly on short sequences still make sense of 'the word 95 tokens back' anywhere in a long document",
+            "To stretch context further, long-context models raise the base θ (e.g. into the hundreds of thousands instead of 10000), which slows every dimension's rotation so positions don't 'wrap around' within the target context length"
+          ],
+          "symbol": "ruler"
+        },
+        {
+          "id": "6aa87ffa-4e87-4c3d-9886-336884bfbbfd",
+          "kind": "problem",
+          "title": "Where RoPE Breaks Down",
+          "body": "RoPE is elegant but not magic — it still needs help to go far beyond its training length, and it isn't a free fit for every input shape.",
+          "bullets": [
+            "Extrapolating way past the trained context length still degrades quality — the model has simply never seen those rotation angles combined",
+            "Fixes like position interpolation or NTK-aware / YaRN scaling squeeze or reshape the rotation frequencies, usually paired with a short fine-tune, to extend context without retraining from scratch",
+            "RoPE assumes a 1D token sequence — encoding 2D image patches or graph structure needs an adapted (e.g. axial or 2D) rotation scheme, not vanilla RoPE",
+            "Changing θ after pretraining is a real architecture decision, not a free knob — get it wrong and long-range attention gets noisy"
+          ],
+          "symbol": "xmark.triangle.fill"
+        },
+        {
+          "id": "f502d239-1367-4d30-8ab8-6e9974d6ccf5",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "RoPE encodes position as a rotation of query/key vector pairs, not an addition to the embedding",
+            "Rotating both vectors makes attention scores depend on relative distance, not absolute position",
+            "Different dimension pairs rotate at different frequencies — fast for local detail, slow for long-range structure",
+            "The rotation base θ is the main lever long-context models tune to extend usable context length",
+            "It's the default positional scheme in most modern open LLMs — LLaMA, Mistral, Qwen, and GPT-NeoX all use it"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "3def69c1-797c-4257-a335-de6219acc81c",
+            "prompt": "What does RoPE actually do to a query or key vector to encode its position?",
+            "options": [
+              "Adds a learned position vector to the token embedding",
+              "Rotates pairs of the vector's dimensions by an angle proportional to position",
+              "Appends the position index as an extra dimension",
+              "Multiplies the whole vector by a scalar based on position"
+            ],
+            "correctIndex": 1,
+            "explanation": "RoPE splits each vector into 2D pairs and rotates each pair by an angle that grows with the token's position, with each pair rotating at its own fixed frequency."
+          },
+          {
+            "id": "cb3cf8cd-9dcd-4cbf-94fb-35ff5fa2d54e",
+            "prompt": "Why does rotating both the query and key vectors make attention 'relative-position-aware'?",
+            "options": [
+              "Because rotation is computationally cheaper than addition",
+              "Because the dot product of two rotated vectors depends only on the difference between their rotation angles, i.e. their relative position",
+              "Because rotated vectors always have the same magnitude",
+              "Because it removes the need for an attention mask"
+            ],
+            "correctIndex": 1,
+            "explanation": "Rotating q by angle mθ and k by angle nθ makes their dot product a function of (m−n)θ — the relative offset — rather than the absolute positions m and n."
+          },
+          {
+            "id": "27ae5d41-031c-48e9-89a7-55b1287c90e4",
+            "prompt": "A long-context model wants to support much longer sequences than it was originally trained on. What's a common RoPE-based lever for this?",
+            "options": [
+              "Switch to absolute learned position embeddings instead",
+              "Remove positional encoding entirely",
+              "Adjust the rotation base θ (and/or interpolate positions) to slow the rotation frequencies, often paired with a short fine-tune",
+              "Increase the number of attention heads"
+            ],
+            "correctIndex": 2,
+            "explanation": "Raising the base θ or applying NTK-aware/YaRN-style interpolation reshapes how fast each dimension pair rotates, which is the standard way to stretch RoPE-based models to longer context windows."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-09-12T18:38:46Z"
+    },
+    {
       "id": "9a608632-b4a0-40eb-a6e1-206a6bd10e6a",
       "title": "MCP Roots: Fencing In What a Server Can Touch",
       "subtitle": "The client, not the server, declares which folders and URIs are in scope — and can change its mind mid-session.",
@@ -11087,171 +11274,6 @@
       "id": "ec6d895d-5e45-4182-ac6c-45832011e1f4",
       "publishedDate": "2026-09-05T18:42:46Z",
       "heroImageURL": null
-    },
-    {
-      "id": "d6df2934-e6d6-468b-9f70-6b4a33d5ac40",
-      "title": "Test-Time Compute: Making Models Think Longer, Not Bigger",
-      "subtitle": "Why spending more compute at answer-time — not just training-time — is now how top models get smarter.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "test-time-compute",
-        "reasoning-models",
-        "self-consistency",
-        "search",
-        "inference"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "Test-time compute scaling spends extra inference compute — through parallel sampling, verifier-guided search, or longer reasoning chains — to boost accuracy on hard problems without retraining. It amplifies a model's existing skill but pays off only when a problem is checkable and the base model already has partial competence.",
-      "slides": [
-        {
-          "id": "ccdd083b-8e32-4c46-9fc7-0966786cf0ca",
-          "kind": "cover",
-          "title": "The New Scaling Axis: Inference, Not Just Parameters",
-          "body": "For years, 'scale' meant bigger models and more training data. Test-time compute scaling adds a third axis: spend more compute while answering a single question.",
-          "bullets": [],
-          "symbol": "brain.head.profile"
-        },
-        {
-          "id": "40a2e2ec-c7c6-4e86-bdd6-2fd3cd5de0e2",
-          "kind": "problem",
-          "title": "Bigger Models Alone Hit Diminishing Returns on Hard Reasoning",
-          "body": null,
-          "bullets": [
-            "Training-time scaling (more parameters, more data) keeps costing more for smaller accuracy gains on multi-step reasoning like competition math or complex coding.",
-            "A single greedy forward pass commits to one reasoning path — if the model takes a wrong turn early, nothing catches or corrects it before the final answer.",
-            "Many hard problems are 'verifiable' — a final answer or an intermediate step can be checked — but a plain one-shot generation never uses that check at all."
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "05c7c313-8fc1-415f-8c87-5950d03acdce",
-          "kind": "solution",
-          "title": "Three Ways to Spend Extra Compute at Answer Time",
-          "body": "Same weights, same model — the difference is how much structured compute goes into producing one answer.",
-          "bullets": [
-            "Parallel sampling: generate N independent answers, then pick the most common one (self-consistency / majority vote) or the one a verifier scores highest (best-of-N).",
-            "Sequential compute: let the model produce a much longer internal reasoning trace before committing to an answer — the approach behind modern reasoning models like OpenAI's o-series and DeepSeek-R1.",
-            "Guided search: use a process reward model to score partial reasoning steps and expand only the promising branches — conceptually similar to how AlphaGo's value network pruned its game-tree search.",
-            "Sampling and search need no retraining of the base model; sequential reasoning models are specifically trained (often with RL on verifiable rewards) to make good use of extra thinking tokens."
-          ],
-          "symbol": "arrow.triangle.branch"
-        },
-        {
-          "id": "fd9c81f5-b373-42f3-86b3-993906293929",
-          "kind": "example",
-          "title": "One Math Problem, Three Ways to Spend the Budget",
-          "body": "Take a competition-style word problem the base model only solves correctly on 4 out of 10 tries.",
-          "bullets": [
-            "Single sample: ask once, accept whatever comes out — roughly 40% correct, no better than the model's raw skill.",
-            "Self-consistency, N=32: sample 32 independent solutions and take the majority final answer — wrong paths tend to disagree with each other on the wrong answer while correct paths converge on the same one, pushing accuracy well above any single sample.",
-            "Verifier-guided search: at each reasoning step, branch into a few candidate next steps and keep only the ones a step-level verifier still rates as on-track, pruning weak branches before they run to completion.",
-            "Nothing about the model changed — only the compute strategy wrapped around it did."
-          ],
-          "symbol": "target"
-        },
-        {
-          "id": "036fb4ad-1be4-44f0-8995-d333d8e12cb9",
-          "kind": "comparison",
-          "title": "Sampling vs. Search vs. Longer Chains",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Approach",
-              "Extra cost",
-              "Best for"
-            ],
-            "rows": [
-              [
-                "Self-consistency / majority vote",
-                "N× the forward passes, no training needed",
-                "Clean final answers you can vote on (math, multiple-choice)"
-              ],
-              [
-                "Verifier-guided tree search",
-                "N× passes plus a trained reward/verifier model",
-                "Long multi-step tasks where partial correctness is checkable"
-              ],
-              [
-                "Extended chain-of-thought (reasoning models)",
-                "Many more output tokens per single answer",
-                "Open-ended reasoning with no easy way to sample-and-vote"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "71030c47-1d46-4901-bf10-ca5697712fbc",
-          "kind": "problem",
-          "title": "Where Test-Time Compute Stops Paying Off",
-          "body": null,
-          "bullets": [
-            "Returns diminish fast: going from 1 to 8 samples helps a lot; going from 32 to 256 on the same problem rarely moves accuracy much further.",
-            "It amplifies existing skill, it doesn't add missing knowledge — if the base model has no real grasp of the domain, more samples or longer chains just produce more confidently wrong answers.",
-            "Latency and cost scale directly with the compute spent, so a real-time chatbot can't afford the budget a batch research job can.",
-            "Skip it for simple, low-stakes queries — a definition lookup or a short factual question — where a single fast pass is already reliable and the extra spend buys nothing."
-          ],
-          "symbol": "exclamationmark.octagon.fill"
-        },
-        {
-          "id": "6e780f5e-56bb-46e0-b751-210286c36a94",
-          "kind": "takeaways",
-          "title": "Why This Reshaped How Labs Build Reasoning Models",
-          "body": null,
-          "bullets": [
-            "Model quality is no longer just a training-time story — how a model is allowed to spend inference compute is now a first-class design choice.",
-            "Modern 'reasoning models' bake extended sequential compute directly into the model via reinforcement learning on verifiable rewards, instead of relying only on bolt-on sampling tricks.",
-            "The practical skill for builders shifted from just 'write a better prompt' to 'choose the right compute-spending strategy for this task's shape and budget.'"
-          ],
-          "symbol": "lightbulb.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f2ebb4e2-bcfc-4746-a7d2-d8bf3baceebf",
-            "prompt": "What does self-consistency (majority voting) actually do?",
-            "options": [
-              "Reduces the model's parameter count",
-              "Picks the most common final answer across several independently sampled solutions",
-              "Trains a new verifier model from scratch",
-              "Compresses the context window into fewer tokens"
-            ],
-            "correctIndex": 1,
-            "explanation": "Self-consistency samples multiple independent reasoning paths for the same question and takes the answer most paths agree on — wrong paths tend to diverge from each other while correct paths tend to converge on the same answer."
-          },
-          {
-            "id": "c884c4a1-3f97-4d21-bf91-8d8c6b4a489c",
-            "prompt": "Why is verifier-guided search compared to AlphaGo's approach?",
-            "options": [
-              "It relies only on human feedback labels",
-              "It compresses model weights before inference",
-              "It scores partial progress and prunes weak branches instead of completing every possible path",
-              "It requires no additional inference compute"
-            ],
-            "correctIndex": 2,
-            "explanation": "Like a value network pruning a game tree in AlphaGo, a process reward model scores partial reasoning steps so the search can drop weak branches early instead of wasting compute finishing every possible path."
-          },
-          {
-            "id": "df5a02c7-a5d5-4203-af4d-f8b3ff16a113",
-            "prompt": "When does extra test-time compute provide the LEAST benefit?",
-            "options": [
-              "On hard multi-step problems the model can partially solve",
-              "On problems the base model has no relevant knowledge or skill for at all",
-              "On tasks with a clean, checkable final answer",
-              "When a verifier can reliably score partial progress"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time compute amplifies a model's existing skill — sampling more or reasoning longer can't inject knowledge or ability the base model never had; it just produces more confident wrong answers."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-09-05T12:39:27Z"
     }
   ]
 }
