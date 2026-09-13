@@ -1,6 +1,210 @@
 {
   "posts": [
     {
+      "id": "c776aad5-51bc-4241-a8d6-431729a07eef",
+      "title": "Continuous Batching: Keeping GPUs Busy Across Requests",
+      "subtitle": "Why LLM servers stopped waiting for the whole batch to finish, and started swapping requests in and out mid-generation.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "inference-optimization",
+        "batching",
+        "gpu-utilization",
+        "throughput",
+        "vllm"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.stack.fill",
+      "summary": "Continuous batching (also called iteration-level scheduling) lets an LLM server add and remove requests from a running batch after every decode step, instead of only at batch boundaries. Because real requests finish at wildly different lengths, this keeps the GPU full instead of idling on the slowest sequence — at the cost of new scheduling complexity around prefill and memory.",
+      "publishedDate": "2026-09-13T18:39:39Z",
+      "slides": [
+        {
+          "id": "771ea178-f734-42ea-9626-0c74a0f2758b",
+          "body": null,
+          "bullets": [],
+          "symbol": "rectangle.stack.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "Stop Waiting for the Slowest Request in the Batch"
+        },
+        {
+          "id": "a84b4975-feaa-4e73-8d74-56fa5a1c2a8b",
+          "body": "Transformers generate one token per forward pass, and GPUs are far more efficient running several sequences through that pass at once than one at a time.",
+          "bullets": [
+            "Static (request-level) batching groups a fixed set of requests, runs them together token by token, and only starts a new batch once every sequence in the current one has finished — including the longest one",
+            "Real prompts and completions vary hugely in length: a one-line chat reply and a 2,000-token essay can land in the same batch, so short requests finish early and then sit idle, holding their GPU slot while the batch limps to the end",
+            "Those idle slots aren't free — the GPU is still doing full-batch-shaped matrix multiplies with padding, so wasted slots burn real compute, not just wall-clock time",
+            "The fix isn't a bigger batch; it's changing when requests are allowed to enter and leave the batch"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Ragged Completions Leave the GPU Half-Empty"
+        },
+        {
+          "id": "0f6d7f7b-205e-425d-baec-151635a7432d",
+          "body": "Continuous batching schedules at the granularity of a single decode iteration, not a whole request.",
+          "bullets": [
+            "After every forward pass, the scheduler checks which sequences just emitted an end-of-sequence token and evicts them immediately, freeing their slot",
+            "A freed slot is backfilled right away from a queue of waiting requests — the batch composition can be different on iteration 41 than it was on iteration 40",
+            "New requests don't need to wait for a batch boundary that might be seconds away; they can join within a single iteration of a slot opening up",
+            "This is also called iteration-level scheduling or in-flight batching — the term vLLM, TensorRT-LLM, and Hugging Face TGI all converged on for the same idea"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "kind": "solution",
+          "title": "Schedule Per Token, Not Per Batch"
+        },
+        {
+          "id": "7843f0d3-3a56-4e96-97c0-639103858762",
+          "body": "Admitting a new request mid-batch means running its prefill (processing its whole prompt in one pass) alongside other sequences that are only doing single-token decode steps.",
+          "bullets": [
+            "Prefill for a long prompt is compute-heavy — it's a full forward pass over every prompt token at once — while decode steps for already-running sequences are cheap, single-token passes",
+            "Naively mixing them means one big prefill can stall the decode steps of every other in-flight request behind it in the same iteration",
+            "Modern schedulers use chunked prefill: they split a long prompt's prefill into pieces and interleave those chunks with other sequences' decode steps, so no single admission blocks the batch for too long",
+            "This only works cleanly with a memory manager that can grow and shrink each sequence's KV cache independently — which is exactly what paged, block-based KV cache allocation (as in PagedAttention) provides"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null,
+          "kind": "architecture",
+          "title": "The Hard Part: Mixing Prefill Into an Active Batch"
+        },
+        {
+          "id": "35ea6830-6088-4b9a-aceb-c769d1262819",
+          "body": "Four requests arrive close together, needing 20, 500, 30, and 800 output tokens respectively.",
+          "bullets": [
+            "Static batching: all four join one batch; the GPU processes 800 decode steps total, because the batch can't shrink — the 20- and 30-token requests hold their slots idle for the other ~97% and ~96% of that time",
+            "Continuous batching: the 20-token request finishes at step 20 and its slot is immediately handed to a fifth request from the queue; the 30-token request finishes at step 30 and does the same — the GPU stays at full occupancy instead of carrying dead weight",
+            "Over a busy server handling hundreds of requests per minute, this difference compounds: idle slots in static batching are lost throughput on every single batch, not a one-time cost",
+            "The gain is biggest exactly when request lengths are most unpredictable — chat and agent workloads — and smallest when every request is roughly the same length"
+          ],
+          "symbol": "list.number",
+          "table": null,
+          "kind": "example",
+          "title": "Four Requests, Four Different Output Lengths"
+        },
+        {
+          "id": "99a38dad-b6ad-4396-9d5a-91d1d3994998",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "",
+              "Static (request-level) batching",
+              "Continuous (iteration-level) batching"
+            ],
+            "rows": [
+              [
+                "New request joins",
+                "Only at the next batch boundary",
+                "As soon as any slot frees up"
+              ],
+              [
+                "Finished request",
+                "Holds its slot until the whole batch ends",
+                "Evicted immediately, slot reused"
+              ],
+              [
+                "GPU idle time",
+                "Grows with output-length variance",
+                "Stays low regardless of variance"
+              ],
+              [
+                "Scheduling complexity",
+                "Simple, fixed batch shape",
+                "Needs chunked prefill + dynamic KV memory"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "The Batch Shape Itself Becomes Dynamic"
+        },
+        {
+          "id": "17d933b4-45cf-4962-a1d0-6526809f37fa",
+          "body": "Continuous batching is a server-side scheduling technique — it doesn't change model quality, and it isn't free.",
+          "bullets": [
+            "It only pays off under real concurrency: a server handling one request at a time, or a batch job where all prompts are the same length, gets no benefit and just inherits the extra scheduler complexity",
+            "Without chunked prefill, admitting a long new prompt mid-batch can spike latency for every other in-flight request in that iteration — teams that only implement the eviction/admission half and skip chunking still see occasional tail-latency stalls",
+            "It couples tightly to memory management: without a block-based KV cache allocator, a batch whose composition changes every iteration fragments memory fast, so continuous batching and paged KV cache tend to ship together, not separately",
+            "Fairness needs its own policy — a naive first-come-first-served admission queue can let a burst of small requests starve one long-running generation of its fair share of decode steps"
+          ],
+          "symbol": "exclamationmark.shield.fill",
+          "table": null,
+          "kind": "concept",
+          "title": "Where It Falls Short"
+        },
+        {
+          "id": "2a8155f7-4f63-4e0e-b1c0-f3487a432609",
+          "body": null,
+          "bullets": [
+            "Continuous batching schedules requests per decode iteration instead of per whole batch, so finished sequences free their slot immediately instead of blocking on the slowest request",
+            "The hard engineering problem is admitting a new request's prefill without stalling other sequences' decode steps — solved with chunked prefill",
+            "It depends on a memory allocator that can grow/shrink each sequence's KV cache independently, which is why it's almost always paired with paged, block-based KV cache management",
+            "The busier and more length-variable the workload, the bigger the win — it does nothing for single-request or uniform-length batch workloads"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "What to Remember About Continuous Batching"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "315b0037-fd10-446c-9743-29b6adb394e4",
+            "prompt": "What specifically does continuous (iteration-level) batching change compared to static batching?",
+            "options": [
+              "It compresses the model weights to fit more requests",
+              "Requests can be added to or evicted from the running batch after every decode step, not just at batch boundaries",
+              "It skips the KV cache entirely to save memory",
+              "It routes every request to a smaller model automatically"
+            ],
+            "correctIndex": 1,
+            "explanation": "Continuous batching moves the scheduling decision from 'per whole batch' to 'per token step' — a finished sequence's slot is freed and refilled immediately instead of waiting for every sequence in the batch to finish."
+          },
+          {
+            "id": "340f2105-0963-4f7f-ab51-bbe0c6f8b351",
+            "prompt": "Why can naively admitting a new request's prefill into an active batch hurt other in-flight requests?",
+            "options": [
+              "Prefill uses a different, incompatible model architecture",
+              "Prefill processes the entire prompt in one heavy pass, which can stall the cheap single-token decode steps of sequences already running in that iteration",
+              "Prefill requires the batch to be static-only",
+              "Prefill always fails silently without warning"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prefill is compute-heavy relative to a single decode step. Mixed naively into a batch, one long prompt's prefill can block everyone else's decode step in that iteration — which is exactly what chunked prefill is designed to avoid."
+          },
+          {
+            "id": "ec2836f6-f664-4517-8e31-950f069c4052",
+            "prompt": "In which scenario does continuous batching provide the least benefit?",
+            "options": [
+              "A chat API serving many concurrent users with wildly different reply lengths",
+              "An agent workload where some tool calls finish fast and others run long",
+              "A single-request, low-concurrency workload where there's rarely more than one sequence in flight",
+              "A high-traffic API with bursty, unpredictable request lengths"
+            ],
+            "correctIndex": 2,
+            "explanation": "Continuous batching's advantage comes from reallocating GPU slots freed by short-finishing requests to waiting ones. With little or no concurrency, there's no idle slot to reclaim and no queue to backfill it from, so the technique has nothing to optimize."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "23a0e6ac-16d2-4261-bc69-091503b8778c",
+          "title": "How continuous batching enables 23x throughput in LLM inference while reducing p50 latency",
+          "url": "https://www.anyscale.com/blog/continuous-batching-llm-inference"
+        },
+        {
+          "id": "70d42d0f-ec2c-4ce4-87b9-d9d8582377e4",
+          "title": "vLLM: Easy, Fast, and Cheap LLM Serving with PagedAttention",
+          "url": "https://blog.vllm.ai/2023/06/20/vllm.html"
+        }
+      ]
+    },
+    {
       "id": "0a75c9d2-f21b-4a12-97cd-d9a8dfdc51f8",
       "title": "MCP Sampling: When the Server Borrows Your Model",
       "subtitle": "The one MCP primitive that flips the usual direction — the server asks the client to run an LLM completion, not the other way around.",
@@ -11004,210 +11208,6 @@
       "references": [],
       "id": "f025645d-4bd0-4d8f-aba6-b34b358776a9",
       "publishedDate": "2026-09-06T12:39:56Z"
-    },
-    {
-      "title": "DPO: Skipping the Reward Model Entirely",
-      "subtitle": "Direct Preference Optimization turns RLHF's two-stage pipeline into one classification-style loss on preference pairs.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "dpo",
-        "rlhf",
-        "alignment",
-        "preference-optimization",
-        "fine-tuning"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.left.arrow.right.circle.fill",
-      "summary": "Direct Preference Optimization (DPO) replaces RLHF's reward-model-plus-PPO pipeline with a single loss computed directly from pairs of preferred and rejected responses, using the language model itself as an implicit reward function. It's simpler and more stable to train than PPO, but it's fully offline — it can't inject a verifier signal the way GRPO can, so it trades exploration for simplicity.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Your Language Model Is Secretly a Reward Model",
-          "body": null,
-          "bullets": [
-            "Introduced by Rafailov et al., 2023 (arXiv:2305.18290)",
-            "Short for Direct Preference Optimization",
-            "Collapses reward modeling + PPO into one supervised-style loss"
-          ],
-          "symbol": "arrow.left.arrow.right.circle.fill",
-          "table": null,
-          "id": "ce81e241-e87d-4ce0-8587-b5bd30e807da"
-        },
-        {
-          "kind": "problem",
-          "title": "RLHF Is a Two-Stage, Three-Model Pipeline",
-          "body": "Standard RLHF first trains a separate reward model on human preference pairs, then uses PPO to fine-tune the policy against that reward model — with a frozen reference model in the loop too.",
-          "bullets": [
-            "Three models in play: policy, reward model, reference model — plus a critic if using vanilla PPO",
-            "The reward model can be exploited (reward hacking) if the policy finds responses that score well but aren't actually better",
-            "PPO's online sampling loop (generate, score, update) is finicky to tune and easy to destabilize"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "c9b99a30-2385-4735-be6e-6eefca00255b"
-        },
-        {
-          "kind": "solution",
-          "title": "Reparameterize the Reward Out of the Loss",
-          "body": "DPO's key move: under the standard RLHF objective, the optimal policy has a closed-form relationship to the reward function. Substituting that relationship into the Bradley-Terry preference model produces a loss expressed purely in terms of the policy itself.",
-          "bullets": [
-            "Loss: -log σ( β · [ log(π_θ(y_w|x)/π_ref(y_w|x)) − log(π_θ(y_l|x)/π_ref(y_l|x)) ] ), where y_w is the chosen response and y_l the rejected one",
-            "β controls how far the policy is allowed to drift from the frozen reference model — same role as PPO's KL penalty, folded directly into the loss",
-            "No reward model is trained at all — the policy's own log-probabilities implicitly define the reward"
-          ],
-          "symbol": "function",
-          "table": null,
-          "id": "bc8014e5-ed1c-4a4e-be35-dfc822a9c37a"
-        },
-        {
-          "kind": "comparison",
-          "title": "DPO vs. PPO vs. GRPO",
-          "body": null,
-          "bullets": [
-            "DPO trades PPO's and GRPO's online sampling for a fixed, pre-collected dataset of preference pairs — cheaper per step, but no fresh exploration during training"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "PPO",
-              "DPO",
-              "GRPO"
-            ],
-            "rows": [
-              [
-                "Needs a trained reward model",
-                "Yes",
-                "No",
-                "No (needs a verifier/reward function)"
-              ],
-              [
-                "Sampling during training",
-                "Online (fresh rollouts)",
-                "Offline (fixed dataset)",
-                "Online (group rollouts)"
-              ],
-              [
-                "Data required",
-                "Reward model + prompts",
-                "(prompt, chosen, rejected) pairs",
-                "Prompts + a scoring function"
-              ],
-              [
-                "Models in memory",
-                "3 (policy, critic, reference)",
-                "2 (policy, reference)",
-                "2 (policy, reference)"
-              ]
-            ]
-          },
-          "id": "3c14aea3-0c5e-4838-a5f0-9cb85da93572"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Two Answers, One Update",
-          "body": "Prompt: 'Explain why the sky is blue.' You have a chosen answer (accurate, well-explained) and a rejected one (vague, partially wrong).",
-          "bullets": [
-            "Before training: policy assigns similar log-probabilities to both, say -12 (chosen) and -14 (rejected) — the gap is small",
-            "The DPO loss pushes log π_θ(chosen)/π_ref(chosen) up relative to log π_θ(rejected)/π_ref(rejected), widening that gap",
-            "After enough updates, the policy assigns meaningfully higher relative likelihood to the accurate explanation — without ever computing a scalar reward for either"
-          ],
-          "symbol": "arrow.up.arrow.down.circle.fill",
-          "table": null,
-          "id": "77ca3580-78a2-45d4-961f-8b336573299f"
-        },
-        {
-          "kind": "concept",
-          "title": "Why the Reference Model Still Matters",
-          "body": "Even with no explicit RL loop, DPO still needs a frozen reference policy — usually the SFT checkpoint before preference tuning.",
-          "bullets": [
-            "The reference model anchors the log-ratio terms in the loss, playing the same regularizing role PPO's KL penalty plays",
-            "Without it, the loss would only care about relative ranking, not how far the policy has moved from a sane starting point",
-            "β is the practical knob: too low and the policy barely moves; too high and it overfits the preference pairs and drifts too far from the reference"
-          ],
-          "symbol": "scale.3d",
-          "table": null,
-          "id": "b937f507-703c-404d-ab82-bda0fab69c23"
-        },
-        {
-          "kind": "concept",
-          "title": "Tradeoffs and When Not to Reach for It",
-          "body": "DPO's simplicity comes from giving up exactly what online RL methods keep: fresh exploration and a reward signal that can be verified rather than just preferred.",
-          "bullets": [
-            "Fully offline: quality is capped by the fixed preference dataset — no way to sample new completions and re-score them mid-training",
-            "Known failure mode is likelihood displacement, where both chosen and rejected log-probabilities can drop together, not just move apart",
-            "Poor fit for domains with a cheap, reliable verifier (math, code correctness) — that's exactly where GRPO's online, reward-function-driven approach tends to win instead"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null,
-          "id": "87962534-cdb4-4198-9bc3-728e08f173e1"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "DPO replaces RLHF's reward model + PPO pipeline with one loss computed directly from (chosen, rejected) pairs",
-            "The trick is reparameterizing the RLHF objective's optimal policy so the reward term cancels out algebraically",
-            "It needs a frozen reference model and a fixed preference dataset — no online sampling, unlike PPO or GRPO",
-            "Best for offline preference data (human or AI-labeled pairs); reach for GRPO instead when you have a cheap, verifiable reward signal"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "c701df45-f9c5-46a1-9d51-e857913b00bf"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does DPO eliminate compared to standard RLHF with PPO?",
-            "options": [
-              "The frozen reference model",
-              "The separately trained reward model and PPO's online sampling loop",
-              "The language model's tokenizer",
-              "The concept of preference data entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO reparameterizes the RLHF objective so the reward model is never explicitly trained — the loss is computed directly from the policy's log-probabilities on preference pairs.",
-            "id": "ba77d26a-9eea-4936-a657-c0c2a910e0aa"
-          },
-          {
-            "prompt": "What role does the reference model (π_ref) play in the DPO loss?",
-            "options": [
-              "It generates the training prompts",
-              "It anchors the log-ratio terms, regularizing how far the policy can drift — the same role PPO's KL penalty plays",
-              "It scores which response is chosen vs rejected",
-              "It has no effect on training"
-            ],
-            "correctIndex": 1,
-            "explanation": "The reference model (typically the SFT checkpoint) keeps the log-ratio terms meaningful and prevents the policy from drifting arbitrarily far just to satisfy the pairwise ranking.",
-            "id": "b65b792b-df0c-4152-9fec-700f3d8bbe43"
-          },
-          {
-            "prompt": "When would GRPO likely outperform DPO?",
-            "options": [
-              "When you only have a static dataset of human preference pairs and no way to sample new completions",
-              "When you have a cheap, reliable verifier (e.g., checking a math answer or running unit tests) and want online exploration",
-              "When you want to avoid using any reference model",
-              "When compute budget is extremely limited"
-            ],
-            "correctIndex": 1,
-            "explanation": "GRPO's online sampling and verifiable reward function let it keep exploring and scoring new completions during training — an advantage DPO's fixed offline dataset can't offer.",
-            "id": "3519af00-54c8-4a76-b37e-23b740448d2c"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model",
-          "url": "https://arxiv.org/abs/2305.18290",
-          "id": "8f31595b-c2f7-4b12-829e-96256f9ba209"
-        }
-      ],
-      "id": "0929b401-173f-4195-bc0d-1bd8342c53c6",
-      "publishedDate": "2026-09-06T06:43:42Z"
     }
   ]
 }
