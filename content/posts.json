@@ -1,6 +1,530 @@
 {
   "posts": [
     {
+      "id": "fd2f532f-7c1c-498c-bfd8-531f4c477523",
+      "title": "Qwen3.8-Flash-Next: 1/9th the FLOPs, 397B-Level Scores",
+      "subtitle": "A 125B MoE with 6B active params trades some quality for a hybrid attention stack — and mostly keeps it.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "moe",
+        "attention",
+        "architecture",
+        "qwen",
+        "efficiency"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu.fill",
+      "summary": "Alibaba's Qwen team built a 125B-parameter MoE (6B activated) that leads its own 397B-A17B predecessor on 8 of 14 benchmarks using roughly 1/3 the training tokens and 1/9 the training FLOPs, by mixing linear attention (Gated DeltaNet) with sparse attention (QSA) in a 3:1 ratio and widening the residual stream into a gated, multi-branch path.",
+      "slides": [
+        {
+          "id": "1727e8f5-e362-4fbe-bd98-af87e38ef7fb",
+          "kind": "cover",
+          "title": "Beating a 397B model at 1/9th the training compute",
+          "body": "Qwen's architecture paper on 3.8-Flash-Next shows how far a smaller, hybrid-attention MoE can push — without a bigger base model.",
+          "bullets": [],
+          "symbol": "cpu.fill"
+        },
+        {
+          "id": "7bc18339-f645-4430-bbb8-14655926325c",
+          "kind": "problem",
+          "title": "Full attention doesn't scale its training budget forever",
+          "body": null,
+          "bullets": [
+            "Full (quadratic) attention gets more expensive per token as context grows — the cost you pay scales with n²",
+            "Pure linear-attention models (plain DeltaNet, Mamba-style) recover the speed but historically give up a few points on recall-heavy tasks",
+            "Qwen's own prior flagship, the 397B-A17B model, needed 3x the activated parameters and roughly 9x the training FLOPs of the new model to compete"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "e2525e17-23ec-46d9-9f9b-73fe02a77169",
+          "kind": "solution",
+          "title": "A 3:1 hybrid of linear and sparse attention, plus a wider residual",
+          "body": "The hidden stack repeats 12 times: three Gated DeltaNet blocks feeding an MoE, then one Qwen Sparse Attention block feeding an MoE.",
+          "bullets": [
+            "Gated DeltaNet (GDN) layers do cheap linear-attention token mixing for 3 out of every 4 blocks",
+            "Qwen Sparse Attention (QSA) layers replace full attention in the 4th block: they score context at micro-block granularity through a compressed, lightweight indexer instead of attending to every token",
+            "Gated Residual (GR): the residual stream is widened into four parallel branches, then recombined through an elementwise gate — a small change the paper credits with real training-stability gains",
+            "An extra 51B parameters live in n-gram embedding tables kept off the accelerator — cheap lookup-based capacity that doesn't add matmul cost"
+          ],
+          "symbol": "square.stack.3d.up.fill"
+        },
+        {
+          "id": "51b47a36-59a5-483b-8aaf-1224bbd85351",
+          "kind": "comparison",
+          "title": "Smaller, cheaper to train, and ahead more often than not",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Metric",
+              "3.8-Flash-Next",
+              "397B-A17B predecessor"
+            ],
+            "rows": [
+              [
+                "Total parameters",
+                "125B",
+                "397B"
+              ],
+              [
+                "Activated per token",
+                "6B",
+                "17B"
+              ],
+              [
+                "Training tokens",
+                "baseline (1x)",
+                "~3x"
+              ],
+              [
+                "Training FLOPs",
+                "~1/9x",
+                "baseline (1x)"
+              ],
+              [
+                "Benchmarks led (of 14)",
+                "8",
+                "6"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "f2429edf-03a7-4957-b1f7-ded6af7c2990",
+          "kind": "example",
+          "title": "Why 6B activated instead of 17B matters at serving time",
+          "body": "Activated parameters, not total parameters, drive inference cost per token.",
+          "bullets": [
+            "Same hardware, same batch size: a model that activates 6B params per token does roughly 1/3 the matmul work per token of one activating 17B",
+            "3 of every 4 attention blocks are linear-attention (GDN), which needs a constant-size recurrent state instead of a KV cache that grows with sequence length",
+            "Net effect: a team that swaps a dense-attention 17B-activated model for this hybrid can serve meaningfully longer contexts on the same GPU memory budget, at the cost of adopting a less battle-tested attention pattern"
+          ],
+          "symbol": "wrench.and.screwdriver.fill"
+        },
+        {
+          "id": "610cf9ef-115c-4064-9633-ce2c1edde51d",
+          "kind": "takeaways",
+          "title": "What actually generalizes from this paper",
+          "body": null,
+          "bullets": [
+            "Hybrid linear + sparse attention (3:1 ratio here) recovers most of full attention's quality at a fraction of the compute — it doesn't need to be all-or-nothing",
+            "The paper still reports trailing the bigger model by up to 2.6 points on 6 of 14 benchmarks — the tradeoff is real, just small",
+            "Gated Residual (widen, then gate) is a cheap architectural lever for training stability, independent of the attention choice",
+            "The new architecture also shifted the optimal learning rate and batch size upward and removed the need for batch-size warmup — a recipe change, not just an architecture change"
+          ],
+          "symbol": "checkmark.seal.fill"
+        },
+        {
+          "id": "bf7f8477-2667-462f-9dce-de58b627cb65",
+          "kind": "problem",
+          "title": "Where this hybrid is a worse fit",
+          "body": null,
+          "bullets": [
+            "It trails the bigger dense-attention model on 6 of 14 benchmarks by up to 2.6 points — for a task that's exactly in that gap, bigger-and-denser can still win",
+            "The 51B n-gram embedding tables need to live off-accelerator: a serving stack without that memory hierarchy loses one of the paper's cheap-capacity tricks",
+            "A 3:1 GDN:QSA ratio was tuned at 125B scale — nothing in the paper says that ratio is optimal at 10x smaller or larger",
+            "Adopting the architecture without adopting the paired Muon-optimizer recipe (shifted LR/batch size, no warmup) risks losing the stability gains it reports"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "5d59b66c-bc3c-4631-814c-6f64a8dc62d3",
+            "prompt": "What ratio of linear-attention (GDN) to sparse-attention (QSA) blocks does Qwen3.8-Flash-Next use?",
+            "options": [
+              "1:1",
+              "3:1",
+              "4:1",
+              "1:4"
+            ],
+            "correctIndex": 1,
+            "explanation": "The hidden layout repeats 12 times: three Gated DeltaNet blocks (each feeding an MoE) followed by one Qwen Sparse Attention block (also feeding an MoE) — a 3:1 linear-to-sparse-attention ratio."
+          },
+          {
+            "id": "b31c6d4e-0a7e-4404-945c-d92d85cfadeb",
+            "prompt": "Roughly how much training compute did Qwen3.8-Flash-Next use, compared to the 397B-A17B predecessor it leads on 8 of 14 benchmarks?",
+            "options": [
+              "About the same",
+              "~3x more",
+              "~1/3 as much",
+              "~1/9 as much"
+            ],
+            "correctIndex": 3,
+            "explanation": "It used roughly 1/9th the training FLOPs (and about 1/3 the training tokens and 1/3 the activated parameters) while leading on more than half the benchmarks tested."
+          },
+          {
+            "id": "d8e360c0-2c7b-4f36-b1d0-060dc1f14560",
+            "prompt": "What's the point of keeping 51B parameters in n-gram embedding tables off the accelerator?",
+            "options": [
+              "They add extra model capacity as cheap lookups, not matmuls — but their size makes them impractical to keep on the accelerator itself",
+              "They speed up the attention computation directly",
+              "They replace the MoE router",
+              "They store the KV cache more compactly"
+            ],
+            "correctIndex": 0,
+            "explanation": "Embedding tables are lookups rather than compute-heavy matrix multiplies, so they can add capacity almost for free in FLOPs — the tradeoff is that a 51B-parameter table is large, so it's held off the accelerator (e.g., host memory) instead of on it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "f3a44f3d-08ab-4bee-8275-6a6c6b1fa02b",
+          "title": "On the Design of Qwen3.8-Next Architecture: Evaluation, Efficiency, and Training Stability (arXiv:2608.30320)",
+          "url": "https://arxiv.org/abs/2608.30320"
+        }
+      ],
+      "publishedDate": "2026-09-13T06:44:39Z"
+    },
+    {
+      "id": "19012255-f94c-4fe4-8cc6-07b816f84e65",
+      "title": "OpenAI's Agents API: Codex's Own Harness, Opened Up",
+      "subtitle": "Durable sessions, context compaction, and hosted sandboxes — billed by usage, not by platform fee.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "openai",
+        "agents",
+        "api",
+        "sandboxes",
+        "codex"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "terminal.fill",
+      "summary": "OpenAI opened a public beta of its Agents API, exposing the same managed harness that runs Codex: durable multi-turn sessions, automatic context compaction, native MCP connections, multi-agent delegation, and hosted or self-hosted sandboxes for code execution — with no extra platform fee beyond tokens and the tools an agent actually uses.",
+      "slides": [
+        {
+          "id": "e8cddaa9-ec74-4a37-8408-ff9173fddcac",
+          "kind": "cover",
+          "title": "The infrastructure behind Codex is now a public API",
+          "body": "OpenAI's Agents API packages session management, context compaction, and sandboxed execution into one billed-by-usage endpoint.",
+          "bullets": [],
+          "symbol": "terminal.fill"
+        },
+        {
+          "id": "7bad62e7-a638-4d54-af16-7e81f3721504",
+          "kind": "problem",
+          "title": "Every team building a serious agent rebuilds the same plumbing",
+          "body": null,
+          "bullets": [
+            "Session state has to persist and resume across many turns, not just one request-response pair",
+            "A long-running agent eventually fills its context window and needs something to summarize or drop older turns — most teams write this by hand",
+            "Running model-generated code safely means standing up your own sandbox, and coordinating hand-offs to sub-agents means writing your own orchestration layer",
+            "Recovery logic for a failed step (retry? escalate? abort?) is usually bespoke per project"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "b15a3e0a-7f9c-4112-8e23-f0c9846fae52",
+          "kind": "solution",
+          "title": "One API surface for sessions, compaction, tools, and execution",
+          "body": "It's the same harness that runs Codex and ChatGPT's agentic features, exposed directly.",
+          "bullets": [
+            "Durable sessions: continue an agent's work across turns without re-sending the full history yourself",
+            "Managed context compaction: the API handles trimming/summarizing older turns as a session grows, instead of the agent silently running out of context",
+            "Native MCP server connections and streaming progress updates while an agent works",
+            "Multi-agent delegation: hand off a sub-task to a sub-agent as a first-class API feature",
+            "Hosted sandboxes for code execution, file editing, and artifact generation — or bring your own via workspace/capability directories; Cloudflare, Vercel, and Oracle also offer sandbox environments for it"
+          ],
+          "symbol": "gearshape.2.fill"
+        },
+        {
+          "id": "6b5f3bd4-d355-4598-8d02-b5c168b56cfd",
+          "kind": "comparison",
+          "title": "No platform fee — but usage adds up",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Component",
+              "Cost"
+            ],
+            "rows": [
+              [
+                "Agents API itself",
+                "No extra fee — pay for tokens + tools used"
+              ],
+              [
+                "Hosted Shell / sandbox session",
+                "Billed per minute, 5-minute minimum"
+              ],
+              [
+                "Code Interpreter",
+                "$0.03 per session"
+              ],
+              [
+                "File Search storage",
+                "$0.10 per GB per day"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "4f813601-be43-4d0d-abfe-58a44bc7fce7",
+          "kind": "example",
+          "title": "A support-triage agent, without custom infrastructure",
+          "body": "Illustrative scenario, not an official case study.",
+          "bullets": [
+            "A ticket-triage agent keeps one durable session open across a multi-day back-and-forth with a customer",
+            "As the thread grows past dozens of turns, the API compacts older messages automatically instead of the agent losing early context",
+            "The agent calls a hosted sandbox to reproduce a bug from attached logs, then delegates fix-verification to a sub-agent — all through the same API, with no bespoke session store or sandbox to run"
+          ],
+          "symbol": "flowchart.fill"
+        },
+        {
+          "id": "1cb6b098-dffc-444a-b563-5b54f866ac1b",
+          "kind": "problem",
+          "title": "Where the managed harness doesn't help",
+          "body": null,
+          "bullets": [
+            "It's a public beta — expect rough edges and API changes before general availability",
+            "\"No platform fee\" still means real costs: the 5-minute minimum per sandbox session is a real floor even for a 10-second task",
+            "Packaging session/sandbox/delegation infrastructure doesn't remove the need to scope what an agent's tools are allowed to do — permissioning is still on you",
+            "A simple single-turn chatbot gains little from this machinery; it's built for multi-turn, tool-using, potentially long-running agents like Codex-style coding assistants"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "3b4744b4-15d3-4ce5-b052-eebf4a45f2c6",
+          "kind": "takeaways",
+          "title": "What to take away",
+          "body": null,
+          "bullets": [
+            "The Agents API is the actual Codex harness, not a simplified developer version of it",
+            "Sessions, context compaction, MCP connections, delegation, and sandboxes are now one billed-by-usage API instead of bespoke infrastructure per team",
+            "Third-party sandbox partners (Cloudflare, Vercel, Oracle) mean execution isn't locked to OpenAI-hosted infrastructure"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "80185efa-778e-463b-8bb9-a5cf98e4dda8",
+            "prompt": "Besides model tokens, what does the Agents API actually charge for?",
+            "options": [
+              "Nothing — it's entirely free beyond your existing model usage",
+              "A flat monthly platform fee",
+              "Tool/sandbox usage — hosted session minutes, Code Interpreter, and File Search storage",
+              "A per-agent software license"
+            ],
+            "correctIndex": 2,
+            "explanation": "There's no separate platform fee for the Agents API itself, but hosted sandbox time (billed per minute, 5-minute minimum), Code Interpreter ($0.03/session), and File Search storage ($0.10/GB/day) are billed on top of token usage."
+          },
+          {
+            "id": "5ffb6566-af0c-4d8b-9b0c-19c353cfac84",
+            "prompt": "What problem does managed \"context compaction\" solve?",
+            "options": [
+              "Encrypting an agent's conversation history",
+              "Keeping a long-running session within its context window as turns accumulate",
+              "Compressing model weights for faster inference",
+              "Reducing the number of API calls an app makes"
+            ],
+            "correctIndex": 1,
+            "explanation": "As a durable session accumulates turns, it eventually risks overflowing the context window — compaction trims or summarizes older turns automatically so the agent doesn't lose the ability to keep going."
+          },
+          {
+            "id": "d2ddae87-ad8d-4aed-8a31-f44d9b7ba51f",
+            "prompt": "Besides OpenAI's own hosted sandboxes, which providers also offer sandbox environments for the Agents API?",
+            "options": [
+              "AWS, GCP, and Azure",
+              "Cloudflare, Vercel, and Oracle",
+              "Only self-hosted Docker",
+              "Snowflake and Databricks"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cloudflare, Vercel, and Oracle offer additional sandbox environments that plug into the Agents API, alongside OpenAI-hosted sandboxes and fully self-hosted options via workspace/capability directories."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "c0db1a08-5ef2-4242-b4a7-6ff624e4ead6",
+          "title": "Introducing the Agents API — OpenAI",
+          "url": "https://openai.com/index/introducing-the-agents-api/"
+        }
+      ],
+      "publishedDate": "2026-09-13T04:44:39Z"
+    },
+    {
+      "id": "c7fee6ac-dfbb-473b-9bf7-2c0481fa4402",
+      "title": "Agent Sandboxes: Letting a Model Run Code Safely",
+      "subtitle": "Generating code is the easy part for an AI agent — running it without owning your host is the hard part.",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "agents",
+        "sandboxing",
+        "security",
+        "microvm",
+        "isolation"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "lock.shield.fill",
+      "summary": "Any agent that can write and execute its own code needs an isolation boundary, because a bug or a successful prompt injection in that code can actually run — not just produce a wrong chat answer. Containers, gVisor, and Firecracker microVMs trade boot latency for progressively stronger isolation, and none of them alone limit what a legitimately permitted tool call can do.",
+      "slides": [
+        {
+          "id": "12c95d43-c874-4a24-a552-ec0e0ce36e02",
+          "kind": "cover",
+          "title": "Running code is where an agent stops being just a chatbot",
+          "body": "The moment an LLM agent executes its own code, that code needs the same isolation you'd give a stranger's code.",
+          "bullets": [],
+          "symbol": "lock.shield.fill"
+        },
+        {
+          "id": "79daaf07-83c5-4496-9046-b5a964cd27e7",
+          "kind": "problem",
+          "title": "Generated code is untrusted input, not a chat response",
+          "body": null,
+          "bullets": [
+            "A wrong chat answer is annoying; a wrong shell command that actually executes (rm -rf, an unbounded loop, a curl exfiltrating a secret) is an incident",
+            "Prompt injection turns \"the agent decided to write this code\" into \"an attacker decided what code runs\" — the agent doesn't have to be malicious for the outcome to be",
+            "Long-running, multi-turn agents (the kind managed agent harnesses like OpenAI's Agents API are built for) widen the exposure window simply by running code across more turns"
+          ],
+          "symbol": "exclamationmark.shield.fill"
+        },
+        {
+          "id": "55dff1d2-2175-4105-af77-bc389787edad",
+          "kind": "solution",
+          "title": "Three layers of isolation, in increasing order of strength",
+          "body": null,
+          "bullets": [
+            "Container (namespaces + cgroups + seccomp): fast, but shares the host kernel — a kernel exploit escapes it",
+            "gVisor: a user-space kernel that intercepts syscalls before they reach the host kernel, created by Google — no shared kernel, moderate overhead",
+            "Firecracker microVM: each sandbox gets its own separate kernel via hardware-enforced KVM isolation, built by AWS in Rust — boots in as little as ~125ms with under 5MiB of memory overhead, and is what powers AWS Lambda",
+            "Session-scoped sandboxes tie one sandbox to one agent session, so a compromised run can't reach another user's data"
+          ],
+          "symbol": "shield.lefthalf.filled"
+        },
+        {
+          "id": "e207bbe6-b91a-429a-a855-0eeb0015144d",
+          "kind": "comparison",
+          "title": "Speed vs. isolation strength",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Isolation",
+              "Shares host kernel?",
+              "Typical boot time",
+              "What escapes it"
+            ],
+            "rows": [
+              [
+                "Bare process",
+                "Yes",
+                "~0ms",
+                "Almost anything"
+              ],
+              [
+                "Container",
+                "Yes",
+                "~50-200ms",
+                "A host kernel exploit"
+              ],
+              [
+                "gVisor",
+                "No (userspace kernel)",
+                "~150-300ms",
+                "A gVisor implementation bug"
+              ],
+              [
+                "Firecracker microVM",
+                "No (own kernel via KVM)",
+                "~125ms",
+                "A hypervisor-level exploit"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b5466243-dbe7-471a-8699-0b4e272e10dc",
+          "kind": "example",
+          "title": "\"Fix the failing test\" gone wrong, two ways",
+          "body": null,
+          "bullets": [
+            "In a bare subprocess: the agent's fix script shells out to pip install a package name it hallucinated; if that name exists and is malicious, it now runs with the same permissions as your CI runner",
+            "In a Firecracker microVM with no outbound egress and a read-only mount of everything except /workspace: the same script can only affect its own throwaway filesystem — worst case, you discard one microVM",
+            "The isolation layer didn't make the agent smarter about picking package names — it just made the blast radius of a bad pick tiny"
+          ],
+          "symbol": "terminal.fill"
+        },
+        {
+          "id": "c10a9383-7444-46d8-8f32-d208769c2742",
+          "kind": "problem",
+          "title": "What sandboxing doesn't fix",
+          "body": null,
+          "bullets": [
+            "Stronger isolation costs more boot latency and infra complexity — most agent frameworks default to containers and only reach for microVMs at real multi-tenant scale",
+            "A sandbox with open outbound internet access defeats half the point: it stops filesystem/process escape, not data leaving over an allowed network call",
+            "Sandboxing execution doesn't sandbox tool calls — an agent with a send_email tool doesn't need a sandbox escape to cause damage, it just needs to call the tool",
+            "Don't build a custom sandbox if a well-audited managed one already fits the threat model — a homegrown isolation layer is its own security risk"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "e84504ae-6d7c-4332-8bc3-729ae0a1f1e7",
+          "kind": "takeaways",
+          "title": "What to take away",
+          "body": null,
+          "bullets": [
+            "Treat any code an LLM agent writes as untrusted input, and isolate its execution the same way you'd isolate a stranger's code",
+            "Pick isolation by threat model: containers for trusted-ish single-tenant use, gVisor or microVMs once multiple untrusted sessions share infrastructure",
+            "Execution sandboxing is necessary but not sufficient — tool permissions and network egress rules need their own boundaries"
+          ],
+          "symbol": "checkmark.shield.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "cf81af6e-18ae-4b87-b407-3b4eddc2fb05",
+            "prompt": "Why should code an LLM agent generates be treated as untrusted input?",
+            "options": [
+              "Because LLMs are inherently malicious",
+              "Because a bug or a successful prompt injection in that code can actually execute — not just produce a wrong chat answer",
+              "Because generated code is always slower than human-written code",
+              "Because it can't be unit tested"
+            ],
+            "correctIndex": 1,
+            "explanation": "A wrong chat response is a bad answer; a wrong or attacker-influenced command that actually runs can delete files, exfiltrate data, or worse — the risk is in execution, not the source of the code."
+          },
+          {
+            "id": "e6550dc2-2892-495b-bf61-251dbb436e64",
+            "prompt": "What's the key architectural difference between a container and a Firecracker microVM?",
+            "options": [
+              "Containers always use more memory than microVMs",
+              "A container shares the host's kernel; a microVM boots its own separate kernel via hardware-enforced virtualization",
+              "MicroVMs can't run Linux workloads",
+              "Containers boot slower than microVMs in every case"
+            ],
+            "correctIndex": 1,
+            "explanation": "Containers isolate processes but still share one kernel with the host, so a kernel exploit can escape a container. A Firecracker microVM gives each sandbox its own kernel through KVM, at the cost of some boot latency."
+          },
+          {
+            "id": "4d93f43d-2eeb-4d4f-8fcc-fcb94910a02f",
+            "prompt": "Which of these is actually solved by sandboxing an agent's code execution?",
+            "options": [
+              "A compromised sandboxed process trying to touch files outside its mount",
+              "A tool call the agent is legitimately permitted to make, like sending an email",
+              "The model hallucinating a wrong fact",
+              "Data leaving over a network call the sandbox's egress rules still allow"
+            ],
+            "correctIndex": 0,
+            "explanation": "Sandboxing bounds the blast radius of code execution itself — filesystem and process access. It does nothing about a permitted tool call, a factual hallucination, or exfiltration through network access the sandbox was configured to allow."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-09-13T02:44:39Z"
+    },
+    {
       "id": "d13fb03e-b0dc-47c6-924a-68de43785e5f",
       "title": "Context Engineering: Deciding What Enters the Window",
       "subtitle": "Prompt engineering asks what to say. Context engineering asks what the model even gets to see.",
@@ -10709,557 +11233,6 @@
       ],
       "id": "d366e1a1-ba36-468e-805d-87e8fac07bbe",
       "publishedDate": "2026-09-06T06:43:42Z"
-    },
-    {
-      "title": "LLaDA-Image: An Open Recipe for Image Generation",
-      "subtitle": "A 6B diffusion transformer that learns to see before it learns to draw — and ships every line of the recipe.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "diffusion-models",
-        "image-generation",
-        "open-source",
-        "multimodal",
-        "vision-language"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "paintbrush.pointed.fill",
-      "summary": "LLaDA-Image pairs a 6B diffusion transformer with a frozen vision-language backbone and trains it in stages — image-only first, text-paired second — to reach state-of-the-art results among open-source image generators on Qwen-Image-Bench, while publishing the full weights, code, and training recipe.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "An Open Recipe for a Closed-Source Race",
-          "body": null,
-          "bullets": [
-            "Published September 2026 (arXiv:2609.03796)",
-            "A 6B-parameter Diffusion Transformer (DiT) for text-to-image generation and instruction-guided editing",
-            "Ships as a fully open release: weights, training code, and the recipe itself"
-          ],
-          "symbol": "paintbrush.pointed.fill",
-          "table": null,
-          "id": "cc694426-58f5-45b6-b525-20fb9da30feb"
-        },
-        {
-          "kind": "problem",
-          "title": "Frontier Image Models Publish Results, Not Recipes",
-          "body": "The strongest text-to-image systems are proprietary or only partially documented — the model card says what the system can do, not how the training curriculum, data mix, or optimizer choices got it there.",
-          "bullets": [
-            "Open replications routinely underperform because the hard-won details (data curriculum, loss balancing) never make it into a paper",
-            "Most open image models bolt a diffusion decoder onto a vision-language model that was never trained to generate images at all",
-            "That mismatch shows up as weaker instruction-following and weaker text rendering than the closed frontier"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "37cce080-744e-4171-925a-03d32288bf70"
-        },
-        {
-          "kind": "solution",
-          "title": "Learn to See, Then Learn to Draw",
-          "body": "LLaDA-Image separates the problem into a generative visual prior and a language-grounded understanding module, then trains the two in a deliberate order instead of jointly from scratch.",
-          "bullets": [
-            "A 6B DiT is pretrained image-only (no captions) to build a strong generative prior before any text pairing begins",
-            "Only after that does it move to text-image pairs, drawing on a frozen vision-language understanding module built on the LLaDA2.0-Mini diffusion language model",
-            "Optimization uses parameter-free RMSNorm throughout the DiT plus the Muon optimizer, chosen for scaling stability over standard AdamW"
-          ],
-          "symbol": "cpu.fill",
-          "table": null,
-          "id": "94b78316-6d65-44d8-8562-333023c04631"
-        },
-        {
-          "kind": "comparison",
-          "title": "Two Models, One Recipe",
-          "body": "The release ships two checkpoints from the same recipe, trading sampling steps for speed.",
-          "bullets": [
-            "Base reaches state-of-the-art scores among open-source models on Qwen-Image-Bench: 53.53 (English track) and 53.38 (Chinese track)",
-            "Turbo distills that down to 4 steps for fast interactive generation and editing, versus Base's 50-step sampling"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "LLaDA-Image (Base)",
-              "LLaDA-Image-Turbo"
-            ],
-            "rows": [
-              [
-                "Sampling steps",
-                "50",
-                "4"
-              ],
-              [
-                "Target use",
-                "Highest-quality generation & editing",
-                "Fast interactive generation & editing"
-              ],
-              [
-                "Qwen-Image-Bench (EN)",
-                "53.53 (open-source SOTA)",
-                "Not separately reported"
-              ]
-            ]
-          },
-          "id": "8c5731e5-7944-4abd-ab0e-21f54c64f63d"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Instruction-Guided Editing",
-          "body": "Because the same architecture handles generation and editing, a single prompt can both understand and modify an existing image.",
-          "bullets": [
-            "Input: a product photo plus the instruction 'put this bottle on a marble countertop with soft morning light'",
-            "The frozen vision-language module first localizes the bottle and reads the scene; the DiT then re-renders only the background and lighting consistent with that understanding",
-            "No separate segmentation or inpainting mask is needed — the instruction alone drives what changes and what stays fixed"
-          ],
-          "symbol": "wand.and.stars",
-          "table": null,
-          "id": "3c398610-cd18-4bc3-a211-e75adfdad249"
-        },
-        {
-          "kind": "concept",
-          "title": "Why Training Order Matters",
-          "body": "The image-only pretraining stage runs on roughly 220 million images, the large majority of them real photographs rather than synthetic renders.",
-          "bullets": [
-            "Training on real images first teaches natural statistics (texture, lighting, geometry) before the model is asked to follow language at all",
-            "Pairing with text only in a later stage lets the model reuse that visual prior instead of learning to see and to read instructions at the same time",
-            "This staged curriculum is presented as the main lever behind the model's quality, more than raw parameter count"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "id": "c820464e-f373-4de9-bc3f-07463612222a"
-        },
-        {
-          "kind": "concept",
-          "title": "Tradeoffs and When Not to Reach for It",
-          "body": "A fully open, mid-sized model is not a drop-in replacement for the closed frontier.",
-          "bullets": [
-            "6B parameters is modest next to the largest closed systems — expect it to lag on the hardest prompts (dense text rendering, complex multi-subject composition)",
-            "The vision-language understanding module is frozen during image training, so gains in the base language backbone don't automatically improve image quality",
-            "If you need the absolute highest fidelity for production creative work, a closed frontier model may still win; if you need a reproducible, fine-tunable, fully-documented base to build on, this is the stronger choice"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null,
-          "id": "edf7a3c8-affb-41db-90e9-2655447f5765"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "LLaDA-Image trains a 6B DiT image-only first, then pairs it with a frozen vision-language backbone — visual competence before language grounding",
-            "It sets a new state-of-the-art among open-source models on Qwen-Image-Bench (53.53 EN / 53.38 CN)",
-            "The Turbo variant trades 50 steps for 4, sacrificing some headroom for interactive speed",
-            "The real contribution is the recipe itself — data curriculum and optimizer choices are published, not just the weights"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "4366f063-509f-417d-8006-980a2c446a35"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does LLaDA-Image train first, before pairing images with text?",
-            "options": [
-              "A reward model for human preferences",
-              "A generative visual prior via image-only pretraining",
-              "A text-only language model",
-              "A separate segmentation network"
-            ],
-            "correctIndex": 1,
-            "explanation": "The DiT is pretrained on images alone to build a strong generative prior before any text-image pairing begins — visual competence comes before language grounding.",
-            "id": "b74307ee-271f-4fd8-9c45-b05ee3093c2e"
-          },
-          {
-            "prompt": "What is the main difference between the Base and Turbo checkpoints?",
-            "options": [
-              "Turbo is a larger model trained on more data",
-              "Base only generates images, Turbo only edits them",
-              "Turbo distills sampling down to 4 steps for speed, versus Base's 50",
-              "They use different optimizers"
-            ],
-            "correctIndex": 2,
-            "explanation": "Both come from the same recipe; Turbo is a distilled 4-step variant traded for interactive speed, while Base uses 50 sampling steps for maximum quality.",
-            "id": "1866aad8-e5ef-47b8-a6da-83b5ca8d1fe7"
-          },
-          {
-            "prompt": "Why does LLaDA-Image's paper matter beyond its benchmark scores?",
-            "options": [
-              "It's the first image generator ever released",
-              "It publishes the training recipe (data curriculum, optimizer choices), not just weights, closing a gap open replications usually hit",
-              "It requires no GPU to run",
-              "It replaces the need for vision-language models entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "Most open image models lag because the training details that matter never get published. LLaDA-Image's contribution is releasing that recipe alongside the weights.",
-            "id": "d4b18d11-932f-407b-b336-6a6cebfdc6cb"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "LLaDA-Image: Building Strong Image Generators with Fully Open Training Recipes",
-          "url": "https://arxiv.org/abs/2609.03796",
-          "id": "6ead1c83-e45e-4a85-958a-36bd9aaa939c"
-        },
-        {
-          "title": "LLaDA-Image model card (inclusionAI)",
-          "url": "https://huggingface.co/inclusionAI/LLaDA-Image",
-          "id": "05bfa8f6-d8f0-4a10-9861-ee47f330fe09"
-        }
-      ],
-      "id": "30540af6-2593-4cb8-a802-ba6080461894",
-      "publishedDate": "2026-09-06T06:43:42Z"
-    },
-    {
-      "title": "Tool Calling: How LLMs Reach Outside the Model",
-      "subtitle": "The structured JSON contract that turns a text predictor into something that can act.",
-      "category": "AI Agents",
-      "difficulty": "Beginner",
-      "postKind": "concept",
-      "tags": [
-        "tool calling",
-        "function calling",
-        "ai agents",
-        "llm",
-        "json schema"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "function",
-      "summary": "Tool calling is the mechanism that lets an LLM trigger real code — a web search, a database query, a weather API — by emitting a structured request instead of guessing an answer from memory. It's the foundation every modern agent framework is built on.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The Feature Behind Every 'AI Agent'",
-          "body": "An LLM is a text predictor. It can't browse the web, run code, or check today's weather on its own. Tool calling is the bridge that lets it ask something else to do that — reliably.",
-          "bullets": [],
-          "symbol": "function",
-          "id": "fa722627-7ace-4c75-be6d-9720b948aa55"
-        },
-        {
-          "kind": "problem",
-          "title": "Before Tool Calling: Regex and Hope",
-          "body": "Early workarounds asked the model to write out an action in free text ('I should search for...') and then had brittle code try to parse that prose to figure out what to actually run.",
-          "bullets": [
-            "Free-text parsing broke the moment the model phrased itself slightly differently",
-            "No guarantee the 'arguments' the model mentioned were even valid or complete",
-            "No standard way to feed the tool's result back into the conversation cleanly"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "44f4f2ca-83d5-4648-a71c-2e201f07e6bd"
-        },
-        {
-          "kind": "solution",
-          "title": "A JSON Schema the Model Is Trained to Fill In",
-          "body": "You describe each tool as a small JSON Schema — a name, a description, and typed parameters — and pass it to the model as a distinct field in the API call, separate from the prompt text.",
-          "bullets": [
-            "The model is fine-tuned to recognize when a tool applies and emit a structured call, e.g. {\"name\": \"get_weather\", \"arguments\": {\"city\": \"Tokyo\"}}",
-            "Your application code parses that structured object — no prose-scraping required",
-            "You execute the real function yourself, then append its output back into the conversation as a new message",
-            "The model reads that result and continues generating, now grounded in real data instead of a guess",
-            "Modern APIs support parallel tool calls: the model can request several tools in one turn"
-          ],
-          "symbol": "gearshape.2.fill",
-          "id": "60305f2c-e102-4d3a-b600-981b4455a16f"
-        },
-        {
-          "kind": "example",
-          "title": "Walking Through One Full Round Trip",
-          "body": "User asks: 'What's the weather in Tokyo, and should I bring an umbrella?'",
-          "bullets": [
-            "1. Model emits a tool call: get_weather(city=\"Tokyo\") instead of guessing",
-            "2. Your backend calls the real weather API and gets back {\"temp\": \"18C\", \"condition\": \"cloudy, light rain\"}",
-            "3. That JSON result is appended to the conversation as a tool-result message",
-            "4. The model reads it and replies: 'It's 18°C and cloudy with light rain in Tokyo — yes, bring an umbrella.'",
-            "The model never touched a real weather sensor; it just knew when to hand off and how to read the answer back"
-          ],
-          "symbol": "magnifyingglass",
-          "id": "b0142c55-3e4a-4185-bf2b-a75987853550"
-        },
-        {
-          "kind": "comparison",
-          "title": "Prose Parsing vs. Native Tool Calling",
-          "body": "Native tool calling isn't just cleaner — it's a fundamentally more reliable contract between model and code.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "",
-              "Free-text parsing",
-              "Native tool calling"
-            ],
-            "rows": [
-              [
-                "Argument format",
-                "Ad hoc, must be regex-parsed",
-                "Strict, validated JSON Schema"
-              ],
-              [
-                "Multiple actions per turn",
-                "Very unreliable",
-                "Supported (parallel tool calls)"
-              ],
-              [
-                "Model training support",
-                "None — improvised",
-                "Model explicitly trained to emit calls"
-              ],
-              [
-                "Failure mode",
-                "Silent misparse",
-                "Schema validation error you can catch"
-              ]
-            ]
-          },
-          "id": "f5021d34-1e9d-44ab-b712-80750f3d4c68"
-        },
-        {
-          "kind": "concept",
-          "title": "Where It Still Goes Wrong",
-          "body": "Tool calling removes parsing brittleness, but it introduces its own failure modes you have to design around.",
-          "bullets": [
-            "Hallucinated calls: the model can still invent a tool name or arguments that don't exist — always validate before executing",
-            "Prompt injection via tool output: a webpage a 'fetch_url' tool returns can contain text trying to instruct the model — treat every tool result as untrusted data, not as instructions",
-            "Latency stacks up: each tool call is a full extra round trip to the model",
-            "Too many tool definitions crowd the context window and can hurt the model's tool-selection accuracy",
-            "Don't give an agent a destructive tool (delete_file, send_payment) without a confirmation or sandboxing step"
-          ],
-          "symbol": "shield.lefthalf.filled",
-          "id": "9f10cb59-9be6-4fe0-88f5-8b1320a15c97"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Tool calling is the single mechanism that separates a chatbot from an agent.",
-          "bullets": [
-            "It replaces free-text guessing with a structured, schema-validated request/response contract",
-            "The loop is always: model calls tool → your code executes it → result feeds back → model continues",
-            "Parallel tool calls let an agent fan out several actions in one turn",
-            "Always validate arguments and treat tool results as untrusted input, never as trusted instructions"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "a9983973-f2eb-4d78-93c9-2b8b9ab829af"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What problem did native tool calling solve compared to earlier free-text-parsing workarounds?",
-            "options": [
-              "It made models faster at generating text",
-              "It replaced brittle regex-parsing of prose with a structured, schema-validated request the model is trained to produce",
-              "It removed the need for any application code at all",
-              "It let models train themselves without human labels"
-            ],
-            "correctIndex": 1,
-            "explanation": "Before native tool calling, apps had to guess an action from the model's free-text output. Tool calling gives a strict JSON Schema contract the model is explicitly trained to fill in correctly.",
-            "id": "7b0b0c65-5cd7-4a8a-aece-67ca3e1e42a0"
-          },
-          {
-            "prompt": "In the tool-calling loop, what happens right after your application executes the requested function?",
-            "options": [
-              "The conversation ends immediately",
-              "The result is discarded",
-              "The result is appended back into the conversation so the model can read it and continue",
-              "The model retrains on the result"
-            ],
-            "correctIndex": 2,
-            "explanation": "The tool's output is fed back into the conversation as a new message. The model then reads that grounded data and generates its final response.",
-            "id": "8fada4c4-0065-4870-a3ac-438de3b251ba"
-          },
-          {
-            "prompt": "Why should a tool's returned content (like a webpage fetched by a 'fetch_url' tool) be treated as untrusted?",
-            "options": [
-              "Because tool results are always malformed JSON",
-              "Because it could contain text attempting to inject instructions the model might follow, so it should be treated as data, not commands",
-              "Because tools are slower than direct model generation",
-              "Because tool results can't be parsed by the model"
-            ],
-            "correctIndex": 1,
-            "explanation": "A fetched webpage or document is external content an attacker could control. If the model treats its text as instructions rather than data, it's vulnerable to prompt injection.",
-            "id": "747bbf78-3a62-4420-b303-a832686139ff"
-          }
-        ]
-      },
-      "references": [],
-      "id": "a4e90c0e-256a-4ca3-9115-67b89ad251d2",
-      "publishedDate": "2026-09-06T00:42:20Z"
-    },
-    {
-      "title": "Enterprise Frontier Safeguards: Logs Stay in Your Cloud",
-      "subtitle": "Anthropic pairs zero data retention with misuse detection that never leaves the customer's infrastructure.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "anthropic",
-        "enterprise ai",
-        "data privacy",
-        "security",
-        "claude"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "lock.shield.fill",
-      "summary": "Anthropic announced Enterprise Frontier Safeguards (EFS), which keeps zero data retention on prompts and responses while still catching cross-session misuse — by running its safety classifiers over activity data stored in the customer's own cloud account, not Anthropic's.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Anthropic's New Answer to Privacy vs. Safety",
-          "body": "Enterprise Frontier Safeguards (EFS) lets enterprises get zero data retention on Claude without losing the ability to catch abuse.",
-          "bullets": [],
-          "symbol": "lock.shield.fill",
-          "id": "82a7a7c3-7344-41a8-a6da-6d17f428181d"
-        },
-        {
-          "kind": "problem",
-          "title": "Zero Retention Meant Anthropic Was Flying Blind",
-          "body": "Enterprises kept asking for stricter data retention, but the most dangerous misuse (stolen credentials, offensive cyber or bio attempts) shows up as a pattern across many sessions and accounts, not in any single request.",
-          "bullets": [
-            "A stolen API key produces requests that look ordinary one at a time",
-            "Scanning and immediately discarding each interaction misses patterns spread across sessions",
-            "Anthropic developed EFS with feedback from 100+ customers across finance, healthcare, telecom, and the public sector"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "951d4f24-19a6-4601-8c8b-0554d9638aa4"
-        },
-        {
-          "kind": "solution",
-          "title": "Move the Data, Not the Detection",
-          "body": "EFS runs Anthropic's real-time safety classifiers as before, but the activity data they analyze is written into infrastructure the customer controls.",
-          "bullets": [
-            "Customers store activity data in their own Amazon S3, Azure Blob Storage, or Google Cloud Storage — under their own encryption keys and access policies",
-            "A stack of real-time classifiers screens for cybersecurity misuse, bio/chem misuse, and model-theft attempts",
-            "Anthropic keeps zero data retention on the underlying prompts and responses",
-            "Flags route straight to the customer's own security team — no human review by Anthropic employees required"
-          ],
-          "symbol": "icloud.fill",
-          "id": "2ebc11fc-92fb-4dc6-bf25-7346ffc50856"
-        },
-        {
-          "kind": "example",
-          "title": "Catching a Slow-Motion Credential Theft",
-          "body": "A leaked enterprise API key gets used across a dozen accounts over several days — each individual call looks completely normal.",
-          "bullets": [
-            "Old model: each interaction is scanned once, then deleted — the cross-session pattern never gets seen",
-            "With EFS: the customer's own classifier stack watches the rolling window of activity in their own cloud storage",
-            "The abnormal, distributed pattern surfaces as a single alert sent directly to the customer's security team",
-            "The customer, not Anthropic, decides what happens next — and holds the full audit trail themselves"
-          ],
-          "symbol": "magnifyingglass",
-          "id": "771f9922-60e8-4fd9-8aaa-766500035e5a"
-        },
-        {
-          "kind": "comparison",
-          "title": "Old ZDR vs. Enterprise Frontier Safeguards",
-          "body": "EFS doesn't replace zero data retention — it adds a detection layer on top without breaking it.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "",
-              "Standard Zero Data Retention",
-              "Enterprise Frontier Safeguards"
-            ],
-            "rows": [
-              [
-                "Prompts/responses stored?",
-                "No",
-                "No"
-              ],
-              [
-                "Cross-session misuse detection",
-                "Limited",
-                "Yes, via customer-held activity data"
-              ],
-              [
-                "Who holds the activity data",
-                "N/A",
-                "Customer's own S3 / Blob / GCS account"
-              ],
-              [
-                "Human review by Anthropic",
-                "N/A",
-                "Not required"
-              ]
-            ]
-          },
-          "id": "915dd2e7-a1c0-4555-96de-969615358e3f"
-        },
-        {
-          "kind": "concept",
-          "title": "What This Doesn't Solve",
-          "body": "EFS shifts real responsibility onto the customer, and it isn't available to everyone yet.",
-          "bullets": [
-            "It's rolling out in phases through fall 2026 to eligible enterprise customers, not a day-one universal switch",
-            "The customer now owns configuring and auditing their own storage bucket correctly — a misconfigured bucket is the customer's exposure, not Anthropic's",
-            "Until EFS is fully rolled out, customers get standard zero data retention on Claude Fable 5 and Fable 5.1",
-            "It addresses detection blind spots, not model behavior itself — it's an infrastructure change, not a capability upgrade"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "id": "961dd48e-bfe5-4b38-b536-c6939c03d7e1"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "EFS is a rare case of a lab treating privacy and safety as a design problem rather than a strict tradeoff.",
-          "bullets": [
-            "Zero data retention and cross-session misuse detection no longer have to be mutually exclusive",
-            "The trick: move where the activity data lives, not who gets to see it",
-            "Anthropic is offering it at no additional charge, developed with 100+ enterprise customers",
-            "Still a phased rollout — check whether your organization is eligible before assuming coverage"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "4dc12957-9b59-4ec8-bf61-d925fd68e9da"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the core mechanism behind Enterprise Frontier Safeguards?",
-            "options": [
-              "Anthropic stores all data permanently for review",
-              "Safety classifiers analyze activity data that lives in the customer's own cloud storage, not Anthropic's",
-              "A human reviewer at Anthropic checks every flagged request",
-              "It disables all logging entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "EFS keeps Anthropic's zero data retention promise by having its classifiers run against activity data stored in the customer's own S3, Azure Blob, or GCS account instead of Anthropic's servers.",
-            "id": "8fccb57f-d389-4927-8927-3247076ac036"
-          },
-          {
-            "prompt": "Why couldn't standard zero data retention catch things like stolen API key abuse?",
-            "options": [
-              "Zero data retention encrypts everything so nothing can be scanned",
-              "That kind of misuse spreads across many sessions and accounts, and looks ordinary in any single request",
-              "Anthropic doesn't scan API traffic at all",
-              "It only applies to free-tier accounts"
-            ],
-            "correctIndex": 1,
-            "explanation": "A stolen key's individual requests look normal in isolation. Only watching a rolling window of activity over time reveals the abnormal cross-session pattern, which immediate scan-and-delete can't do.",
-            "id": "3fef4cca-636a-444d-9980-9c900458b930"
-          },
-          {
-            "prompt": "Who is responsible for reviewing flags raised by EFS's classifiers?",
-            "options": [
-              "Anthropic's internal trust & safety team, exclusively",
-              "A third-party auditor",
-              "The customer's own security team — no human review by Anthropic is required",
-              "No one; flags are auto-resolved"
-            ],
-            "correctIndex": 2,
-            "explanation": "Flags route directly to the customer's own security team, since the underlying activity data lives in infrastructure the customer controls, not Anthropic's.",
-            "id": "b8e55d62-e947-4b02-a4cf-a2e14c3167ad"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Developing Enterprise Frontier Safeguards with our customers",
-          "url": "https://www.anthropic.com/news/enterprise-frontier-safeguards",
-          "id": "3ec62e54-2627-4754-aadb-83ef389fbd18"
-        }
-      ],
-      "id": "3024a53d-b51d-4c5b-ab50-a46fedad6a41",
-      "publishedDate": "2026-09-06T00:42:20Z"
     }
   ]
 }
