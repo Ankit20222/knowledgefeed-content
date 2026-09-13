@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "id": "0a75c9d2-f21b-4a12-97cd-d9a8dfdc51f8",
+      "title": "MCP Sampling: When the Server Borrows Your Model",
+      "subtitle": "The one MCP primitive that flips the usual direction — the server asks the client to run an LLM completion, not the other way around.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "protocol-design",
+        "llm-inference",
+        "client-server",
+        "ai-agents"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath.circle.fill",
+      "summary": "Sampling is the MCP primitive that lets a server ask the client to run an LLM completion on its behalf, instead of the server needing its own model API key. The client stays in control — it can inspect, edit, or reject every request — which keeps billing, auth, and model choice centralized on the client side.",
+      "publishedDate": "2026-09-13T12:38:32Z",
+      "slides": [
+        {
+          "id": "5e57c31a-c182-4408-85be-af4221f2e588",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath.circle.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "The Server Asks, the Client's Model Answers"
+        },
+        {
+          "id": "8a41db1f-faa0-4066-b551-8bb6f492dc90",
+          "body": "Most MCP servers are dumb pipes: they expose tools, resources, and prompts, but they have no model of their own to reason with.",
+          "bullets": [
+            "A git server that wants to draft a commit message from a diff, or a docs server that wants to summarize a long page, needs an LLM to do that reasoning — not just data plumbing",
+            "The obvious fix is to give the server its own API key to OpenAI, Anthropic, or whoever — but that means every server operator now manages separate billing, separate auth, and picks its own model, disconnected from what the user is already paying for",
+            "It also duplicates cost: the user is already paying for a model session in their client, and now a server behind it is spinning up a second, unrelated one",
+            "MCP needed a way for a server to say 'run this completion for me' without owning any model access itself"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Servers Need Reasoning, Not Just Data Access"
+        },
+        {
+          "id": "f147972c-0c20-43a5-b468-849304150f18",
+          "body": "Sampling inverts the usual request direction: the server sends the request, and the client is the one that calls the model.",
+          "bullets": [
+            "A server sends a sampling/createMessage request containing the messages to complete, an optional systemPrompt, maxTokens, temperature, and stopSequences",
+            "Instead of naming an exact model, the server sends modelPreferences: abstract 0–1 hints for costPriority, speedPriority, and intelligencePriority — the client picks whatever model actually fits, keeping servers portable across model backends",
+            "An includeContext field (none | thisServer | allServers) controls how much of the client's own conversation and other servers' exposed context gets folded into the completion — a privacy dial the server doesn't get to override",
+            "The client returns a standard result: role, content, the model that actually ran, and a stopReason — the server never learns which model it was beyond that"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null,
+          "kind": "architecture",
+          "title": "sampling/createMessage: Hints, Not Commands"
+        },
+        {
+          "id": "4f5ba633-aa5a-48e7-af4a-4703da32425e",
+          "body": "A git-tools MCP server is asked to prepare a commit for a 200-line diff.",
+          "bullets": [
+            "Instead of shipping its own OpenAI key, it sends sampling/createMessage with the diff text and a system prompt asking for a conventional-commit-style summary, with intelligencePriority set high and speedPriority low",
+            "The client (say, a desktop AI app) intercepts the request and shows the user: 'git-tools wants to generate text using your model' with a preview of the prompt, before it runs anything",
+            "The user approves; the client runs the completion on whatever model it has active, and returns the drafted commit message text to the server",
+            "The server never touched a model API, never needed a key, and the user's own subscription — not a second hidden bill — paid for the tokens"
+          ],
+          "symbol": "checkmark.bubble.fill",
+          "table": null,
+          "kind": "example",
+          "title": "A Commit-Message Server With No Model Key of Its Own"
+        },
+        {
+          "id": "06574b5f-d3d3-4061-8c03-9b4cffe378bf",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal.fill",
+          "table": {
+            "headers": [
+              "Primitive",
+              "Who initiates",
+              "What it moves"
+            ],
+            "rows": [
+              [
+                "Tools",
+                "Client calls server",
+                "An action the model asked to perform"
+              ],
+              [
+                "Resources",
+                "Client reads from server",
+                "Data/context the server exposes"
+              ],
+              [
+                "Prompts",
+                "Client fetches from server",
+                "Reusable instruction templates"
+              ],
+              [
+                "Sampling",
+                "Server calls client",
+                "An LLM completion, run on the client's model"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Sampling Is the One Primitive That Runs Backwards"
+        },
+        {
+          "id": "8fb31adb-ebb9-4736-be83-8a3b210bec2a",
+          "body": "Sampling only pays off when a server truly needs reasoning it can't do itself — and only where a client supports it.",
+          "bullets": [
+            "Every sampling call is a full extra round trip (server → client → model → client → server), so it adds real latency compared to a server that just calls its own model directly",
+            "It's optional: many clients don't implement the sampling capability at all, so a server has to check the negotiated capabilities at connection time and degrade gracefully if it's missing",
+            "Because a sampling request spends the user's own tokens/quota, the spec expects human-in-the-loop review — a client that silently auto-approves every request opens the door to a misbehaving server draining the user's usage",
+            "Skip sampling if the server needs a guaranteed specific model's behavior (modelPreferences are only hints) or already has its own model access and no reason to share billing with the client"
+          ],
+          "symbol": "exclamationmark.shield.fill",
+          "table": null,
+          "kind": "concept",
+          "title": "The Cost Is Latency, and Trust Is Load-Bearing"
+        },
+        {
+          "id": "49368313-6095-43c9-980c-9b082e9f21a1",
+          "body": null,
+          "bullets": [
+            "Sampling lets a server request an LLM completion from the client instead of holding its own model API key",
+            "modelPreferences are soft hints (cost/speed/intelligence priority), not a pinned model — the client always makes the final call",
+            "includeContext lets a server ask for surrounding conversation context, but the client decides how much to actually share",
+            "Because it spends the user's own tokens, treat every sampling request as something the user should see and approve, not a silent background call"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "What to Remember About Sampling"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c90af29e-714b-4600-9bdd-92bf5bb0a6ea",
+            "prompt": "In MCP's sampling flow, who sends the sampling/createMessage request?",
+            "options": [
+              "The client, to the server",
+              "The server, to the client",
+              "The end user, directly to the model",
+              "One server, to another server"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sampling reverses the usual direction: the server sends sampling/createMessage to the client, asking the client to run the completion — the opposite of how Tools, Resources, and Prompts work."
+          },
+          {
+            "id": "13b2e1e3-f291-4445-8ea8-92fc7882ddc2",
+            "prompt": "What do a sampling request's modelPreferences (costPriority, speedPriority, intelligencePriority) actually control?",
+            "options": [
+              "They pin the exact model the client must use",
+              "They're soft 0–1 hints the client can weigh however it wants when picking a model",
+              "They set the dollar budget for the request",
+              "They select which MCP server handles the request"
+            ],
+            "correctIndex": 1,
+            "explanation": "modelPreferences are abstract hints, not a model name — the client is free to pick whatever model it has available that best fits those priorities, which is what keeps servers portable across different backends."
+          },
+          {
+            "id": "a2c71587-befe-4e53-ae38-cd63e32a758f",
+            "prompt": "Why does the MCP spec expect human-in-the-loop approval before a client fulfills a sampling request?",
+            "options": [
+              "Because sampling requests are always malformed",
+              "Because the completion runs on the user's own model access and spends their tokens/quota, so a misbehaving server shouldn't be able to spend it silently",
+              "Because only administrators are allowed to use MCP servers",
+              "Because sampling requests bypass encryption"
+            ],
+            "correctIndex": 1,
+            "explanation": "A sampling call consumes the user's own model quota. Without a review step, a compromised or careless server could rack up usage the user never intended to authorize."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "341b58fb-f061-419e-ae32-f25223439cd3",
+          "title": "Sampling – Model Context Protocol Specification",
+          "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/sampling"
+        }
+      ]
+    },
+    {
       "id": "fd2f532f-7c1c-498c-bfd8-531f4c477523",
       "title": "Qwen3.8-Flash-Next: 1/9th the FLOPs, 397B-Level Scores",
       "subtitle": "A 125B MoE with 6B active params trades some quality for a hybrid attention stack — and mostly keeps it.",
@@ -11023,215 +11207,6 @@
         }
       ],
       "id": "0929b401-173f-4195-bc0d-1bd8342c53c6",
-      "publishedDate": "2026-09-06T06:43:42Z"
-    },
-    {
-      "title": "GLM-5.3-Flash: A Multimodal MoE Under MIT License",
-      "subtitle": "Z.ai's 320B-parameter model runs at 18B-active cost, reads images natively, and ships fully open weights.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "glm",
-        "mixture-of-experts",
-        "open-weights",
-        "multimodal",
-        "z-ai"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cpu.fill",
-      "summary": "Z.ai released GLM-5.3-Flash on August 26, 2026: a 320B-total/18B-active mixture-of-experts model that's natively multimodal, supports a 1M-token context window, and ships under an unmodified MIT license — while scoring sharply higher than its predecessor on coding benchmarks at roughly a tenth of the price.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A Big Model That Runs Like a Small One",
-          "body": null,
-          "bullets": [
-            "Released August 26, 2026 by Z.ai (Zhipu AI)",
-            "320B total parameters, only 18B active per forward pass (MoE)",
-            "First natively multimodal model in the GLM-5 line, MIT-licensed"
-          ],
-          "symbol": "cpu.fill",
-          "table": null,
-          "id": "d54493c7-0452-4bb6-99e1-6dae8c6cb169"
-        },
-        {
-          "kind": "problem",
-          "title": "Multimodal Usually Means Expensive",
-          "body": "Adding vision to a language model, and stretching context to a million tokens, typically multiplies inference cost — pushing teams toward either a small, cheap, text-only model or a large, expensive, multimodal one.",
-          "bullets": [
-            "Bolted-on vision adapters often need a separate encoder and extra serving complexity",
-            "Long context windows are usually gated behind the largest, priciest tier of a model family",
-            "Permissive licensing (no revenue-threshold clauses, no usage restrictions) is often reserved for smaller, weaker open models"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "4d25d36d-dbea-4f80-8bf8-2a734b2159dd"
-        },
-        {
-          "kind": "solution",
-          "title": "MoE Sparsity Plus Hybrid Attention",
-          "body": "GLM-5.3-Flash keeps a large total parameter budget for capacity while activating only a fraction of it per token, and pairs that with an attention design built for long context.",
-          "bullets": [
-            "Mixture-of-experts routing activates 18B of the model's 320B total parameters per forward pass",
-            "A hybrid sparse-and-linear attention architecture keeps a 1M-token context window computationally affordable",
-            "Vision is native rather than adapter-bolted — this is the first GLM-5-series checkpoint trained as multimodal from the start"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "id": "9406d968-926b-4842-813b-b5d8981bd1aa"
-        },
-        {
-          "kind": "comparison",
-          "title": "GLM-5.3-Flash vs. GLM-5.2",
-          "body": null,
-          "bullets": [
-            "Z.ai reports GLM-5.3-Flash beats GLM-5.2 across its evaluations while operating at roughly one-tenth the price"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "GLM-5.2",
-              "GLM-5.3-Flash"
-            ],
-            "rows": [
-              [
-                "DeepSWE v1.1 score",
-                "46.2",
-                "63.4"
-              ],
-              [
-                "Terminal-Bench 2.1",
-                "Not reported here",
-                "84.3"
-              ],
-              [
-                "Context window",
-                "Smaller",
-                "1,000,000 tokens"
-              ],
-              [
-                "Modality",
-                "Text-centric",
-                "Natively multimodal"
-              ],
-              [
-                "Output price (per 1M tokens)",
-                "Higher",
-                "$0.50"
-              ]
-            ]
-          },
-          "id": "614afb61-c4a0-458c-a664-85ba35ccfc60"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A Coding Agent on a Real Repo",
-          "body": "A coding agent needs to review a repository with 400K tokens of source plus a handful of UI screenshots in the same task.",
-          "bullets": [
-            "GLM-5.3-Flash's 1M-token window fits the whole repo and the screenshots in one context, no chunking or re-embedding pass required",
-            "Because vision is native, the model can reason about a screenshot and the code that renders it in the same forward pass",
-            "At $0.15/M input and $0.03/M cached input, repeatedly re-sending that repo context across a multi-turn debugging session stays cheap"
-          ],
-          "symbol": "terminal.fill",
-          "table": null,
-          "id": "2094a007-e07e-47d3-8c49-b9de3dfff0b8"
-        },
-        {
-          "kind": "concept",
-          "title": "One Name, Two Licenses — Don't Conflate Them",
-          "body": "Z.ai shipped two different GLM-5.3 models within a week, under two different licenses.",
-          "bullets": [
-            "GLM-5.3-Flash (320B/18B, this release) is MIT-licensed — unrestricted commercial use, no revenue threshold",
-            "The larger 753B-total GLM-5.3 flagship followed two days later under a separate, bespoke license that requires a Z.ai security review above an undisclosed revenue threshold before commercial hosting",
-            "Check the specific model card before assuming license terms carry across a model family"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null,
-          "id": "06b9059c-50c3-45c4-823e-49a672692974"
-        },
-        {
-          "kind": "concept",
-          "title": "Tradeoffs and What to Verify Yourself",
-          "body": "The headline numbers come from Z.ai's own evaluation, as is standard for a launch announcement.",
-          "bullets": [
-            "DeepSWE and Terminal-Bench scores are self-reported using a specific harness (mini-swe-agent, temperature 0.95) — results can shift under a different eval setup",
-            "320B total parameters still means a large memory footprint to host, even though only 18B are active per token — MoE saves compute, not storage",
-            "\"One-tenth the price\" is a vendor comparison against GLM-5.2's list price, not an independent cost audit — validate against your own workload before committing"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null,
-          "id": "4e0f1b53-b6fd-4c36-9d48-0c529f7fb4f8"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "GLM-5.3-Flash activates 18B of 320B total parameters per token, keeping a large-capacity model cheap to run",
-            "It's the first natively multimodal GLM-5 model, with a 1M-token context via hybrid sparse/linear attention",
-            "DeepSWE jumped from 46.2 (GLM-5.2) to 63.4 under Z.ai's own harness",
-            "It ships MIT-licensed — but the larger 753B GLM-5.3 flagship does not, so check the specific model card"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "504576a7-21cf-40cc-a03e-2c5d2cbc93d7"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does GLM-5.3-Flash stay cheap to run despite having 320B total parameters?",
-            "options": [
-              "It quantizes all weights to 4-bit",
-              "Mixture-of-experts routing activates only 18B parameters per forward pass",
-              "It caches every response permanently",
-              "It runs entirely on CPU"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE sparsity means only a subset of the model's total parameters (18B of 320B) does work on any given token, cutting compute cost without cutting total capacity.",
-            "id": "fc26665b-5bfc-41ff-8bd8-035a456d562e"
-          },
-          {
-            "prompt": "What licensing detail should you check before deploying a GLM-5.3 model commercially?",
-            "options": [
-              "Whether you picked GLM-5.3-Flash (MIT) or the larger 753B GLM-5.3 flagship (bespoke license with a security-review clause)",
-              "GLM models have no license restrictions of any kind",
-              "All GLM-5.3 models require a paid subscription",
-              "License terms are identical across the entire GLM-5 family"
-            ],
-            "correctIndex": 0,
-            "explanation": "Z.ai used two different licenses within the same week — MIT for the 320B/18B Flash model, a bespoke license for the larger 753B flagship. The name alone doesn't tell you which applies.",
-            "id": "e65d243e-d91b-47a8-8ba3-fab17ddd5372"
-          },
-          {
-            "prompt": "What should you keep in mind about the DeepSWE and Terminal-Bench scores in the launch announcement?",
-            "options": [
-              "They are independently audited by a third party",
-              "They are self-reported by Z.ai under a specific evaluation harness, and may shift under different settings",
-              "They measure image quality, not coding ability",
-              "They come from a completely different model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Launch benchmarks are typically vendor-reported under a chosen harness and configuration — useful as a signal, but worth validating on your own workload before relying on them.",
-            "id": "f911e6b5-27e0-4609-be8c-6e919269eed6"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "GLM-5.3-Flash model card (zai-org)",
-          "url": "https://huggingface.co/zai-org/GLM-5.3-Flash",
-          "id": "41a4d5db-076a-4dd5-a1b9-4b1501686ef5"
-        },
-        {
-          "title": "Z.ai Releases GLM-5.3-Flash: A 320B-A18B Natively Multimodal MoE With a 1M-Token Context",
-          "url": "https://www.marktechpost.com/2026/08/26/z-ai-releases-glm-5-3-flash-a-320b-a18b-natively-multimodal-moe-with-a-1m-token-context/",
-          "id": "e2978deb-ddb3-4e32-8584-e6a28028a047"
-        }
-      ],
-      "id": "d366e1a1-ba36-468e-805d-87e8fac07bbe",
       "publishedDate": "2026-09-06T06:43:42Z"
     }
   ]
