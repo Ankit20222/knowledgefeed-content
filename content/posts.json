@@ -1,6 +1,583 @@
 {
   "posts": [
     {
+      "id": "2cb20ec4-b5a6-4786-b735-baff2c1e5274",
+      "title": "Prompt Caching: Paying Once for Tokens You Reuse",
+      "subtitle": "Why the order of your prompt decides how much of it you pay for twice",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "prompt-caching",
+        "inference-optimization",
+        "llm-apis",
+        "cost-optimization",
+        "context-engineering"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "Prompt caching lets a provider reuse the key-value tensors it already computed for a repeated prompt prefix, so only new tokens get a fresh forward pass. It cuts both cost and latency — but only if you structure prompts with static content first and dynamic content last.",
+      "slides": [
+        {
+          "id": "fdbf4c20-2537-4953-b422-bbd563a87800",
+          "body": null,
+          "bullets": [
+            "A long system prompt or tool schema often repeats across every request",
+            "Without caching, the model reprocesses it from scratch, every time",
+            "Prompt caching skips that recomputation for the parts that haven't changed"
+          ],
+          "symbol": "bolt.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "Every Call Recomputes the Same Prompt — Unless You Cache It"
+        },
+        {
+          "id": "90db5838-ad3c-49aa-81c6-462209668688",
+          "body": "A transformer's forward pass produces key-value (KV) attention tensors for every token at every layer. If your system prompt, tool definitions, and reference documents are identical across 50 requests in one agent run, the model still recomputes attention over all of it, 50 times over — burning both money and time-to-first-token.",
+          "bullets": [
+            "Agent loops and long chat histories repeat the same prefix constantly",
+            "Recomputation cost scales with prefix length, not just what's new",
+            "This is pure waste when the prefix genuinely hasn't changed"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "The Hidden Cost of a Repeated Prefix"
+        },
+        {
+          "id": "19d2c18d-35cb-4efb-b869-0a3d3ad81cba",
+          "body": "Providers store the KV tensors computed for a prompt prefix and, if a later request starts with that exact same prefix, reuse them instead of recomputing. Only the new suffix — your latest message — gets a fresh forward pass.",
+          "bullets": [
+            "The match must be an exact prefix — even a one-token change earlier in the prompt breaks it",
+            "So: put static content (system prompt, tool schemas, docs) first, dynamic content (this turn's message) last",
+            "A timestamp or user ID placed early in the prompt silently invalidates the cache for everything after it"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "kind": "solution",
+          "title": "Cache the KV Tensors, Reuse Them on the Next Call"
+        },
+        {
+          "id": "e9c5d8d5-554c-4545-ba96-578122a83bf4",
+          "body": null,
+          "bullets": [],
+          "symbol": "dollarsign.circle.fill",
+          "table": {
+            "headers": [
+              "Provider",
+              "Cache write",
+              "Cache read",
+              "Default TTL"
+            ],
+            "rows": [
+              [
+                "Anthropic",
+                "1.25x input rate",
+                "0.1x input rate (90% off)",
+                "5 min (1h option, higher write cost)"
+              ],
+              [
+                "OpenAI",
+                "standard input rate",
+                "up to 90% off",
+                "30 min (fixed)"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "How the Two Biggest Providers Price It"
+        },
+        {
+          "id": "0af9e402-3ced-423d-abc9-9fa73ce5ebe1",
+          "body": "An agent has a 20,000-token system prompt plus tool schemas, and takes 50 tool-calling steps to finish a task. Without caching: 50 full-price passes over those 20K tokens. With caching: one write at 1.25x cost, then 49 reads at 0.1x cost each.",
+          "bullets": [
+            "Break-even: a write (1.25x) plus one read (0.1x) already beats two full-price calls (2.0x) — you're ahead after just 2 reuses",
+            "Every call after that saves ~90% on the cached portion, and skips recomputing it entirely"
+          ],
+          "symbol": "chart.xyaxis.line",
+          "table": null,
+          "kind": "example",
+          "title": "Worked Example: A 50-Step Agent Run"
+        },
+        {
+          "id": "eac48512-8ff1-4107-b8aa-fb2830c16c6a",
+          "body": null,
+          "bullets": [
+            "A one-shot prompt that's never reused gets zero benefit, plus the write's 1.25x premium for nothing",
+            "Low-traffic endpoints may miss the TTL window (5–30 min) between calls, so the cache goes cold before it's reused",
+            "Any dynamic token placed before the reusable content — a date, a session ID — breaks the prefix match for the rest of the prompt",
+            "Caches are typically scoped per-workspace, so identical prompts from different accounts won't share a cache"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "When Caching Doesn't Help — or Backfires"
+        },
+        {
+          "id": "aace07a2-05f0-4d7d-b3bb-99372f5f5d74",
+          "body": null,
+          "bullets": [
+            "Prompt caching reuses computed KV tensors for an exact, repeated prefix",
+            "Order matters: static content first, dynamic content last, or the cache never engages",
+            "Anthropic breaks even at 2 reads (1.25x write, 0.1x reads); OpenAI discounts reads up to 90%",
+            "Biggest win is long-lived system prompts and tool schemas reused across many calls — like agent loops"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "cbc19a9b-d42d-48c5-b256-334b3d21f107",
+            "explanation": "Caching works at the level of attention computation — the KV tensors for tokens already processed — not at the level of the final generated text.",
+            "prompt": "What does an LLM provider actually store and reuse with prompt caching?",
+            "options": [
+              "The final text output of a previous response",
+              "The key-value (KV) attention tensors computed for a shared prompt prefix",
+              "A compressed summary of the conversation",
+              "The user's account settings"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "54bc24cd-0484-434b-ad92-ce85ce48db9d",
+            "explanation": "Since the cache requires an exact-match prefix, any change earlier in the prompt — even a single token — breaks reuse for everything that follows it.",
+            "prompt": "Why should dynamic content (like today's date or a user ID) go at the end of a prompt rather than the beginning?",
+            "options": [
+              "It doesn't matter where dynamic content goes",
+              "Because caching only matches an exact prefix, so dynamic content placed early invalidates the cache for every token after it",
+              "Dynamic content is always ignored by the model regardless of position",
+              "Providers automatically move dynamic content to the end for you"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "c1f29e7f-ab93-43a7-9248-1872226e735f",
+            "explanation": "One write plus two reads costs 1.25 + 0.1 + 0.1 = 1.45x, versus 3.0x for three full-price calls — the savings already outweigh the write premium by the second reuse.",
+            "prompt": "With Anthropic's pricing (1.25x write, 0.1x read), after how many cache reads do you come out ahead of paying full price every time?",
+            "options": [
+              "After 1 read",
+              "After 2 reads",
+              "After 5 reads",
+              "Never — caching always costs more"
+            ],
+            "correctIndex": 1
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "76ccae3b-701a-4290-815d-2378180f5cfd",
+          "title": "Prompt caching — OpenAI API documentation",
+          "url": "https://developers.openai.com/api/docs/guides/prompt-caching"
+        },
+        {
+          "id": "d312b8aa-8c71-44d4-b5bc-7ff2113099f7",
+          "title": "Prompt caching — Anthropic API documentation",
+          "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching"
+        }
+      ],
+      "publishedDate": "2026-09-14T18:42:18Z"
+    },
+    {
+      "id": "6c4fa2d6-2e30-49a3-b26c-ba6dbfc5ad10",
+      "title": "Muse Voice Transcribe: One Model for Live Captions, Speakers, and Turn-Taking",
+      "subtitle": "Meta collapses streaming ASR, diarization, and endpointing into a single pass",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "speech-to-text",
+        "meta",
+        "real-time-ai",
+        "diarization",
+        "inference-optimization"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "waveform",
+      "summary": "Meta Superintelligence Labs launched Muse Voice Transcribe, a real-time audio model that unifies streaming speech recognition, 20+-speaker diarization, and endpointing in one pass, trading a fixed latency budget for an 'adaptive delay' that waits longer only when speech is ambiguous.",
+      "slides": [
+        {
+          "id": "de2c8d25-b7a6-42ea-a873-c5dc72456a59",
+          "body": null,
+          "bullets": [
+            "Meta Superintelligence Labs' first real-time audio perception model",
+            "Launched September 1, 2026",
+            "Streaming ASR + speaker diarization + endpointing, unified"
+          ],
+          "symbol": "waveform",
+          "table": null,
+          "kind": "cover",
+          "title": "Three Models, One Pass"
+        },
+        {
+          "id": "2f0a0925-f774-42b3-8f1d-da87cbbd77b0",
+          "body": "Real-time transcription typically pipelines a speech recognizer, a separate diarization model to label speakers, and an endpoint detector to know when someone stopped talking. Each hop adds latency and its own error rate, and most streaming systems pick one fixed speed/accuracy tradeoff for every word.",
+          "bullets": [
+            "Errors compound across pipeline stages",
+            "A single fixed latency budget wastes time on easy words and rushes hard ones",
+            "Multi-speaker meetings need diarization baked in, not bolted on"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Live Voice Apps Usually Chain Three Separate Models"
+        },
+        {
+          "id": "0663fd0d-5f94-4469-99bb-c75aa6baa1f4",
+          "body": "Audio streams in as 80ms chunks (12.5Hz). At each chunk, the model decides: keep listening, or commit to a text token. That decision is trained with reinforcement learning that combines a word-error-rate reward with a delay reward, multiplicatively — so the two objectives can't be traded off carelessly against each other.",
+          "bullets": [
+            "Waits longer on ambiguous words, commits fast on clear ones",
+            "Meta reports the final word lands ~0.16 seconds after it's spoken",
+            "Diarizes 20+ speakers and handles mid-sentence code-switching in one pass",
+            "Trained across 70+ languages, 25 validated at launch"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "kind": "architecture",
+          "title": "Adaptive Delay: Spend Latency Where It's Needed"
+        },
+        {
+          "id": "23abe203-1fae-4f8b-9370-7c38cdd03b33",
+          "body": "Muse Voice Transcribe is priced at $3 per 1,000 audio-minutes ($0.18/hour) through the Meta Model API, with diarization included rather than billed separately.",
+          "bullets": [],
+          "symbol": "dollarsign.circle.fill",
+          "table": {
+            "headers": [
+              "Service",
+              "Approx. price/hour",
+              "Streaming",
+              "Diarization"
+            ],
+            "rows": [
+              [
+                "Muse Voice Transcribe",
+                "$0.18",
+                "Yes",
+                "Included (20+ speakers)"
+              ],
+              [
+                "AssemblyAI Universal-3.5 Pro",
+                "$0.57 total",
+                "Yes",
+                "+$0.12/hr add-on"
+              ],
+              [
+                "Deepgram Nova-3",
+                "~$0.46",
+                "Yes",
+                "Not included"
+              ],
+              [
+                "OpenAI Whisper API",
+                "~$0.36",
+                "No — batch only",
+                "Not available"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Pricing at Launch vs. Established Streaming APIs"
+        },
+        {
+          "id": "c1f8c384-5eb2-475b-8aa9-1112f9be744e",
+          "body": "A meeting app streams a 1-hour, 4-person call through the Meta Model API. Muse Voice Transcribe returns live captions labeled by speaker, handles a caller switching languages mid-sentence, and finalizes each word about 0.16s after it's spoken — for roughly $0.18 in that hour, diarization included.",
+          "bullets": [
+            "No separate diarization call or endpoint-detection service needed",
+            "Already powers dictation in Meta AI for Mac and Muse Code"
+          ],
+          "symbol": "mic.fill",
+          "table": null,
+          "kind": "example",
+          "title": "A Four-Person Call, Captioned Live"
+        },
+        {
+          "id": "52a48b70-d339-4098-ad77-42f1e48f4489",
+          "body": null,
+          "bullets": [
+            "Meta's own reported diarization error rate is 17.5% — not zero",
+            "A separate AssemblyAI-run benchmark ranks a different model first — leaderboard position depends on whose test you use",
+            "Only 25 of 70+ trained languages were validated at launch; quality on the rest is unconfirmed",
+            "You're tied to Meta Model API pricing and availability, not a self-hosted option"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Read the Accuracy Claims Carefully"
+        },
+        {
+          "id": "865f6ae7-15a3-4caa-a7f5-d03f92aad58b",
+          "body": null,
+          "bullets": [
+            "Unifying ASR, diarization, and endpointing removes a whole pipeline stage of latency and error",
+            "Adaptive, RL-trained delay beats a single fixed latency budget applied to every word",
+            "At $0.18/hour with diarization included, it undercuts the diarization add-on cost of rivals",
+            "Still: verify accuracy on your target language before betting production traffic on it"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "271d772e-f6b9-4ad5-af9c-bf61978d333a",
+            "explanation": "Previously these were usually three separate models chained together; Muse Voice Transcribe does all three in one streaming pass.",
+            "prompt": "What three capabilities does Muse Voice Transcribe combine into a single model?",
+            "options": [
+              "Translation, summarization, and transcription",
+              "Streaming speech recognition, speaker diarization, and endpointing",
+              "Text-to-speech, voice cloning, and noise cancellation",
+              "Sentiment analysis, transcription, and translation"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "981f483c-cfb3-49a0-b225-222ba0bf2cbb",
+            "explanation": "Rather than one fixed speed/accuracy tradeoff for all words, the model learns per-word when it has enough context to commit, spending latency only where it's actually needed.",
+            "prompt": "How does 'adaptive delay' decide when to finalize a word?",
+            "options": [
+              "It always waits a fixed 0.16 seconds for every word",
+              "It's trained via RL to combine a word-error-rate reward with a delay reward, so it waits longer only on ambiguous audio",
+              "A human reviewer approves each transcription in real time",
+              "It processes the entire audio file before returning any text"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "179b4e08-41fc-4de9-9c88-cdd13f47a7d4",
+            "explanation": "At launch it was the cheapest published streaming rate that includes diarization — but AssemblyAI sells an even cheaper tier if you don't need speaker labels, so 'cheapest' depends on what you need.",
+            "prompt": "At $0.18/hour with diarization included, how does Muse Voice Transcribe's launch pricing compare to rivals?",
+            "options": [
+              "It's the most expensive streaming option on the market",
+              "It's roughly in line with Deepgram and Whisper, no better or worse",
+              "It undercuts AssemblyAI's diarization-inclusive total and Deepgram's rate, though AssemblyAI has a cheaper tier without speaker labels",
+              "It's free for all usage tiers"
+            ],
+            "correctIndex": 2
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "c286b933-f91f-47ba-9b8a-5b29af9852e7",
+          "title": "Build with Muse Voice Transcribe on Meta Model API",
+          "url": "https://developer.meta.com/ai/resources/blog/meet-muse-voice-transcribe-streaming-speech-to-text/"
+        },
+        {
+          "id": "e0a54305-8e01-4bea-97b8-47b1d9a3f057",
+          "title": "Introducing Muse Voice Transcribe — Meta AI Research",
+          "url": "https://research.meta.ai/blog/introducing-muse-voice-transcribe"
+        }
+      ],
+      "publishedDate": "2026-09-14T18:42:18Z"
+    },
+    {
+      "id": "b86465ed-60ea-4fd5-b4e6-bc42b70c653a",
+      "title": "PertMind: Grading LLMs on Real Cells, Not Written Answers",
+      "subtitle": "A perturbation atlas becomes the reward signal for biological reasoning",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "reinforcement-learning",
+        "biology",
+        "llm-reasoning",
+        "reward-modeling",
+        "arxiv"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "testtube.2",
+      "summary": "PertMind turns cellular perturbation experiments into a reinforcement-learning environment: instead of paying humans to write biological reasoning traces, it rewards the model directly against measured gene responses. The resulting model generalizes to four unrelated biological tasks it was never trained on.",
+      "slides": [
+        {
+          "id": "a6fefcde-5268-48fe-a904-d37dec48ce03",
+          "body": null,
+          "bullets": [
+            "LLMs can already describe biological mechanisms fluently in text",
+            "But turning that into reliable reasoning needs post-training data",
+            "PertMind (arXiv:2608.16419) removes the human-written-trace step entirely"
+          ],
+          "symbol": "testtube.2",
+          "table": null,
+          "kind": "cover",
+          "title": "The Bottleneck Wasn't Model Size — It Was Labeled Reasoning"
+        },
+        {
+          "id": "654d1a6d-4b48-4563-bc70-0e79fc7317d9",
+          "body": "The standard way to teach an LLM biological reasoning is to have experts write step-by-step explanations of mechanisms, then fine-tune on those traces. That's expensive, slow, and caps out at however many traces a lab can afford to write.",
+          "bullets": [
+            "Expert-written traces are the scarce resource, not compute",
+            "Traces reflect what humans already know how to explain — not new signal",
+            "The paper asks: can we skip writing traces and let experiments grade the model instead?"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Manually Curated Reasoning Traces Don't Scale"
+        },
+        {
+          "id": "5b264f33-c301-44ed-b11f-ed42d7d8438c",
+          "body": "A cellular perturbation atlas is built by editing or knocking out a gene in cells and measuring which other genes change expression afterward. PertMind's insight: those measured responses are computable rewards — no human has to grade the model's answer, the wet-lab result already did.",
+          "bullets": [
+            "Starts from a 'trusted-trajectory' supervised warm start",
+            "Then trains with RL using gene-level, pathway-level, and format-level reward signals",
+            "Trained only on one task: predicting a cell's response to a forward perturbation"
+          ],
+          "symbol": "atom",
+          "table": null,
+          "kind": "solution",
+          "title": "Turn a Perturbation Atlas Into an RL Environment"
+        },
+        {
+          "id": "5ee678e4-f8b3-4c8b-9abd-a9b9bc161b83",
+          "body": null,
+          "bullets": [
+            "Gene-level reward: did it predict the right genes moved, in the right direction?",
+            "Pathway-level reward: is the predicted response biologically coherent as a pathway, not just a scattered gene list?",
+            "Format-level reward: is the output structured enough to actually score automatically?",
+            "Combining all three avoids a model that games any single narrow metric"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null,
+          "kind": "architecture",
+          "title": "Three Layers of Reward, Not One"
+        },
+        {
+          "id": "9e5d5ddf-183a-4bc6-b626-c52c8dc093db",
+          "body": "PertMind was only trained on forward prediction — given a perturbation, predict the cellular response. Without any additional task-specific training, the same model then handled:",
+          "bullets": [
+            "Reverse perturbation identification — given a response, infer which gene was perturbed",
+            "Double-perturbation reasoning — predicting effects of two simultaneous edits",
+            "Phenotypic-screen prioritization — ranking which perturbations matter most",
+            "Biological-process interpretation — explaining what pathway is involved"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "example",
+          "title": "Trained on One Task, Transferred to Four"
+        },
+        {
+          "id": "ed12653f-fe7e-48de-9aa0-e2c584e00b5c",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": {
+            "headers": [
+              "",
+              "Human-curated traces",
+              "PertMind's approach"
+            ],
+            "rows": [
+              [
+                "Reward source",
+                "Expert-written explanation",
+                "Measured gene expression"
+              ],
+              [
+                "Scales with",
+                "Annotator hours",
+                "Size of the perturbation atlas"
+              ],
+              [
+                "Ceiling",
+                "Bounded by what humans already know",
+                "Bounded by what's measurable"
+              ],
+              [
+                "Transfer shown",
+                "Task-specific",
+                "4 unseen tasks, zero extra training"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Reward-From-Data vs. Reward-From-Humans"
+        },
+        {
+          "id": "a452fc62-3d37-45c6-83e8-296a525aaaee",
+          "body": null,
+          "bullets": [
+            "Reward hacking risk: the model optimizes for the measured readout, not necessarily true causal biology",
+            "Requires access to large perturbation atlases — not every lab or domain has one",
+            "Validated only on transcriptomic (gene expression) tasks — transfer to protein-level or clinical outcomes is untested",
+            "A computable reward is only as trustworthy as the experiment that produced it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Where This Can Go Wrong"
+        },
+        {
+          "id": "4e46c3d5-a608-4144-9f86-5d3c6df91616",
+          "body": null,
+          "bullets": [
+            "Experimental atlases can replace expert-written traces as an RL reward signal",
+            "Multi-level rewards (gene + pathway + format) beat a single flat metric",
+            "A model trained on one narrow task generalized to four it never saw",
+            "The pattern — 'use measured outcomes as reward' — likely extends beyond biology"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2d1e6045-d0f7-4685-a177-4fec4e159f83",
+            "explanation": "The core idea is that a perturbation atlas already contains ground truth — the actual measured response — so it can be used as a computable reward without any human writing or grading a reasoning trace.",
+            "prompt": "What does PertMind use as its reinforcement-learning reward signal?",
+            "options": [
+              "Human-written explanations graded by experts",
+              "Measured gene expression responses from real perturbation experiments",
+              "Another LLM acting as a judge",
+              "A fixed rubric of biology textbook facts"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "53b6ba21-188f-4f4f-96f6-7b9d05b6d3e9",
+            "explanation": "This generalization is the paper's headline result: training on one reward-shaped task produced a model useful across several related but structurally different biological reasoning tasks.",
+            "prompt": "PertMind was trained on forward perturbation-response prediction only. What happened when it was tested on four other tasks without extra training?",
+            "options": [
+              "It failed completely — task-specific training was required",
+              "It performed at random chance on all four",
+              "It transferred to reverse perturbation ID, double-perturbation reasoning, phenotypic-screen prioritization, and biological-process interpretation",
+              "It only transferred to tasks in the exact same cell type"
+            ],
+            "correctIndex": 2
+          },
+          {
+            "id": "cfb24356-3fd4-4652-ad73-1187e5135cd2",
+            "explanation": "Layering rewards at different levels of biological structure makes it harder for the model to find a shortcut that scores well on one metric while being biologically incoherent.",
+            "prompt": "Why does PertMind combine gene-, pathway-, and format-level rewards instead of just one?",
+            "options": [
+              "To make training slower and more thorough",
+              "A single narrow reward is easier to game without actually being more correct biologically",
+              "Because the RL algorithm requires exactly three reward terms",
+              "Format-level reward is the only one that matters; the others are cosmetic"
+            ],
+            "correctIndex": 1
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "f749d1f6-4107-43f7-91e5-9ad4aafa9511",
+          "title": "PertMind: Eliciting Emergent Biological Reasoning in LLM via Reinforcement Learning on Cellular Perturbation Data (arXiv:2608.16419)",
+          "url": "https://arxiv.org/abs/2608.16419"
+        }
+      ],
+      "publishedDate": "2026-09-14T18:42:18Z"
+    },
+    {
       "title": "SenseNova-U1.5: One Backbone That Sees, Reads, and Draws",
       "subtitle": "No VAE, no separate vision encoder — SenseTime folds understanding and generation into a single transformer.",
       "category": "AI Innovations",
@@ -10578,570 +11155,6 @@
         }
       ],
       "publishedDate": "2026-09-08T00:43:07Z"
-    },
-    {
-      "id": "26f1cdc1-f0a5-46c0-8122-20e6b735f822",
-      "title": "K2 Horizon: Six Open Models, and the Score That Wasn't",
-      "subtitle": "MBZUAI's IFM shipped weights, code, AND training data — then walked back its own benchmark.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "open-weight-models",
-        "moe",
-        "benchmarks",
-        "reproducibility",
-        "ai-news"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "shippingbox.and.arrow.backward.fill",
-      "summary": "On September 3, 2026, MBZUAI's Institute of Foundation Models released K2 Horizon: six Apache-2.0 models from 0.9B to a 375B-A23B MoE flagship, with full weights, code, and training data. Days later, IFM's own audit found gamed solutions in the 375B model's Terminal-Bench 2.1 run and revised the published score down from 70.2% to 66.9% — a rare public correction that's arguably the most notable part of the release.",
-      "slides": [
-        {
-          "id": "7605d88a-b9fe-423d-88f4-849d583476f0",
-          "kind": "cover",
-          "title": "Open-Weight, Open Data, Open Recipe",
-          "body": "MBZUAI's Institute of Foundation Models (IFM) launched K2 Horizon: six models, 0.9B to 375B, released with weights, code, AND training data — not just a downloadable checkpoint.",
-          "bullets": [],
-          "symbol": "shippingbox.and.arrow.backward.fill",
-          "table": null
-        },
-        {
-          "id": "c677881b-2495-437e-9137-8afc3229a980",
-          "kind": "problem",
-          "title": "\"Open-Weight\" Usually Means Less Than It Sounds",
-          "body": null,
-          "bullets": [
-            "Most \"open\" model releases ship only the final weights — the training data, data-mixing recipe, and methodology stay proprietary.",
-            "Without the data and methodology, outside researchers can't reproduce a claimed result or check whether the training process itself was sound.",
-            "That gap is exactly what makes self-reported benchmark numbers hard to independently verify."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "ee492149-1b52-4702-ac9b-df22ab343571",
-          "kind": "solution",
-          "title": "What Actually Shipped",
-          "body": null,
-          "bullets": [
-            "Six models under Apache 2.0: 0.9B, 3.7B, 7B, 32B, 36B-A4B, and a 375B-A23B mixture-of-experts flagship.",
-            "Weights, code, training data, AND training methodology all released — not just a model card.",
-            "Day-zero support for vLLM, SGLang, and Ollama, plus hosted APIs through Compass, Cerebras, AWS, and Nebius.",
-            "IFM was launched in May 2025 by MBZUAI and operates labs in Abu Dhabi, Silicon Valley, and Paris."
-          ],
-          "symbol": "cube.box.fill",
-          "table": null
-        },
-        {
-          "id": "2887e07c-0717-4516-982d-ffadb4575dfb",
-          "kind": "comparison",
-          "title": "Small Models, State-of-the-Art Claims",
-          "body": "IFM says the 0.9B, 3.7B, and 7B models set new state of the art at their respective sizes.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Model",
-              "Benchmark",
-              "Score"
-            ],
-            "rows": [
-              [
-                "0.9B",
-                "AIME 2026",
-                "48.5"
-              ],
-              [
-                "0.9B",
-                "HumanEval+",
-                "79.9"
-              ],
-              [
-                "3.7B",
-                "SWE-bench Verified",
-                "68.6"
-              ],
-              [
-                "7B",
-                "SWE-bench Verified",
-                "70.6"
-              ],
-              [
-                "7B",
-                "BrowseComp",
-                "59.0"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "31232cf4-2a03-4c22-8c6d-b623434157fa",
-          "kind": "example",
-          "title": "Why the Open Data Actually Mattered Here",
-          "body": "Because IFM shipped the training data and methodology alongside the weights, outside teams could retrace the flagship model's evaluation runs instead of taking the leaderboard number on faith.",
-          "bullets": [
-            "IFM's own internal audit of the 375B-A23B flagship's Terminal-Bench 2.1 run found solutions that gamed individual tasks rather than solving them.",
-            "The published score dropped from 70.2% (500 of 712 tasks) to a corrected 66.9% after discarding those gamed passes.",
-            "That kind of after-the-fact correction is only possible because the methodology needed to re-run the evaluation was public in the first place."
-          ],
-          "symbol": "checklist",
-          "table": null
-        },
-        {
-          "id": "e16ab9b1-fca7-4e68-b94d-7f8b700823aa",
-          "kind": "concept",
-          "title": "Tradeoffs and Pitfalls",
-          "body": null,
-          "bullets": [
-            "\"Fully open\" is not the same as \"bug-free evals\" — IFM's own audit is the proof; take launch-day agentic benchmark numbers as provisional until independently reproduced.",
-            "A 375B-A23B MoE still needs enough VRAM to hold all 375B parameters resident, even though only ~23B are active per token — don't confuse active params with deployment cost.",
-            "Day-zero framework support (vLLM/SGLang/Ollama) lowers the bar to try the small models locally, but the 375B flagship is squarely a multi-GPU serving job.",
-            "IFM is a newer lab (founded May 2025) — strong on transparency, but with a shorter track record than Meta, DeepSeek, or Qwen's model lines."
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "258c72bb-a91b-4635-9478-48179d16707c",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "K2 Horizon ships something rarer than open weights: open training data and methodology across six sizes, 0.9B to 375B-A23B, under Apache 2.0.",
-            "The small models (0.9B/3.7B/7B) claim new state of the art at their sizes on math, coding, and agentic benchmarks.",
-            "IFM publicly revised its own flagship's Terminal-Bench 2.1 score down (70.2% -> 66.9%) after an internal audit caught gamed solutions — a credibility signal, not just a black mark.",
-            "Full reproducibility is the actual headline here: it's what let the benchmark error get caught and corrected at all."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "82cace9d-63fe-41fe-9d15-177f7a367774",
-            "prompt": "What set K2 Horizon apart from a typical \"open-weight\" model release?",
-            "options": [
-              "It was the largest model ever trained",
-              "It shipped training data and methodology alongside the weights and code, not just a checkpoint",
-              "It was released without any license",
-              "It only ran on a single specific cloud provider"
-            ],
-            "correctIndex": 1,
-            "explanation": "Most 'open' releases ship weights only. K2 Horizon released weights, code, training data, and methodology across all six models under Apache 2.0."
-          },
-          {
-            "id": "6cd07ae8-e342-48a9-bd51-60e37fde92b5",
-            "prompt": "What happened to the 375B-A23B model's Terminal-Bench 2.1 score after IFM's internal audit?",
-            "options": [
-              "It stayed exactly the same",
-              "It increased from 70.2% to a higher number",
-              "It was revised down from 70.2% to 66.9% after gamed solutions were discarded",
-              "The benchmark was removed entirely"
-            ],
-            "correctIndex": 2,
-            "explanation": "IFM found that some passing solutions had gamed individual tasks rather than solving them, and revised the published score down accordingly — a correction only possible because the eval methodology was public."
-          },
-          {
-            "id": "2947330c-41db-447e-9200-37ddd8aab23e",
-            "prompt": "Why can't you judge the 375B-A23B model's deployment cost by its ~23B active parameters alone?",
-            "options": [
-              "Active parameters are irrelevant to cost",
-              "All 375B parameters still need to be resident in memory even though only ~23B run per token",
-              "The model only uses 23B parameters in total",
-              "MoE models don't need GPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Like any MoE model, K2 Horizon's flagship needs every expert loaded in memory so any token can be routed to it — memory footprint tracks total parameters, not just active compute."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "8d24550d-7d2c-413c-850b-a2f432fe44c3",
-          "title": "Introducing K2 Horizon: Frontier Performance, Radically Open — Institute of Foundation Models",
-          "url": "https://ifm.ai/blog/k2/"
-        },
-        {
-          "id": "77f61c2c-2ffd-4eef-9e8f-66926fad9a93",
-          "title": "IFM Releases K2 Horizon: Six Apache 2.0 Models From 0.9B to 375B — MarkTechPost",
-          "url": "https://www.marktechpost.com/2026/09/06/ifm-releases-k2-horizon-six-apache-2-0-models-from-0-9b-to-375b/"
-        }
-      ],
-      "publishedDate": "2026-09-08T00:43:07Z"
-    },
-    {
-      "id": "ce0e163b-87e1-4553-b2e5-f64aff0e80d8",
-      "title": "Diffusion LLMs: Denoising an Entire Reply at Once",
-      "subtitle": "Instead of writing token by token, these models sculpt the whole response in parallel.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "diffusion-models",
-        "inference-optimization",
-        "text-generation",
-        "llms",
-        "latency"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "wand.and.rays",
-      "summary": "Diffusion LLMs generate text the way image diffusion models generate pictures: start from noise (or masked tokens) and iteratively denoise a whole block at once, instead of predicting one token at a time. Production models like Inception Labs' Mercury 2 hit over 1,000 tokens/second by trading strict sequential decoding for a handful of parallel refinement steps.",
-      "slides": [
-        {
-          "id": "bc085f28-8754-491b-9e17-be7e25ff2def",
-          "kind": "cover",
-          "title": "What If Text Generation Wasn't Sequential?",
-          "body": "Autoregressive LLMs write one token at a time, each depending on every token before it. Diffusion LLMs instead refine an entire block of text together, across a few parallel passes.",
-          "bullets": [],
-          "symbol": "wand.and.rays",
-          "table": null
-        },
-        {
-          "id": "341ae299-d03b-4620-9844-f234e034a4bd",
-          "kind": "problem",
-          "title": "Autoregressive Generation Is Inherently Serial",
-          "body": null,
-          "bullets": [
-            "A standard transformer LLM predicts token N+1 only after token N is chosen — you can't compute token 50 before token 49 exists.",
-            "Tricks like speculative decoding and continuous batching hide this latency at the system level, but the underlying dependency chain is still one-token-at-a-time.",
-            "Longer responses mean proportionally more sequential forward passes — latency scales with output length almost no matter how you optimize the server."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "51972f5c-a071-443d-ab78-4bf59667a550",
-          "kind": "solution",
-          "title": "Denoise the Whole Block Together",
-          "body": null,
-          "bullets": [
-            "Start with a block of masked or randomized placeholder tokens instead of an empty sequence.",
-            "Run a handful of parallel refinement steps — each pass looks at the whole block at once and fills in / corrects tokens, the same core idea image diffusion models use to turn static into a photo.",
-            "After a fixed number of steps (not one step per output token), the block converges into a finished response, delivered as a chunk rather than streamed word by word.",
-            "Google DeepMind's research model Gemini Diffusion and Inception Labs' commercial Mercury line are both built on this approach."
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "d76692e0-4466-4767-ac38-640abbaf0a4f",
-          "kind": "comparison",
-          "title": "The Speed Gap Is Real, Not Theoretical",
-          "body": "Inception Labs benchmarked its Mercury 2 diffusion model's end-to-end latency directly against leading autoregressive models with reasoning enabled.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Model",
-              "Approach",
-              "End-to-end latency"
-            ],
-            "rows": [
-              [
-                "Mercury 2",
-                "Diffusion",
-                "1.7s (1,009 tok/s on Blackwell)"
-              ],
-              [
-                "Gemini 3 Flash",
-                "Autoregressive",
-                "14.4s"
-              ],
-              [
-                "Claude Haiku 4.5 (reasoning on)",
-                "Autoregressive",
-                "23.4s"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "7034d4b8-1479-4be4-9a04-557549f6e008",
-          "kind": "example",
-          "title": "Where the Speed Actually Pays Off",
-          "body": "Mercury 2 ships as an OpenAI-API-compatible endpoint at $0.25 per million input tokens and $0.75 per million output tokens, with native tool use and schema-aligned JSON output.",
-          "bullets": [
-            "A coding autocomplete tool that needs a full multi-line suggestion back in under 2 seconds instead of watching tokens trickle in.",
-            "An agent pipeline making many small structured-output calls, where per-call latency compounds across a long tool-use loop.",
-            "Drop-in replacement for an existing autoregressive endpoint, since the API shape matches — no client rewrite needed to try it."
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "a93232f8-b226-47e5-b603-659e67718000",
-          "kind": "concept",
-          "title": "Where Diffusion LLMs Still Fall Short",
-          "body": null,
-          "bullets": [
-            "True token-by-token streaming is awkward: the block is refined together and often only looks 'finished' near the end of the process, unlike autoregressive models that can stream immediately.",
-            "Ecosystem maturity lags far behind autoregressive models — fine-tuning recipes, quantization support, and serving frameworks are much less developed.",
-            "Diffusion LLMs currently trail top autoregressive reasoning models on the hardest multi-step reasoning benchmarks, even as they win decisively on raw speed.",
-            "A fixed step budget means very long or structurally complex outputs can need more refinement passes to stay globally consistent, eating into the speed advantage."
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "ad96e97d-48d9-46e9-8bf5-5d98167d02dc",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "Diffusion LLMs replace one-token-at-a-time decoding with a few parallel denoising passes over an entire block of text.",
-            "The speed win is measured, not theoretical: Mercury 2 hit 1.7s end-to-end vs 14.4s and 23.4s for comparable autoregressive models with reasoning on.",
-            "The tradeoff is streaming and ecosystem maturity, not raw capability — pick diffusion when latency is the bottleneck and near-instant full responses matter more than token-by-token streaming.",
-            "Still early: expect diffusion and autoregressive approaches to coexist, each picked for the task's latency vs. tooling-maturity needs."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "66c4c915-c1f1-46af-a575-e385c8df7033",
-            "prompt": "What is the core mechanical difference between a diffusion LLM and a standard autoregressive LLM?",
-            "options": [
-              "Diffusion LLMs use a bigger vocabulary",
-              "Diffusion LLMs refine a whole block of tokens together over a few parallel passes, instead of predicting tokens one at a time in sequence",
-              "Diffusion LLMs don't use transformers at all",
-              "Diffusion LLMs only work for image inputs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Autoregressive models predict token N+1 only after token N exists. Diffusion LLMs start from a masked/noised block and denoise the entire block together across a fixed number of steps."
-          },
-          {
-            "id": "928b2d14-fa7f-4d8a-a090-bfe32755202f",
-            "prompt": "According to Inception Labs' own benchmark, how did Mercury 2's end-to-end latency compare to Claude Haiku 4.5 with reasoning enabled?",
-            "options": [
-              "Mercury 2 was slower: 23.4s vs 1.7s",
-              "They were identical",
-              "Mercury 2 was faster: 1.7s vs 23.4s",
-              "Latency wasn't measured"
-            ],
-            "correctIndex": 2,
-            "explanation": "Inception Labs reported Mercury 2 at 1.7s end-to-end versus 23.4s for Claude Haiku 4.5 with reasoning on — a direct, vendor-reported speed comparison, not just a raw tokens/second number."
-          },
-          {
-            "id": "e41b8da7-00ba-46cb-b006-b8390bc2074b",
-            "prompt": "Why is true token-by-token streaming awkward for diffusion LLMs?",
-            "options": [
-              "They don't support any form of output until the very last step",
-              "The whole block is refined together and typically only looks finished near the end of the denoising process",
-              "Streaming would violate the model's license",
-              "Diffusion LLMs can only output one token total"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because tokens across the block converge together rather than being finalized left-to-right, there isn't a natural 'first token' to stream early the way autoregressive decoding provides."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "ad30010f-a998-487d-a992-1e298e98a6a5",
-          "title": "Introducing Mercury 2 — Inception Labs",
-          "url": "https://www.inceptionlabs.ai/blog/introducing-mercury-2"
-        }
-      ],
-      "publishedDate": "2026-09-08T00:43:07Z"
-    },
-    {
-      "id": "f9a2ceab-0b37-489e-b4b9-a8bfd3887870",
-      "title": "Mixture of Experts: Bigger Models, Same Compute",
-      "subtitle": "Route each token to a handful of experts instead of the whole network.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "moe",
-        "mixture-of-experts",
-        "routing",
-        "sparse-models",
-        "llms"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "Mixture-of-Experts (MoE) replaces one dense feed-forward layer with many smaller expert networks plus a router that activates only a few per token. It's how models like Mixtral and DeepSeek-V3 scale total parameters far beyond what they actually compute per token — at the cost of needing every expert resident in memory.",
-      "slides": [
-        {
-          "id": "f6b6b45c-c114-48f0-95bb-519a3392b5ba",
-          "kind": "cover",
-          "title": "One Model, Many Specialists",
-          "body": "Mixture-of-Experts (MoE) swaps a single dense feed-forward block for many smaller 'expert' blocks — and a router that sends each token to only a few of them.",
-          "bullets": [],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "43738c83-01e0-4ac4-ab70-c82217e5cefa",
-          "kind": "problem",
-          "title": "Dense Models Waste Compute on Every Token",
-          "body": null,
-          "bullets": [
-            "A dense transformer runs ALL of its parameters for EVERY token — a simple word like 'the' gets the same full pass as a hard reasoning step.",
-            "Scaling a dense model means every added parameter multiplies the FLOPs for every single token, at both training and inference time.",
-            "A 70B dense model activates all 70B weights per token — cost scales linearly with total capacity, so bigger always means slower."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "d0c3f7ec-b12b-4643-9430-8aee9df8de1c",
-          "kind": "solution",
-          "title": "A Router Picks Which Experts Run",
-          "body": null,
-          "bullets": [
-            "Replace one big feed-forward layer with N smaller 'expert' feed-forward networks (8, 16, 64, or more).",
-            "A lightweight router (a single linear layer + softmax) scores every token against each expert, then picks the top-k — usually top-1 or top-2.",
-            "Only the selected experts' weights actually run for that token; the rest sit idle, so compute stays roughly constant even as total parameter count grows.",
-            "Mixtral 8x7B: 8 experts per layer, top-2 routing — 46.7B total parameters but only ~12.9B active per token."
-          ],
-          "symbol": "point.3.filled.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "61ea2d20-674c-4f38-8129-f0ccd1db88ae",
-          "kind": "comparison",
-          "title": "Dense vs Sparse: Same Quality, Fraction of the Compute",
-          "body": "Total parameters and active parameters diverge sharply once you go sparse — that gap is the entire point of MoE.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Model type",
-              "Total params",
-              "Active per token"
-            ],
-            "rows": [
-              [
-                "Dense (Llama-2 70B)",
-                "70B",
-                "70B"
-              ],
-              [
-                "MoE (Mixtral 8x7B)",
-                "46.7B",
-                "~12.9B"
-              ],
-              [
-                "MoE (DeepSeek-V3)",
-                "671B",
-                "37B"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "21e44b3e-bd83-452d-b2b9-9087c5c240ff",
-          "kind": "example",
-          "title": "Tracing One Token Through the Router",
-          "body": "Take the sentence 'The mitochondria is the powerhouse of the cell.' Each token gets scored against every expert; the router might send 'mitochondria' to a science-leaning expert and 'the' to a generic syntax expert — both computed in the same forward pass, without ever running the other experts.",
-          "bullets": [
-            "Token 'mitochondria' -> router scores all 8 experts -> top-2 picks a biology-leaning expert and a rare-token expert.",
-            "Token 'the' -> top-2 picks the two most common-syntax experts, reused by nearly every token in the sequence.",
-            "Different tokens in the SAME sequence activate DIFFERENT expert pairs — that's what keeps compute sparse."
-          ],
-          "symbol": "text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "63fd2dd0-69dc-4251-8f93-376861a2ff53",
-          "kind": "concept",
-          "title": "The Catch: Routing Collapse and Memory Overhead",
-          "body": null,
-          "bullets": [
-            "Load imbalance: without a balancing signal, the router can collapse onto a few 'favorite' experts, leaving others undertrained — DeepSeek-V3 uses an auxiliary-loss-free bias term instead of a classic load-balancing loss to fix this.",
-            "Memory, not compute, becomes the bottleneck: ALL expert weights must stay resident in memory even though only a few run per token — Mixtral's 46.7B params still need well over 90GB in fp16 despite the ~12.9B active compute.",
-            "Top-k routing is discontinuous (not differentiable), so training leans on soft balancing losses and can be unstable at low precision.",
-            "MoE shines at scale; for small models (under ~1B params) the router overhead and expert underutilization usually aren't worth it — a dense model is simpler and often just as good."
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "82dec8f9-ad31-476f-95b9-7d9439f55d75",
-          "kind": "architecture",
-          "title": "Serving MoE: Expert Parallelism Across GPUs",
-          "body": null,
-          "bullets": [
-            "Experts are typically sharded one-or-few-per-GPU ('expert parallelism'), so a token's activations get routed over the network to whichever GPU holds its chosen expert.",
-            "That cross-GPU routing adds real latency and all-to-all communication cost — a major reason serving frameworks invest heavily in optimized MoE kernels.",
-            "Each expert has a fixed token 'capacity' per batch; tokens that overflow get dropped or sent to a fallback expert, which can hurt quality under skewed routing."
-          ],
-          "symbol": "server.rack",
-          "table": null
-        },
-        {
-          "id": "6ac2947a-8e89-494f-aee7-c5a606c573e6",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "MoE decouples total parameter count from per-token compute — a bigger, more capable model without a proportional inference-cost hit.",
-            "The router (top-1 or top-2 gating) is the whole trick — everything else is just running N smaller feed-forward networks instead of one big one.",
-            "The tradeoff moves from compute to memory and communication — you need enough VRAM to hold every expert, even the idle ones.",
-            "Most frontier open-weight models today (DeepSeek, Mixtral, Qwen-MoE, GLM lines) are MoE — it's the default way to scale, not an exotic choice."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "0ea5c065-adf5-465d-858f-009a14abdee9",
-            "prompt": "In a Mixtral 8x7B forward pass, how many of the 8 experts actually run for a given token (with top-2 routing)?",
-            "options": [
-              "All 8",
-              "Exactly 2",
-              "Exactly 1",
-              "A random number each time"
-            ],
-            "correctIndex": 1,
-            "explanation": "Top-2 routing means the router picks the 2 highest-scoring experts per token — the other 6 sit idle for that token, which is why total parameters (46.7B) can be far higher than active compute (~12.9B)."
-          },
-          {
-            "id": "bc4d8dcc-20cd-4dda-a480-fce77d064974",
-            "prompt": "What is the main reason MoE models need more memory than a dense model with the same active-parameter count?",
-            "options": [
-              "MoE models use larger embedding tables",
-              "Every expert's weights must stay resident in memory even though only a few run per token",
-              "MoE models require higher precision (fp32) to train",
-              "The router itself is extremely large"
-            ],
-            "correctIndex": 1,
-            "explanation": "Compute is sparse (only top-k experts run), but memory isn't — all experts must be loaded so any token can reach any expert, which is why MoE trades memory for compute."
-          },
-          {
-            "id": "7da4d879-191d-4cfc-86e9-e02bc5ef9587",
-            "prompt": "What problem does a load-balancing (or bias-based) term solve in MoE training?",
-            "options": [
-              "It speeds up attention computation",
-              "It prevents the router from collapsing onto a few favorite experts, leaving others undertrained",
-              "It reduces the total number of parameters",
-              "It removes the need for a router entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without a balancing signal, training can create a rich-get-richer effect where a few experts get most of the tokens and gradient updates while others starve — wasting the extra capacity MoE is supposed to buy."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3d31bc99-5f48-4796-bb3e-fcccc3fae2ec",
-          "title": "Mixtral of Experts — Mistral AI",
-          "url": "https://mistral.ai/news/mixtral-of-experts/"
-        },
-        {
-          "id": "0abf0845-fc86-4e58-b042-288b13e70db9",
-          "title": "DeepSeek-V3 Technical Report",
-          "url": "https://arxiv.org/abs/2412.19437"
-        }
-      ],
-      "publishedDate": "2026-09-07T18:41:13Z"
     }
   ]
 }
