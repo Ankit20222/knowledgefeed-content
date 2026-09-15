@@ -1,6 +1,195 @@
 {
   "posts": [
     {
+      "id": "a3174a2f-20a1-455a-a47a-c37d3a1614ba",
+      "title": "Mixture of Experts: Scaling Params Without the FLOPs",
+      "subtitle": "How sparse routing lets trillion-parameter models run like much smaller ones",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture-of-experts",
+        "moe",
+        "sparse-models",
+        "llm-architecture",
+        "routing",
+        "inference-efficiency"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "A Mixture-of-Experts layer swaps one big feed-forward block for many smaller 'expert' blocks plus a router that sends each token to only a few of them. Total parameters explode, but the FLOPs per token stay small — the trick behind most of today's largest open models.",
+      "slides": [
+        {
+          "id": "584b00b1-1652-431f-8a01-1a9ba36f52d5",
+          "kind": "cover",
+          "title": "A Model With Hundreds of Billions of Params That Runs Like a Small One",
+          "body": null,
+          "bullets": [
+            "Mixture of Experts (MoE) replaces a single dense feed-forward block with many parallel 'expert' blocks",
+            "A learned router sends each token to only a handful of them, not all",
+            "Result: massive total capacity, but a fraction of the compute per token"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "d8d3c3d2-871b-4c68-a7c7-f672e5ec8d71",
+          "kind": "problem",
+          "title": "Dense Models Force Every Token Through Every Parameter",
+          "body": "In a standard ('dense') transformer, every token activates every weight in every feed-forward layer. Want more knowledge and capacity? You add parameters — but every one of them now costs compute on every single token, forever, at both training and inference time.",
+          "bullets": [
+            "Compute cost scales linearly with total parameter count in a dense model",
+            "Doubling capacity means roughly doubling FLOPs per token, and doubling inference latency/cost",
+            "Most of a huge dense model's knowledge is irrelevant to any given token, yet you still pay to compute it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "8dfa046e-d154-489b-b17d-e494f00d3fe2",
+          "kind": "solution",
+          "title": "Split the Feed-Forward Layer Into Experts, Route Instead of Broadcast",
+          "body": "An MoE layer replaces the single feed-forward block with N smaller feed-forward blocks ('experts') plus a lightweight router (a small learned linear layer + softmax). For each token, the router scores every expert and activates only the top-k highest-scoring ones — typically k=1 or k=2 out of 8, 16, even 256 experts.",
+          "bullets": [
+            "Router output picks the top-k experts per token; only those experts do a forward pass for that token",
+            "The token's representation is a weighted sum of the outputs of just those k experts",
+            "Everything else in the transformer (attention layers, embeddings) usually stays dense — only the FFN sub-layer is sparse"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "efdb63e5-a070-4b39-86a9-690fff4829e8",
+          "kind": "architecture",
+          "title": "Why Routing Alone Isn't Enough: Load Balancing",
+          "body": "Left unconstrained, a router quickly collapses onto a handful of favorite experts — they get better because they're used more, so the router picks them even more, starving the rest. Training adds an auxiliary load-balancing loss that penalizes uneven expert usage across a batch, pushing the router toward a roughly even split.",
+          "bullets": [
+            "Without balancing: a few experts overtrain, most experts undertrain and stay useless",
+            "The auxiliary loss is added to the main next-token loss with a small weight so it nudges, not dominates, training",
+            "Some designs cap each expert's 'capacity' (max tokens it'll accept per batch) and drop overflow tokens, trading a little accuracy for guaranteed balance"
+          ],
+          "symbol": "scalemass.fill",
+          "table": null
+        },
+        {
+          "id": "524e93b9-5b14-46de-a82d-72dbfaca7f68",
+          "kind": "example",
+          "title": "Worked Example: Routing One Token Through an 8-Expert Layer",
+          "body": "Say a layer has 8 experts and top-k=2. For the token 'photosynthesis', the router computes 8 scores, softmaxes them, and picks the 2 highest — maybe a 'biology/science' expert and a 'general vocabulary' expert. Only those two run their full feed-forward computation on this token; the other 6 do nothing for it.",
+          "bullets": [
+            "Router cost: one small matmul (hidden_size x num_experts) — negligible next to the experts themselves",
+            "Compute for this token's FFN sub-layer: 2/8 = 25% of what a dense layer with the same total FFN parameters would cost",
+            "Different tokens in the same batch route to different expert pairs — 'the' might hit different experts than 'photosynthesis'"
+          ],
+          "symbol": "text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "2ca4df39-8c2a-47a6-b531-da45025aee55",
+          "kind": "comparison",
+          "title": "Total Parameters vs. Active Parameters — the Number That Actually Matters",
+          "body": "MoE models are usually described by two numbers: total parameters (everything stored on disk/in memory) and active parameters (what actually runs per token). Active parameters is the number that predicts inference speed and per-token FLOPs — total parameters predicts memory footprint.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Model type",
+              "What scales with param count",
+              "What you pay per token"
+            ],
+            "rows": [
+              [
+                "Dense",
+                "Total params = active params",
+                "Full FFN compute, every token"
+              ],
+              [
+                "MoE (top-k of N experts)",
+                "Total params = N x expert size",
+                "Only k/N of the FFN compute, every token"
+              ],
+              [
+                "MoE tradeoff",
+                "Needs all experts resident in memory/VRAM",
+                "But inference latency tracks active params, not total"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "0b366769-6e2a-4a33-8e1e-55ccf28c7fcf",
+          "kind": "problem",
+          "title": "Where Sparsity Bites Back",
+          "body": "MoE isn't a free lunch. The savings are in compute, not memory — you still have to hold every expert in VRAM even though most sit idle for any given token, since you don't know in advance which ones a batch will need.",
+          "bullets": [
+            "Memory cost is closer to the dense equivalent of the total parameter count, not the active count — this is the classic MoE tradeoff",
+            "In distributed training/serving, experts often live on different devices, so routing decisions trigger all-to-all network communication that can bottleneck throughput",
+            "Fine-tuning MoE models is trickier: with less data flowing through any one expert, individual experts are more prone to overfitting or instability than in dense fine-tuning",
+            "Don't reach for MoE at small scale — the routing/balancing overhead and engineering complexity only pay off once the model is large enough that dense compute becomes the real bottleneck"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "210254a7-bdd9-4d7b-953c-903b9da94818",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "MoE swaps one dense FFN for many small experts plus a router that activates only the top-k per token",
+            "Total params (capacity) and active params (compute cost) decouple — that's the entire point",
+            "A load-balancing auxiliary loss keeps the router from collapsing onto a few favorite experts",
+            "The cost you save in FLOPs, you partly pay back in VRAM (all experts must stay resident) and in routing/communication overhead",
+            "It's the architecture behind most of today's largest open-weight models, because it's the practical way to keep scaling capacity once dense compute stops being affordable"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "785da01e-fb0e-42e0-a72b-bb198eaadf0b",
+            "prompt": "In a Mixture-of-Experts layer with 8 experts and top-k=2, what happens to a single token?",
+            "options": [
+              "It's processed by all 8 experts and the results are averaged",
+              "The router scores all 8 experts and only the 2 highest-scoring experts process the token",
+              "One random expert is chosen for each token",
+              "The token skips the feed-forward layer entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "The router computes a score per expert and routes the token to only the top-k (here, 2) highest-scoring experts — the rest do no work for that token, which is exactly where the compute savings come from."
+          },
+          {
+            "id": "9eda675f-08c9-4d64-b605-1d813bf66a2b",
+            "prompt": "Why does MoE training add an auxiliary load-balancing loss?",
+            "options": [
+              "To make the model's total parameter count smaller",
+              "To speed up the router's matmul",
+              "To stop the router from collapsing onto a few favorite experts while the rest go undertrained",
+              "To remove the need for a router entirely"
+            ],
+            "correctIndex": 2,
+            "explanation": "Without a balancing signal, a few experts get picked more, get better because they're trained more, and get picked even more — a feedback loop that leaves most experts undertrained and useless."
+          },
+          {
+            "id": "a87dc974-c72c-4bb3-9030-0208258ca355",
+            "prompt": "What's the key tradeoff MoE makes compared to a dense model of equivalent total parameter count?",
+            "options": [
+              "MoE uses less memory but the same compute per token",
+              "MoE reduces compute per token (only active experts run), but still needs all experts resident in memory",
+              "MoE eliminates the need for a feed-forward layer",
+              "MoE is strictly better with no downsides"
+            ],
+            "correctIndex": 1,
+            "explanation": "MoE decouples capacity (total params, which drives memory footprint) from per-token compute (active params) — you save FLOPs, but you still have to keep every expert loaded since you don't know in advance which ones each token will need."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-09-15T00:39:52Z"
+    },
+    {
       "id": "2cb20ec4-b5a6-4786-b735-baff2c1e5274",
       "title": "Prompt Caching: Paying Once for Tokens You Reuse",
       "subtitle": "Why the order of your prompt decides how much of it you pay for twice",
@@ -10978,183 +11167,6 @@
       ],
       "id": "c65b97a7-c7be-4d46-a13e-4c8f78976e10",
       "publishedDate": "2026-09-08T06:40:37Z"
-    },
-    {
-      "id": "ed2dad84-3170-420d-91ac-bec9bf354691",
-      "title": "Compile by Training: Turning a Prompt Into a Tiny Function",
-      "subtitle": "Pay a big model once at compile time, then run a small one forever.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "distillation",
-        "inference-optimization",
-        "adapters",
-        "llm-compilers",
-        "context-engineering"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "hammer.fill",
-      "summary": "A new EMNLP 2026 paper, \"Compile by Training,\" turns a natural-language task description into a small, reusable neural function: a teacher LLM generates training examples once, those train a compact adapter, and the resulting artifact runs standalone with no teacher calls at inference. On FuzzyBench-Hard it reaches 83.6% semantic accuracy, at the cost of roughly a minute of compile time instead of seconds.",
-      "slides": [
-        {
-          "id": "c5e75165-695d-4da2-8ef1-806f6eb1d191",
-          "kind": "cover",
-          "title": "Compiling English Into a Neural Function",
-          "body": "Instead of calling a large model on every input, this paper trains a small adapter once from a natural-language spec — then runs that adapter forever, without the big model in the loop.",
-          "bullets": [],
-          "symbol": "hammer.fill",
-          "table": null
-        },
-        {
-          "id": "76ba0abe-7279-467c-ac16-72c7950b3f7c",
-          "kind": "problem",
-          "title": "Recurring Text Tasks Are Easy to Describe, Hard to Ship",
-          "body": null,
-          "bullets": [
-            "A task like \"extract the shipping address from this email\" is trivial to describe in English but brittle to implement with hand-written rules.",
-            "The obvious fix — call a large remote model on every input — adds repeated per-call cost, network latency, and a hard dependency on one provider staying up and unchanged.",
-            "Neither option gives you something you can store, version, diff, or run offline like ordinary software."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "e0e6c956-2f22-4db0-b7d7-348efde1251f",
-          "kind": "solution",
-          "title": "Teacher Models Train a Small Interpreter, Once",
-          "body": null,
-          "bullets": [
-            "At compile time, one or more teacher LLMs generate task-specific input/output examples from the natural-language spec.",
-            "Those examples train a small adapter that plugs into a compact, shared interpreter model — not a full fine-tune of a giant model.",
-            "The resulting compiled function runs completely without the teachers: it's a standalone artifact you can store, version, and compose like a library, not a live API dependency.",
-            "Authors: Yuntian Deng, Pengyu Nie, Stuart Shieber — accepted as an EMNLP 2026 System Demonstrations paper."
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "b2d53fd7-e8dc-4f94-a6c6-517d345c9b55",
-          "kind": "comparison",
-          "title": "Accuracy Bought With Compile Time, Not Inference Time",
-          "body": "The paper compares against \"Program-as-Weights,\" a fast compiler that skips training and produces a function directly — cheap to compile, but it can fail outright on harder specs.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Compiler",
-              "Compile time",
-              "FuzzyBench-Hard result"
-            ],
-            "rows": [
-              [
-                "Program-as-Weights (fast compiler)",
-                "~seconds",
-                "No exact matches on this hard subset"
-              ],
-              [
-                "Compile by Training",
-                "~1 minute",
-                "83.6% semantic accuracy"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "2e23141a-37c6-4cd0-abb2-61f2b01bb4f0",
-          "kind": "example",
-          "title": "One Spec, Three Very Different Deployments",
-          "body": "The authors demo the same compile-by-training pipeline producing working, teacher-free functions for very different jobs.",
-          "bullets": [
-            "A multi-site website helper that answers questions using only that site's content.",
-            "A language-controlled 3D avatar — English commands compiled into a function that drives avatar behavior.",
-            "A bidirectional translator compiled from a plain-language spec of the translation task, not hand-written rules."
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "bf68995f-a56a-406d-a1a3-dd94e2c9210b",
-          "kind": "concept",
-          "title": "Where This Breaks Down",
-          "body": null,
-          "bullets": [
-            "The 1-minute compile cost is paid per task spec — fine for a function you'll call millions of times, wasteful for a one-off query you'll never repeat.",
-            "The compiled adapter is narrow by design: it's built for one described function, not a general-purpose assistant — you compile a new one for a new task.",
-            "You still need teacher-model access at compile time; this removes the teacher from the inference path, not from the pipeline entirely.",
-            "Quality is bounded by how well the teacher's synthetic examples cover the real input distribution — a poorly specified task compiles into a poorly behaved function."
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "e311108a-e238-4e35-9db0-ebc36ce26247",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "Compile by training amortizes a big model's cost: pay for teacher inference once at compile time, then run a small adapter forever at inference time.",
-            "The output is a storable, versionable artifact — closer to compiled software than to a prompt template or a live API call.",
-            "It trades a slower compile step (~1 minute vs seconds) for meaningfully higher accuracy (83.6% on a hard benchmark subset where the fast alternative got zero exact matches).",
-            "Best fit: narrow, recurring, well-specified text functions called at volume — not open-ended assistants or rarely-run one-off tasks."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "1f3ccf78-3fca-4c9d-ac62-589551669b62",
-            "prompt": "In \"compile by training,\" when does the teacher LLM actually get called?",
-            "options": [
-              "On every inference request, just like a normal API call",
-              "Only at compile time, to generate training examples for the adapter",
-              "Never — the system works with zero LLM involvement",
-              "Only when the compiled function's confidence is low"
-            ],
-            "correctIndex": 1,
-            "explanation": "The teacher generates task-specific examples once, at compile time. The resulting adapter runs standalone afterward — the whole point is removing the teacher from the inference path."
-          },
-          {
-            "id": "1babdd6d-ead0-4a1f-96de-16b26fccce88",
-            "prompt": "On FuzzyBench-Hard, why is compile by training's 83.6% semantic accuracy notable?",
-            "options": [
-              "It matches GPT-4's original benchmark score",
-              "It's measured on a subset where the fast Program-as-Weights compiler produced no exact matches at all",
-              "It was achieved with zero training data",
-              "It runs faster than the fast compiler"
-            ],
-            "correctIndex": 1,
-            "explanation": "FuzzyBench-Hard is specifically the subset that broke the fast compiler. Compile by training reaches 83.6% there, but pays for it with roughly a minute of compile time instead of seconds."
-          },
-          {
-            "id": "470d1456-dca3-4d57-85b0-08b2ebaacdf8",
-            "prompt": "Which scenario is the WORST fit for compile by training?",
-            "options": [
-              "A translation function called millions of times in production",
-              "A one-off analysis you'll run exactly once and never again",
-              "A website Q&A helper answering repeated visitor questions",
-              "A language-controlled function called repeatedly by an avatar"
-            ],
-            "correctIndex": 1,
-            "explanation": "The ~1-minute compile cost only pays off when the resulting function is reused many times. A single one-off query never earns back that upfront training cost."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "2928e86f-2a15-4306-ac4a-7a78b64e5ed9",
-          "title": "Compile by Training: Turning Natural-Language Specifications into Local Neural Functions (arXiv:2609.04199)",
-          "url": "https://arxiv.org/abs/2609.04199"
-        },
-        {
-          "id": "e4a8fec2-08f5-4a76-b0e3-9ac5c57dadbd",
-          "title": "Paper page — Compile by Training (Hugging Face Daily Papers)",
-          "url": "https://huggingface.co/papers/2609.04199"
-        }
-      ],
-      "publishedDate": "2026-09-08T00:43:07Z"
     }
   ]
 }
