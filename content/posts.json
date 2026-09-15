@@ -1,6 +1,361 @@
 {
   "posts": [
     {
+      "id": "1da77dfd-ad2c-4c9d-a818-a8021a6a166b",
+      "title": "MLA: Compressing the KV Cache Without Losing Quality",
+      "subtitle": "DeepSeek's trick for making long-context serving cheap: cache a compressed latent, not full-size keys and values.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "inference-optimization",
+        "deepseek",
+        "transformers"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu.fill",
+      "summary": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2, shrinks the KV cache by storing a single compressed latent vector per token instead of full-size keys and values per head, then reconstructing them on the fly — cutting serving memory dramatically while matching or beating standard attention's quality.",
+      "publishedDate": "2026-09-15T12:41:41Z",
+      "slides": [
+        {
+          "id": "8ff951e4-3c3f-4589-96a0-0e1183731bbc",
+          "kind": "cover",
+          "title": "MLA: Compressing the KV Cache Without Losing Quality",
+          "body": "Multi-Head Latent Attention (MLA) is the attention variant behind DeepSeek-V2 and V3's cheap long-context serving. It's a different answer to the KV cache problem than the more familiar GQA.",
+          "bullets": [],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "39bb8bd0-a35d-4d73-9ffd-c4234fdae70a",
+          "kind": "problem",
+          "title": "The KV cache is what actually limits your context window",
+          "body": "During inference, standard Multi-Head Attention (MHA) caches a full-size key and value vector per attention head, per token, so every token you generate keeps growing that cache. It's not the model weights that blow your GPU memory at long context — it's this cache.",
+          "bullets": [
+            "Cache size scales with context length × batch size × number of heads — all three compound",
+            "Grouped-Query Attention (GQA) fixes this by sharing K/V across groups of heads, but that sharing reduces the model's expressivity",
+            "Bigger caches mean fewer concurrent users you can serve per GPU, directly setting your API's cost per token"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "3e8a5899-4e55-41cc-91ba-f7f382f2f7c2",
+          "kind": "solution",
+          "title": "Cache a compressed latent, reconstruct it just-in-time",
+          "body": "MLA takes a different approach from GQA: instead of sharing K/V across heads, it projects K and V down into one small low-rank latent vector per token via a learned down-projection matrix. Only that latent gets cached. At attention time, learned up-projection matrices expand it back into full per-head keys and values.",
+          "bullets": [
+            "The cache stores one compact latent per token, not one K/V pair per head",
+            "Up/down-projection matrices are learned during pretraining, not bolted on afterward",
+            "DeepSeek-V2's report shows MLA needs only a small fraction of standard MHA's cache size — and still outperforms MHA on quality"
+          ],
+          "symbol": "wand.and.stars",
+          "table": null
+        },
+        {
+          "id": "a659b616-0687-4029-8b21-99f80a950c31",
+          "kind": "architecture",
+          "title": "The catch: RoPE doesn't compress cleanly",
+          "body": "Rotary position embeddings (RoPE) rotate query/key vectors based on position, and that rotation doesn't commute with MLA's low-rank compression. DeepSeek's fix is 'decoupled RoPE': split each key into a compressed content part (handled by MLA) and a small separate part that carries positional info directly, uncompressed.",
+          "bullets": [
+            "Without this split, compressing then rotating (or rotating then compressing) would corrupt position information",
+            "The decoupled RoPE part is small relative to the compressed content part, so it adds little cache overhead",
+            "This detail is why MLA can't be bolted onto a RoPE model by just adding a projection layer — it needs architecture-level support"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "871427b7-0180-4fbe-b599-5a05335e10e4",
+          "kind": "comparison",
+          "title": "MLA vs. GQA vs. standard MHA",
+          "body": "Different points on the same tradeoff: how much of standard MHA's KV cache do you keep, and what does that cost in quality?",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Method",
+              "KV cache vs. MHA",
+              "Quality vs. MHA"
+            ],
+            "rows": [
+              [
+                "Standard MHA",
+                "100% (baseline)",
+                "baseline"
+              ],
+              [
+                "GQA",
+                "shared across head groups (varies by group size)",
+                "slightly lower"
+              ],
+              [
+                "MLA (DeepSeek-V2/V3)",
+                "single-digit % of MHA on large MoE models",
+                "matches or exceeds MHA per DeepSeek's report"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "92fc8648-1328-4896-b92b-7b2486977fef",
+          "kind": "example",
+          "title": "Why this is why DeepSeek serves long context cheaply",
+          "body": "Picture a 128K-token chat session served on a fixed GPU budget. With standard MHA, the KV cache for that one session already eats a large chunk of memory, so you can host relatively few such sessions concurrently. Compress each token's cache entry to a small latent, and the same GPU can hold far more concurrent long-context sessions.",
+          "bullets": [
+            "This is a direct lever on cost-per-token at serving time, not just a training-time trick",
+            "It's a structural reason DeepSeek's API pricing has undercut comparable-quality Western models",
+            "The saving compounds with batch size — more concurrent users, not just longer context per user"
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "bffdc45e-b257-4ee7-a1dc-74a7056c7dc3",
+          "kind": "takeaways",
+          "title": "When MLA is (and isn't) the right call",
+          "body": "MLA isn't a free lunch — it trades implementation and training complexity for serving efficiency.",
+          "bullets": [
+            "Worth it when: you're serving long contexts at high concurrency and inference cost dominates (exactly DeepSeek's situation)",
+            "Adds real complexity: extra up/down-projection matrices, decoupled RoPE handling — harder to implement correctly than plain MHA or GQA",
+            "Not a drop-in retrofit: models are typically pretrained with MLA from the start rather than converted after the fact",
+            "If your bottleneck is compute (FLOPs) rather than memory, or your contexts are short, GQA's simplicity may be the better tradeoff"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "f932fa9a-2403-4de7-83c8-19e6dc4000ac",
+            "prompt": "What does MLA actually store in the KV cache, instead of full-size keys and values per head?",
+            "options": [
+              "Nothing — it recomputes attention from scratch every step",
+              "A single compressed low-rank latent vector per token, expanded back to full size only when needed",
+              "A quantized (lower-precision) copy of the full K/V pairs",
+              "Only the value vectors, discarding all keys"
+            ],
+            "correctIndex": 1,
+            "explanation": "MLA down-projects K and V into one small latent vector per token for caching, then up-projects it back to full per-head K/V at attention time — that's where the memory savings come from."
+          },
+          {
+            "id": "9e2ab64a-1538-48d8-a5e5-e205e05ec110",
+            "prompt": "Why does MLA need 'decoupled RoPE' instead of applying rotary position embeddings normally?",
+            "options": [
+              "RoPE is too slow to compute at inference time",
+              "RoPE's rotation doesn't commute with MLA's low-rank compression, so position info would be corrupted without a separate uncompressed path",
+              "Decoupled RoPE makes the model support longer context than the original RoPE",
+              "It's purely a licensing workaround, not a technical requirement"
+            ],
+            "correctIndex": 1,
+            "explanation": "Compressing a vector and then rotating it (or vice versa) doesn't give the same result as rotating first, since the operations don't commute — so DeepSeek splits keys into a compressed content part and a small uncompressed part that carries position directly."
+          },
+          {
+            "id": "802227a0-b632-49f2-965f-d54e2bc307f3",
+            "prompt": "How does MLA's tradeoff differ from GQA's?",
+            "options": [
+              "GQA shares K/V heads across groups to shrink cache size, at some cost to expressivity; MLA compresses into a latent and reconstructs it, aiming to shrink cache without that expressivity loss",
+              "They are two names for the exact same mechanism",
+              "GQA is only usable in vision models, MLA only in language models",
+              "MLA increases cache size to improve quality, the opposite of GQA's goal"
+            ],
+            "correctIndex": 0,
+            "explanation": "GQA reduces cache by having multiple query heads share fewer K/V heads. MLA takes a different path — compress-then-reconstruct via low-rank projections — which DeepSeek's report shows can shrink the cache even further while matching or beating standard MHA quality."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "89c03b4a-0b19-4e2d-8de4-d92099d3013a",
+          "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model (arXiv:2405.04434)",
+          "url": "https://arxiv.org/abs/2405.04434"
+        }
+      ]
+    },
+    {
+      "id": "8116d4f7-ba28-4f90-a66f-91aaa1830ba0",
+      "title": "Vidu S2: Real-Time Video You Can Edit Mid-Stream",
+      "subtitle": "One model generates an interactive avatar live; another rewrites a video stream while it plays.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "paper",
+      "tags": [
+        "video-generation",
+        "real-time-ai",
+        "autoregressive-models",
+        "multimodal",
+        "avatars"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "video.fill",
+      "summary": "Vidu S2, from Shengshu AI, pairs a real-time interactive avatar model with a real-time video-stream editor, both running fast enough for human-in-the-loop interaction. It beats strong offline and streaming baselines on editing quality while exploring real-time spatial (3D-aware) video generation.",
+      "publishedDate": "2026-09-15T12:41:41Z",
+      "slides": [
+        {
+          "id": "f5d3a9b4-3fe2-408b-82b8-87b0b4a6c3b6",
+          "kind": "cover",
+          "title": "Vidu S2: Real-Time Video You Can Edit Mid-Stream",
+          "body": "Published September 15, 2026 by Shengshu AI (makers of the Vidu video models). Two systems, one paper: a live digital avatar you can direct as it generates, and a live editor that rewrites an existing video stream frame by frame.",
+          "bullets": [],
+          "symbol": "video.fill",
+          "table": null
+        },
+        {
+          "id": "69b077e6-638b-4df5-a5b6-4291ec8ab5cf",
+          "kind": "problem",
+          "title": "Video models are good, but not interactive",
+          "body": "Most video generation runs offline: you submit a prompt, wait seconds to minutes, and get a fixed clip back. That's fine for a one-shot render — useless for a live avatar, a game character, or a video call filter that has to react to you in the moment.",
+          "bullets": [
+            "Offline generation can't take new instructions once it starts rendering",
+            "Editing an existing video stream (swap the outfit, change the background) normally means re-rendering the whole clip",
+            "Prior 'real-time' systems (the paper's own predecessor, Vidu S1) proved live generation was possible but not live editing"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "806e4427-31b4-4ea4-bcf5-b1860aa33337",
+          "kind": "solution",
+          "title": "Two specialized real-time models, one shared engine",
+          "body": "Vidu S2 splits the problem into generation and editing, but both lean on the same real-time recipe: Self-Replay Forcing to keep autoregressive generation stable frame after frame, plus hybrid attention, quantization, kernel fusion, and multi-GPU scheduling to hit interactive latency.",
+          "bullets": [
+            "Vidu S2-Avatar: generates an interactive digital character from scratch, live",
+            "Vidu S2-Editing: takes an existing video stream and edits it in real time",
+            "Self-Replay Forcing stops the usual autoregressive-video failure mode where small errors compound into drift over long generations"
+          ],
+          "symbol": "wand.and.stars",
+          "table": null
+        },
+        {
+          "id": "0b299ef1-fc32-48bf-a985-bad4e5499d03",
+          "kind": "example",
+          "title": "Avatar: swap the reference mid-generation",
+          "body": "Vidu S2-Avatar generates 720p video at 25–42 FPS and accepts a 'dynamic reference' — a driving image or instruction — that can change at any moment while it's running, not just at the start.",
+          "bullets": [
+            "Example: start with a static character reference, then mid-stream tell it to 'start dancing' — it follows without restarting",
+            "Reference-following is explicitly stronger than Vidu S1's, per the paper",
+            "Targets use cases like live digital hosts and interactive characters, not pre-rendered cutscenes"
+          ],
+          "symbol": "person.fill.viewfinder",
+          "table": null
+        },
+        {
+          "id": "5541f334-fd48-45f3-865b-8ae24102d9b8",
+          "kind": "example",
+          "title": "Editing: a live filter driven by text, not a fixed effect",
+          "body": "Vidu S2-Editing operates on a running video stream and supports style rendering, clothing replacement, character replacement, and background replacement — all while the stream keeps playing, not as a batch re-render.",
+          "bullets": [
+            "Think of it as a semantic camera filter: 'change the background to a beach' applied live",
+            "The paper also studies real-time spatial (3D-aware) video generation as an extension of both models",
+            "This is the harder of the two problems: it has to stay temporally consistent with content it didn't generate"
+          ],
+          "symbol": "paintbrush.pointed.fill",
+          "table": null
+        },
+        {
+          "id": "d932bfd9-1fb2-4b4d-b686-cc17ed046576",
+          "kind": "comparison",
+          "title": "Beats both offline and streaming baselines",
+          "body": "On the paper's editing benchmarks, Vidu S2-Editing scores higher than the strongest offline editor and the strongest prior streaming editor — despite running in real time, which is usually the harder constraint to satisfy.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "System",
+              "Benchmark",
+              "Overall score"
+            ],
+            "rows": [
+              [
+                "Vidu S2-Editing",
+                "Joint (OpenVE + RefVIE)",
+                "4.26"
+              ],
+              [
+                "Bernini-R 14B (offline baseline)",
+                "Joint",
+                "3.92"
+              ],
+              [
+                "Vidu S2-Editing",
+                "RefVIE (streaming)",
+                "3.78"
+              ],
+              [
+                "Decart-Lucy2.5 (streaming baseline)",
+                "RefVIE",
+                "3.71"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "4b91eba7-f6ee-4db4-ad37-ba065c25f659",
+          "kind": "takeaways",
+          "title": "Why this matters beyond video demos",
+          "body": "Real-time, steerable generation is the same problem agentic AI keeps running into elsewhere: can the model take new information mid-task instead of only at the start? Vidu S2 is a concrete answer for video.",
+          "bullets": [
+            "Real-time editing needs both speed (quantization, kernel fusion, multi-GPU scheduling) AND stability (Self-Replay Forcing) — one without the other fails",
+            "Splitting 'generate' and 'edit' into separate specialized models beat trying to do both with one system",
+            "Interactive video is still 720p and short-horizon — not a replacement for offline cinematic generation, just a different product category",
+            "Try the live demo at vidu.com/vidu-stream to see the latency tradeoffs firsthand"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "21c67103-85e9-4806-a52f-f6531a976c9a",
+            "prompt": "What problem does 'Self-Replay Forcing' solve in Vidu S2?",
+            "options": [
+              "It compresses the video file size for streaming",
+              "It keeps long autoregressive video generation stable instead of drifting/degrading over time",
+              "It replaces the need for a GPU during inference",
+              "It translates text prompts into a different language"
+            ],
+            "correctIndex": 1,
+            "explanation": "Autoregressive video generation tends to accumulate small errors frame after frame until quality collapses. Self-Replay Forcing is the training technique Vidu S2 uses to keep generation stable over long, live sessions."
+          },
+          {
+            "id": "50250f19-5374-4541-b528-4726449bc420",
+            "prompt": "What's the key difference between Vidu S2-Avatar and Vidu S2-Editing?",
+            "options": [
+              "Avatar only works offline, Editing only works in real time",
+              "Avatar generates a new interactive character from scratch; Editing modifies an existing live video stream",
+              "They are the same model with different names",
+              "Avatar produces audio, Editing produces video"
+            ],
+            "correctIndex": 1,
+            "explanation": "Avatar is a generation model (it creates the character/video live), while Editing takes an already-running video stream and rewrites it — style, clothing, character, or background — in real time."
+          },
+          {
+            "id": "903bae97-899f-4531-bf0e-441d1cbed5a3",
+            "prompt": "On the paper's editing benchmarks, how did Vidu S2-Editing compare to the strongest baselines?",
+            "options": [
+              "It scored lower than both the offline and streaming baselines but was much faster",
+              "It tied with offline baselines and lost to streaming baselines",
+              "It outscored both the strongest offline baseline (Bernini-R 14B) and the strongest streaming baseline (Decart-Lucy2.5)",
+              "It was not compared to any baselines"
+            ],
+            "correctIndex": 2,
+            "explanation": "Vidu S2-Editing posted a joint overall score of 4.26 versus 3.92 for the offline baseline Bernini-R 14B, and 3.78 versus 3.71 for the streaming baseline Decart-Lucy2.5 on RefVIE — beating both while running in real time."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "704b9932-ddc9-4c8c-a732-b4e9e78a6a06",
+          "title": "Vidu S2: Real-Time Interactive, Editable, and Spatial Video Generation (arXiv:2609.11638)",
+          "url": "https://arxiv.org/abs/2609.11638"
+        }
+      ]
+    },
+    {
       "id": "99bd894a-dc3c-4c79-8af7-6431d3c95ada",
       "title": "SAS: Sparse Attention That Ranks Its Own Context",
       "subtitle": "An end-to-end trained gate beats distillation-based sparse attention at tight budgets",
@@ -10708,401 +11063,6 @@
           "url": "https://arxiv.org/abs/2312.00752"
         }
       ]
-    },
-    {
-      "title": "Speculative Decoding: Guess Ahead, Verify in Parallel",
-      "subtitle": "A cheap draft model proposes tokens; the big model checks them all in one pass.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "speculative decoding",
-        "llm inference",
-        "inference optimization",
-        "decoding",
-        "serving"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "hare.fill",
-      "summary": "Speculative decoding speeds up LLM generation by having a small draft model propose several tokens ahead, then verifying them all in one parallel pass through the target model — with a rejection-sampling scheme that guarantees the output distribution never changes.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Speculative Decoding: Guess Ahead, Verify in Parallel",
-          "body": "Autoregressive LLMs generate one token per forward pass. Speculative decoding lets a small draft model propose several tokens at once, then the big model checks them all in a single pass — same output distribution, fewer expensive passes.",
-          "bullets": [],
-          "symbol": "hare.fill",
-          "table": null,
-          "id": "8c5e392d-2477-4231-81ed-53d78b279072"
-        },
-        {
-          "kind": "problem",
-          "title": "Decoding Is Memory-Bound, Not Compute-Bound",
-          "body": null,
-          "bullets": [
-            "Generating each token requires a full forward pass through every layer of the target model — for a 70B model that means tens of GB of weights streamed from HBM per single token.",
-            "At small batch sizes the GPU spends most of that pass waiting on memory bandwidth, not doing math — its arithmetic units sit mostly idle.",
-            "The sequential dependency between tokens means you can't start token N+1 until token N is sampled, so passes can't just be pipelined away."
-          ],
-          "symbol": "hourglass",
-          "table": null,
-          "id": "c310cdce-d8bb-4157-9b4d-c0dc943d5798"
-        },
-        {
-          "kind": "solution",
-          "title": "A Cheap Draft Model Proposes, the Big Model Verifies",
-          "body": "Run a small, fast 'draft' model autoregressively for k steps to propose k candidate tokens. Then run the large 'target' model ONCE on all k+1 positions in parallel — one memory-bound pass instead of k.",
-          "bullets": [
-            "Draft model: a much smaller model from the same family (e.g., a ~1B model drafting for a 70B target), or the target itself with an early exit.",
-            "The target checks every draft token's probability under its own distribution in a single batched forward pass covering all k positions.",
-            "Accepted tokens are free wins; the first rejected token is resampled from a corrected distribution — never accepted from something the target disagrees with."
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "8b9ba694-ae2f-4236-b8fc-c3eef756a74e"
-        },
-        {
-          "kind": "architecture",
-          "title": "Rejection Sampling Keeps the Output Provably Identical",
-          "body": "The math guarantees the sampled sequence has exactly the same distribution as sampling from the target model alone — this is a lossless speedup, not an approximation.",
-          "bullets": [
-            "For each draft token, accept it with probability min(1, p_target(token) / p_draft(token)).",
-            "If rejected, resample from the residual distribution max(0, p_target − p_draft), renormalized — this exactly cancels the draft model's bias.",
-            "If all k draft tokens are accepted, sample one bonus token for free from the target's distribution at position k+1."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "589c25f1-09c5-45d3-9732-2a53d2c1aa89"
-        },
-        {
-          "kind": "example",
-          "title": "Walking Through One Verification Step",
-          "body": "Suppose k=4 and a draft model is completing 'The capital of France is ___'. The target model checks all draft positions in one pass.",
-          "bullets": [
-            "Draft proposes: 'The', 'capital', 'of', 'Spain' — the target agrees on the first three but assigns near-zero probability to 'Spain' given the earlier context.",
-            "The first 3 tokens are accepted for the cost of ONE target forward pass; the 4th is rejected and correctly resampled as 'France'.",
-            "Net result: 4 tokens advance (3 accepted + 1 resampled) using 1 expensive target pass plus 4 cheap draft passes, instead of 4 expensive target passes."
-          ],
-          "symbol": "text.magnifyingglass",
-          "table": null,
-          "id": "e12c0ec8-571d-4275-bce8-b4bc790990d6"
-        },
-        {
-          "kind": "comparison",
-          "title": "Acceptance Rate Decides the Real-World Speedup",
-          "body": null,
-          "bullets": [
-            "Speedup scales with acceptance rate — predictable text like code or boilerplate accepts far more draft tokens than creative or highly technical writing.",
-            "Real gains also depend on how much cheaper the draft pass is relative to the target pass, and how large k is set."
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Method",
-              "Draft strategy",
-              "Reported speedup"
-            ],
-            "rows": [
-              [
-                "Speculative decoding (Leviathan et al. 2023)",
-                "Separate small LM drafting for a larger target",
-                "~2-3x on translation/summarization"
-              ],
-              [
-                "Speculative sampling (Chen et al. 2023)",
-                "Small separate LM (e.g., 70M) drafting for a much larger target",
-                "~2x wall-clock, exact output match"
-              ],
-              [
-                "Medusa",
-                "Extra prediction heads bolted onto the target model itself",
-                "~2-3x, no separate model to host"
-              ],
-              [
-                "EAGLE",
-                "Drafts in the target's feature space one layer up, not raw tokens",
-                "Higher acceptance rate than vanilla drafting"
-              ]
-            ]
-          },
-          "id": "4cdee8c7-c36d-4930-99c0-a06d05b01fba"
-        },
-        {
-          "kind": "concept",
-          "title": "When It Doesn't Pay Off",
-          "body": null,
-          "bullets": [
-            "Low-acceptance domains (highly creative or out-of-distribution text) mean most draft tokens get rejected — you pay for the draft passes without saving target passes.",
-            "It needs a second model resident in memory (or extra heads/layers) — added VRAM and engineering complexity, and the draft model must stay well-aligned as the target is updated.",
-            "Large-batch serving dilutes the win: the technique helps most at low batch sizes where the target pass is memory-bound and underutilized; at high batch sizes the pass is already compute-bound.",
-            "Setting k too high wastes draft compute on tokens that get rejected anyway; too low caps the ceiling on speedup — it needs tuning per workload."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "a0dcdb7b-0c26-490f-bc03-1a4ffdb1800e"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Same Output, Fewer Expensive Passes",
-          "body": null,
-          "bullets": [
-            "Speculative decoding is lossless: it changes wall-clock time, not what the model would have said.",
-            "The core trick is trading many cheap draft passes for fewer expensive target passes, exploiting idle GPU capacity during memory-bound decoding.",
-            "Acceptance rate is the number that matters most — it's set by how well the draft model's distribution matches the target's on your actual traffic."
-          ],
-          "symbol": "flag.checkered",
-          "table": null,
-          "id": "a0181c09-d86b-4de2-a9fd-130a032c102d"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why doesn't speculative decoding change the model's output distribution?",
-            "options": [
-              "It always accepts the draft model's guess",
-              "Rejected tokens are corrected with a residual resampling step that exactly cancels the draft model's bias",
-              "It only works with deterministic (greedy) decoding",
-              "The target model is skipped entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "The accept/reject rule (min(1, p_target/p_draft)) plus resampling from the residual distribution on rejection is mathematically equivalent to sampling straight from the target model — that equivalence is what makes the speedup lossless.",
-            "id": "b53cde67-45d1-46bf-8f18-bb29182d728f"
-          },
-          {
-            "prompt": "What actually makes standard autoregressive decoding slow on a GPU?",
-            "options": [
-              "The GPU runs out of arithmetic throughput",
-              "Each token requires a full memory-bound pass through the model's weights, and tokens must be generated sequentially",
-              "Tokenization is CPU-bound and dominates latency",
-              "Attention cost grows so fast it dominates every step"
-            ],
-            "correctIndex": 1,
-            "explanation": "At small batch sizes, decoding is bottlenecked on streaming weights from memory rather than on compute, and the sequential dependency between tokens prevents batching multiple steps together — exactly the idle capacity speculative decoding exploits.",
-            "id": "ee1f3e32-2d63-4a3c-9614-76b7aa9a9ca0"
-          },
-          {
-            "prompt": "When does speculative decoding help the LEAST?",
-            "options": [
-              "Low batch size, predictable text like code",
-              "High batch size serving, where the target's pass is already compute-bound",
-              "Long documents with repetitive structure",
-              "When the draft model closely matches the target's style"
-            ],
-            "correctIndex": 1,
-            "explanation": "At high batch sizes the target model's forward pass is already compute-bound rather than memory-bound, so there's little idle GPU capacity left for speculative decoding to soak up — the technique shines most at low batch sizes.",
-            "id": "37c53c34-fdc3-41dc-a560-224088be1b95"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Fast Inference from Transformers via Speculative Decoding",
-          "url": "https://arxiv.org/abs/2211.17192",
-          "id": "f8756833-2958-4d19-82de-96aadc91aff9"
-        },
-        {
-          "title": "Accelerating Large Language Model Decoding with Speculative Sampling",
-          "url": "https://arxiv.org/abs/2302.01318",
-          "id": "316cfabb-7a00-4dd8-bd0a-33dc26c771ee"
-        }
-      ],
-      "id": "df89c71b-3e93-4284-9f12-4e73f2309e1c",
-      "publishedDate": "2026-09-08T18:40:45Z"
-    },
-    {
-      "title": "Orchard: An Open Framework for Scaling Agentic AI",
-      "subtitle": "Microsoft's open-source stack trains agents inside the same Kubernetes sandboxes they later deploy in.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "agents",
-        "open-source",
-        "kubernetes",
-        "reinforcement-learning",
-        "microsoft"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "server.rack",
-      "summary": "Microsoft Research open-sourced Orchard, a Kubernetes-native framework that trains agents inside the exact harnesses they deploy in. Its three recipes (SWE, GUI, Claw) hit strong benchmark scores with small models by closing the train-deploy gap other frameworks leave open.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Framework, Three Layers, Zero Train-Deploy Mismatch",
-          "body": null,
-          "bullets": [
-            "Open-sourced by Microsoft Research, August 3, 2026",
-            "Kubernetes-native sandboxes for training AND deployment",
-            "Ships three ready-made agent recipes: SWE, GUI, Claw"
-          ],
-          "symbol": "server.rack",
-          "table": null,
-          "id": "a62c3fab-bd00-4aff-9c31-47e0f799912f"
-        },
-        {
-          "kind": "problem",
-          "title": "Agent Training Infrastructure Is a Private Luxury",
-          "body": "Frontier labs train agents against proprietary sandboxes, closed pipelines, and datasets nobody else can see — so most researchers can't reproduce agent RL results at all.",
-          "bullets": [
-            "Custom sandboxes and closed training pipelines are the norm at big labs",
-            "A trained agent is often evaluated in a different harness than it trained in — a 'train-deploy mismatch' that quietly costs performance",
-            "Reproducible agent research needs open, reusable infrastructure, not another one-off eval script"
-          ],
-          "symbol": "lock.fill",
-          "table": null,
-          "id": "4da31fd5-40bb-4e05-9522-abce8ce18e62"
-        },
-        {
-          "kind": "solution",
-          "title": "Orchard Env: A Kubernetes Layer Under Every Agent",
-          "body": "The core of Orchard is Orchard Env — a lightweight Kubernetes-native service that manages isolated sandboxes, file I/O, networking, and APIs for agents, whether they're training or running in production.",
-          "bullets": [
-            "Layer 1 — Orchard Env: isolated, reusable sandboxes on Kubernetes",
-            "Layer 2 — Domain recipes: Orchard-SWE (coding), Orchard-GUI (web navigation), Orchard-Claw (personal-assistant tasks)",
-            "Layer 3 — Training pipeline: data curation, curriculum design, SFT, RL, evaluation",
-            "Agents train directly inside real deployment harnesses (Codex, OpenClaw, ZeroClaw) instead of a synthetic training-only sandbox"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "id": "588b9ca7-982d-4686-bcde-56e3b6ec2ba4"
-        },
-        {
-          "kind": "comparison",
-          "title": "Small Models, Benchmark Scores That Punch Above Their Size",
-          "body": null,
-          "bullets": [
-            "Orchard-SWE approaches systems reported to be roughly 10x larger",
-            "Orchard-Claw reaches its score after training on just 200 synthetic tasks"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Recipe",
-              "Benchmark",
-              "Score"
-            ],
-            "rows": [
-              [
-                "Orchard-SWE (~3B active params)",
-                "SWE-bench Verified",
-                "69.7% (73% w/ reranking) vs. 61.4% baseline"
-              ],
-              [
-                "Orchard-GUI (4B VLM)",
-                "WebVoyager / Online-Mind2Web / DeepShop avg",
-                "68.4%"
-              ],
-              [
-                "Orchard-Claw (200 training tasks)",
-                "Claw-Eval, paired with ZeroClaw harness",
-                "73.9%"
-              ]
-            ]
-          },
-          "id": "0dc804bf-502c-4598-ab59-d3bbc29bf331"
-        },
-        {
-          "kind": "example",
-          "title": "Training Orchard-GUI to Not Get Lost in a Website",
-          "body": "A concrete run: Orchard-GUI, a 4-billion-parameter vision-language model, is dropped into recipe environments and has to complete multi-step web tasks — find a product, fill a form, complete checkout — while the sandbox scores task completion automatically.",
-          "bullets": [
-            "The same recipe is reused across WebVoyager, Online-Mind2Web, and DeepShop without rebuilding infrastructure",
-            "Because training happens inside the deployment harness, the policy that ships is the exact policy that was scored",
-            "The 68.4% average is a mean across all three benchmarks — no single benchmark is cherry-picked"
-          ],
-          "symbol": "globe",
-          "table": null,
-          "id": "0bd642ff-9c6f-421b-a044-0f6b0e0bd39c"
-        },
-        {
-          "kind": "concept",
-          "title": "The Training Loop Underneath Every Recipe",
-          "body": "Every Orchard recipe runs the same five-stage pipeline: curate data, design a curriculum of increasing task difficulty, supervised fine-tune on demonstrations, reinforcement-learn against the sandbox's own reward signal, then evaluate — all before the agent ever leaves Orchard Env.",
-          "bullets": [
-            "Curriculum design matters as much as the RL algorithm — ramping difficulty keeps the agent from collapsing on hard tasks early",
-            "Reward comes from the sandbox itself (task completion, test pass/fail) rather than a separate learned reward model"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "a2ed9cc8-d11e-4018-9a35-b629e5e8018c"
-        },
-        {
-          "kind": "concept",
-          "title": "Where Orchard Fits — and Where It Doesn't",
-          "body": "Orchard is infrastructure, not a finished product: you still need to build or adapt a recipe for your domain, and its benchmark numbers come from Microsoft's own recipes, not a guarantee for arbitrary tasks.",
-          "bullets": [
-            "Best fit: teams that want to train task-specific agents and need training/deployment parity",
-            "Not a fit: teams that just want to call an existing hosted agent API with no training loop of their own",
-            "Open code and datasets make it auditable, but you still own the ops burden of running Kubernetes sandboxes"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "7b785692-cdcf-4fc5-b2b5-78d9b9d12394"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Three Things Worth Remembering",
-          "body": null,
-          "bullets": [
-            "Orchard closes the train-deploy gap by training agents inside the same harness (Codex, OpenClaw, ZeroClaw) they'll run in",
-            "Small, task-specific models (3-4B active params) can approach much larger systems when the training loop matches the deployment loop",
-            "It's open infrastructure, not a hosted product — you still build the recipe and run the cluster"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null,
-          "id": "c13ab70a-489f-4f93-8beb-f6d7c02b9b70"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What problem does Orchard Env solve directly?",
-            "options": [
-              "It provides isolated, reusable Kubernetes sandboxes agents can train AND deploy in",
-              "It replaces the need for reinforcement learning entirely",
-              "It hosts a proprietary agent API",
-              "It only works with one specific model family"
-            ],
-            "correctIndex": 0,
-            "explanation": "Orchard Env is the Kubernetes-native layer that removes the mismatch between where an agent trains and where it deploys.",
-            "id": "71a1fe18-e1b6-4fe7-b950-9dc724e49ad1"
-          },
-          {
-            "prompt": "How does Orchard-SWE's active parameter count compare to systems it approaches in performance?",
-            "options": [
-              "About the same size",
-              "Roughly 10x smaller",
-              "100x smaller",
-              "It's actually larger"
-            ],
-            "correctIndex": 1,
-            "explanation": "Orchard-SWE uses about 3B active parameters yet approaches systems reported to be roughly 10x larger on SWE-bench Verified.",
-            "id": "569b4bbf-33c0-4fca-a552-6f858e26e2a7"
-          },
-          {
-            "prompt": "Why does training inside the real deployment harness (Codex, OpenClaw, ZeroClaw) matter?",
-            "options": [
-              "It makes training faster on any hardware",
-              "It avoids the need for a curriculum",
-              "It ensures the exact policy trained is the one that ships, avoiding train-deploy mismatch",
-              "It removes the need for benchmarks"
-            ],
-            "correctIndex": 2,
-            "explanation": "Training inside the same harness used at deployment means there's no gap between the environment an agent learned in and the one it operates in.",
-            "id": "d059f94f-d418-4498-ba96-ce34f37428d7"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Orchard: An open framework for scalable agentic AI — Microsoft Research",
-          "url": "https://www.microsoft.com/en-us/research/blog/orchard-an-open-framework-for-scalable-agentic-ai/",
-          "id": "7f06caf1-b98f-4ad0-a900-eea48d307884"
-        }
-      ],
-      "id": "5d640f27-dd6d-4f61-8c95-6799d79c8247",
-      "publishedDate": "2026-09-08T12:43:14Z"
     }
   ]
 }
