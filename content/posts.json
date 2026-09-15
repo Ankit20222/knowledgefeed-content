@@ -1,6 +1,588 @@
 {
   "posts": [
     {
+      "id": "dc2f4fbd-c679-436c-a708-2c7b0e11be82",
+      "title": "FreeToken: Running a 753B Model on One Gaming GPU",
+      "subtitle": "Berkeley and MIT researchers turn scarce PCIe bandwidth into a live scheduling signal so frontier MoE models fit on a single consumer GPU.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "moe",
+        "inference",
+        "edge-ai",
+        "gpu-serving",
+        "quantization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu",
+      "summary": "FreeToken is an edge-native serving engine that treats a single gaming PC as an elastic inference platform for huge Mixture-of-Experts models. By making bandwidth-adaptive execution, expert caching, and elastic VRAM management the center of the design instead of an afterthought, it lets a 753B-parameter model run on one workstation GPU — though independent testers note the speedup isn't uniform across every setup.",
+      "slides": [
+        {
+          "id": "c00460e5-331d-4a90-bf82-525fe45ce68e",
+          "kind": "cover",
+          "title": "753 Billion Parameters. One Gaming GPU.",
+          "body": "A team from UC Berkeley and MIT — including Ion Stoica, Matei Zaharia, and Song Han — built an inference engine that fits frontier-scale Mixture-of-Experts models onto hardware you can buy at a electronics store.",
+          "bullets": [],
+          "symbol": "cpu",
+          "table": null
+        },
+        {
+          "id": "d5995bf2-57f9-47ac-9368-008a1960a71c",
+          "kind": "problem",
+          "title": "MoE Models Grew Faster Than Consumer VRAM",
+          "body": "Modern open MoE models like GLM-5.2 (753B total params) or DeepSeek-V4-Flash (284B) only activate a fraction of their weights per token, but the FULL weight set still has to live somewhere reachable.",
+          "bullets": [
+            "A gaming GPU tops out around 16-24GB VRAM; a 753B MoE model in low precision still needs hundreds of GB of storage",
+            "Naive fixes swap experts from CPU RAM or SSD on demand, but agent workloads jump between prefill-heavy and decode-heavy patterns unpredictably",
+            "Static CPU/GPU splits (pick some layers for GPU, rest for CPU) waste VRAM when the split doesn't match the current workload"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "ff31ed4c-4af7-4ed6-8eba-fbef99ebbe10",
+          "kind": "solution",
+          "title": "Bandwidth Becomes a Scheduling Signal, Not a Wall",
+          "body": "Instead of a fixed memory layout, FreeToken continuously decides which experts stay resident in VRAM versus stream from CPU RAM or NVMe, based on real-time PCIe/NVMe bandwidth availability.",
+          "bullets": [
+            "Double-buffered prefill streaming overlaps expert loading with compute so the GPU is rarely stalled waiting on a weight transfer",
+            "A custom FTW (fast weight) format is designed for quick partial loads instead of generic checkpoint formats",
+            "A global LRU cache keeps the most bandwidth-expensive-to-reload experts resident across requests, not just within one"
+          ],
+          "symbol": "bolt.horizontal.circle",
+          "table": null
+        },
+        {
+          "id": "86a7e612-744d-43a5-a8d4-fec92bc81df5",
+          "kind": "architecture",
+          "title": "Semantic Caching Keeps Agent State Alive",
+          "body": "Agentic workloads (coding assistants, tool-using agents) repeatedly revisit and edit earlier context, so FreeToken caches more than raw tokens.",
+          "bullets": [
+            "Anchor checkpoints capture recurrent state and KV cache so an edited prompt can reuse unaffected prefix work instead of recomputing it",
+            "Elastic memory management dynamically reallocates VRAM between the expert cache and the KV cache without restarting the serving engine",
+            "This targets the actual usage pattern of coding agents — small edits to a large shared context — rather than one-shot batch inference"
+          ],
+          "symbol": "memorychip",
+          "table": null
+        },
+        {
+          "id": "9fa4542f-f1b0-4fb3-a26d-b6f030a5dcb6",
+          "kind": "comparison",
+          "title": "The Headline Numbers",
+          "body": "Reported throughput on MoE models across three hardware tiers, per the authors' benchmarks.",
+          "bullets": [
+            "Time-to-first-token: under 44s for FreeToken vs 232s for llama.cpp vs 946s for KTransformers in the authors' tests",
+            "Independent testers on an RTX 5060 8GB report llama.cpp already reaching 34.9 tok/s on Qwen3.6-35B, close to FreeToken's 39.3 tok/s — the gap narrows outside the authors' own benchmarks"
+          ],
+          "symbol": "chart.bar",
+          "table": {
+            "headers": [
+              "Model",
+              "Hardware",
+              "Throughput"
+            ],
+            "rows": [
+              [
+                "Qwen3.6-35B-A3B",
+                "8GB laptop GPU",
+                "39.3 tok/s"
+              ],
+              [
+                "DeepSeek-V4-Flash (284B)",
+                "32GB GPU",
+                "22 tok/s"
+              ],
+              [
+                "GLM-5.2 (753B)",
+                "96GB workstation GPU",
+                "14.9 tok/s"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8abcfb36-03de-4634-b92b-9401d9ff957a",
+          "kind": "example",
+          "title": "A Coding Agent on a Desktop, Not a Rack",
+          "body": "A developer runs a 284B-parameter DeepSeek-V4-Flash as a local coding agent on a single 32GB workstation GPU using FreeToken's Anthropic/OpenAI-compatible API.",
+          "bullets": [
+            "The agent edits the same 20k-token file repeatedly — anchor checkpoints let each edit reuse the unaffected KV cache instead of recomputing the whole prefix",
+            "Bandwidth-adaptive execution keeps the frequently-used experts (e.g. code-related routing paths) resident in VRAM across the session",
+            "No cloud API calls, no per-token billing, and the model never leaves the machine"
+          ],
+          "symbol": "hammer",
+          "table": null
+        },
+        {
+          "id": "935a6078-2a32-4ddb-b650-64d01e6ecf7b",
+          "kind": "concept",
+          "title": "It's a Workload Match, Not a Universal Speedup",
+          "body": "FreeToken's gains are real but conditional — the comparisons that make headlines aren't guaranteed on every setup.",
+          "bullets": [
+            "Its advantage comes from optimizing for bursty, agentic access patterns; for steady batch decoding, gains over llama.cpp shrink significantly",
+            "You still need enough combined VRAM + system RAM to hold the active working set — it doesn't shrink the model, it schedules around scarce bandwidth",
+            "Ollama and llama.cpp optimize for GGUF quantization and simple layer offload; vLLM/SGLang target datacenter throughput — FreeToken competes in a specific middle niche (consumer MoE serving)"
+          ],
+          "symbol": "scalemass",
+          "table": null
+        },
+        {
+          "id": "a6ec946c-efb1-4765-aa9e-20a962d3ac80",
+          "kind": "takeaways",
+          "title": "What to Remember",
+          "body": null,
+          "bullets": [
+            "FreeToken makes bandwidth — not VRAM capacity alone — the thing you schedule around when serving MoE models on consumer hardware",
+            "Bandwidth-adaptive execution + a global expert LRU cache + a fast weight format are the three load-bearing ideas",
+            "Semantic-aware caching (anchor checkpoints) is what makes it good for agents specifically, not just raw throughput",
+            "Treat the marketed multipliers skeptically — independent benchmarks on some hardware show a smaller gap versus llama.cpp than the launch numbers imply"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6fbf4024-8b3e-4adf-bc61-54c1673621d7",
+            "prompt": "What does FreeToken treat as the primary constraint to schedule around, rather than VRAM capacity alone?",
+            "options": [
+              "GPU clock speed",
+              "Available memory bandwidth (PCIe/NVMe)",
+              "Number of CPU cores",
+              "Network latency to the cloud"
+            ],
+            "correctIndex": 1,
+            "explanation": "FreeToken's core idea is bandwidth-adaptive execution: it decides what to keep resident in VRAM versus stream from CPU/SSD based on real-time bandwidth availability, turning a fixed bottleneck into a scheduling signal."
+          },
+          {
+            "id": "5820e493-6743-4b47-af03-b3e06bf276ff",
+            "prompt": "Why do anchor checkpoints matter specifically for agentic coding workloads?",
+            "options": [
+              "They compress the model weights permanently",
+              "They let edits to a large shared context reuse unaffected prefix computation instead of recomputing it",
+              "They increase the model's parameter count",
+              "They replace the need for a draft model"
+            ],
+            "correctIndex": 1,
+            "explanation": "Agents repeatedly revisit and lightly edit large contexts. Anchor checkpoints cache recurrent/KV state so an edit only recomputes what actually changed, which matters far more for agentic loops than for one-shot generation."
+          },
+          {
+            "id": "0eca999f-24e8-47a9-897a-6be9cd051a9b",
+            "prompt": "What's the fair caveat about FreeToken's headline speedup numbers?",
+            "options": [
+              "They only work on Apple Silicon",
+              "They require a cloud connection to function",
+              "They come from the authors' own benchmarks; independent testers on some hardware saw a smaller gap vs. llama.cpp",
+              "They only apply to dense (non-MoE) models"
+            ],
+            "correctIndex": 2,
+            "explanation": "Like most systems papers, the strongest numbers come from the authors' chosen configurations. Independent testing (e.g., on an RTX 5060 8GB) found llama.cpp already competitive on some models, so the real-world advantage varies by hardware and workload."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "43f8e513-43a0-4d4c-88a5-e79d22284791",
+          "title": "FreeToken: Efficient Edge-Native MoE Serving with Bandwidth-Adaptive Execution (arXiv)",
+          "url": "https://arxiv.org/abs/2608.16157"
+        },
+        {
+          "id": "dc7db2ae-d550-4622-bb2a-96cd8aadc9ae",
+          "title": "FreeToken GitHub Repository",
+          "url": "https://github.com/FlashML-org/FreeToken"
+        }
+      ],
+      "publishedDate": "2026-09-15T18:43:23Z"
+    },
+    {
+      "id": "6d02e298-8972-408e-874d-4d5346506793",
+      "title": "Siri AI Ships, and Apple Is Paying Google to Run It",
+      "subtitle": "iOS 27's rebuilt assistant splits work between on-device Apple models and a licensed 1.2-trillion-parameter Gemini — with daily caps on the smart parts.",
+      "category": "AI News",
+      "difficulty": "Beginner",
+      "postKind": "release",
+      "tags": [
+        "siri",
+        "apple-intelligence",
+        "gemini",
+        "on-device-ai",
+        "product-launch"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "mic.circle.fill",
+      "summary": "Apple shipped the long-promised rebuilt Siri as an opt-in beta inside iOS/iPadOS/macOS/watchOS/visionOS 27 on September 14, 2026. Simple on-device requests stay free and unlimited; complex requests route to a custom, large Gemini model Apple licenses from Google for a reported ~$1B a year, and those come with undisclosed daily usage caps.",
+      "slides": [
+        {
+          "id": "ccff9088-84ae-45cf-bfed-1aac0fde73ed",
+          "kind": "cover",
+          "title": "The Siri Rebuild Finally Ships",
+          "body": "Two years after Apple first promised a 'profoundly more capable' Siri, the redesigned assistant arrived as an opt-in beta on September 14, 2026, alongside iOS 27 and five sibling OS releases.",
+          "bullets": [],
+          "symbol": "mic.circle.fill",
+          "table": null
+        },
+        {
+          "id": "5d97b57a-57bf-4324-bd88-64ff5ecf3741",
+          "kind": "problem",
+          "title": "Siri Had Fallen Years Behind",
+          "body": "While ChatGPT, Gemini, and Alexa+ absorbed conversational AI, Siri stayed largely rule-based and had repeatedly missed its own promised ship dates.",
+          "bullets": [
+            "Apple originally previewed the new Siri at WWDC and slipped the release multiple times",
+            "Competitive pressure mounted as rivals shipped assistants that could hold context across a conversation and act across apps",
+            "Apple needed a fix that preserved its privacy positioning while catching up on raw capability"
+          ],
+          "symbol": "clock.arrow.circlepath",
+          "table": null
+        },
+        {
+          "id": "649c4876-bab8-48eb-84a7-8bc174f2aac2",
+          "kind": "solution",
+          "title": "What Actually Shipped on September 14",
+          "body": "Siri AI launched as an opt-in beta, English-only at first, inside iOS 27, iPadOS 27, macOS 27, watchOS 27, and visionOS 27.",
+          "bullets": [
+            "Users must opt in through Settings; some may land on a waitlist before getting access",
+            "French, Japanese, Korean, Portuguese, and Spanish support is scheduled to follow in October 2026",
+            "Simple on-device tasks (timers, texts, quick queries) run free and unlimited, with no usage cap"
+          ],
+          "symbol": "app.badge.checkmark",
+          "table": null
+        },
+        {
+          "id": "469598ab-652b-439b-8ccc-e624d73679b4",
+          "kind": "architecture",
+          "title": "A Hybrid Stack: Apple Models Plus a Licensed Gemini",
+          "body": "The redesigned Siri routes requests across three tiers rather than relying on one model.",
+          "bullets": [
+            "On-device Apple Foundation Models handle simple, private, low-latency requests locally and for free",
+            "Apple Foundation 3 cloud models (Apple's own, via Private Cloud Compute) handle heavier but still Apple-built requests",
+            "For the hardest conversational and creative requests, Apple routes to a custom ~1.2-trillion-parameter Gemini model, reportedly paying Google around $1B a year for the license"
+          ],
+          "symbol": "point.3.filled.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "c4321280-687f-425e-bd8f-4063cca0547f",
+          "kind": "comparison",
+          "title": "Free vs. Capped vs. Future Paid",
+          "body": null,
+          "bullets": [
+            "Apple has not disclosed the size of the daily free allowance for cloud-routed requests",
+            "Apple said higher iCloud+ tiers will eventually unlock expanded access to capped features"
+          ],
+          "symbol": "chart.bar",
+          "table": {
+            "headers": [
+              "Tier",
+              "Where it runs",
+              "Cost to user"
+            ],
+            "rows": [
+              [
+                "Simple tasks",
+                "On-device",
+                "Free, unlimited"
+              ],
+              [
+                "Complex Siri / photo editing / Image Playground",
+                "Apple cloud + licensed Gemini",
+                "Free with an undisclosed daily cap"
+              ],
+              [
+                "Expanded access",
+                "Same cloud tier",
+                "Coming via a fee Apple hasn't priced yet"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7290aa5d-ef7c-4a9e-bce1-884389efebc6",
+          "kind": "example",
+          "title": "Two Requests, Two Very Different Paths",
+          "body": "\"Set a 10-minute timer\" resolves entirely on-device: free, instant, unlimited, no cap consumed.",
+          "bullets": [
+            "\"Find the photo of us on the beach last July and add it to my trip album\" needs contextual search + cross-app action — it routes to the cloud tier and counts against the undisclosed daily cap",
+            "The user experiences both as 'talking to Siri,' but only one of them touches a $1B-a-year licensed model"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "14560f28-0828-4e30-8e75-29ab3a542bcc",
+          "kind": "concept",
+          "title": "What's Still Unresolved",
+          "body": null,
+          "bullets": [
+            "The daily cap size, and the future fee for 'expanded access,' are both undisclosed — early adopters don't know when they'll hit a wall",
+            "EU availability is split: Siri AI is withheld on iPhone, iPad, and Apple Watch in the EU at launch, but available on Mac and Apple Vision Pro",
+            "Depending on a competitor's model for the hardest queries is a notable reversal from Apple's 'we build our own AI' framing",
+            "It's still an opt-in beta — Apple hasn't committed to a general-availability date"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "ca8dd176-cff5-451b-bc11-a0b787f36a65",
+          "kind": "takeaways",
+          "title": "What to Remember",
+          "body": null,
+          "bullets": [
+            "Siri AI shipped September 14, 2026 as an opt-in, English-only beta across six Apple OS releases",
+            "The split is architectural, not cosmetic: free unlimited on-device for simple tasks, capped cloud access (partly Gemini-powered) for anything hard",
+            "Apple pays Google roughly $1B/year to license a large Gemini model for Siri's hardest requests",
+            "Pricing for 'expanded access' and the exact daily caps remain undisclosed — worth tracking as this moves out of beta"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "87bdab30-e4ff-4881-95f2-31dcf2e85012",
+            "prompt": "What determines whether a Siri AI request is free/unlimited versus subject to a daily cap?",
+            "options": [
+              "Whether the user has an iCloud+ subscription",
+              "Whether the request is simple enough to run on-device, versus needing the cloud tier",
+              "The time of day the request is made",
+              "Whether the device is an iPhone or a Mac"
+            ],
+            "correctIndex": 1,
+            "explanation": "Apple runs simple requests (timers, texts, quick queries) on-device for free with no limit. Complex or creative requests route to the cloud tier — Apple's own cloud models or the licensed Gemini model — which carries an undisclosed daily cap."
+          },
+          {
+            "id": "16009fb7-be99-4371-aa23-4b47bf0917eb",
+            "prompt": "What's notable about the model powering Siri AI's hardest requests?",
+            "options": [
+              "It's entirely built and trained by Apple with no external dependencies",
+              "It's a custom, large-scale Gemini model Apple licenses from Google for roughly $1B/year",
+              "It runs entirely on-device with no cloud component",
+              "It's open-source and available on GitHub"
+            ],
+            "correctIndex": 1,
+            "explanation": "For its hardest conversational and creative requests, Apple routes to a custom ~1.2-trillion-parameter Gemini model it licenses from Google — a reversal from Apple's usual framing of building its own AI in-house."
+          },
+          {
+            "id": "649e064c-f33b-4afb-898c-1a0fe1988b9a",
+            "prompt": "How does Siri AI's availability differ in the EU at launch?",
+            "options": [
+              "It's unavailable on all Apple devices in the EU",
+              "It's available on all devices except Mac",
+              "It's withheld on iPhone, iPad, and Apple Watch, but available on Mac and Apple Vision Pro",
+              "It requires a separate EU-only subscription"
+            ],
+            "correctIndex": 2,
+            "explanation": "Regulatory constraints led Apple to withhold Siri AI from iPhone, iPad, and Apple Watch in the EU at launch, while still enabling it on Mac and Apple Vision Pro."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "5bb0213e-7357-4902-85f4-135add716631",
+          "title": "Siri AI, a profoundly more capable and personal assistant, is here — Apple Newsroom",
+          "url": "https://www.apple.com/newsroom/2026/09/siri-ai-a-profoundly-more-capable-and-personal-assistant-is-here/"
+        },
+        {
+          "id": "ed70657c-d2e5-4302-b1e6-276ebbf9fbb0",
+          "title": "Apple's Fine Print: Daily Usage Limits for Siri AI, 'Expanded Access' Coming for a Fee — MacRumors",
+          "url": "https://www.macrumors.com/2026/09/09/apple-siri-ai-usage-limits/"
+        }
+      ],
+      "publishedDate": "2026-09-15T18:43:23Z"
+    },
+    {
+      "id": "20991a5d-2df8-488f-80c3-d4af99c20d40",
+      "title": "Speculative Decoding: Draft Fast, Verify in Parallel",
+      "subtitle": "A cheap draft model guesses several tokens ahead; the big model checks them all in one pass — turning sequential decoding into parallel verification, with zero change to the output.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "inference",
+        "decoding",
+        "llm-serving",
+        "eagle",
+        "throughput"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding uses a small draft model to guess several tokens ahead, then lets the large target model verify all of them in a single parallel forward pass — accepting the ones that match and discarding the rest via exact rejection sampling. The result is 2-5x faster generation with mathematically identical output, now standard in vLLM, SGLang, and TensorRT-LLM.",
+      "slides": [
+        {
+          "id": "76aea4c8-0a53-4653-a5e0-4078944c9eff",
+          "kind": "cover",
+          "title": "Why Wait One Token at a Time?",
+          "body": "Autoregressive decoding generates a token, feeds it back in, and generates the next — strictly sequential. Speculative decoding breaks that bottleneck without changing a single output token.",
+          "bullets": [],
+          "symbol": "hare.fill",
+          "table": null
+        },
+        {
+          "id": "303d37e3-31b0-4182-a3ff-43a9046c6d16",
+          "kind": "problem",
+          "title": "Decoding Is Memory-Bound, Not Compute-Bound",
+          "body": "Each decode step reads the model's entire weight set from GPU memory to produce just one token, so the GPU's compute sits mostly idle waiting on memory bandwidth.",
+          "bullets": [
+            "A modern GPU can do far more FLOPs per second than a batch-size-1 decode step actually uses",
+            "This is why decoding throughput is often far below what the GPU's raw compute could theoretically support",
+            "Simply generating more tokens per forward pass would use that idle compute — the question is how to do it without guessing wrong"
+          ],
+          "symbol": "exclamationmark.triangle",
+          "table": null
+        },
+        {
+          "id": "f998960f-b87e-415c-b5f8-d82d3fa3df66",
+          "kind": "solution",
+          "title": "Draft, Then Verify in One Shot",
+          "body": "A small, fast draft model autoregressively proposes γ tokens ahead (commonly 4-6). The large target model then evaluates all γ+1 candidate positions in a single parallel forward pass — the same cost as generating just one token normally, since verification is compute-bound, not sequential.",
+          "bullets": [
+            "Rejection sampling accepts each drafted token only if it's consistent with the target model's exact probability distribution",
+            "The moment a token is rejected, the process resamples correctly from the target's distribution at that position and discards everything after",
+            "Output distribution is provably identical to standard decoding — this is lossless acceleration, not approximation"
+          ],
+          "symbol": "checkmark.circle",
+          "table": null
+        },
+        {
+          "id": "8c35dafc-bb08-4004-b61e-f8595e0af885",
+          "kind": "architecture",
+          "title": "EAGLE: Drafting From the Target's Own Features",
+          "body": "Instead of a fully separate small language model, the EAGLE family drafts using the target model's own hidden states plus a lightweight prediction head.",
+          "bullets": [
+            "Feature-level drafting aligns more closely with the target model's actual distribution, raising the acceptance rate",
+            "P-EAGLE (contributed to vLLM by AWS in early 2026) drafts all K candidate tokens in one parallel pass instead of sequentially, cutting drafting overhead further",
+            "On coding benchmarks, P-EAGLE reaches a 20-30% improvement over EAGLE-3 alone"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "ebec5977-6119-42b9-9aa2-ada934da0d1a",
+          "kind": "comparison",
+          "title": "Speedup Tracks the Acceptance Rate",
+          "body": "The higher the fraction of drafted tokens the target model accepts (α), the bigger the win — and how predictable the text is drives α.",
+          "bullets": [],
+          "symbol": "chart.bar",
+          "table": {
+            "headers": [
+              "Workload",
+              "Typical accept rate (α)",
+              "Speedup"
+            ],
+            "rows": [
+              [
+                "General chat",
+                "0.6 - 0.8",
+                "2-3x"
+              ],
+              [
+                "Coding-heavy",
+                "higher (predictable syntax)",
+                "3.5-5x"
+              ],
+              [
+                "EAGLE-3 on HumanEval, LLaMA 3.3 70B",
+                "high",
+                "~4.8x"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "421881cd-a94e-4dd1-9999-b841ae069bea",
+          "kind": "example",
+          "title": "A Support Chatbot Serving More Users, Same Hardware",
+          "body": "A customer-support bot runs Llama-3.3-70B with an EAGLE-3 draft head in front of vLLM.",
+          "bullets": [
+            "Median response latency drops roughly in proportion to the achieved speedup, because more tokens land per GPU forward pass",
+            "With the same latency budget per user, one GPU can now serve substantially more concurrent conversations",
+            "No retraining of the 70B model and no change to its outputs — the draft head is the only new component"
+          ],
+          "symbol": "person.2.fill",
+          "table": null
+        },
+        {
+          "id": "d08ae2fd-b778-45d8-b07c-6beb63d3b65e",
+          "kind": "concept",
+          "title": "When It Doesn't Help",
+          "body": null,
+          "bullets": [
+            "A poorly-aligned or too-large draft model can cost more compute than it saves — the draft has to be genuinely cheap relative to the target",
+            "High-entropy, creative generation (brainstorming, poetry) has a lower natural acceptance rate than boilerplate or code, shrinking the speedup",
+            "It adds serving complexity: a second model to load, keep in sync with the target, and monitor",
+            "It doesn't shrink time-to-first-token — prefill is still one pass; the win is entirely in the decode phase",
+            "At very large batch sizes, the server may already be compute-bound, at which point spare compute for drafting/verifying shrinks and gains diminish"
+          ],
+          "symbol": "scalemass",
+          "table": null
+        },
+        {
+          "id": "5bad5f02-aca3-46a6-a38b-0af3ad5e9d41",
+          "kind": "takeaways",
+          "title": "What to Remember",
+          "body": null,
+          "bullets": [
+            "Speculative decoding exploits idle GPU compute during memory-bound decode steps by verifying multiple guessed tokens in one pass",
+            "It's mathematically lossless: rejection sampling guarantees the exact same output distribution as normal decoding",
+            "Speedup is driven by the draft's acceptance rate — the closer the small model tracks the big one, the bigger the win",
+            "It's now standard production infrastructure in vLLM, SGLang, and TensorRT-LLM — not a research curiosity"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4216f2ef-0ad3-46ac-a598-94711d10e048",
+            "prompt": "Why is verifying γ drafted tokens roughly as expensive as generating just one token normally?",
+            "options": [
+              "Because the draft model does all the work",
+              "Because verification is a single parallel forward pass over the γ+1 positions, which is compute-bound rather than memory-bound like sequential decoding",
+              "Because γ is always set to 1",
+              "Because the target model skips reading its own weights during verification"
+            ],
+            "correctIndex": 1,
+            "explanation": "Normal decoding is memory-bandwidth-bound because each step only produces one token per full weight read. Verifying several candidate positions at once is a batched, compute-bound operation that costs about the same as one memory-bound step, which is exactly the idle capacity speculative decoding exploits."
+          },
+          {
+            "id": "1545156a-e94c-42cb-9052-f366312e5a8d",
+            "prompt": "What guarantees that speculative decoding doesn't change the model's output distribution?",
+            "options": [
+              "The draft model is trained to be identical to the target model",
+              "Rejection sampling accepts drafted tokens only when consistent with the target's exact probabilities, and correctly resamples at the first mismatch",
+              "The target model is run twice and the results are averaged",
+              "Output tokens are rounded to the nearest valid vocabulary entry"
+            ],
+            "correctIndex": 1,
+            "explanation": "The rejection sampling step is what makes this lossless: a token is kept only if it matches what the target model's own distribution would have produced, and any rejection point correctly resamples from the target's distribution rather than the draft's."
+          },
+          {
+            "id": "a59fc104-7e3e-496b-889f-d7fc8fd37d2f",
+            "prompt": "In which scenario would speculative decoding likely deliver the SMALLEST speedup?",
+            "options": [
+              "Generating boilerplate code with a coding assistant",
+              "Answering a highly predictable, templated support query",
+              "Freeform creative writing with high output entropy",
+              "Autocompleting a common phrase"
+            ],
+            "correctIndex": 2,
+            "explanation": "Speedup tracks the draft's acceptance rate, and acceptance rate tracks how predictable the text is. High-entropy creative generation is harder for a small draft model to predict correctly, so fewer drafted tokens get accepted and the speedup shrinks."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "ca18c926-1e70-49de-b541-ddfc0f134eaf",
+          "title": "Fast Inference from Transformers via Speculative Decoding (Leviathan, Kalman, Matias — arXiv)",
+          "url": "https://arxiv.org/abs/2211.17192"
+        }
+      ],
+      "publishedDate": "2026-09-15T18:43:23Z"
+    },
+    {
       "id": "1da77dfd-ad2c-4c9d-a818-a8021a6a166b",
       "title": "MLA: Compressing the KV Cache Without Losing Quality",
       "subtitle": "DeepSeek's trick for making long-context serving cheap: cache a compressed latent, not full-size keys and values.",
@@ -10452,617 +11034,6 @@
       ],
       "id": "6e42da7e-1556-4de2-9598-58cd1a4979fe",
       "publishedDate": "2026-09-09T12:30:00Z"
-    },
-    {
-      "title": "FlashAttention: Fast, Exact Attention on GPUs",
-      "subtitle": "Same math as standard attention, 2-4x faster, by never writing the full score matrix to slow memory.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "gpu",
-        "transformers",
-        "memory-bandwidth",
-        "inference"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "bolt.fill",
-      "summary": "FlashAttention (Dao et al., 2022) speeds up transformer attention not by approximating it but by rethinking which memory it touches: it tiles the computation so the full N x N attention matrix never has to leave a GPU's fast on-chip SRAM. That IO-awareness delivers 2-4x speedups and linear instead of quadratic memory, with no change to the output. FlashAttention-2 pushed further, reaching up to 230 TFLOPs/s on an A100 (73% of peak) and a 1.3x end-to-end GPT-2 training speedup over the original.",
-      "slides": [
-        {
-          "id": "6abd09cf-91c4-498b-86e0-c1e34ce1ac98",
-          "kind": "cover",
-          "title": "The matrix nobody should have to build",
-          "body": "Standard attention computes QK^T, applies softmax, then multiplies by V — and in the middle, it materializes a full N x N matrix of attention scores.",
-          "bullets": [
-            "For a sequence of 8,000 tokens, that's a 8,000 x 8,000 matrix per attention head, per batch item",
-            "FlashAttention (Dao, Fu, Ermon, Rudra, Ré — arXiv:2205.14135) asks: what if that matrix never has to exist in slow memory at all?"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "896a639c-e67a-4b2c-8311-0003dd2b9c4f",
-          "kind": "problem",
-          "title": "The bottleneck is memory movement, not math",
-          "body": "GPUs have two very different kinds of memory, and attention's naive implementation abuses the slow one.",
-          "bullets": [
-            "On-chip SRAM: extremely fast (~19 TB/s) but tiny — tens of megabytes",
-            "Off-chip HBM: large (tens of gigabytes) but far slower (~1.5-2 TB/s) to move data through",
-            "Standard attention writes the full N x N score matrix to HBM after QK^T, reads it back for softmax, then reads it again for the final multiply by V",
-            "Attention looks compute-heavy but is actually memory-bound: the GPU spends more time waiting on data movement than doing arithmetic"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "8820f5a5-ffa3-49d8-9baf-4b69cabbe8c4",
-          "kind": "solution",
-          "title": "Tile the computation, keep it all in SRAM",
-          "body": "FlashAttention splits Q, K, and V into small blocks that fit inside SRAM, and fuses the whole QK^T → softmax → weighted-sum pipeline into a single GPU kernel.",
-          "bullets": [
-            "Each block of Q is compared against blocks of K and V one at a time, entirely inside fast on-chip memory",
-            "An 'online softmax' trick keeps a running max and running sum so partial results can be combined correctly without ever seeing the full row at once",
-            "The full N x N matrix is never written to HBM — only the final output and a small per-row statistic are"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "614d9275-4589-46df-aae5-9006e7636a01",
-          "kind": "architecture",
-          "title": "The backward pass recomputes instead of storing",
-          "body": "Training needs the attention matrix again during backpropagation — FlashAttention doesn't store it, it recomputes it on the fly.",
-          "bullets": [
-            "Only a small logsumexp statistic per row is kept from the forward pass, not the full matrix",
-            "During the backward pass, blocks of the attention matrix are recomputed from that statistic as needed — trading a bit of extra compute for a large memory saving",
-            "This 'recompute over store' choice is why the method is called IO-aware rather than an approximation — the output is mathematically identical to standard attention"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "88871ad8-7778-40fa-b002-71b759deecb7",
-          "kind": "comparison",
-          "title": "The numbers, v1 to v2",
-          "body": "FlashAttention-2 (2023) improved parallelism and work partitioning on top of the same core idea.",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Metric",
-              "FlashAttention",
-              "FlashAttention-2"
-            ],
-            "rows": [
-              [
-                "Memory scaling",
-                "O(N) instead of O(N²)",
-                "O(N) instead of O(N²)"
-              ],
-              [
-                "Speedup vs. standard attention",
-                "2-4x",
-                "3-10x"
-              ],
-              [
-                "A100 throughput",
-                "—",
-                "up to 230 TFLOPs/s (73% of peak)"
-              ],
-              [
-                "End-to-end GPT-2 training speedup",
-                "baseline",
-                "1.3x over FlashAttention, 2.8x over no-FlashAttention"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e23ec1f1-bf10-4b10-9326-5833214e9b53",
-          "kind": "example",
-          "title": "Why this is what let context windows grow",
-          "body": "Training at an 8k context with standard attention means repeatedly moving a ~256MB (per head, fp32) score matrix through HBM — brutal on bandwidth, and often just not fitting in memory at all.",
-          "bullets": [
-            "FlashAttention instead processes, say, 128-row/128-column tiles that comfortably fit in a GPU SM's SRAM",
-            "Each tile does a small, fast matmul entirely on-chip before moving to the next one",
-            "This is a direct reason models could jump from low-thousands of tokens of context to tens of thousands without a proportional memory blowup"
-          ],
-          "symbol": "arrow.up.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "4518f33d-7937-4b8b-9d23-e8453ae73242",
-          "kind": "problem",
-          "title": "Where it doesn't help, or needs redoing",
-          "body": "FlashAttention is not a universal free lunch.",
-          "bullets": [
-            "It reduces memory traffic, not the underlying O(N²) FLOP count — it doesn't fix attention's asymptotic scaling the way sub-quadratic methods (linear attention, Mamba) aim to",
-            "On short sequences (roughly under 512 tokens), tiling overhead eats into the gains — the wins compound with sequence length",
-            "It's tied to specific GPU architectures — Hopper's async instructions and FP8 support needed a dedicated FlashAttention-3 to exploit",
-            "It's exact, which is the point — don't reach for it expecting the further speedups that come from approximate/sparse attention variants"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "843a4373-74ef-4a63-9d42-e968affc2855",
-          "kind": "takeaways",
-          "title": "What to remember about FlashAttention",
-          "body": null,
-          "bullets": [
-            "The bottleneck it solves is memory bandwidth (SRAM vs. HBM traffic), not raw compute",
-            "Tiling plus online softmax means the full N x N score matrix never touches slow memory",
-            "It's mathematically exact — zero accuracy tradeoff, unlike sparse or linear attention approximations",
-            "FlashAttention-2 reached up to 230 TFLOPs/s on A100 (73% of peak) and a 1.3x end-to-end training speedup over v1",
-            "Gains grow with sequence length and are architecture-specific — newer GPUs need their own kernel version"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "bf600d1e-655d-490d-a61d-2feeb0579533",
-            "prompt": "What is the actual bottleneck FlashAttention targets in standard attention?",
-            "options": [
-              "The number of floating-point operations (FLOPs) required",
-              "Memory bandwidth — repeatedly moving the full attention matrix between slow HBM and fast SRAM",
-              "The number of attention heads in the model",
-              "The precision of the softmax function"
-            ],
-            "correctIndex": 1,
-            "explanation": "Standard attention looks compute-heavy but is memory-bound: it writes and reads the full N x N score matrix to slow HBM multiple times. FlashAttention's tiling keeps that traffic inside fast on-chip SRAM instead."
-          },
-          {
-            "id": "a74a56fc-bcaf-49ad-8aed-b1ae29705bce",
-            "prompt": "Is FlashAttention an approximation of standard attention?",
-            "options": [
-              "Yes, it drops small attention weights to save time",
-              "Yes, it uses a sparse pattern that skips some tokens",
-              "No — it produces mathematically identical output; only the memory access pattern changes",
-              "No, but it changes the softmax formula to a faster approximation"
-            ],
-            "correctIndex": 2,
-            "explanation": "FlashAttention is IO-aware, not approximate. Tiling plus the online softmax trick and recomputation in the backward pass produce exactly the same result as standard attention — the speedup comes purely from avoiding unnecessary memory movement."
-          },
-          {
-            "id": "e78c8613-cec9-404d-ad57-9a9b9ec886e2",
-            "prompt": "According to the FlashAttention-2 paper, roughly what throughput did it reach on an A100 GPU, and what was the end-to-end GPT-2 training speedup over the original FlashAttention?",
-            "options": [
-              "10 TFLOPs/s, and a 10x training speedup",
-              "Up to 230 TFLOPs/s (73% of peak), and a 1.3x end-to-end training speedup",
-              "500 TFLOPs/s, and no measurable training speedup",
-              "230 TFLOPs/s, but training became slower due to overhead"
-            ],
-            "correctIndex": 1,
-            "explanation": "FlashAttention-2 reached up to 230 TFLOPs/s on A100 (about 73% of the theoretical peak) and delivered a 1.3x end-to-end speedup training GPT-style models compared to the original FlashAttention, and 2.8x versus a baseline without it."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "a813c310-729a-47c1-8037-ec108b0806ab",
-          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (arXiv:2205.14135)",
-          "url": "https://arxiv.org/abs/2205.14135"
-        },
-        {
-          "id": "6f4376f3-900a-4ed9-b52d-0963ba44fb73",
-          "title": "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning (arXiv:2307.08691)",
-          "url": "https://arxiv.org/abs/2307.08691"
-        }
-      ],
-      "id": "23b12596-31a8-4bd4-84cd-560e303a4386",
-      "publishedDate": "2026-09-09T12:15:00Z"
-    },
-    {
-      "title": "HNSW: Fast Approximate Search Over Millions of Vectors",
-      "subtitle": "A layered graph inspired by skip lists turns nearest-neighbor search from a linear scan into a handful of hops.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "hnsw",
-        "vector-search",
-        "ann",
-        "embeddings",
-        "vector-database"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm behind most production vector search — Faiss, hnswlib, Milvus, Weaviate, Qdrant, and pgvector all build on it. It arranges vectors into a multi-layer graph where sparse upper layers let a query take long jumps and the dense bottom layer refines the answer, turning search into roughly log(N) hops instead of a full scan. It trades a small, tunable amount of recall for that speed, and pays for it in RAM and slow deletes.",
-      "slides": [
-        {
-          "id": "9e68f65d-da01-453c-9928-937f17e51fa8",
-          "kind": "cover",
-          "title": "A skip list, but for nearest neighbors",
-          "body": "HNSW (Malkov & Yashunin, 2016) is the graph structure most vector databases build under the hood — Faiss, hnswlib, Milvus, Weaviate, Qdrant, and pgvector's `hnsw` index all use it.",
-          "bullets": [
-            "Turns 'find the closest vector to this one' from a full scan into a handful of graph hops",
-            "No training step required — unlike clustering-based indexes, you just insert vectors one at a time",
-            "The default choice when you need high recall at low latency and can afford the RAM"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "74c1835c-72db-4573-ae37-3948a8356d55",
-          "kind": "problem",
-          "title": "Comparing a query to every vector doesn't scale",
-          "body": "Brute-force nearest-neighbor search is exact but linear — every added vector adds a fixed amount of work to every future query.",
-          "bullets": [
-            "A brute-force scan over 10 million 768-dim embeddings means 10 million distance computations per query",
-            "Even at roughly a microsecond per comparison, that's already single-digit milliseconds of pure compute per query, before reranking or generation even starts",
-            "High-dimensional distance doesn't compress with simple tricks like sorting or hashing — you need structure, not a shortcut"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "da7e5b43-1d07-4d11-8bff-068a7c57540a",
-          "kind": "concept",
-          "title": "Layers get sparser as you go up, like a skip list",
-          "body": "HNSW builds a graph where every vector lives on layer 0, but only a shrinking fraction also exists on higher layers.",
-          "bullets": [
-            "Each inserted point is randomly assigned a top layer, with the probability of reaching the next layer up decaying exponentially — layer 0 might hold 10M points while layer 4 holds a few hundred",
-            "On every layer, a node connects to roughly M of its nearest already-inserted neighbors (a common default is M=16)",
-            "Higher layers act like highways for long jumps across the vector space; layer 0 is the dense, fine-grained local map"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "1eb01559-8232-4ddf-9e6a-b15a71366e9b",
-          "kind": "solution",
-          "title": "Search greedily descends, then runs a local beam search",
-          "body": "A query starts at a fixed entry point on the top layer and works its way down.",
-          "bullets": [
-            "At each layer, greedily hop to whichever neighbor is closest to the query until no neighbor is closer — that local minimum becomes the entry point for the layer below",
-            "At layer 0, instead of stopping at one point, HNSW keeps a candidate list of size ef (efSearch) and keeps expanding the best unexplored candidates — this beam search is what makes results approximate rather than purely greedy",
-            "Total hops scale roughly with log(N): doubling the dataset adds about one more layer to cross, not double the work"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "d4edbfd9-4c99-4f34-83b5-0a790dfb789b",
-          "kind": "comparison",
-          "title": "HNSW vs. brute-force vs. IVF",
-          "body": "IVF (Inverted File Index) clusters vectors with k-means and only searches the nprobe closest clusters; HNSW skips training entirely but pays for it in RAM.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "",
-              "Brute-force",
-              "IVF",
-              "HNSW"
-            ],
-            "rows": [
-              [
-                "Query cost",
-                "O(N)",
-                "O(N/nlist × nprobe)",
-                "~O(log N)"
-              ],
-              [
-                "Needs a training step?",
-                "No",
-                "Yes (k-means)",
-                "No"
-              ],
-              [
-                "Typical recall@10",
-                "100% (exact)",
-                "85-95% (tunable)",
-                "95-99% (tunable)"
-              ],
-              [
-                "Memory vs. raw vectors",
-                "1x",
-                "~1.1x",
-                "~1.5-2x (stores graph edges)"
-              ],
-              [
-                "Fast deletes?",
-                "Yes",
-                "Yes",
-                "No — tombstones or rebuild"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a1f53dd6-8487-40db-8d04-085e500ce8ed",
-          "kind": "example",
-          "title": "A RAG retriever answering under 20ms",
-          "body": "Concrete setup: 5 million document chunks embedded at 1536 dimensions, stored in an HNSW index with M=16, efConstruction=200.",
-          "bullets": [
-            "Brute-force: ~5M distance computations per query — tens of milliseconds of pure math before reranking even starts",
-            "HNSW with efSearch=50: a few hundred distance computations spread across roughly 4-5 layers — typically single-digit milliseconds",
-            "Raise efSearch to 200 for a hard query that needs higher recall — it's a per-query knob you tune live, not something that requires rebuilding the index"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "50dbdbe5-457a-42ac-9026-e8db49a5dd1f",
-          "kind": "problem",
-          "title": "The RAM bill and the missing delete button",
-          "body": "HNSW's speed comes from a graph that has to live in memory, and that graph doesn't like being edited.",
-          "bullets": [
-            "Index size typically runs 1.5-2x the raw vector data, since every node stores M+ neighbor pointers per layer on top of the vector itself",
-            "Deleting a vector doesn't remove it from other nodes' neighbor lists — implementations usually tombstone it and filter at query time, or require a periodic rebuild",
-            "Recall is probabilistic, not guaranteed: a query can genuinely miss the true nearest neighbor, so HNSW is the wrong tool when you need exact results (e.g. deduplication) instead of 'close enough'",
-            "When data won't fit in RAM, a disk-oriented index like DiskANN trades some latency for handling billions of vectors off SSD"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "3cd6a519-b370-48b4-b8cf-ea5c60584da4",
-          "kind": "takeaways",
-          "title": "What to remember about HNSW",
-          "body": null,
-          "bullets": [
-            "It's a layered graph — sparse on top for long jumps, dense at the bottom for fine-grained search, like a skip list for vectors",
-            "Three knobs matter: M (graph density/memory), efConstruction (build-time quality), efSearch (query-time recall vs. speed)",
-            "It trades a small, tunable amount of recall for roughly logarithmic query time and zero training step",
-            "Watch the RAM budget, and avoid it when you need exact results or a workload with heavy deletes/updates"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5b326bf9-99b1-440c-ba8f-bb94c4f2cd19",
-            "prompt": "What does the parameter efSearch control in HNSW?",
-            "options": [
-              "The number of layers in the graph",
-              "The size of the candidate list explored at query time, trading speed for recall",
-              "The dimensionality of the stored vectors",
-              "The number of vectors removed per rebuild"
-            ],
-            "correctIndex": 1,
-            "explanation": "efSearch sets how many candidates HNSW keeps open while searching layer 0. A larger efSearch explores more of the graph, raising recall at the cost of more distance computations per query — and it's tunable per query, with no rebuild needed."
-          },
-          {
-            "id": "df2849d5-1912-42bb-80e3-7658d1f4b74d",
-            "prompt": "Why does HNSW use a hierarchy of layers instead of one flat graph?",
-            "options": [
-              "To store redundant copies of each vector for fault tolerance",
-              "To let long-distance jumps happen on sparse upper layers before fine-grained search on the dense bottom layer",
-              "To support multiple distance metrics at once",
-              "To reduce the dimensionality of vectors before comparison"
-            ],
-            "correctIndex": 1,
-            "explanation": "The layered structure mirrors a skip list: sparse upper layers let a search cross the vector space in a few big hops, then progressively denser layers refine the answer — that's what keeps search close to logarithmic instead of linear in the number of vectors."
-          },
-          {
-            "id": "3849d8b9-1433-424c-8c1c-82eaa776517b",
-            "prompt": "Which workload is HNSW a poor fit for?",
-            "options": [
-              "Powering a RAG retriever over a mostly-static document set",
-              "Semantic search over a few million product descriptions",
-              "A dataset with heavy continuous deletes and updates",
-              "A recommendation system doing lookups on stable embeddings"
-            ],
-            "correctIndex": 2,
-            "explanation": "HNSW graphs don't support cheap deletes — removing a node still leaves dangling references in its neighbors' edge lists, so implementations typically tombstone entries and periodically rebuild. Workloads with constant churn pay for that maintenance repeatedly."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "fdc9facb-0e33-40b7-9494-217a070e8859",
-          "title": "Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs (Malkov & Yashunin, 2016)",
-          "url": "https://arxiv.org/abs/1603.09320"
-        }
-      ],
-      "id": "48e38db7-8a3b-45fc-8960-c170f3baaec3",
-      "publishedDate": "2026-09-09T06:40:27Z"
-    },
-    {
-      "id": "b9debb07-0699-47dd-95c4-25c9bc9df768",
-      "title": "Mamba: Ditching Attention for a Constant-Size State",
-      "subtitle": "Selective state space models process sequences in linear time with a fixed-size memory — no KV cache required.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "mamba",
-        "state-space-models",
-        "ssm",
-        "linear-attention",
-        "sequence-modeling"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "waveform.path",
-      "summary": "Mamba replaces self-attention with a selective state space model: a recurrence whose update rule depends on the current token, computed via a hardware-aware parallel scan. It runs in linear time with a constant-size hidden state instead of a growing KV cache, trading some precise long-range recall for far cheaper long-sequence inference.",
-      "publishedDate": "2026-09-09T00:41:26Z",
-      "slides": [
-        {
-          "id": "a2bfebcd-0e23-4169-a997-6b2a71b06b52",
-          "kind": "cover",
-          "title": "Attention scales quadratically. Mamba doesn't.",
-          "body": "Mamba (Albert Gu and Tri Dao, December 2023) replaces self-attention with a selective state space model — a recurrence that updates a fixed-size hidden state instead of attending over every past token.",
-          "bullets": [
-            "No attention, no KV cache — just a hidden state that updates one token at a time",
-            "Runs in linear time and constant memory per generated token",
-            "Now the backbone (often mixed with attention) of long-context and on-device models"
-          ],
-          "symbol": "waveform.path",
-          "table": null
-        },
-        {
-          "id": "47b35e0e-1330-44c7-b21f-6066328d01e8",
-          "kind": "problem",
-          "title": "Every generated token costs more than the last one did",
-          "body": "Self-attention's cost and memory both grow with how much context the model has already seen.",
-          "bullets": [
-            "Self-attention compares every token to every other token: O(n^2) compute over a sequence of length n",
-            "Autoregressive decoding keeps a KV cache — one key and value vector per past token — that grows linearly with the conversation",
-            "Past a few hundred thousand tokens, that KV cache can occupy more GPU memory than the model's own weights"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "table": null
-        },
-        {
-          "id": "353e7c24-cf26-4ea9-8e55-f3c38a3362ac",
-          "kind": "concept",
-          "title": "A state space model keeps a summary, not a list",
-          "body": "The idea predates deep learning: control theory describes a system by a hidden state that evolves over time.",
-          "bullets": [
-            "A continuous-time SSM updates a hidden state h via matrices A, B, C, then reads it out through C — discretized into a step-by-step recurrence for use on sequences",
-            "Earlier structured SSMs (S4, 2021) kept A, B, C fixed for the entire sequence, which let the recurrence be rewritten as one big convolution — fast, but the same fixed matrices had to work for every input",
-            "That fixed-parameter constraint made S4 efficient but weak at content-based behavior like 'copy this token' or 'ignore that one'"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "c1fbb5f7-800b-4ed8-a4b6-50ca4f5ea098",
-          "kind": "solution",
-          "title": "Mamba makes the update depend on the input",
-          "body": "Mamba's fix: let the SSM's parameters change based on what token it's currently looking at.",
-          "bullets": [
-            "B, C, and the timestep Delta become functions of the current token, so the model can choose what to remember or forget based on content — this is the 'selective' in selective SSM",
-            "That breaks the fixed-kernel convolution trick S4 relied on, so Mamba instead computes the recurrence with a hardware-aware parallel scan",
-            "The scan keeps the large intermediate state in fast GPU SRAM instead of spilling it to slower HBM — the same IO-awareness idea behind FlashAttention",
-            "Net effect: a genuinely input-dependent recurrent model that still trains at near-Transformer speed on GPUs"
-          ],
-          "symbol": "cpu",
-          "table": null
-        },
-        {
-          "id": "68b03b3b-e245-4919-a5c0-499f4749b648",
-          "kind": "comparison",
-          "title": "Where each architecture wins on paper",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Property",
-              "Transformer (attention)",
-              "Mamba (selective SSM)"
-            ],
-            "rows": [
-              [
-                "Compute per generated token",
-                "Grows with total context length",
-                "Constant, independent of context length"
-              ],
-              [
-                "Memory during generation",
-                "KV cache grows linearly with tokens seen",
-                "Fixed-size hidden state that never grows"
-              ],
-              [
-                "Training parallelism",
-                "Fully parallel across the sequence",
-                "Parallel via the hardware-aware scan"
-              ],
-              [
-                "Precise long-range recall",
-                "Strong — any past token stays directly addressable",
-                "Weaker — history is compressed into the fixed state"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1845a4f6-2e38-4413-9815-89b353d3ee33",
-          "kind": "example",
-          "title": "Reading a 400,000-token document on one GPU",
-          "body": "The constant-memory property is easiest to see with a concrete scale.",
-          "bullets": [
-            "A Transformer reading that document keeps a growing KV cache entry for every one of those 400,000 tokens",
-            "A Mamba-based model updates the same fixed-size hidden state the whole way through — memory use at token 400,000 looks identical to memory use at token 400",
-            "This is why SSM and hybrid layers show up specifically in models built for very long context or on-device deployment, where KV-cache memory — not raw FLOPs — is the actual limit"
-          ],
-          "symbol": "doc.plaintext",
-          "table": null
-        },
-        {
-          "id": "e3f0740f-5c65-4b82-be54-28e802cf70ee",
-          "kind": "concept",
-          "title": "Compression has a cost: exact recall gets harder",
-          "body": "Squeezing the whole history into one fixed-size state is not free.",
-          "bullets": [
-            "Retrieving one exact fact from far back ('needle in a haystack') is harder for a compressed state than for attention, which can look at any individual past token directly",
-            "Follow-up work on in-context recall benchmarks shows pure SSMs specifically lag attention on tasks needing exact copying or lookup, even when they match it on general language modeling loss",
-            "The practical fix is hybrid architectures: interleave a handful of attention layers among mostly-SSM layers — Mistral's Codestral Mamba and AI21's Jamba both ship this way",
-            "Don't reach for a pure SSM when the task is dominated by precise long-document retrieval — that's still attention's or RAG's strength. Reach for it when raw sequence length and serving memory are the bottleneck"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "fe72285c-4420-4995-9e03-c1fe4df2b555",
-          "kind": "takeaways",
-          "title": "What to actually take from this",
-          "body": null,
-          "bullets": [
-            "Mamba swaps attention for a selective state space model: a recurrence whose update matrices depend on the current input",
-            "The payoff is O(n) compute and a constant-size state, instead of O(n^2) attention and an ever-growing KV cache",
-            "The cost is weaker exact long-range recall, which is why hybrid attention+SSM architectures exist",
-            "It matters most for very long sequences or memory-constrained serving — not as a universal attention replacement"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e3a9109b-a8a8-4841-b38c-bc2ca12e7bb3",
-            "prompt": "What is the core architectural change Mamba makes compared to earlier structured state space models like S4?",
-            "options": [
-              "It removes the hidden state entirely",
-              "It makes the SSM's B, C, and timestep parameters depend on the current input (selective) instead of holding them fixed",
-              "It replaces the state space model with an LSTM",
-              "It adds more attention heads to the model"
-            ],
-            "correctIndex": 1,
-            "explanation": "S4 held its A, B, C matrices fixed across the whole sequence, which enabled a fast convolution but limited it to input-independent behavior. Mamba makes B, C, and the timestep depend on the current token, letting it selectively remember or forget content — at the cost of that convolution shortcut, which is why it needs a hardware-aware parallel scan instead."
-          },
-          {
-            "id": "fd3ab667-2a66-443f-b85a-b5c2919272c5",
-            "prompt": "Why doesn't Mamba's memory usage grow as it generates more tokens, unlike a Transformer's KV cache?",
-            "options": [
-              "It only keeps the last 10 tokens in memory",
-              "It stores every past token's key and value vectors, just compressed",
-              "It updates a single fixed-size hidden state at each step instead of appending to a growing cache",
-              "It offloads memory to disk automatically"
-            ],
-            "correctIndex": 2,
-            "explanation": "Mamba's recurrence updates one fixed-size hidden state per step. That state's size doesn't depend on how many tokens came before it, unlike a Transformer's KV cache, which stores a vector per past token and keeps growing."
-          },
-          {
-            "id": "74132d7c-104b-4aea-ac7a-cc2455b82428",
-            "prompt": "What is the main tradeoff of Mamba's fixed-size state compared to attention?",
-            "options": [
-              "It cannot be trained on GPUs",
-              "It requires far more parameters than a Transformer of similar quality",
-              "Precise recall of one exact fact from far back in the sequence is harder, since history gets compressed rather than kept token-by-token",
-              "It cannot process sequences longer than 4,096 tokens"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because the entire history is compressed into one fixed-size state, exact lookup of a specific past detail is harder than for attention, which can address any individual past token directly. This is why hybrid architectures mix in a few attention layers to patch the recall gap."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "52221494-aa2f-40e3-a67e-13c123747c62",
-          "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
-          "url": "https://arxiv.org/abs/2312.00752"
-        }
-      ]
     }
   ]
 }
