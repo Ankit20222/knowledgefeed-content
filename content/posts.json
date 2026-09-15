@@ -1,6 +1,533 @@
 {
   "posts": [
     {
+      "id": "99bd894a-dc3c-4c79-8af7-6431d3c95ada",
+      "title": "SAS: Sparse Attention That Ranks Its Own Context",
+      "subtitle": "An end-to-end trained gate beats distillation-based sparse attention at tight budgets",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "attention",
+        "sparse-attention",
+        "inference-optimization",
+        "transformers",
+        "long-context"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cpu",
+      "summary": "SAS (Simple Attention Sparsification) is a Tencent Hunyuan paper trending on Hugging Face's Daily Papers that attaches continuous, learnable gates to blocks of context and lets the language-modeling loss itself optimize which blocks each query attends to — instead of distilling a separate selector from the original model's dense attention. Across reasoning, long-context, and agentic tasks it beats prior trainable sparse-attention baselines, with the widest margins at the tightest attention budgets.",
+      "slides": [
+        {
+          "id": "5cfc0625-96f6-47fa-aaed-89c7c2d9f83a",
+          "kind": "cover",
+          "title": "Full Attention Doesn't Scale — So Models Fake It",
+          "body": "Transformer attention costs grow quadratically with context length. Once contexts hit hundreds of thousands of tokens, computing full attention over every token pair becomes the dominant cost. SAS is a new post-training method for deciding, cheaply and per-query, which slice of that context is actually worth attending to.",
+          "bullets": [
+            "Trending #1 on Hugging Face Daily Papers this week",
+            "From Tencent Hunyuan — arXiv 2609.13141",
+            "Open code + weights released alongside the paper"
+          ],
+          "symbol": "cpu",
+          "table": null
+        },
+        {
+          "id": "97493d41-604d-427f-807a-4fc044898cd5",
+          "kind": "problem",
+          "title": "Distillation-Based Selectors Can't Beat Their Teacher",
+          "body": "Most trainable sparse-attention methods train a lightweight selector to imitate the pattern of the original model's dense attention. That's a ceiling, not a target: the selector is only ever learning to copy scores that were never optimized for the sparsification task in the first place.",
+          "bullets": [
+            "Selector is trained to match dense-attention scores, not to minimize the real language-modeling loss",
+            "Any mismatch between 'looks like dense attention' and 'is actually the useful context' never gets corrected",
+            "Performance quietly caps out well below what the architecture could support"
+          ],
+          "symbol": "xmark.octagon",
+          "table": null
+        },
+        {
+          "id": "056d5378-7f95-4265-b826-ccf28b9ee829",
+          "kind": "solution",
+          "title": "Continuous Gates Make Selection Differentiable",
+          "body": "SAS attaches a continuous, learnable gate to each candidate context block. Because the gate is continuous (not a hard discrete pick), gradients from the ordinary language-modeling loss flow straight through it — so the model learns which blocks matter for the actual downstream objective, with no separate distillation target and no dense-attention teacher required at training time.",
+          "bullets": [
+            "Gates are optimized end-to-end with the LM loss, not by imitation",
+            "No frozen dense-attention teacher needed during training",
+            "Context ranking becomes a first-class, directly-optimized part of the model"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "0782d0ee-285f-476b-a641-baaa928d8040",
+          "kind": "concept",
+          "title": "The Unit of Selection Is Blocks, Not Tokens",
+          "body": "SAS scores and selects 'context units' — contiguous blocks of tokens — rather than individual tokens. Operating at block granularity keeps the selection budget-controllable and hardware-friendly (blocks map cleanly onto the tiled matmuls GPUs already do for attention), while still letting the per-query gate scores decide which blocks survive.",
+          "bullets": [
+            "Query-dependent: different queries can keep different blocks",
+            "Block granularity trades a little precision for big efficiency wins on real hardware",
+            "The attention budget (how many blocks to keep) is a tunable knob, not fixed at train time"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "9c572f28-40ec-468f-831d-0a355a577409",
+          "kind": "comparison",
+          "title": "The Gap Widens as the Budget Shrinks",
+          "body": "The paper reports that SAS consistently outperforms trainable sparse-attention baselines across attention budgets — and that the advantage is largest precisely when the budget is tightest, i.e. when the model can only keep a small fraction of the context.",
+          "table": {
+            "headers": [
+              "Attention budget",
+              "Distillation-based selector",
+              "SAS (end-to-end)"
+            ],
+            "rows": [
+              [
+                "Loose (mild sparsity)",
+                "Close to the dense baseline",
+                "Matches dense baseline, no teacher needed"
+              ],
+              [
+                "Tight (aggressive sparsity)",
+                "Accuracy drops sharply — capped by teacher quality",
+                "Reported largest relative gains over baselines"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "bullets": []
+        },
+        {
+          "id": "70e3db0c-cbef-4e24-a35d-d02ef0b1327c",
+          "kind": "example",
+          "title": "A 200-Page Contract, One Buried Clause",
+          "body": "Say a model is asked a question that hinges on a single indemnification clause on page 80 of a 200-page contract loaded into a long context window. A distillation-based selector picks blocks that merely 'look important' to a frozen dense-attention pattern — which may or may not include page 80. SAS's gates were trained against the actual task loss, so they're pushed to keep whatever blocks the model needs to answer correctly, including a narrow, unusual clause a generic importance heuristic would miss.",
+          "bullets": [
+            "Selection is task-driven, not just 'attention-pattern-shaped'",
+            "Matters most exactly when the needle is easy to miss"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "8700c581-3582-4016-9e4a-15e930ee81bc",
+          "kind": "takeaways",
+          "title": "When Learned Sparsity Isn't the Right Call",
+          "body": "SAS is a post-training method: it needs a fine-tuning phase on the target model, unlike training-free heuristics (fixed local+global windows, streaming attention) that need zero extra training. That extra step buys better accuracy at aggressive sparsity, at the cost of engineering complexity and a training run you have to redo if you change the deployment context length.",
+          "bullets": [
+            "Needs post-training data representative of your real deployment context lengths",
+            "Adds a training/engineering step that training-free sparsity methods skip entirely",
+            "Best justified when you're already pushing very long contexts at a tight compute budget",
+            "Code and weights are public — Tencent-Hunyuan/Simple-Attention-Sparsification"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4d83e382-5f97-497f-b510-97dd03669a22",
+            "prompt": "What core problem does SAS solve compared to distillation-based sparse-attention selectors?",
+            "options": [
+              "It removes the need for any post-training step",
+              "It optimizes context ranking end-to-end with the language-modeling loss instead of imitating dense attention",
+              "It only works on sequences shorter than 1,000 tokens",
+              "It replaces attention with a recurrent state"
+            ],
+            "correctIndex": 1,
+            "explanation": "Distillation caps a selector at copying a frozen dense-attention pattern. SAS instead backpropagates the real training objective through continuous gates, so selection is optimized for the task itself."
+          },
+          {
+            "id": "29d81bd7-f058-4be4-8234-da94e5eea79c",
+            "prompt": "What is a 'context unit' in SAS?",
+            "options": [
+              "An individual attention head",
+              "An entire document",
+              "A contiguous block of tokens",
+              "A model layer"
+            ],
+            "correctIndex": 2,
+            "explanation": "SAS scores and selects blocks of tokens rather than single tokens, which keeps the selection budget-controllable and maps efficiently onto GPU matmul tiling."
+          },
+          {
+            "id": "809bfc7e-94e9-4db3-873b-1b2d7b2860b6",
+            "prompt": "According to the paper, where does SAS show its largest relative improvement over prior baselines?",
+            "options": [
+              "At very loose attention budgets close to full dense attention",
+              "At tight attention budgets, i.e. aggressive sparsity",
+              "Only during pretraining, never at inference",
+              "Only on multimodal benchmarks"
+            ],
+            "correctIndex": 1,
+            "explanation": "Selection quality matters most when few blocks can be kept — that's exactly where end-to-end optimization of the ranking pays off most over a teacher-imitating selector."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "13a2f480-9e06-4b1d-aac0-093a9b5d5100",
+          "title": "SAS: Simple Attention Sparsification via End-to-End Optimization of Context Ranking",
+          "url": "https://arxiv.org/abs/2609.13141"
+        }
+      ],
+      "publishedDate": "2026-09-15T06:45:45Z"
+    },
+    {
+      "id": "88caa779-2f31-4ed7-b383-4fc2a8d846ef",
+      "title": "Shieldstral: A 3B Safety Model That Reads Your Policy",
+      "subtitle": "Mistral's open guard model takes your moderation rules as a prompt, not as training data",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "safety",
+        "content-moderation",
+        "open-weights",
+        "guard-models",
+        "multimodal"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "checkmark.shield.fill",
+      "summary": "Mistral AI released Shieldstral 1.0, a 3B-parameter open-weights safety classifier that judges text and images against a moderation policy written in plain language at inference time, rather than a fixed harm taxonomy baked in during training. Built on Ministral-3-3B with a native Pixtral vision encoder, Mistral reports it matches guard models roughly 7x its size on text safety and leads on multimodal moderation.",
+      "slides": [
+        {
+          "id": "06e7bc19-cf5d-45b2-b288-e3cb04da812d",
+          "kind": "cover",
+          "title": "A Guard Model You Configure With a Sentence, Not a Fine-Tune",
+          "body": "Mistral AI open-sourced Shieldstral 1.0: a 3B-parameter safety classifier for text and images, released under Apache 2.0 with weights on Hugging Face.",
+          "bullets": [
+            "3B parameters, runs on a single 16GB GPU",
+            "Covers 12 languages, judges text and images through one interface",
+            "Apache 2.0 — open weights, not just an API"
+          ],
+          "symbol": "checkmark.shield.fill",
+          "table": null
+        },
+        {
+          "id": "3d162f4e-9c5f-4d45-86ad-16e89297cfe9",
+          "kind": "problem",
+          "title": "Fixed-Taxonomy Guard Models Don't Travel",
+          "body": "Most safety classifiers are trained against a fixed list of harm categories. That works for a generic policy, but every product and platform has its own rules — what counts as 'graphic violence' on a news app is different from a game with cartoon combat. Adapting a fixed-taxonomy model to a new policy usually means collecting labeled data and retraining.",
+          "bullets": [
+            "Harm categories are frozen at training time",
+            "A new or platform-specific rule requires a new training run",
+            "Slow to keep pace with fast-moving product and regulatory requirements"
+          ],
+          "symbol": "xmark.octagon",
+          "table": null
+        },
+        {
+          "id": "8f36b7ec-a58e-43b0-a57f-740f46412960",
+          "kind": "solution",
+          "title": "Moderation Reframed as Yes/No Question Answering",
+          "body": "Shieldstral takes three inputs: an <Instruct> block (the evaluation context, strictness level, and optionally a definition of what counts as unsafe), a <Query> (a single yes/no question, e.g. 'Does this content promote physical violence?'), and a <Document> (the content to judge — a prompt, a response, a prompt-response pair, or an image with optional text).",
+          "bullets": [
+            "The policy lives in the prompt, not in the model's weights",
+            "Change the policy by changing the <Instruct> text — no retraining",
+            "Same interface handles pure text, pure image, or mixed content"
+          ],
+          "symbol": "text.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "c36fffb1-8946-4b1d-9cca-ac3399bfff32",
+          "kind": "architecture",
+          "title": "Built on Ministral-3-3B With a Native Vision Encoder",
+          "body": "Shieldstral is built on Ministral-3-3B-Base-2512 with a Pixtral vision encoder folded into the same model, so text and image moderation share one interface instead of two separate pipelines. That native multimodality is what lets a single <Document> field accept either modality.",
+          "bullets": [
+            "Base model: Ministral-3-3B-Base-2512",
+            "Vision: native Pixtral encoder, not a bolted-on OCR step",
+            "One forward pass judges text, images, or both together"
+          ],
+          "symbol": "eye.fill",
+          "table": null
+        },
+        {
+          "id": "3032d0f8-c9b4-4ddf-898d-c51865a47fee",
+          "kind": "comparison",
+          "title": "Small Model, Reported Parity With a Much Bigger One",
+          "body": "Mistral's announcement reports Shieldstral matching much larger guard models on text safety while leading on multimodal safety — figures corroborated by multiple independent write-ups of the release.",
+          "table": {
+            "headers": [
+              "Model",
+              "Size",
+              "Reported result (per Mistral's announcement)"
+            ],
+            "rows": [
+              [
+                "GPT-OSS-Safeguard-20B",
+                "20B",
+                "Baseline text-safety guard model"
+              ],
+              [
+                "Shieldstral-1.0",
+                "3B (~7x smaller)",
+                "~84.9% avg F1 on text safety — roughly matches the 20B baseline"
+              ],
+              [
+                "Shieldstral-1.0 (multimodal)",
+                "3B",
+                "~83.8% F1 on multimodal safety — ahead of evaluated baselines"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "bullets": []
+        },
+        {
+          "id": "5fcfcbb0-116c-4d87-ad7b-2e44b9b96398",
+          "kind": "example",
+          "title": "Same Model, Two Different Platforms' Rules",
+          "body": "A game platform wants to allow stylized cartoon combat but block real-world violence glorification; a news platform wants the opposite bias — permissive on real reporting of violence, strict on gratuitous gore. With a fixed-taxonomy classifier, that's two training runs. With Shieldstral, it's two different <Instruct> strings sent to the same weights, evaluated with the same <Query>.",
+          "bullets": [
+            "Policy experiments become prompt edits, not ML projects",
+            "Useful for platforms that need per-tenant or per-region policy variation"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "dcc066c8-c29f-4ef7-88b9-f5d282a8d293",
+          "kind": "takeaways",
+          "title": "Where a Prompted Judge Falls Short",
+          "body": "Shieldstral outputs a binary yes/no signal per query, not a nuanced severity score, and — like any prompted model — its accuracy depends on how clearly the policy is written. It's a single-purpose classifier: useful as one layer of a moderation pipeline, not a replacement for human review on ambiguous or appealed cases.",
+          "bullets": [
+            "Binary yes/no per query, not graded severity",
+            "Prompt-sensitive: vague policy wording gives vague judgments",
+            "Best used as one signal alongside human review, not a full replacement",
+            "Released under Apache 2.0 with weights on Hugging Face"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "584561cc-691b-45ff-8f28-923588823060",
+            "prompt": "What makes Shieldstral different from a typical fixed-taxonomy safety classifier?",
+            "options": [
+              "It has far more parameters than typical guard models",
+              "It takes the moderation policy as part of the input prompt instead of baking fixed categories in during training",
+              "It only works on images, never text",
+              "It requires no inference compute at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Shieldstral's <Instruct>/<Query>/<Document> format means the policy is an input, not a training target — so changing the policy means changing the prompt, not retraining."
+          },
+          {
+            "id": "bd3ee95e-cd99-4930-9daa-03ce77724900",
+            "prompt": "What lets Shieldstral moderate both text and images through a single interface?",
+            "options": [
+              "A native Pixtral vision encoder built into the same model",
+              "Two separate models chained together with a router",
+              "An external OCR service called before inference",
+              "It doesn't actually support images"
+            ],
+            "correctIndex": 0,
+            "explanation": "Shieldstral is built on Ministral-3-3B with a native Pixtral vision encoder folded in, so one model and one prompt format cover both modalities."
+          },
+          {
+            "id": "5b2ac424-7019-4a42-b9e7-b13733758ac9",
+            "prompt": "Per Mistral's announcement, roughly how does the 3B Shieldstral compare to the 20B GPT-OSS-Safeguard on text safety?",
+            "options": [
+              "It performs far worse despite being smaller",
+              "It's roughly on par (~84.9% avg F1) despite being about 7x smaller",
+              "It scores twice as high",
+              "The two aren't comparable on any benchmark"
+            ],
+            "correctIndex": 1,
+            "explanation": "Mistral reports Shieldstral reaching about 84.9% average F1 on text safety, matching a guard model roughly 7x its parameter count."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "492187d5-f2ba-4622-9bc9-adabace8f155",
+          "title": "Introducing Shieldstral",
+          "url": "https://mistral.ai/news/shieldstral/"
+        }
+      ],
+      "publishedDate": "2026-09-15T06:45:44Z"
+    },
+    {
+      "id": "e9df4f02-8833-48e5-a2c0-d47ed3a9902f",
+      "title": "ReAct: Why Agents Think Between Every Action",
+      "subtitle": "Interleaving reasoning traces with tool calls stops agents from spiraling on a bad step",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "agents",
+        "react",
+        "reasoning",
+        "tool-use",
+        "prompting"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "ReAct (Yao et al., 2022) interleaves short reasoning traces ('thoughts') with tool-calling actions and their observations in a repeating loop, instead of reasoning alone or acting alone. The thought step acts as working memory that lets an agent notice when an observation contradicts its plan and adjust — which is exactly what pure chain-of-thought and pure tool-calling agents can't do on their own.",
+      "slides": [
+        {
+          "id": "bc86c89d-fa58-4e51-a339-7e7628f9d414",
+          "kind": "cover",
+          "title": "Reasoning and Acting, One Step at a Time",
+          "body": "ReAct, introduced by Yao et al. in 2022, prompts a language model to generate a short reasoning trace and a tool-calling action at every step, feed the tool's result back in as an observation, and repeat — instead of picking only reasoning or only acting.",
+          "bullets": [
+            "Core loop: Thought -> Action -> Observation, repeated",
+            "Now the default pattern behind most tool-using LLM agents"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "8b3dded9-0e7b-4838-9559-9fd330ec8fb5",
+          "kind": "problem",
+          "title": "Pure Reasoning Can't Touch the World; Pure Acting Can't Course-Correct",
+          "body": "Chain-of-thought-only prompting reasons fluently but is stuck with whatever the model already 'knows' — it can't look anything up, so it can confidently reason its way to a wrong answer. Act-only agents (tool calls with no visible reasoning) tend to lock onto a plausible-looking action and, without a visible plan to check against, struggle to notice when an observation contradicts what they assumed.",
+          "bullets": [
+            "CoT alone: no way to verify or update against the real world",
+            "Act-only: no persistent plan to notice or diagnose a bad step",
+            "Neither approach supervises its own trajectory"
+          ],
+          "symbol": "xmark.octagon",
+          "table": null
+        },
+        {
+          "id": "a0317955-93e3-4952-a892-1b2e5a15d38a",
+          "kind": "concept",
+          "title": "The Thought -> Action -> Observation Loop",
+          "body": "At each step the model emits a Thought (a short plan or rationale), then an Action (a tool call — search, calculator, an API), and receives an Observation (the tool's result), which gets appended to the context before the next step. The loop ends when the model emits a Finish action with the final answer.",
+          "bullets": [
+            "The Thought is working memory: it tracks the plan across steps",
+            "Each Observation can change the next Thought, not just the next Action",
+            "One model plays planner and actor in the same context window"
+          ],
+          "symbol": "list.number",
+          "table": null
+        },
+        {
+          "id": "0ba30434-af7c-41d1-a5c5-8e9b537a5547",
+          "kind": "architecture",
+          "title": "What Actually Goes Into the Prompt",
+          "body": "In practice this is implemented with a few-shot prompt (or a system prompt for instruction-tuned models) showing example Thought/Action/Observation trajectories, plus a defined set of callable tools. No separate planner model is required — the same model that reasons also emits the structured action calls.",
+          "bullets": [
+            "Few-shot exemplars or a system-prompt description of the loop",
+            "A fixed tool interface the model's actions must conform to",
+            "No extra planning model — one context window, one model, both roles"
+          ],
+          "symbol": "text.alignleft",
+          "table": null
+        },
+        {
+          "id": "15d27ca4-4e5a-4a09-ab83-6fe1bb73c5a2",
+          "kind": "comparison",
+          "title": "Three Ways to Build an Agent",
+          "table": {
+            "headers": [
+              "Approach",
+              "Can use tools?",
+              "Can course-correct mid-task?",
+              "Typical failure mode"
+            ],
+            "rows": [
+              [
+                "Chain-of-thought only",
+                "No",
+                "N/A — no tools to observe",
+                "Confidently reasons from stale or wrong internal knowledge"
+              ],
+              [
+                "Act-only (tool calls, no visible reasoning)",
+                "Yes",
+                "Poorly",
+                "Locks onto a bad early action, can't diagnose why it failed"
+              ],
+              [
+                "ReAct (thought + action + observation loop)",
+                "Yes",
+                "Yes",
+                "Extra reasoning tokens add latency and cost per step"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "body": null,
+          "bullets": []
+        },
+        {
+          "id": "f8f545a6-2c2c-4032-adc6-b7937efc9491",
+          "kind": "example",
+          "title": "Answering a Question That Needs Two Lookups",
+          "body": "Question: \"What's the population of the city that hosted the 2024 Olympics closing ceremony?\" Thought: I need the host city first. Action: search(\"2024 Olympics host city\"). Observation: \"Paris.\" Thought: Now I need Paris's population. Action: search(\"Paris population\"). Observation: \"~2.1 million.\" Thought: I have what I need. Action: Finish[\"~2.1 million\"].",
+          "bullets": [
+            "Each Thought is decided using what the previous Observation just revealed",
+            "No fixed upfront plan — the second lookup query depends on the first result",
+            "A plan-once, act-many agent would have to guess both queries in advance"
+          ],
+          "symbol": "magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "1e1d3538-22ce-49bb-9d40-9b9a6a2600d3",
+          "kind": "takeaways",
+          "title": "When the Loop Isn't Worth It",
+          "body": "Every Thought is extra tokens, which means extra latency and cost per step — for a single, simple lookup, plain tool-calling with no visible reasoning is faster and cheaper. Reasoning traces can also hallucinate a wrong plan and lock into it just as confidently as a right one, so ReAct reduces certain failure modes without eliminating them, and needs a max-step guard so it can't loop forever on a task that isn't converging.",
+          "bullets": [
+            "Skip the loop for simple, single-tool lookups — it just adds overhead",
+            "Always cap max steps; nothing stops a stuck agent from looping",
+            "Truncate large observations (e.g. full HTML) or they'll blow the context window",
+            "Now the default pattern behind LangChain, most agent frameworks, and tool-calling APIs"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "02daf97a-40a1-45bb-9b79-3f6082563495",
+            "prompt": "What are the three repeating parts of the ReAct loop?",
+            "options": [
+              "Plan, Execute, Review",
+              "Thought, Action, Observation",
+              "Prompt, Response, Feedback",
+              "Query, Retrieve, Generate"
+            ],
+            "correctIndex": 1,
+            "explanation": "ReAct repeats a Thought (reasoning), an Action (a tool call), and an Observation (the tool's result) until the model finishes with an answer."
+          },
+          {
+            "id": "51dfbc64-cc09-4517-83f4-a35df3146dfb",
+            "prompt": "Why do act-only agents (tool calls with no visible reasoning) tend to struggle when a step fails?",
+            "options": [
+              "They technically can't call tools at all",
+              "There's no persistent reasoning trace tracking the plan, so the agent can't diagnose or adjust when a result contradicts its assumption",
+              "They always use more tokens than ReAct agents",
+              "They can only call one tool per task"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without a visible Thought step, there's no working memory of the plan to check new observations against, so the agent can't notice or correct a bad path as easily."
+          },
+          {
+            "id": "8e17682d-a99f-4bda-b30f-6220ce36578e",
+            "prompt": "What's a real cost of adding a Thought before every Action?",
+            "options": [
+              "It removes the model's ability to call tools",
+              "Extra reasoning tokens increase latency and cost at every step",
+              "It requires training a second, separate model",
+              "It prevents the agent from ever finishing a task"
+            ],
+            "correctIndex": 1,
+            "explanation": "Each Thought is more generated tokens, so for simple single-lookup tasks the overhead of reasoning at every step can cost more than it saves."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-09-15T06:45:43Z"
+    },
+    {
       "id": "a3174a2f-20a1-455a-a47a-c37d3a1614ba",
       "title": "Mixture of Experts: Scaling Params Without the FLOPs",
       "subtitle": "How sparse routing lets trillion-parameter models run like much smaller ones",
@@ -10576,597 +11103,6 @@
       ],
       "id": "5d640f27-dd6d-4f61-8c95-6799d79c8247",
       "publishedDate": "2026-09-08T12:43:14Z"
-    },
-    {
-      "title": "CARE-X: A Radiology VLM That Reports Its Confidence",
-      "subtitle": "Auxiliary heads, reward-aligned RL, and tool-augmented measurement push chest X-ray AI past text-only diagnosis.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "medical-ai",
-        "vision-language-models",
-        "reinforcement-learning",
-        "calibration",
-        "multimodal"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "stethoscope",
-      "summary": "Microsoft Research and Narayana Health built CARE-X, a chest X-ray vision-language model that pairs free-text reports with calibrated, threshold-tunable predictions. Adding tool-augmented measurement lifted F1 by up to 71 points on findings that need an actual computed ratio instead of a visual guess.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A Chest X-Ray Model That Knows When to Hedge",
-          "body": null,
-          "bullets": [
-            "Published by Microsoft Research with Narayana Health, August 11, 2026",
-            "Built on a SigLIP2 vision encoder plus a Phi-4-mini-instruct (3.8B) language backbone",
-            "Combines free-text reports with calibrated, threshold-tunable diagnoses"
-          ],
-          "symbol": "stethoscope",
-          "table": null,
-          "id": "b545ef24-2efd-4f73-8405-834998654412"
-        },
-        {
-          "kind": "problem",
-          "title": "Generative Reports Alone Aren't Clinically Usable",
-          "body": "A model that writes 'possible cardiomegaly' in a report gives a clinician nothing to act on — no confidence score to trade sensitivity against specificity, and no way to know if it measured anything or just guessed from the image.",
-          "bullets": [
-            "Cross-entropy training treats a missed life-threatening finding the same as a minor wording error",
-            "Findings like cardiomegaly need an actual measurement (heart-to-thorax ratio), not a visual guess — and that depends on imaging view and patient positioning",
-            "Clinicians need an adjustable operating point, not one fixed yes/no threshold"
-          ],
-          "symbol": "exclamationmark.bubble.fill",
-          "table": null,
-          "id": "a339f912-d0c9-4859-b804-1f26e23cfb5e"
-        },
-        {
-          "kind": "solution",
-          "title": "Three Fixes Bolted Onto One Backbone",
-          "body": "CARE-X keeps a standard vision-language backbone but adds task-specific auxiliary heads for classification and grounding, trains with DAPO-based reinforcement learning against clinically weighted rewards, and — in a companion experiment — pairs a VLM with deterministic measurement tools for a perceive-then-compute loop.",
-          "bullets": [
-            "Stages 1-3 (SFT): vision pretraining, then adapter/head training, then LoRA adaptation",
-            "Stage 4: DAPO reinforcement learning optimized directly for clinical reward, not generic text likelihood",
-            "Tool-augmented arm: Qwen3-VL-4B-Instruct calls deterministic measurement tools across multi-turn reasoning instead of eyeballing a ratio"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null,
-          "id": "eb5e9410-19c2-43ab-ad68-1a3601fa373b"
-        },
-        {
-          "kind": "comparison",
-          "title": "Where the Numbers Actually Move",
-          "body": null,
-          "bullets": [
-            "The biggest jumps come from measurement-dependent findings, not general report quality — tool use fixes a different failure mode than better language modeling"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Task",
-              "Metric",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Report generation (4 benchmarks)",
-                "CRIMSON (clinically-weighted)",
-                "Best score across ReXGradient, MIMIC-CXR, IU-Xray, CheXpert-Plus"
-              ],
-              [
-                "Visual QA",
-                "ReXVQA leaderboard accuracy",
-                "94% overall, +6 pp over next best"
-              ],
-              [
-                "Anatomical grounding",
-                "mAP / mIoU vs. generative-only",
-                "+28.2 pp mAP, +6.2 pp mIoU"
-              ],
-              [
-                "Aortic enlargement (tool-augmented)",
-                "F1 vs. perception-only",
-                "+39.5 to +71.4 F1 points"
-              ]
-            ]
-          },
-          "id": "6d7b7f1c-e185-4af0-90a4-475e79969d47"
-        },
-        {
-          "kind": "example",
-          "title": "Catching What a Vision-Only Model Missed",
-          "body": "On a real ICU cohort from Narayana Health (1,047 radiographs, rare-condition prevalence of 2.6-5.2%), the tool-augmented model reached 94.26% recall on CT-confirmed cardiac enlargement — 10.65 points above the perception-only version — and surfaced 35 additional missed mild aortic dilation cases at 93% sensitivity.",
-          "bullets": [
-            "The gain comes from actually computing a ratio with a tool, not from a bigger model or more training data",
-            "Rare conditions are exactly where confident-but-wrong text generation is most dangerous"
-          ],
-          "symbol": "waveform.path.ecg",
-          "table": null,
-          "id": "c0e06a53-cd10-42e3-a4fb-77a0eece8129"
-        },
-        {
-          "kind": "concept",
-          "title": "A Slider Instead of a Coin Flip",
-          "body": "Because CARE-X predicts calibrated probabilities from a single forward pass, a clinician can move the decision threshold instead of accepting one baked-in cutoff.",
-          "bullets": [
-            "Lowering the threshold trades precision for recall — useful when missing a finding is worse than a false alarm",
-            "This tunability is the direct payoff of training with calibration in mind instead of only optimizing accuracy"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": {
-            "headers": [
-              "Threshold",
-              "Sensitivity",
-              "PPV",
-              "F1"
-            ],
-            "rows": [
-              [
-                "0.5",
-                "0.943",
-                "0.885",
-                "0.913"
-              ],
-              [
-                "0.6",
-                "0.855",
-                "0.927",
-                "0.890"
-              ]
-            ]
-          },
-          "id": "7bcbda91-d01c-4c13-a8c7-526237b8b757"
-        },
-        {
-          "kind": "concept",
-          "title": "Not a Deployable Diagnostic Yet",
-          "body": "Microsoft is explicit: CARE-X is a research model, not a cleared medical device, and it hasn't been approved by any regulatory authority for diagnosis, screening, or patient care.",
-          "bullets": [
-            "No benchmark number here substitutes for prospective clinical trials or regulatory clearance",
-            "The tool-augmented measurement arm used a different backbone (Qwen3-VL-4B) than the main CARE-X model — the two results aren't the same system",
-            "Auxiliary heads and calibration aid interpretability, but a misspecified reward can still teach a model to game the metric rather than the underlying finding"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "d2725ac5-31d5-4eea-9479-3333732799d0"
-        },
-        {
-          "kind": "takeaways",
-          "title": "What This Actually Proves",
-          "body": null,
-          "bullets": [
-            "Auxiliary heads, reward-aligned RL, and tool-augmented measurement each fix a different failure mode of pure text-generation radiology AI",
-            "The largest gains (up to +71 F1 points) show up exactly where models used to guess a measurement instead of computing one",
-            "Calibrated, threshold-tunable output is what makes a model usable by a clinician, not just accurate on a leaderboard"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null,
-          "id": "a768a39b-acfb-4bca-95de-5865b8a78560"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does CARE-X add task-specific auxiliary heads instead of relying only on generated text?",
-            "options": [
-              "To make the model faster at inference",
-              "To produce calibrated, threshold-tunable confidence scores alongside free text",
-              "To reduce the number of parameters",
-              "To avoid needing any training data"
-            ],
-            "correctIndex": 1,
-            "explanation": "Auxiliary heads give structured, calibrated outputs a clinician can threshold — something free-text generation alone can't provide.",
-            "id": "bb43bb41-173d-496d-8048-ed6c1c40acc5"
-          },
-          {
-            "prompt": "What accounts for CARE-X's biggest F1 gains, like +39.5 to +71.4 points on aortic enlargement?",
-            "options": [
-              "A larger language model",
-              "Pairing the VLM with deterministic measurement tools instead of visual guessing",
-              "More training epochs",
-              "Switching to a different vision encoder"
-            ],
-            "correctIndex": 1,
-            "explanation": "Measurement-dependent findings improved most when the model called a tool to actually compute a ratio rather than estimating it visually.",
-            "id": "0cb4af9a-f9ec-4d85-902e-f6dc274e15ef"
-          },
-          {
-            "prompt": "What happens when CARE-X's decision threshold moves from 0.5 to 0.6?",
-            "options": [
-              "Sensitivity increases, PPV decreases",
-              "Sensitivity decreases, PPV increases",
-              "Neither metric changes",
-              "It only affects report generation, not classification"
-            ],
-            "correctIndex": 1,
-            "explanation": "At threshold 0.6, sensitivity drops from 0.943 to 0.855 while PPV rises from 0.885 to 0.927 — a real precision/recall tradeoff, not a free lunch.",
-            "id": "82f2e6b5-b90f-4020-af77-6f098e28ba70"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing CARE-X: Towards Clinically Useful Radiology VLMs — Microsoft Research",
-          "url": "https://www.microsoft.com/en-us/research/blog/introducing-care-x-towards-clinically-useful-radiology-vlms/",
-          "id": "ac2ef2e4-2017-4202-9225-d9ee43fd43c3"
-        }
-      ],
-      "id": "a4330e4f-8626-41cc-bf93-8c0bf1c145ae",
-      "publishedDate": "2026-09-08T12:43:14Z"
-    },
-    {
-      "title": "MCP Prompts: Reusable Templates a Server Controls",
-      "subtitle": "The MCP primitive that lets a server ship its own best prompt instead of hoping the client writes one.",
-      "category": "MCP",
-      "difficulty": "Beginner",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "prompt-engineering",
-        "protocol",
-        "llm-integration"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.text.fill",
-      "summary": "MCP prompts are user-triggered, server-authored message templates — the third MCP primitive alongside tools and resources. They let a server own its best prompt once instead of every client reinventing it, and can embed resource content directly in the returned messages.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "MCP Has Three Ways to Give a Model Context — Prompts Is One",
-          "body": null,
-          "bullets": [
-            "Tools = actions the model can call",
-            "Resources = data the model can read",
-            "Prompts = ready-made instruction templates the server hands to the client"
-          ],
-          "symbol": "doc.text.fill",
-          "table": null,
-          "id": "896c63f4-9354-44ec-a090-ba4cfed1ada6"
-        },
-        {
-          "kind": "problem",
-          "title": "Every Client Reinvents the Same Prompt",
-          "body": "If a database MCP server exposes a 'query' tool, every client that wants to use it well has to independently figure out the right system prompt, few-shot examples, and safety caveats for writing SQL against that specific schema.",
-          "bullets": [
-            "Prompt quality becomes a client-side guessing game instead of something the domain expert (the server author) controls",
-            "Teams duplicate and drift on effectively the same prompt across every app that integrates the same server",
-            "A tool's raw JSON schema tells a model what it can call, not how to use it well"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "id": "210de3be-6f96-49f8-a859-929c77cba815"
-        },
-        {
-          "kind": "solution",
-          "title": "The Server Ships the Prompt, the Client Fills the Slots",
-          "body": "An MCP server declares a list of named prompt templates, each with typed arguments. A client requests a specific prompt with argument values, and the server returns a ready-to-send sequence of messages — including embedded resources — for the client to hand to its model.",
-          "bullets": [
-            "Prompts are user-triggered (e.g. a slash command or menu item in the client UI), unlike tools, which the model decides to call itself",
-            "Arguments are typed and can be validated by the server before the template is filled in",
-            "A returned prompt can embed resource content directly, so the client doesn't need a second round-trip to fetch context"
-          ],
-          "symbol": "text.badge.checkmark",
-          "table": null,
-          "id": "6cdcce02-5d08-40f5-bbc6-f9b832201611"
-        },
-        {
-          "kind": "comparison",
-          "title": "Prompts vs. Tools vs. Resources",
-          "body": null,
-          "bullets": [
-            "Prompts are the only primitive explicitly designed to be user-initiated, not model- or client-initiated"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Primitive",
-              "Who decides to invoke it",
-              "What it returns"
-            ],
-            "rows": [
-              [
-                "Tools",
-                "The model, autonomously, mid-conversation",
-                "A function result the model reasons over"
-              ],
-              [
-                "Resources",
-                "The client, to attach context up front",
-                "Raw data (files, DB rows, docs)"
-              ],
-              [
-                "Prompts",
-                "The user, explicitly (like a slash command)",
-                "A pre-built message sequence, ready to send"
-              ]
-            ]
-          },
-          "id": "42446227-a245-4469-82cd-74c198dce559"
-        },
-        {
-          "kind": "example",
-          "title": "A 'summarize-pr' Prompt in Practice",
-          "body": "A GitHub MCP server defines a prompt named 'summarize-pr' with one argument, pr_number. When a user picks it from their client's command menu, the client requests it with {pr_number: 482}. The server returns a fully-formed message list: a system instruction tuned for PR summaries, plus the PR diff embedded as a resource — and the client sends that straight to the model.",
-          "bullets": [
-            "The user never had to write or know the underlying prompt",
-            "The server can update its summarization instructions for every client at once, without any client shipping a new version"
-          ],
-          "symbol": "chevron.left.forwardslash.chevron.right",
-          "table": null,
-          "id": "91b09350-55c8-4ab6-a5d4-413cecdb0a5c"
-        },
-        {
-          "kind": "concept",
-          "title": "Prompts Can List Themselves With Autocomplete",
-          "body": "Clients can list available prompts and their argument shapes, and MCP supports argument autocompletion so a client UI can suggest valid values (like matching PR numbers) as the user types.",
-          "bullets": [
-            "Discovery follows MCP's core 'list, then get/call' pattern — the same shape as tools and resources",
-            "This is what lets a generic MCP client build slash-command menus for servers it has never seen before"
-          ],
-          "symbol": "text.cursor",
-          "table": null,
-          "id": "18118e20-5c02-467c-92b0-76240d549134"
-        },
-        {
-          "kind": "concept",
-          "title": "When Prompts Are the Wrong Primitive",
-          "body": "Prompts aren't a replacement for tools or resources — they're for the specific case of a reusable, user-invoked instruction template.",
-          "bullets": [
-            "If the model should decide on its own when to fetch something mid-task, that's a tool or resource, not a prompt — prompts aren't triggered autonomously by the model",
-            "A prompt template still has to be filled with real arguments; it doesn't remove the need for typed, validated inputs",
-            "Using a prompt for something that changes on every call (like a raw one-off query) just adds a round trip over calling a tool directly"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "ed45e2a0-d19e-42ce-802f-7e5e51f88160"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The Three MCP Primitives, One Line Each",
-          "body": null,
-          "bullets": [
-            "Tools: model-invoked actions with side effects",
-            "Resources: client-attached data the model reads",
-            "Prompts: user-invoked, server-authored instruction templates — the fix for 'every client reinvents the same system prompt'"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null,
-          "id": "87ea0a87-aec8-4ff4-ad71-a562e3b336a5"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Who typically triggers an MCP prompt?",
-            "options": [
-              "The model, autonomously mid-conversation",
-              "The user, explicitly (e.g. picking a slash command)",
-              "The server, on a timer",
-              "Another MCP server"
-            ],
-            "correctIndex": 1,
-            "explanation": "Unlike tools, which the model decides to call itself, prompts are designed to be explicitly invoked by the user.",
-            "id": "3157c35c-aab1-4cc0-a2bf-66eb7a4095f8"
-          },
-          {
-            "prompt": "What problem does putting a prompt template on the server, instead of the client, solve?",
-            "options": [
-              "It makes the model faster",
-              "It stops every client from independently guessing the best prompt for a server's domain",
-              "It removes the need for any arguments",
-              "It replaces the need for tools entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "Server-owned prompts let the domain expert who built the server control prompt quality once, instead of every client reinventing it.",
-            "id": "25203565-d6d3-46e9-9fb2-bcead02aafdc"
-          },
-          {
-            "prompt": "What can a prompt response include besides plain text instructions?",
-            "options": [
-              "Nothing else — text only",
-              "Embedded resource content, so the client doesn't need a second fetch",
-              "A compiled binary",
-              "Another MCP server's full tool list"
-            ],
-            "correctIndex": 1,
-            "explanation": "A returned prompt can embed resources directly in the message sequence, saving the client an extra round-trip to fetch that context.",
-            "id": "7945eddd-b54b-4056-84cd-c436fe7b48d1"
-          }
-        ]
-      },
-      "references": [],
-      "id": "937083ef-c07e-48f0-a195-dcaaf913a1de",
-      "publishedDate": "2026-09-08T12:43:14Z"
-    },
-    {
-      "title": "Reflection: Teaching an Agent to Grade Its Own Work",
-      "subtitle": "Generate, critique, revise — but only if the critique has something real to check.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "ai-agents",
-        "reflection",
-        "self-correction",
-        "reflexion",
-        "agent-loops"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "Reflection loops let an agent critique its own draft and revise before returning an answer, but the pattern only pays off when the critique step has a real signal — a test, a compiler, an execution result — not just the model re-reading itself.",
-      "slides": [
-        {
-          "id": "76c86fbe-75c8-4652-981e-05100e5f876d",
-          "kind": "cover",
-          "title": "One LLM Call Can't Check Its Own Mistake",
-          "body": "Reflection turns a single generation into a loop: produce a draft, critique it against something real, revise, repeat.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "eef5c015-b75d-4b13-8b5e-0fd614643bdf",
-          "kind": "problem",
-          "title": "Agent Loops Inherit Whatever the First Draft Gets Wrong",
-          "body": null,
-          "bullets": [
-            "A single forward pass has no mechanism to notice its own error mid-response",
-            "Multi-step agents (ReAct-style tool loops) just keep building on a bad first move",
-            "The longer the output — a SQL query, a function, a multi-step plan — the more surface area for an unnoticed bug",
-            "Sampling a new attempt from scratch doesn't fix this: the same blind spots produce the same class of mistake"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "b3ae04fe-c708-4dc4-a366-575e5baaa0f9",
-          "kind": "solution",
-          "title": "The Loop: Actor Drafts, Evaluator Checks, Actor Revises",
-          "body": "Reflexion (Shinn et al., 2023) formalized this as an actor/evaluator pair sharing a scratchpad of past attempts and critiques.",
-          "bullets": [
-            "Actor generates an attempt — an answer, a function, a plan",
-            "Evaluator scores it: ideally against a real check (unit tests, a compiler, code execution, a retrieved fact), not just vibes",
-            "The critique — verbatim error text or a structured verdict — gets appended to context as 'verbal reinforcement'",
-            "Actor revises with that critique in view; loop repeats until the evaluator approves or a round budget (typically 2-4) runs out"
-          ],
-          "symbol": "arrow.2.squarepath",
-          "table": null
-        },
-        {
-          "id": "bce86f07-aa1d-4c8b-9951-c06e5e2f1dc0",
-          "kind": "example",
-          "title": "Worked Example: A Self-Correcting SQL Agent",
-          "body": null,
-          "bullets": [
-            "Task: 'top 5 customers by revenue last quarter' — actor writes a SQL query and runs it",
-            "Database returns a real error: 'column reference \"customer_id\" is ambiguous' — that error text IS the critique, no self-judgment needed",
-            "Actor reads the exact error, qualifies the column with the right table alias, re-runs",
-            "Second execution succeeds — the loop closed because the signal came from the database, not from the model re-reading its own SQL"
-          ],
-          "symbol": "terminal.fill",
-          "table": null
-        },
-        {
-          "id": "33332afd-eb04-4139-9077-7bb61542d08e",
-          "kind": "comparison",
-          "title": "Not All Critiques Are Equally Trustworthy",
-          "body": null,
-          "bullets": [
-            "The gap between self-judgment and execution feedback is the whole story here"
-          ],
-          "table": {
-            "headers": [
-              "Approach",
-              "Extra LLM calls",
-              "Signal is real?",
-              "Typical outcome"
-            ],
-            "rows": [
-              [
-                "Single pass",
-                "1x",
-                "n/a",
-                "Baseline — no correction"
-              ],
-              [
-                "Self-critique only",
-                "2-3x",
-                "No (model judges itself)",
-                "Modest gains, can approve its own mistake"
-              ],
-              [
-                "Reflection + execution feedback",
-                "2-4x",
-                "Yes (tests/compiler/DB output)",
-                "Large gains — Reflexion reported HumanEval pass@1 climbing from GPT-4's ~80% baseline to roughly 91% using verbal reinforcement from test failures"
-              ]
-            ]
-          },
-          "symbol": "tablecells"
-        },
-        {
-          "id": "6032e9cf-5f54-484d-abff-eb9ed335d28c",
-          "kind": "concept",
-          "title": "When Reflection Backfires",
-          "body": null,
-          "bullets": [
-            "Cost multiplies 2-4x in tokens and latency — a poor fit for a chat reply on a tight time budget",
-            "Pure self-judgment shares the same blind spots as the draft: a model that missed a logic error the first time often misses it while 'grading' too",
-            "Best fit: any task with a checkable ground truth — unit tests, a compiler, code execution, retrieved facts — not open-ended writing where there's nothing to check against",
-            "Cap the loop at 2-3 rounds; reflection either converges fast or stalls, and an uncapped loop just burns budget"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "a77a1aca-2062-4fdd-a5af-fa37af501bdf",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Reflection = generate, critique, revise — the value is entirely in what the critique is checked against",
-            "Execution feedback (tests, compilers, DB errors) beats self-judgment because it's a signal outside the model's own blind spots",
-            "Budget 2-4x the calls and cap rounds at 2-3 — it converges quickly or not at all",
-            "Skip it for latency-sensitive replies or tasks with no real way to verify the draft"
-          ],
-          "symbol": "checklist",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a86044b0-e0f1-4c7c-8c6b-3f2c158a59c5",
-            "prompt": "What's the biggest limitation of a reflection loop that relies on pure self-critique (no external checker)?",
-            "options": [
-              "It's always too slow to be practical",
-              "The model can approve its own mistake, since the same blind spot that produced the error can also miss it while grading",
-              "Models are architecturally unable to critique their own output",
-              "It requires fine-tuning a separate model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without a ground-truth signal, the actor and the evaluator are really the same weights looking at the same blind spot twice — that's why Reflexion's biggest gains came from execution feedback (test/compiler output), not from the model just re-reading itself."
-          },
-          {
-            "id": "4baf63bf-1d58-408a-b9c3-1f57146866b9",
-            "prompt": "In the SQL agent example, what actually served as the 'critique' that let the agent fix its query?",
-            "options": [
-              "A second LLM call asked to grade the first query",
-              "A human reviewer's comment",
-              "The database's own error message from actually running the query",
-              "A random alternative query sampled at higher temperature"
-            ],
-            "correctIndex": 2,
-            "explanation": "The real database error ('ambiguous column reference') is a ground-truth signal the model couldn't have produced by just re-reading its own SQL — that's what makes execution feedback stronger than self-judgment."
-          },
-          {
-            "id": "3b9296ea-8fdf-4c80-a340-45b0959c1d7e",
-            "prompt": "When should you skip a reflection loop?",
-            "options": [
-              "When the task has a tight latency/cost budget and there's no real way to check the draft (no tests, no execution, no retrieval)",
-              "Whenever the agent writes code",
-              "Whenever accuracy matters more than speed",
-              "Never — reflection should always be applied"
-            ],
-            "correctIndex": 0,
-            "explanation": "Reflection adds 2-4x the calls. That's worth it when there's a real signal to check against; without one, and under a tight budget, a single well-prompted pass is more efficient than paying for rounds of self-judgment."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "75cf0f04-1e17-42d5-bb5e-ccab405d44e4",
-          "title": "Reflexion: Language Agents with Verbal Reinforcement Learning (Shinn et al., 2023)",
-          "url": "https://arxiv.org/abs/2303.11366"
-        },
-        {
-          "id": "174e95b5-738e-4ee7-a25b-dc89ec4bdc8e",
-          "title": "Self-Refine: Iterative Refinement with Self-Feedback (Madaan et al., 2023)",
-          "url": "https://arxiv.org/abs/2303.17651"
-        }
-      ],
-      "id": "c65b97a7-c7be-4d46-a13e-4c8f78976e10",
-      "publishedDate": "2026-09-08T06:40:37Z"
     }
   ]
 }
