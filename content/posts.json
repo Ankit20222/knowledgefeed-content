@@ -1,6 +1,188 @@
 {
   "posts": [
     {
+      "id": "6c866f1d-9489-4072-9187-3b22c5b26da0",
+      "title": "Quantization: Shrinking LLMs Without Losing Their Minds",
+      "subtitle": "How rounding 16-bit weights to 4 bits turns a 4-GPU model into a laptop model",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "gptq",
+        "awq",
+        "int4",
+        "inference",
+        "llm-serving"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "cpu.fill",
+      "summary": "Quantization compresses an LLM's weights from 16-bit floats down to 8 or 4 bits, cutting memory and bandwidth roughly in half or in quarter. Methods like GPTQ and AWQ make this work by compensating for rounding error or protecting the small set of outlier channels that matter most, keeping quality nearly intact.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Quantization: Shrinking LLMs Without Losing Their Minds",
+          "body": "A 70B model in full precision needs ~140GB of VRAM. Quantization gets it running on a single consumer GPU — by rounding, not retraining.",
+          "bullets": [],
+          "symbol": "cpu.fill"
+        },
+        {
+          "kind": "problem",
+          "title": "Big Models Are Memory-Bound, Not Compute-Bound",
+          "body": "Serving an LLM one token at a time means the GPU spends most of its time waiting on weights to stream in from memory, not doing math. Fewer bytes per weight means faster generation, not just a smaller footprint.",
+          "bullets": [
+            "FP16 stores each weight in 2 bytes: a 70B-parameter model needs ~140GB just for weights",
+            "A high-end consumer GPU has 24GB — that model doesn't fit without splitting across many GPUs",
+            "Autoregressive decoding re-reads the entire weight set for every single token, so memory bandwidth caps your tokens/sec",
+            "Cutting bytes-per-weight in half roughly doubles achievable throughput on the same hardware"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "kind": "solution",
+          "title": "Round to Fewer Bits, Then Fix the Damage",
+          "body": "Naively rounding every weight to 4 bits tanks quality. The trick is compensating for that error instead of ignoring it.",
+          "bullets": [
+            "Basic scheme: map a range of FP16 values to integers via a scale + zero-point, usually per small group of ~128 weights (not the whole tensor) to limit error",
+            "GPTQ quantizes one weight at a time and updates the *remaining unquantized* weights to absorb the rounding error, using second-order (Hessian) information — it processes a 175B model in a few GPU-hours",
+            "AWQ observes that ~1% of weight channels see much larger activation magnitudes than the rest; it keeps those salient channels at higher effective precision instead of treating every weight equally",
+            "Both are post-training: no retraining, no gradient updates — just a calibration pass over a few hundred sample sequences"
+          ],
+          "symbol": "slider.horizontal.3"
+        },
+        {
+          "kind": "comparison",
+          "title": "What You Give Up at Each Bit Width",
+          "body": "Typical published ranges for a ~70B-class model — exact numbers vary by model and calibration set.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Precision",
+              "Weights memory",
+              "Quality vs FP16",
+              "Typical use"
+            ],
+            "rows": [
+              [
+                "FP16",
+                "~140GB",
+                "Baseline",
+                "Multi-GPU serving, max fidelity"
+              ],
+              [
+                "INT8",
+                "~70GB",
+                "Near-lossless",
+                "Single high-VRAM GPU, safest compression"
+              ],
+              [
+                "INT4 (GPTQ)",
+                "~35-40GB",
+                "Small, measurable drop",
+                "Consumer GPU serving"
+              ],
+              [
+                "INT4 (AWQ)",
+                "~35-40GB",
+                "Usually edges out GPTQ at same width",
+                "Consumer GPU serving, faster kernels"
+              ],
+              [
+                "INT2/3",
+                "~18-25GB",
+                "Often too lossy without extra tricks",
+                "Research, aggressive edge deployment"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill"
+        },
+        {
+          "kind": "example",
+          "title": "Fitting a 13B Chat Model on an 8GB Laptop GPU",
+          "body": "Llama-2-13B at FP16 needs ~26GB — nowhere close to fitting. Quantize to 4-bit (llama.cpp's Q4_K_M-style format) and weights drop to roughly 6.5-7GB.",
+          "bullets": [
+            "6.5-7GB of weights plus a few GB for KV cache and activations comfortably fits an 8GB laptop GPU",
+            "This is exactly why GGUF (llama.cpp), GPTQ, and AWQ checkpoints of every popular open model get published within days of release",
+            "The same math is why a 70B model needs ~35-40GB at 4-bit — still too big for one 24GB card, which is why people reach for a 30-40B model instead at 4-bit, or accept 2 GPUs"
+          ],
+          "symbol": "laptopcomputer"
+        },
+        {
+          "kind": "concept",
+          "title": "When Quantization Bites Back",
+          "body": "The failure modes are predictable once you know where the outliers live.",
+          "bullets": [
+            "Below ~4 bits, naive per-tensor quantization degrades fast — those outlier activation channels AWQ protects get crushed, and math/reasoning-heavy tasks suffer more than fluent chit-chat",
+            "Quantizing the KV cache (not just weights) needs its own care — long, reasoning-heavy contexts are more sensitive to KV precision loss than short chats",
+            "Don't quantize a model you're about to fine-tune on new data — fine-tune in higher precision first (or use a method like QLoRA that's designed to fine-tune through a quantized base), then quantize for serving",
+            "Always re-run your own eval suite after quantizing — perplexity on a generic corpus can look fine while a narrow downstream task (tool-calling accuracy, code correctness) quietly regresses"
+          ],
+          "symbol": "xmark.octagon.fill"
+        },
+        {
+          "kind": "takeaways",
+          "title": "The Short Version",
+          "body": "Quantization trades a small, controllable amount of accuracy for a large, predictable amount of memory and speed.",
+          "bullets": [
+            "Bytes-per-weight is the lever: FP16 → INT8 halves memory, → INT4 quarters it",
+            "GPTQ compensates for rounding error layer-by-layer; AWQ protects the small set of high-magnitude activation channels — pick AWQ first for speed, GPTQ when you need its tooling ecosystem",
+            "INT8 is close to a free lunch; INT4 costs a little quality for a lot of memory; below 4-bit gets risky without specialized methods",
+            "Always validate on your actual task after quantizing, not just generic perplexity"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why is serving a large language model usually 'memory-bound' rather than 'compute-bound'?",
+            "options": [
+              "GPUs cannot perform floating-point math fast enough for transformer layers",
+              "Autoregressive decoding re-reads the full set of weights from memory for every generated token, so memory bandwidth limits throughput",
+              "Quantized models require more matrix multiplications than full-precision ones",
+              "Attention layers require more VRAM than the model's weights"
+            ],
+            "correctIndex": 1,
+            "explanation": "Generating one token at a time means the GPU streams the entire weight set from memory on every step. That repeated memory traffic, not raw arithmetic, is usually the bottleneck — which is exactly why shrinking bytes-per-weight (quantization) speeds up generation, not just saves space."
+          },
+          {
+            "prompt": "What does AWQ do differently from simply rounding every weight to the nearest 4-bit value?",
+            "options": [
+              "It retrains the entire model from scratch at lower precision",
+              "It identifies the small set of weight channels tied to unusually large activation magnitudes and protects them from aggressive rounding",
+              "It only quantizes the attention layers and leaves the feed-forward layers in FP16",
+              "It increases the model's parameter count to compensate for lost precision"
+            ],
+            "correctIndex": 1,
+            "explanation": "AWQ's key observation is that a small fraction of channels (often under 1%) see much larger activations than the rest. Naively rounding those channels does disproportionate damage, so AWQ keeps them at effectively higher precision while quantizing the rest normally — no retraining needed."
+          },
+          {
+            "prompt": "A 70B-parameter model needs roughly 140GB of VRAM at FP16. Roughly how much does it need at 4-bit quantization?",
+            "options": [
+              "About 140GB — quantization only speeds up compute, not memory",
+              "About 70GB",
+              "About 35-40GB",
+              "About 5GB"
+            ],
+            "correctIndex": 2,
+            "explanation": "FP16 uses 2 bytes per weight; 4-bit uses roughly a quarter of that per weight (0.5 bytes), plus some overhead for scales and zero-points — so memory drops from ~140GB toward ~35-40GB. That's the difference between needing a multi-GPU server and fitting on one high-end consumer card."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (Frantar et al., 2022)",
+          "url": "https://arxiv.org/abs/2210.17323"
+        },
+        {
+          "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration (Lin et al., 2023)",
+          "url": "https://arxiv.org/abs/2306.00978"
+        }
+      ],
+      "publishedDate": "2026-09-16T18:44:08Z"
+    },
+    {
       "id": "23de69ca-502e-41ee-b79e-a41a6ce792f6",
       "title": "When Agents Slow Down: Tokens Stop Paying Off",
       "subtitle": "A new Elo-per-token analysis shows agent test-time compute has a scaling inflection point — and parallel sessions beat one long one.",
@@ -10871,170 +11053,6 @@
         }
       ],
       "id": "517b8bb9-1438-48f2-852e-6599b2bf9131",
-      "publishedDate": "2026-09-10T06:41:49Z"
-    },
-    {
-      "postKind": "concept",
-      "title": "Idempotency Keys: Making Retries Safe",
-      "subtitle": "How to retry a network call without accidentally charging someone twice",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "tags": [
-        "idempotency",
-        "distributed systems",
-        "api design",
-        "retries",
-        "backend"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "key.fill",
-      "summary": "An idempotency key lets a client safely retry a request that may or may not have already succeeded, by giving the server a way to recognize \"this is the same operation\" and return the original result instead of executing it again.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Idempotency Keys: Making Retries Safe",
-          "body": "A network timeout doesn't tell you whether the server processed your request or not. Retrying blindly can be dangerous — idempotency keys make it safe.",
-          "bullets": [],
-          "symbol": "key.fill",
-          "id": "a2cc6f57-73dd-4936-b5cd-e665b0cbf245"
-        },
-        {
-          "kind": "problem",
-          "title": "The Ambiguity Every Retry Faces",
-          "body": "You call POST /charge, the connection drops before the response arrives. Did the charge go through? You genuinely don't know — the request could have failed before reaching the server, or succeeded and only the response got lost.",
-          "bullets": [
-            "Retrying is the obvious fix for transient failures — but if the original request actually succeeded, retrying re-executes it",
-            "For a payment, that means charging the customer twice",
-            "For an inventory decrement, that means double-counting a sale"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "54a525ea-f5f5-4f63-b20d-f192fe43068a"
-        },
-        {
-          "kind": "solution",
-          "title": "The Mechanism: A Key That Deduplicates Intent",
-          "body": "The client generates a unique key (typically a UUID) once per logical operation and sends it with every attempt, including retries. The server stores the key alongside the operation's result, atomically with the operation itself.",
-          "bullets": [
-            "First request with a new key: server executes it, stores result keyed by that ID",
-            "Retry with the same key: server sees it's already been handled and returns the stored result — no re-execution",
-            "The key must be generated once per intent and reused across retries, never regenerated per attempt"
-          ],
-          "symbol": "arrow.clockwise",
-          "id": "1e0ba709-e326-4405-8057-e2789be2e68c"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A Payment API Under Timeout",
-          "body": "A client calls POST /v1/charges with header Idempotency-Key: 7e9a...-4b2. The request times out client-side after 5s, but the server actually finished processing it in 6s. The client retries with the SAME key.",
-          "bullets": [
-            "Server checks its idempotency table: key already exists with status=completed → returns the stored charge result immediately, doesn't charge again",
-            "Race condition: two retries arrive concurrently before the first finishes. A unique constraint on the key column plus a status=pending row (inserted before execution starts) makes the second request see a conflict and wait or return \"in progress\"",
-            "This pattern is exactly how Stripe's Idempotency-Key header works in production"
-          ],
-          "symbol": "creditcard.fill",
-          "id": "d0667db6-6aec-4f2b-a008-083f73714beb"
-        },
-        {
-          "kind": "comparison",
-          "title": "Naive Retry vs. Idempotency-Key Retry",
-          "body": "The difference shows up exactly when it matters: the request that ambiguously \"maybe succeeded.\"",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Scenario",
-              "Naive retry",
-              "With idempotency key"
-            ],
-            "rows": [
-              [
-                "Request never reached server",
-                "Safe — executes once",
-                "Safe — executes once"
-              ],
-              [
-                "Request succeeded, response lost",
-                "Executes AGAIN (duplicate charge)",
-                "Returns stored result — no duplicate"
-              ],
-              [
-                "Two retries race concurrently",
-                "Both may execute",
-                "Unique constraint blocks the second"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.fill",
-          "id": "4960e54f-95e6-4523-988b-05e41cabaf0e"
-        },
-        {
-          "kind": "problem",
-          "title": "Pitfalls to Watch For",
-          "body": "Idempotency keys aren't a free safety net — they need deliberate handling at the edges.",
-          "bullets": [
-            "Key reused with a DIFFERENT request body: the server should reject this (or hash the body and compare) rather than silently returning a mismatched cached result",
-            "Unbounded key storage grows forever — keys need a TTL (e.g., 24h) after which they're purged and can be reused",
-            "GET requests are naturally idempotent already — idempotency keys matter for POST/PATCH/DELETE with side effects, not reads",
-            "Doesn't help across different logical operations — it only protects retries of the SAME operation, not overall business-logic consistency"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "b1fa1192-2d53-4b0b-ab5b-5533c80edf34"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "A network failure means \"unknown outcome,\" not \"failed\" — safe retries need a way to detect duplicate intent",
-            "Client generates one key per logical operation; server stores key → result atomically with the side effect",
-            "Retry with the same key returns the stored result instead of re-executing — this is what makes it safe to retry payments and other side-effecting calls",
-            "Guard the edges: reject mismatched bodies on key reuse, use a unique constraint to close the concurrent-retry race, and expire keys with a TTL",
-            "This is exactly the mechanism behind Stripe's and most payment APIs' Idempotency-Key header"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "e1084681-9483-4bc0-9570-20a3602c1f69"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why is blindly retrying a failed POST /charge request risky?",
-            "options": [
-              "POST requests are always rejected by servers on retry",
-              "The original request may have actually succeeded before the response was lost, so retrying could charge the customer twice",
-              "Retries always take longer than the original request",
-              "It only works over HTTP/1.1, not HTTP/2"
-            ],
-            "correctIndex": 1,
-            "explanation": "A timeout or dropped connection is ambiguous — the server may have already processed the request. Retrying without a deduplication mechanism can re-execute a side effect that already happened.",
-            "id": "223ed004-dcd3-4394-844a-c73e392cda9f"
-          },
-          {
-            "prompt": "How does an idempotency key prevent a duplicate charge on retry?",
-            "options": [
-              "It encrypts the request body so the server can't read it twice",
-              "The server stores the key with the operation's result; a retry with the same key returns the stored result instead of re-executing",
-              "It slows down the retry so the first request always finishes first",
-              "It converts the POST into a GET request"
-            ],
-            "correctIndex": 1,
-            "explanation": "The server atomically records the key alongside the executed operation's outcome. On a retry carrying the same key, it recognizes the duplicate intent and returns the cached result rather than running the operation again.",
-            "id": "7c91326e-3f15-41eb-9bf2-ec5af43bdf9e"
-          },
-          {
-            "prompt": "What should a server do if it receives the same idempotency key with a DIFFERENT request body?",
-            "options": [
-              "Execute the new body and overwrite the old cached result",
-              "Reject it (or detect the mismatch by hashing the body) instead of returning a cached result for an unrelated payload",
-              "Ignore the key entirely and always execute",
-              "Merge both request bodies into one operation"
-            ],
-            "correctIndex": 1,
-            "explanation": "Reusing a key for a different payload is a client bug or an attempted key collision — the server should reject the mismatch rather than silently returning a cached result for the wrong operation.",
-            "id": "4c906188-4194-434e-9830-5a3573b5ab69"
-          }
-        ]
-      },
-      "references": [],
-      "id": "cd65720f-e54d-4a99-ab0b-40440f9ea1f4",
       "publishedDate": "2026-09-10T06:41:49Z"
     }
   ]
