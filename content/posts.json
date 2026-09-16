@@ -1,6 +1,205 @@
 {
   "posts": [
     {
+      "id": "111fe9e1-e0de-4bcb-b771-5dc46043d84a",
+      "title": "Constrained Decoding: Forcing LLMs to Output Valid JSON",
+      "subtitle": "Stop asking nicely in the prompt — make illegal tokens unsampleable.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "constrained-decoding",
+        "structured-output",
+        "json-schema",
+        "grammars",
+        "tool-calling",
+        "inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "curlybraces",
+      "summary": "Constrained decoding compiles a JSON Schema or grammar into an automaton and masks illegal tokens before sampling, so an LLM's output is guaranteed to parse and match your schema. It guarantees syntax, never semantics — hallucinated values still need downstream validation.",
+      "slides": [
+        {
+          "id": "5cedee7b-fd13-4e38-8ca2-864c37843d94",
+          "kind": "cover",
+          "title": "Constrained Decoding: Forcing LLMs to Output Valid JSON",
+          "body": "Every agent that calls tools or fills a schema hits the same wall: LLMs sample freely, so they occasionally emit malformed JSON. Constrained decoding fixes this at the token level, not the prompt level.",
+          "bullets": [],
+          "symbol": "curlybraces",
+          "table": null
+        },
+        {
+          "id": "58341003-45f3-4cee-88a8-800499f5f489",
+          "kind": "problem",
+          "title": "Prompting for JSON Only Gets You So Far",
+          "body": "Telling a model 'respond only in JSON' relies on the model choosing to comply — it's a suggestion, not a guarantee.",
+          "bullets": [
+            "Common failures: trailing commas, unescaped quotes, wrong types (a string where a number belongs), stray prose before or after the JSON",
+            "Retrying on a parse failure burns latency and tokens, sometimes repeatedly",
+            "Failure rate climbs as schemas nest deeper or the model runs under time or token pressure"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3c52c8bc-9594-4fff-a3dd-0fbdecf36821",
+          "kind": "solution",
+          "title": "Mask Out Every Token That Would Break the Grammar",
+          "body": "Constrained decoding compiles your JSON Schema (or any context-free grammar) into an automaton. At each decoding step it computes which tokens are legal given the current parse state, and sets the logits for everything else to -infinity before sampling.",
+          "bullets": [
+            "The model still chooses freely among the tokens the grammar allows — it just can't emit an illegal one",
+            "The automaton is compiled once per schema, then walked incrementally: one state transition per generated token, not a full reparse",
+            "It layers under any decoding strategy — greedy, top-p, beam search — since it only edits the logit distribution before sampling runs"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "2c4a966c-5fd0-40fc-a039-b6465533d7b1",
+          "kind": "architecture",
+          "title": "From Regex to a Full JSON Schema: How the Automaton Is Built",
+          "body": "Libraries like Outlines and XGrammar turn a schema into a pushdown automaton over the tokenizer's actual vocabulary, then precompute which tokens are valid from each state.",
+          "bullets": [
+            "Naive approach: try appending each candidate token and re-validate the whole string — far too slow to run every step",
+            "Fast approach: precompute a token-to-transition table offline, so the per-step cost is a vocabulary-sized bitmask, not a parse",
+            "Nested objects and arrays need a pushdown automaton, not a plain finite-state machine, to track unbounded nesting depth"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "a841580a-af58-43a4-941d-c3bdf4065c97",
+          "kind": "comparison",
+          "title": "Three Ways to Get Structured Output",
+          "body": "The three common approaches trade guarantees for flexibility differently.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Approach",
+              "Guarantees syntax?",
+              "Per-step overhead",
+              "Expressiveness"
+            ],
+            "rows": [
+              [
+                "Prompt only (\"respond in JSON\")",
+                "No — best effort",
+                "None",
+                "Anything you can describe"
+              ],
+              [
+                "JSON-mode (braces balance)",
+                "Braces balance, not your schema",
+                "Low",
+                "Any JSON, not your specific shape"
+              ],
+              [
+                "Grammar-constrained (schema/CFG)",
+                "Yes — always parses and matches schema",
+                "Small per-token mask",
+                "Whatever the grammar can express"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "840ca504-5c84-4327-9d54-67c2fe4aa37f",
+          "kind": "example",
+          "title": "Extracting an Order From a Messy Customer Email",
+          "body": "Schema: { id: string, items: [{ sku: string, qty: integer }], total: number }. Mid-generation, right after \"qty\": 3, the automaton sits in a state that only allows , or } next.",
+          "bullets": [
+            "If the model's top-ranked token were a rogue \" (starting a new key without closing the array), the automaton masks it out entirely",
+            "The model resamples from what's left — , to add another item, or } to close the object — so it can't derail into invalid JSON",
+            "The email's typos and rambling don't matter; only the schema's shape has to hold"
+          ],
+          "symbol": "envelope.fill",
+          "table": null
+        },
+        {
+          "id": "e9293198-40f9-4ac2-b789-179a8dc6c4e1",
+          "kind": "problem",
+          "title": "What Constrained Decoding Doesn't Buy You",
+          "body": "It guarantees the output parses and matches your schema's shape — it says nothing about whether the values inside are correct.",
+          "bullets": [
+            "A model can still hallucinate a confident but wrong total or invent a SKU that doesn't exist — syntax valid, content wrong",
+            "Very large or deeply recursive schemas (unbounded nested unions) can blow up automaton size and slow compilation",
+            "Skip libraries that re-validate token-by-token instead of precomputing the mask — that naive path carries a real latency tax",
+            "Combining it with speculative decoding takes extra care, since draft tokens must also satisfy the same mask"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "7e9cef28-b2c6-4a4f-a66c-2e12542aa807",
+          "kind": "takeaways",
+          "title": "The Core Idea, in One Line",
+          "body": null,
+          "bullets": [
+            "Constrained decoding moves correctness from 'ask nicely in the prompt' to 'make illegal tokens unsampleable'",
+            "It guarantees syntax and schema shape, never semantic truth — still validate values downstream",
+            "Reach for it whenever a program, not a human, reads the model's output: tool calls, API payloads, structured extraction"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b074c4ed-cd41-4d57-a1a8-c9b2a7c8f5a2",
+            "prompt": "What does constrained (grammar-based) decoding actually guarantee about a model's output?",
+            "options": [
+              "That the output will always be factually correct",
+              "That the output will always parse and match the given grammar or schema",
+              "That the model will run faster than unconstrained decoding",
+              "That the model no longer needs a system prompt"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding only restricts which tokens are legal at each step, so it guarantees syntactic validity, not factual correctness. A model can still confidently fill in a wrong number inside a perfectly valid JSON object."
+          },
+          {
+            "id": "be3e16bc-938b-41ef-81a4-d6b24fc963c5",
+            "prompt": "Mechanically, how does constrained decoding stop a model from emitting an invalid token?",
+            "options": [
+              "It fine-tunes the model on valid examples before generation starts",
+              "It re-runs the whole generation from scratch whenever a token turns out invalid",
+              "It masks the logits of any token that would violate the grammar's current state, before sampling",
+              "It asks a second LLM to fix the output after generation finishes"
+            ],
+            "correctIndex": 2,
+            "explanation": "The automaton tracks a parse state per generated token and computes, ahead of sampling, which vocabulary tokens are legal transitions from that state. Illegal tokens get their logits set to -infinity so they can never be sampled — no retry or post-hoc fixup needed."
+          },
+          {
+            "id": "489779e9-b341-4bd8-888f-7fff09df3510",
+            "prompt": "Which of these is a genuine limitation of constrained decoding?",
+            "options": [
+              "It can't be combined with top-p or beam search",
+              "Deeply recursive or very large schemas can blow up automaton size and slow compilation",
+              "It only works with one specific model provider",
+              "It requires retraining the base model"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constrained decoding sits on top of any sampling strategy and needs no retraining — but a pushdown automaton for a large or deeply recursive schema can have many states, making compilation and mask computation slower and more memory-heavy."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d72ace92-d845-431a-87ad-94e9ee0beef5",
+          "title": "Outlines: structured outputs for LLMs (GitHub)",
+          "url": "https://github.com/dottxt-ai/outlines"
+        },
+        {
+          "id": "ee9fd8ab-6850-4d56-93cb-e31cccccb4fa",
+          "title": "XGrammar: efficient, flexible, portable structured generation (GitHub)",
+          "url": "https://github.com/mlc-ai/xgrammar"
+        }
+      ],
+      "publishedDate": "2026-09-16T06:40:17Z",
+      "heroImageURL": null
+    },
+    {
       "id": "543c6a88-0bea-4473-a7b5-c2805f796ef0",
       "title": "FlashAttention: Attention Is Memory-Bound, Not Compute-Bound",
       "subtitle": "The kernel trick that made long-context training fit on a single GPU",
@@ -10845,200 +11044,6 @@
       ],
       "id": "b67352aa-4d0b-4a09-b17e-decc7a52561c",
       "publishedDate": "2026-09-09T18:40:06Z"
-    },
-    {
-      "title": "MaxKernel: Google's Agents That Write TPU Kernels",
-      "subtitle": "An LLM agent loop with real compiler feedback that beats hand-tuned kernels on production workloads.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "tpu",
-        "agentic-ai",
-        "kernel-optimization",
-        "compilers",
-        "llm-agents"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cpu.fill",
-      "summary": "MaxKernel (Google, Sept 2026) is a multi-agent system that writes and optimizes TPU kernels in JAX/Pallas by looping an LLM against real compiler output and hardware profiler traces instead of generating code once and hoping. On JAXBench's 50 tasks it hits a 1.58x geometric-mean speedup, and on 8 production kernels with existing human-written baselines, its agent-tuned kernels reach 2.32x versus the reference code — edging out the 2.02x that expert engineers achieved by hand.",
-      "slides": [
-        {
-          "id": "d1192846-aaed-4bf1-b532-71d730d407e6",
-          "kind": "cover",
-          "title": "The last mile of AI speed is still hand-written code",
-          "body": "Frameworks like JAX compile most operations well, but the highest-value kernels — the ones a model spends most of its time in — still get hand-tuned by a small number of engineers who understand the hardware.",
-          "bullets": [
-            "Custom TPU kernels are written in Pallas, a low-level language exposing memory tiling and the matrix unit directly",
-            "Google's MaxKernel (arXiv:2609.04523, Sept 3 2026) points LLM agents at this bottleneck instead of at chat"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "eb4ad872-b35b-409c-bd40-f2e8ea6d0d54",
-          "kind": "problem",
-          "title": "Kernel tuning is expert-scarce and slow",
-          "body": "Writing a fast Pallas kernel means reasoning about SRAM tile sizes, matrix-unit occupancy, and memory-vs-compute tradeoffs that don't show up until you run the thing on real silicon.",
-          "bullets": [
-            "A single kernel can take a specialist days of trial-and-error profiling to tune well",
-            "Most LLM code-generation setups ask a model for one shot of code and stop — no way to react to what the compiler or profiler actually reports",
-            "That one-shot pattern is exactly what earlier work (JAXBench) showed autonomous agents struggling with on TPUs"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "b6bd8a56-b36e-49e5-9dba-42898c299bc4",
-          "kind": "solution",
-          "title": "Three agent paradigms, one shared toolbox",
-          "body": "MaxKernel doesn't pick one workflow — it offers three, all built from the same pool of sub-agents.",
-          "bullets": [
-            "HITL (Human-in-the-Loop): the agent proposes an optimization plan, a person approves each step — best for learning Pallas or high-stakes kernels",
-            "Auto: a fully autonomous loop runs end-to-end without a human, driven by compiler and profiler metrics",
-            "Auto-Search: spins up multiple worker agents to explore the tuning space in parallel or via beam search, then keeps the best verified-correct candidate",
-            "Shared sub-agents handle planning, implementation, self-debugging, correctness testing, and hardware profiling across all three modes"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "9b7154ff-1ac2-41a0-af2e-fb85d8f561dc",
-          "kind": "architecture",
-          "title": "The loop runs on real hardware, not just static analysis",
-          "body": "What separates this from ordinary LLM code generation is that every candidate gets compiled and executed on an actual TPU before the next revision.",
-          "bullets": [
-            "Generate a candidate kernel → compile it → run it on hardware → capture the profiler trace → feed the trace back to the LLM as the next prompt",
-            "The self-debugging sub-agent handles compile errors and incorrect outputs before the profiling sub-agent even gets a turn",
-            "Because feedback is a real trace, not a guess, later revisions target the actual bottleneck (e.g. an underused matrix unit) instead of guessing"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "d5abb521-a18f-4c9c-b02f-c2383028572f",
-          "kind": "comparison",
-          "title": "Agent-tuned kernels vs. the human baseline",
-          "body": "The production-kernel comparison is the headline result: on the 8 kernels where a hand-written baseline exists, MaxKernel's agents came out ahead of the humans.",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Geomean speedup vs. reference"
-            ],
-            "rows": [
-              [
-                "JAXBench (50 diverse tasks)",
-                "1.58x"
-              ],
-              [
-                "8 production kernels — human-written",
-                "2.02x"
-              ],
-              [
-                "8 production kernels — MaxKernel agents",
-                "2.32x"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "49bb7497-397f-4a23-9aa1-de8ebf303f13",
-          "kind": "example",
-          "title": "Auto-Search exploring one stubborn kernel",
-          "body": "Picture a fused matmul kernel that's underusing the TPU's matrix unit.",
-          "bullets": [
-            "Auto-Search launches several worker agents, each trying a different tile size and memory layout in parallel",
-            "Every candidate is compiled and profiled for real; a beam search keeps only the top performers and mutates them further",
-            "A candidate that fails correctness tests is discarded immediately, regardless of how fast its (wrong) output ran",
-            "The search converges on a kernel a human might reach only after days of manual profiling sessions"
-          ],
-          "symbol": "flowchart.fill",
-          "table": null
-        },
-        {
-          "id": "8180390b-51e3-43fe-b82c-23d81106a3d0",
-          "kind": "problem",
-          "title": "Where this approach costs you",
-          "body": "Running an agent loop against real hardware is not free, and the result is not a drop-in replacement for every situation.",
-          "bullets": [
-            "Each iteration needs a real TPU compile-and-run cycle — this is expensive and slow compared to a single LLM code-gen call",
-            "Auto-Search's parallel exploration multiplies that hardware cost by however many workers you run",
-            "Correctness testing is load-bearing: without a solid test harness, a fast-but-wrong kernel could pass unnoticed",
-            "Not worth it for a kernel you'll run once or for teams without spare TPU capacity to burn on search"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "ca2fece7-f987-41f0-b3f6-4c62d8f19101",
-          "kind": "takeaways",
-          "title": "What to remember about MaxKernel",
-          "body": null,
-          "bullets": [
-            "The trick isn't a smarter prompt — it's closing the loop with a real compiler and profiler on real hardware",
-            "Three modes (HITL, Auto, Auto-Search) trade human oversight for autonomy and search breadth",
-            "On production kernels with human baselines, agent-tuned code beat the humans: 2.32x vs. 2.02x",
-            "The cost is hardware time and a trustworthy correctness harness — this is an infrastructure investment, not a free lunch"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "996db50e-6a20-4603-85a3-994714ba8a9e",
-            "prompt": "What makes MaxKernel's approach different from a typical 'ask an LLM to write a kernel' setup?",
-            "options": [
-              "It only works with Python instead of Pallas",
-              "It closes the loop with real compiler output and hardware profiler traces across multiple iterations",
-              "It avoids testing kernels for correctness to save time",
-              "It replaces the TPU's matrix unit with a software emulator"
-            ],
-            "correctIndex": 1,
-            "explanation": "MaxKernel's core idea is iterative: generate, compile, run on real hardware, profile, and feed that trace back into the next LLM revision — not a single one-shot generation."
-          },
-          {
-            "id": "6e3c3246-34e4-472e-8ac9-36b1138839f4",
-            "prompt": "On the 8 production kernels with existing human-written baselines, how did MaxKernel's agents compare?",
-            "options": [
-              "They matched human performance exactly",
-              "They underperformed humans by roughly 15%",
-              "They outperformed the human baseline: 2.32x vs. 2.02x geomean speedup",
-              "They could not produce correct kernels for any of the 8 tasks"
-            ],
-            "correctIndex": 2,
-            "explanation": "This is the paper's headline number: on production kernels where expert engineers had already hand-tuned a baseline, MaxKernel's agent-generated kernels reached a higher geometric-mean speedup than the human-written versions."
-          },
-          {
-            "id": "c349a36a-f4c9-48cb-b34c-c350a5c1dd88",
-            "prompt": "What is the main practical cost of MaxKernel's Auto-Search mode?",
-            "options": [
-              "It requires no hardware at all, running purely in simulation",
-              "It multiplies real TPU compile-and-run cycles across many parallel workers, which is expensive",
-              "It cannot handle kernels larger than a few lines of code",
-              "It only works on GPUs, not TPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because every candidate must actually compile and run on hardware to get a real profiler trace, running many workers in parallel (as Auto-Search does) multiplies that hardware cost — the tradeoff for a broader, faster search."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "a43fcaa1-6cd3-4c0b-a601-45651ab502a0",
-          "title": "MaxKernel: Agentic Kernel Generation for TPUs (arXiv:2609.04523)",
-          "url": "https://arxiv.org/abs/2609.04523"
-        },
-        {
-          "id": "7b8f1f7c-6f02-4f72-8b66-bd157ed4f8c1",
-          "title": "AI-Hypercomputer/accelerator-agents — MaxKernel (GitHub)",
-          "url": "https://github.com/AI-Hypercomputer/accelerator-agents/tree/main/MaxKernel"
-        }
-      ],
-      "id": "c7493731-cbe5-4149-9317-891f6327af10",
-      "publishedDate": "2026-09-09T12:44:59Z"
     }
   ]
 }
