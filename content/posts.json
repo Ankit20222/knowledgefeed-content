@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "id": "543c6a88-0bea-4473-a7b5-c2805f796ef0",
+      "title": "FlashAttention: Attention Is Memory-Bound, Not Compute-Bound",
+      "subtitle": "The kernel trick that made long-context training fit on a single GPU",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "flashattention",
+        "attention",
+        "gpu-memory",
+        "inference-optimization",
+        "transformers",
+        "kernel-fusion"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Standard attention is slow not because of FLOPs but because it repeatedly reads and writes a full N×N score matrix to slow GPU memory. FlashAttention fuses the whole operation into tiles that stay in fast on-chip SRAM, computing the exact same softmax attention output in O(N) memory instead of O(N²) — no approximation, just smarter I/O.",
+      "slides": [
+        {
+          "id": "be099125-c2ec-43ab-ad48-58cc26fd4efa",
+          "kind": "cover",
+          "title": "The Bottleneck Was Never the Math",
+          "body": "GPUs can do far more floating-point operations per second than they can move bytes between memory tiers. Standard attention ignores that asymmetry — FlashAttention is built around it.",
+          "bullets": [],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "1d80d888-d86c-4ef3-b417-9d02e96d6786",
+          "kind": "problem",
+          "title": "Standard Attention Is Memory-Bound, Not FLOP-Bound",
+          "body": "Computing softmax(QKᵀ)V naively means materializing the full N×N score matrix in GPU high-bandwidth memory (HBM), then reading it back for softmax, then again for the V multiply.",
+          "bullets": [
+            "GPU compute (TFLOPs) has scaled much faster than HBM bandwidth over the last decade",
+            "Every intermediate N×N matrix gets written to and re-read from slow HBM, not the fast on-chip SRAM",
+            "Result: attention spends most of its wall-clock time waiting on memory transfers, while the GPU's compute cores sit idle"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "7c9f1e53-f6fc-45a5-8c11-50adc54e23b4",
+          "kind": "solution",
+          "title": "Tile the Computation, Never Materialize the Full Matrix",
+          "body": "FlashAttention splits Q, K, and V into small blocks sized to fit in SRAM, then fuses the matmul, softmax, and second matmul into a single kernel per tile.",
+          "bullets": [
+            "Blocks of Q, K, V are loaded into SRAM once and reused across the tile's computation",
+            "An 'online softmax' running-max/running-sum trick lets each tile update the correct normalized output incrementally, without ever seeing the full row of scores at once",
+            "The final output is mathematically IDENTICAL to standard softmax attention — this is an exact algorithm, not an approximation like sparse or linear attention"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "e93ecec6-01fd-452b-a059-7320a0ef0532",
+          "kind": "architecture",
+          "title": "The Backward Pass Trades Compute for Memory",
+          "body": "Standard backprop through attention stores the N×N matrix from the forward pass to reuse in gradients. FlashAttention instead throws it away and recomputes it.",
+          "bullets": [
+            "Storing O(N²) activations for backward would defeat the whole point of tiling",
+            "Instead, the forward pass keeps only the small per-row softmax statistics (max and sum) needed to recompute scores on demand",
+            "Recomputation adds extra FLOPs in the backward pass — but since compute is cheap relative to HBM I/O on modern GPUs, it's still a net speedup"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "a79519b6-8519-4194-b133-434502e873a5",
+          "kind": "comparison",
+          "title": "Standard vs. Tiled Attention",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Aspect",
+              "Standard Attention",
+              "FlashAttention"
+            ],
+            "rows": [
+              [
+                "Peak memory for scores",
+                "O(N²) — full matrix in HBM",
+                "O(N) — matrix never fully materialized"
+              ],
+              [
+                "Bottleneck",
+                "HBM read/write bandwidth",
+                "On-chip SRAM compute"
+              ],
+              [
+                "Output correctness",
+                "Exact softmax attention",
+                "Exact — bit-identical up to floating-point rounding"
+              ],
+              [
+                "Backward pass",
+                "Reads stored N×N matrix",
+                "Recomputes scores from Q/K/V on the fly"
+              ],
+              [
+                "FLOPs (total)",
+                "Baseline O(N²)",
+                "Same O(N²) — this optimizes I/O, not arithmetic complexity"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill"
+        },
+        {
+          "id": "c4ac2f9e-3946-4300-a6e3-5252ee031cb4",
+          "kind": "example",
+          "title": "Why 16K Context Used to Just Not Fit",
+          "body": "The memory math makes the problem concrete: a single attention score matrix at long context length is enormous before you even get to storing activations for backprop.",
+          "bullets": [
+            "At sequence length N = 16,384, one N×N score matrix in fp16 is 16384² × 2 bytes ≈ 512 MB — for ONE attention head, in ONE layer, for ONE example",
+            "Multiply that by dozens of layers and heads per batch item, and standard attention runs out of memory long before the rest of the model even loads",
+            "FlashAttention never allocates that matrix at all, so the same GPU that couldn't fit a 2K-token standard-attention layer can train at 16K+ tokens"
+          ],
+          "symbol": "textformat.123",
+          "table": null
+        },
+        {
+          "id": "f73a43e9-fd09-41af-a8ae-55be22de689a",
+          "kind": "problem",
+          "title": "When It Doesn't Help — or Doesn't Apply",
+          "body": "FlashAttention is a systems-level win, not a free lunch in every setting.",
+          "bullets": [
+            "It needs a custom fused kernel for the specific GPU architecture — support lags on new hardware or non-NVIDIA backends",
+            "For very short sequences, the N×N matrix already fits comfortably in cache; tiling overhead can erase the benefit",
+            "It doesn't reduce the underlying O(N²) FLOPs of attention — for extreme context lengths you still need complementary tricks (sliding window, sparse attention) to cut compute, not just memory traffic",
+            "Because it changes floating-point accumulation order, results can differ from naive attention in the last few bits of precision — rarely an issue, but not bit-for-bit identical in practice"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "fdefd0fa-2392-4d3e-9162-dfabd7eb660f",
+          "kind": "takeaways",
+          "title": "The Core Idea, Distilled",
+          "body": "Know the bottleneck before you optimize the math.",
+          "bullets": [
+            "Attention's real cost on GPUs is memory movement, not floating-point math",
+            "Tiling + fused kernels + online softmax = exact attention in linear memory",
+            "Recomputing in the backward pass is a deliberate compute-for-memory trade, not an oversight",
+            "It's now the default attention implementation behind most production LLM training and serving stacks"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "04c5082f-ac2c-4d47-8528-59d7d945c5c0",
+            "prompt": "What is the primary bottleneck FlashAttention is designed to fix?",
+            "options": [
+              "The raw number of floating-point operations (FLOPs) attention requires",
+              "Repeated reads/writes of the full N×N attention matrix to slow GPU HBM",
+              "Network bandwidth between multiple GPUs",
+              "Python interpreter overhead in the training loop"
+            ],
+            "correctIndex": 1,
+            "explanation": "GPUs have far more compute throughput than memory bandwidth. Standard attention is memory-bound because it repeatedly shuttles the full N×N score matrix between fast on-chip SRAM and slow HBM — FlashAttention targets that I/O pattern, not the arithmetic itself."
+          },
+          {
+            "id": "cb3b0cc3-19d5-4194-ae0f-356dd5797e5b",
+            "prompt": "How does FlashAttention avoid ever storing the complete N×N attention matrix?",
+            "options": [
+              "It approximates attention using a fixed sparse pattern",
+              "It processes Q/K/V in small SRAM-sized tiles and uses an online (running) softmax to combine partial results correctly",
+              "It drops the softmax step entirely",
+              "It quantizes all activations to int8 before computing attention"
+            ],
+            "correctIndex": 1,
+            "explanation": "The core trick is tiling combined with an online softmax: each tile updates a running max and running sum so the final normalized output is exactly correct, without ever holding a full row of scores in memory at once."
+          },
+          {
+            "id": "bb915ef9-94e8-4046-b4b4-2baf7e5e4e51",
+            "prompt": "Which statement correctly describes a genuine tradeoff of FlashAttention?",
+            "options": [
+              "It reduces attention's O(N²) FLOP count to O(N)",
+              "It recomputes attention scores during the backward pass instead of storing them, trading extra compute for far less memory use",
+              "It only runs on CPUs, not GPUs",
+              "It produces an approximate result, like sparse or linear attention"
+            ],
+            "correctIndex": 1,
+            "explanation": "FlashAttention is an exact algorithm — it still does O(N²) FLOPs. What it changes is memory strategy: rather than storing the N×N matrix for backprop, it recomputes it from Q/K/V on demand, which is a good trade because compute is cheap relative to HBM bandwidth on modern GPUs."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d562f8ff-9931-4f79-a9e2-265799e92bcf",
+          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao, Fu, Ermon, Rudra, Ré)",
+          "url": "https://arxiv.org/abs/2205.14135"
+        }
+      ],
+      "publishedDate": "2026-09-16T00:40:04Z",
+      "heroImageURL": null
+    },
+    {
       "id": "dc2f4fbd-c679-436c-a708-2c7b0e11be82",
       "title": "FreeToken: Running a 753B Model on One Gaming GPU",
       "subtitle": "Berkeley and MIT researchers turn scarce PCIe bandwidth into a live scheduling signal so frontier MoE models fit on a single consumer GPU.",
@@ -10838,202 +11039,6 @@
       ],
       "id": "c7493731-cbe5-4149-9317-891f6327af10",
       "publishedDate": "2026-09-09T12:44:59Z"
-    },
-    {
-      "title": "Mistral Agentic Search: Retrieval That Checks Its Own Work",
-      "subtitle": "Five operations replace a single embedding lookup — and correctness on dense docs triples.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "rag",
-        "agentic-search",
-        "mistral",
-        "retrieval",
-        "tool-use"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.text.magnifyingglass",
-      "summary": "Mistral's Agentic Search (2026) replaces classic one-shot embed-and-retrieve RAG with a multi-step loop where the model can search, open, navigate, read, and grep through documents until it has real evidence — closer to an analyst using find-in-page than a search engine. On FinanceBench it lifts correctness from 26.7% to 86%, and on the table-heavy OfficeQA Pro benchmark it gains 45.6 points (6.3% to 51.9%), at the cost of more tool calls and latency per query.",
-      "slides": [
-        {
-          "id": "2f98a684-e042-4dcf-b37d-c81ca0a3a094",
-          "kind": "cover",
-          "title": "RAG never gets to double-check itself",
-          "body": "Standard retrieval-augmented generation embeds a query, pulls the top-k chunks once, and hands them to the model — there's no step where the model can say 'that number looks off, let me look again.'",
-          "bullets": [
-            "Mistral shipped Agentic Search into its Search Toolkit, Libraries, Studio, and Vibe products in 2026",
-            "It's built for the documents one-shot RAG handles worst: dense filings, tables split across pages, multi-hop references"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "88613a24-e117-4843-ace6-aee0051294e8",
-          "kind": "problem",
-          "title": "Chunking breaks the documents that matter most",
-          "body": "Fixed-size chunking is a reasonable approximation for prose, but it mangles structure that spans page boundaries.",
-          "bullets": [
-            "A table split mid-row across two chunks loses the row's meaning to both halves",
-            "A footnote defining a term used three pages earlier lands in a chunk nowhere near where it's needed",
-            "On FinanceBench, traditional single-shot RAG scored only 26.7% correctness — dense financial filings are exactly this kind of document",
-            "Once the wrong chunk is retrieved, the model has no mechanism to go back and check"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "ec30847d-bbbe-4283-a22b-74223fa9c864",
-          "kind": "solution",
-          "title": "Five operations instead of one lookup",
-          "body": "Agentic Search gives the model a small toolkit and lets it keep working until it has enough evidence to answer.",
-          "bullets": [
-            "search — find candidate documents or sections across the corpus",
-            "open — load a specific document",
-            "navigate — move to a particular page or section within it",
-            "read — pull the exact content at that location",
-            "grep — search for a pattern inside the document, like confirming a figure doesn't appear elsewhere with a different value"
-          ],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": null
-        },
-        {
-          "id": "46f44309-1137-4f38-a3ac-7ebf646a2fef",
-          "kind": "architecture",
-          "title": "An orchestration layer, not a new retriever",
-          "body": "Agentic Search sits on top of existing retrieval primitives rather than replacing them.",
-          "bullets": [
-            "It adds navigation and iteration on top of standard search/embeddings, continuing the loop until the model judges it has enough evidence",
-            "Ships inside the Mistral Search Toolkit and is built into the Libraries feature, plus Studio and Vibe",
-            "Supports both cloud and on-premises deployment"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "53f4f51f-3c58-4ab2-bfa6-73b0f158e314",
-          "kind": "comparison",
-          "title": "Correctness gains on structure-heavy benchmarks",
-          "body": "Both benchmarks stress exactly the failure mode one-shot RAG has: dense tables and multi-document, multi-hop questions.",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Traditional RAG",
-              "Agentic Search"
-            ],
-            "rows": [
-              [
-                "FinanceBench (financial filings)",
-                "26.7%",
-                "86%"
-              ],
-              [
-                "OfficeQA Pro (table-heavy, multi-doc)",
-                "6.3%",
-                "51.9%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "8b18ef22-1602-4f09-a57a-55acaa10dc51",
-          "kind": "example",
-          "title": "Finding one footnote in a 200-page filing",
-          "body": "Task: locate the exact gross-margin footnote in a long 10-K where the relevant table spans a page break.",
-          "bullets": [
-            "search surfaces the filing as a likely candidate among the corpus",
-            "open loads the full document instead of a pre-cut chunk",
-            "navigate jumps to the financial-statements section rather than scanning linearly",
-            "read pulls the precise footnote text once located",
-            "grep checks the same figure doesn't appear elsewhere with a conflicting value before the model commits to an answer"
-          ],
-          "symbol": "text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "fb1f042c-de4b-4e1c-a379-2b3035730246",
-          "kind": "problem",
-          "title": "The loop isn't free",
-          "body": "Multiple tool calls per query is the price of the accuracy gain, and it isn't always worth paying.",
-          "bullets": [
-            "Every search/open/navigate/read/grep step is a round trip — latency and cost scale with how many steps a question needs",
-            "Simple lookups (a short FAQ, a single well-chunked paragraph) gain little and pay the overhead anyway",
-            "Still depends on a working index and navigable document structure underneath — it orchestrates retrieval, it doesn't replace the need for one",
-            "Not a fit for latency-critical paths where a single fast embedding lookup is good enough"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "896e6a08-544e-4325-b2fe-dac33fa9dff4",
-          "kind": "takeaways",
-          "title": "What to remember about Agentic Search",
-          "body": null,
-          "bullets": [
-            "It reframes retrieval as a loop the model drives, not a single embedding lookup",
-            "Five operations (search, open, navigate, read, grep) let it verify before answering, not just retrieve and hope",
-            "Biggest wins are on dense, structured, multi-hop documents — FinanceBench correctness roughly tripled",
-            "Reach for it when documents are messy and being wrong is costly; skip it for simple, latency-sensitive lookups"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "1321b4b0-5169-463b-a737-6a70434699f8",
-            "prompt": "What is the core difference between Agentic Search and traditional single-shot RAG?",
-            "options": [
-              "Agentic Search uses a bigger embedding model",
-              "Agentic Search lets the model iterate — searching, navigating, and verifying — instead of retrieving once and stopping",
-              "Agentic Search removes the need for any document index",
-              "Agentic Search only works on plain text, never tables"
-            ],
-            "correctIndex": 1,
-            "explanation": "Traditional RAG embeds a query and pulls top-k chunks once. Agentic Search gives the model five operations (search, open, navigate, read, grep) and lets it keep working until it has enough evidence — closer to an analyst than a one-shot lookup."
-          },
-          {
-            "id": "1c3874b7-300c-4128-a96f-2d5ad6c6d310",
-            "prompt": "On the FinanceBench benchmark, what correctness jump did Agentic Search show over traditional RAG?",
-            "options": [
-              "No meaningful change",
-              "From 26.7% to 86%",
-              "From 86% to 99%",
-              "From 50% to 60%"
-            ],
-            "correctIndex": 1,
-            "explanation": "Traditional single-shot RAG scored 26.7% correctness on FinanceBench's dense financial filings; Agentic Search reached 86% by letting the model navigate and verify instead of trusting the first retrieved chunk."
-          },
-          {
-            "id": "7c29b6d3-583b-4660-8559-d74b65b6be92",
-            "prompt": "When is Agentic Search's multi-step loop NOT worth using?",
-            "options": [
-              "When documents are large, dense filings with tables spanning pages",
-              "For a simple, well-chunked FAQ lookup where latency matters and one retrieval already suffices",
-              "When multi-hop reasoning across several documents is required",
-              "When the answer must be verified against conflicting figures in the same corpus"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every step in the loop is a round trip that adds latency and cost. For simple lookups where a single embedding retrieval already gets the right chunk, the extra steps add overhead without a meaningful accuracy gain."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "e2deadb5-10de-4546-a868-8157765dc8b1",
-          "title": "Introducing Agentic Search — Mistral AI",
-          "url": "https://mistral.ai/news/agentic-search/"
-        },
-        {
-          "id": "7a35f328-33b1-45ec-94c4-057933a76b14",
-          "title": "Agentic Search — Mistral Docs",
-          "url": "https://docs.mistral.ai/studio/search/agentic-search"
-        }
-      ],
-      "id": "6e42da7e-1556-4de2-9598-58cd1a4979fe",
-      "publishedDate": "2026-09-09T12:30:00Z"
     }
   ]
 }
