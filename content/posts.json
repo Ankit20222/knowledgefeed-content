@@ -1,6 +1,609 @@
 {
   "posts": [
     {
+      "id": "514eb7e2-e68a-4b2c-beb9-319ff70c63a4",
+      "title": "Ternary LLMs: The 1.6-Bit Assumption Was Wrong",
+      "subtitle": "29 models later, zeros turn out to be the real payload.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "paper",
+      "tags": [
+        "quantization",
+        "ternary-llm",
+        "model-compression",
+        "inference",
+        "bitcos"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "square.stack.3d.up.fill",
+      "summary": "A new paper (arXiv:2609.16338) shows the standard 1.6-bit-per-weight packing format for ternary LLMs wastes space by assuming a uniform {-1,0,+1} distribution. Measuring 29 real models found zeros can hit 51.5% of weights; a new layout called BITCOS reads each model's own zero fraction to shrink storage further and speed up inference — with no retraining.",
+      "publishedDate": "2026-09-17T06:43:42Z",
+      "slides": [
+        {
+          "id": "16ce7d2f-911c-44bf-ace7-1876666ef857",
+          "kind": "cover",
+          "title": "Every Ternary Weight Costs 1.6 Bits — Except It Doesn't",
+          "body": null,
+          "bullets": [
+            "Ternary LLMs store each weight as -1, 0, or +1",
+            "The textbook floor is log2(3) ≈ 1.585 bits/weight",
+            "A new paper shows real models beat that floor — legally"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "b62b0583-6208-426b-95c9-6c27cb945df8",
+          "kind": "problem",
+          "title": "The Packing Format Everyone Uses Wastes Bits",
+          "body": "Ternary weight-2 formats are popular for on-device and edge deployment because {-1,0,+1} needs far less storage than int8 or fp16. But the standard deployment format bakes in an assumption nobody had actually checked.",
+          "bullets": [
+            "Standard format packs 5 ternary weights per byte (\"5-trit packing\")",
+            "8 bits / 5 trits = 1.6 bits/weight in theory, 1.625 in practice after power-of-two group-size rounding",
+            "That format assumes -1, 0, and +1 are roughly equally likely — a guess, not a measurement"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "cf58f4e2-a7ca-41e9-b467-059717281fc0",
+          "kind": "solution",
+          "title": "Zeros Aren't 1/3 of the Weights — They're Half",
+          "body": "The authors measured the actual symbol distribution across 29 published ternary LLMs instead of assuming one.",
+          "bullets": [
+            "Measured 29 real trained ternary models, not synthetic weight draws",
+            "Zero fraction varied widely — up to 51.5% of all weights in the sparsest models",
+            "That skew means the uniform 1.585-bit theoretical floor never actually applied to real checkpoints"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "f14d8aa8-e5f9-4618-ac79-838215d11737",
+          "kind": "architecture",
+          "title": "BITCOS: A Bitmap for 'Is It Zero,' a Vector for the Sign",
+          "body": "BITCOS splits storage into two structures instead of one fixed-width code per weight.",
+          "bullets": [
+            "Layer 1: a dense presence bitmap — 1 bit per weight, marks zero vs nonzero",
+            "Layer 2: a compacted sign vector — stores +/- only for the nonzero entries",
+            "Total cost: 2 − z bits/weight, where z is that model's own measured zero fraction",
+            "No retraining, no new checkpoint — same trained weights, a smarter on-disk/on-GPU layout"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "d07f2b67-ee98-452a-a4d7-3b2c053d2eb8",
+          "kind": "comparison",
+          "title": "The Numbers: Same Weights, Denser Layout",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Metric",
+              "5-trit packing (status quo)",
+              "BITCOS"
+            ],
+            "rows": [
+              [
+                "Bits/weight (typical)",
+                "1.625",
+                "~1.485 on the sparsest models"
+              ],
+              [
+                "Assumes uniform distribution",
+                "Yes",
+                "No — adapts to each model's zero fraction"
+              ],
+              [
+                "CPU throughput",
+                "baseline",
+                "1.18x faster"
+              ],
+              [
+                "GPU throughput",
+                "baseline",
+                "1.27x faster"
+              ],
+              [
+                "Retraining required",
+                "—",
+                "None"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "0cc8738d-a8c5-45fb-8723-0322e33fdc00",
+          "kind": "example",
+          "title": "What ~9% Smaller Looks Like on a Real-Sized Model",
+          "body": "Applying the paper's reported bits/weight figures to a hypothetical model makes the savings concrete.",
+          "bullets": [
+            "Take a hypothetical 70B-parameter ternary model with z = 0.515 (matching the paper's sparsest case)",
+            "Old 5-trit packing: 1.625 bits/weight → ~14.2GB just for weight storage",
+            "BITCOS at 2 − z = 1.485 bits/weight → ~13.0GB, roughly 9% smaller",
+            "Same accuracy, same checkpoint — only the storage layout changed"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "ab4d04a3-c477-40c3-a83d-54f340c4b45e",
+          "kind": "problem",
+          "title": "The Catch: Gains Depend on How Sparse Your Model Already Is",
+          "body": "BITCOS isn't a universal win — it's a bet on a property some models have more of than others.",
+          "bullets": [
+            "Savings scale with z — a model with few zero weights barely benefits from this scheme",
+            "The bitmap decode adds a small per-access branch; gains show up in throughput, not just raw size",
+            "Only applies to true ternary {-1,0,+1} weights — doesn't transfer to int4/int8/fp8 quantization",
+            "It's a storage/inference trick, not a training-time fix — it can't rescue a badly-quantized model"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "11bba92d-697f-446d-a309-0cec9438712a",
+          "kind": "takeaways",
+          "title": "The Takeaway: Your Quantized Model Was Already Compressible Further",
+          "body": null,
+          "bullets": [
+            "Ternary LLMs were never uniformly distributed — assuming so wasted real bits in every deployment",
+            "BITCOS reads a model's own zero fraction and encodes accordingly: 2 − z bits/weight",
+            "On the sparsest of 29 tested models: ~1.485 bits/weight, 1.18x-1.27x faster inference",
+            "It's a free lunch only because it's decoding reality, not changing the model"
+          ],
+          "symbol": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "60f41138-a009-4e32-91dd-f5109453ee37",
+            "prompt": "What is the information-theoretic minimum for storing a ternary weight, assuming -1, 0, and +1 are equally likely?",
+            "options": [
+              "1 bit",
+              "log2(3) ≈ 1.585 bits",
+              "2 bits",
+              "4 bits"
+            ],
+            "correctIndex": 1,
+            "explanation": "log2(3) ≈ 1.585 bits/weight is the Shannon-optimal cost IF all three symbols are equally likely. BITCOS's whole insight is that in real trained models, they usually aren't."
+          },
+          {
+            "id": "85e6b9be-c635-4bdd-ba4c-f8fa276387be",
+            "prompt": "Why does the standard '5 trits per byte' packing format cost 1.625 bits/weight instead of the theoretical 1.6?",
+            "options": [
+              "Because ternary weights need an extra sign bit",
+              "Because power-of-two group sizes round the packing up in practice",
+              "Because zeros are stored using two bits each",
+              "Because GPUs require every format to be byte-aligned"
+            ],
+            "correctIndex": 1,
+            "explanation": "8 bits / 5 trits = 1.6 bits/weight in theory, but real deployments use power-of-two group sizes for the packed blocks, which rounds the effective cost up to 1.625 bits/weight."
+          },
+          {
+            "id": "a942fc5c-9651-45d5-9fa7-3e6832b92469",
+            "prompt": "What does BITCOS exploit that the standard packing format ignores?",
+            "options": [
+              "That most models are trained on synthetic data",
+              "That zeros make up a much larger, non-uniform share of ternary weights than assumed",
+              "That GPUs multiply faster than they add",
+              "That weights change after a model is deployed"
+            ],
+            "correctIndex": 1,
+            "explanation": "Measuring 29 real ternary LLMs showed zeros can be up to 51.5% of weights — far from the ~33% a uniform distribution would predict. BITCOS's bitmap-plus-sign-vector layout directly encodes that skew instead of ignoring it."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "10e25310-3b5e-45a6-8303-3d5f4da1df80",
+          "title": "Breaking the 1.58-bit Barrier for Ternary LLMs",
+          "url": "https://arxiv.org/abs/2609.16338"
+        }
+      ]
+    },
+    {
+      "id": "6d227801-f2b6-46f3-8d83-d0250c8080f4",
+      "title": "Anthropic Merges Claude Cowork Into Claude Chat",
+      "subtitle": "Three products become two: Claude Chat and Claude Code.",
+      "category": "AI News",
+      "difficulty": "Beginner",
+      "postKind": "release",
+      "tags": [
+        "anthropic",
+        "claude",
+        "product-launch",
+        "claude-docs",
+        "claude-slides"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.merge",
+      "summary": "On September 16, 2026, Anthropic announced that Claude Cowork is folding into the regular Claude chat experience — Claude now decides whether a request needs a quick answer or a longer work session, instead of the user picking a mode. The change ships alongside two new beta tools, Claude Docs and Claude Slides, and rolls out to Pro/Max plans first.",
+      "publishedDate": "2026-09-17T06:43:42Z",
+      "slides": [
+        {
+          "id": "7d06e61f-b6b0-411e-9150-c73885beb32f",
+          "kind": "cover",
+          "title": "Three Claude Products Just Became Two",
+          "body": null,
+          "bullets": [
+            "Anthropic announced on September 16, 2026 that Claude Cowork is folding into Claude chat",
+            "No more picking a mode — Claude now decides whether a request needs a quick answer or a full work session",
+            "Claude drops from three surfaces (Chat, Cowork, Code) to two (Chat, Code)"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "bc3eca60-4f7b-4405-8f09-ccb4c6065078",
+          "kind": "problem",
+          "title": "The Problem: Users Had to Guess Which Claude to Open",
+          "body": "Before the merge, Cowork and Chat were separate surfaces — users had to decide upfront whether a task was a quick question or real work, and open the right tool.",
+          "bullets": [
+            "Cowork handled longer, multi-step work: research, reports, spreadsheets, presentations",
+            "Chat handled quick questions and short exchanges",
+            "Picking wrong meant switching tools mid-task and losing context"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "072dcc94-cd75-4b44-914a-17005193c6d7",
+          "kind": "solution",
+          "title": "What Changes: One Surface, Claude Picks the Mode",
+          "body": "In the unified experience there's no mode toggle. You describe what you need; Claude decides whether to answer inline or spin up a longer task and hand back a finished, editable file.",
+          "bullets": [
+            "Describe the task in plain language — Claude routes it internally",
+            "Small ask → answered inline, like ordinary chat",
+            "Bigger ask (a report, a deck, a spreadsheet) → Claude works it and hands back an editable file",
+            "Existing chats, projects, artifacts, connectors, and skills all carry over unchanged"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "f660d77c-0b5d-44b7-93b5-998c71b12748",
+          "kind": "architecture",
+          "title": "New in Beta: Claude Docs and Claude Slides",
+          "body": "Alongside the merge, Anthropic is shipping two new tools in beta, plus folding a third into the same experience.",
+          "bullets": [
+            "Claude Docs: create and edit documents collaboratively inside a conversation",
+            "Claude Slides: generate a presentation, edit it directly, present it from Claude, or export to PowerPoint/PDF",
+            "Claude Design — previously a separate surface — is now available inside regular conversations too"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "ca11ff61-f6fb-4f7a-92f9-385b2e522db6",
+          "kind": "comparison",
+          "title": "Before vs. After the Merge",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "",
+              "Before",
+              "After"
+            ],
+            "rows": [
+              [
+                "Product surfaces",
+                "Chat, Cowork, Code (3)",
+                "Chat, Code (2)"
+              ],
+              [
+                "Choosing a mode",
+                "Manual, upfront",
+                "Automatic, per-request"
+              ],
+              [
+                "Docs & Slides",
+                "Not built in",
+                "In beta, exportable to PPTX/PDF"
+              ],
+              [
+                "Design tool",
+                "Separate surface",
+                "Inside conversations"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "6da92ab1-f750-4a6e-b762-b0ebb1dd8521",
+          "kind": "example",
+          "title": "What This Looks Like Day to Day",
+          "body": null,
+          "bullets": [
+            "Ask \"what's the capital of Peru\" → instant inline answer, same as before",
+            "Ask \"pull last quarter's numbers into a slide deck for the board\" → Claude researches, builds the deck, hands back an editable Claude Slides file",
+            "You never chose a \"Cowork mode\" for the second one — the request itself decided it"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "163df581-c84d-45ba-a1e9-d40c573ae2e7",
+          "kind": "problem",
+          "title": "The Rollout Isn't Instant — and Not Everyone Gets It First",
+          "body": null,
+          "bullets": [
+            "Pro and Max plans get it first, rolling out over the coming weeks",
+            "Team and Free plans follow later",
+            "Enterprise admins get a minimum of 30 days' notice before it reaches their org",
+            "The announcement doesn't describe a manual override if Claude misjudges whether a request needs a quick reply or a longer work session"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "a1334a16-7f24-4b58-b8db-39dc652cb122",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Anthropic collapsed Claude Chat + Cowork into one adaptive surface — Claude Code remains separate",
+            "The bet: users shouldn't have to know in advance how big a task is before starting it",
+            "Claude Docs and Claude Slides (beta) turn conversations into editable, exportable deliverables",
+            "Rollout is staged: Pro/Max first, Team/Free later, Enterprise with 30+ days notice"
+          ],
+          "symbol": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "169186b7-8c1e-4d4a-821e-cba9003cc2f6",
+            "prompt": "What happened to Claude Cowork in Anthropic's September 16, 2026 announcement?",
+            "options": [
+              "It was discontinued with no replacement",
+              "It was merged into Claude chat, so there's no separate mode to choose",
+              "It became a paid add-on for Enterprise only",
+              "It was rebranded as Claude Code"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cowork wasn't removed — its capabilities were folded into the regular Claude chat experience. Claude now decides whether a request needs a quick reply or a longer work session, instead of the user picking a mode."
+          },
+          {
+            "id": "adf1ef66-6aa6-428e-a2cb-b589575b8bd7",
+            "prompt": "After the merge, how many separate Claude product surfaces remain?",
+            "options": [
+              "One",
+              "Two: Claude Chat and Claude Code",
+              "Three: Chat, Cowork, and Code",
+              "Four, including Claude Docs as its own surface"
+            ],
+            "correctIndex": 1,
+            "explanation": "Claude drops from three surfaces (Chat, Cowork, Code) to two (Chat, Code). Docs and Slides are new tools inside the chat experience, not separate product surfaces."
+          },
+          {
+            "id": "6c59f0bf-5881-4da8-9469-e7862869c3eb",
+            "prompt": "Which group of users gets the unified experience first?",
+            "options": [
+              "Enterprise, because they requested it",
+              "Free plan users, as a trial",
+              "Pro and Max plan subscribers, with Team and Free following later",
+              "Everyone simultaneously on September 16"
+            ],
+            "correctIndex": 2,
+            "explanation": "The rollout is staged: Pro and Max plans first over the coming weeks, then Team and Free. Enterprise admins additionally get at least 30 days' notice before the change reaches their organization."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "f9590a02-1813-4b70-8e94-3145e0ef2ed0",
+          "title": "Anthropic merges Claude chat and Cowork in one interface",
+          "url": "https://techcrunch.com/2026/09/16/anthropic-merges-claude-chat-and-cowork-in-one-interface/"
+        },
+        {
+          "id": "62ac4580-c025-485f-918a-cb79a18c88c7",
+          "title": "Anthropic is killing off Claude Cowork and folding it into Claude chat, launching Claude Docs and Claude Slides",
+          "url": "https://venturebeat.com/technology/anthropic-is-killing-off-cowork-and-folding-it-into-claude-launching-claude-docs-and-claude-slides"
+        }
+      ]
+    },
+    {
+      "id": "6db3154c-808f-4bf1-8aa3-57e0a93c01ee",
+      "title": "HNSW: How Vector Search Finds Neighbors Fast",
+      "subtitle": "Skip lists met graphs, and approximate nearest-neighbor search got fast.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "vector-search",
+        "hnsw",
+        "ann",
+        "embeddings",
+        "rag"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "network",
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based index behind most production vector databases. By searching a multi-layer proximity graph instead of scanning every vector, it turns nearest-neighbor lookup from an O(n) scan into roughly O(log n) hops — at the cost of approximate (not exact) results and real memory overhead.",
+      "publishedDate": "2026-09-17T06:43:42Z",
+      "slides": [
+        {
+          "id": "30f54cdb-0d84-49d0-b572-387fb1c41ecf",
+          "kind": "cover",
+          "title": "Searching a Billion Vectors Without Checking Each One",
+          "body": null,
+          "bullets": [
+            "Brute-force nearest-neighbor search checks every vector: O(n) per query",
+            "HNSW (Hierarchical Navigable Small World) answers in roughly O(log n)",
+            "It's the default index behind most production vector databases today"
+          ],
+          "symbol": "network",
+          "table": null
+        },
+        {
+          "id": "9bb752d3-1c1a-44d0-a76b-e05662eb588c",
+          "kind": "problem",
+          "title": "The Problem: Exact Nearest Neighbor Doesn't Scale",
+          "body": "For RAG, every query embedding must be compared against millions of stored vectors to find the closest matches. Exact brute-force comparison is linear — fine at small scale, unworkable at real scale.",
+          "bullets": [
+            "Brute-force cosine/dot-product search compares the query to every stored vector",
+            "At 10M vectors and 768 dimensions, that's ~10M dot products per query",
+            "Latency scales linearly with corpus size — doubling your data doubles every query's cost"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "157024a4-0d0a-4a81-9ce3-a2adbcf8ae95",
+          "kind": "concept",
+          "title": "The Trick: A 'Skip List' Made of Graphs",
+          "body": "HNSW builds several layers of a proximity graph. The top layer has very few nodes with long-range links; each layer below has progressively more nodes with shorter links, down to the bottom layer containing every vector.",
+          "bullets": [
+            "Every vector is a node in the bottom (densest) layer",
+            "Higher layers contain a random, shrinking subset of nodes — fewer nodes, longer edges",
+            "Search starts at the sparse top layer, greedily walks toward the query, drops a layer, repeats",
+            "Each layer narrows the search region before the next does finer-grained work"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "de1014db-1c74-412b-aaf3-2666fb6597af",
+          "kind": "architecture",
+          "title": "Why It's Fast: Logarithmic Hops, Not Linear Scans",
+          "body": "Two tunable parameters control the accuracy/speed tradeoff directly.",
+          "bullets": [
+            "Search cost is roughly O(log n) hops through the graph, not O(n) comparisons",
+            "Insertion is also O(log n): a new vector picks a random max layer, then greedily connects to nearby nodes at each layer it belongs to",
+            "M controls max connections per node; efSearch/efConstruction controls how wide the greedy search explores",
+            "Higher ef = better recall, more comparisons per query — a direct accuracy/latency dial"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "532cc1da-876d-4b44-b941-dff782d30516",
+          "kind": "comparison",
+          "title": "HNSW vs. the Alternatives",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Method",
+              "Query time",
+              "Recall",
+              "Memory"
+            ],
+            "rows": [
+              [
+                "Brute-force (flat)",
+                "O(n)",
+                "100% (exact)",
+                "Lowest"
+              ],
+              [
+                "IVF (inverted file)",
+                "O(n/k) after clustering",
+                "~90-98%",
+                "Low"
+              ],
+              [
+                "HNSW",
+                "O(log n)",
+                "~95-99%",
+                "Highest (graph edges + vectors)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e9bf4023-fec8-45fc-9fa5-c4c4b362a603",
+          "kind": "example",
+          "title": "Tuning HNSW for a 5M-Document RAG Index",
+          "body": "A concrete parameter choice for a mid-size production index.",
+          "bullets": [
+            "5M chunk embeddings at 1536 dimensions (a typical embedding model's output size)",
+            "M=16 (moderate connectivity), efConstruction=200 for the build pass",
+            "efSearch=64 at query time → sub-20ms p99 latency in typical vector-DB benchmarks, ~97% recall@10",
+            "Bump efSearch to 128 to chase 99% recall — latency roughly doubles, still far below brute-force"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "e4cc0d3f-04a3-4ad7-bd21-85cffe30dc9f",
+          "kind": "problem",
+          "title": "When HNSW Is the Wrong Choice",
+          "body": null,
+          "bullets": [
+            "Recall is approximate, never guaranteed exact — wrong tool if you need provably-correct top-k",
+            "The index is memory-hungry: graph edges add real overhead on top of raw vector storage",
+            "Insertions are cheap; bulk deletes aren't — most implementations mark-and-skip rather than truly remove nodes, bloating the graph over time",
+            "For small corpora (under ~100K vectors), brute-force can be just as fast and far simpler to reason about"
+          ],
+          "symbol": null,
+          "table": null
+        },
+        {
+          "id": "7f957fec-9dd5-4d3f-bbfb-d170a42a4f29",
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "HNSW trades exact recall for logarithmic-time approximate search via a multi-layer graph",
+            "M and ef are the real levers: more connections and wider search mean higher recall at higher cost",
+            "It's the default ANN index in most production vector databases for a reason — but not free at scale (memory) or under heavy deletes",
+            "For RAG at real scale, HNSW is usually the right default; validate recall@k on your own embeddings before trusting it blindly"
+          ],
+          "symbol": null,
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6b59c086-5d33-46f6-be92-30b219b8230b",
+            "prompt": "What is the primary reason HNSW is faster than brute-force nearest-neighbor search?",
+            "options": [
+              "It compresses vectors before comparing them",
+              "It searches a multi-layer graph greedily instead of comparing to every vector",
+              "It only searches vectors uploaded in the last 24 hours",
+              "It uses GPU parallelism exclusively"
+            ],
+            "correctIndex": 1,
+            "explanation": "HNSW's speed comes from its layered graph structure: a sparse top layer narrows the search region quickly, then denser lower layers refine it — turning an O(n) scan into roughly O(log n) hops."
+          },
+          {
+            "id": "fa64de2f-0af7-423a-ab35-a744267acfc1",
+            "prompt": "What does increasing the efSearch parameter do?",
+            "options": [
+              "Deletes low-quality vectors from the index",
+              "Widens the greedy search at query time, trading latency for higher recall",
+              "Reduces the number of graph layers",
+              "Compresses the vector dimensions"
+            ],
+            "correctIndex": 1,
+            "explanation": "efSearch controls how many candidates HNSW explores per layer during a query. Higher ef means more comparisons (slower) but a better chance of finding the true nearest neighbors (higher recall)."
+          },
+          {
+            "id": "f4d28489-9a25-486a-9302-9fdd56158608",
+            "prompt": "Why is HNSW a poor fit for an index with frequent bulk deletions?",
+            "options": [
+              "It cannot store more than 1 million vectors",
+              "Most implementations mark deleted nodes rather than truly removing them, bloating the graph over time",
+              "Deleting a vector requires rebuilding all layers from scratch every time",
+              "HNSW indexes cannot be updated after creation"
+            ],
+            "correctIndex": 1,
+            "explanation": "HNSW graphs are built incrementally and optimized for insertion, not removal. Cleanly deleting a node would require re-linking its neighbors, so most implementations just mark it deleted and skip it during search — leaving dead weight in the graph until a full rebuild."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "4c488cbd-060d-42c5-9094-92b701f4c21a",
       "title": "Recursive Self-Improvement: Five Stages of AI Autonomy",
       "subtitle": "A 33-author roadmap for AI that improves how it improves — and why we're only at stage 3",
@@ -10555,518 +11158,6 @@
         }
       ],
       "publishedDate": "2026-09-10T18:44:21Z"
-    },
-    {
-      "id": "be289155-50c0-4766-a398-e5034b5ab29c",
-      "title": "Sliding Window Attention: Local Focus, Global Reach",
-      "subtitle": "Cap every token's attention to a fixed nearby window, then let depth or hybrid layers carry information the rest of the way.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "transformers",
-        "llm-architecture",
-        "long-context",
-        "efficiency"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "viewfinder",
-      "summary": "Full self-attention costs grow quadratically with sequence length, which breaks down for long context. Sliding window attention caps each token's attention to a fixed nearby window, cutting cost to linear in sequence length — and models recover long-range reach either by stacking layers (Mistral 7B) or alternating local windows with full-attention layers (Gemma 2).",
-      "slides": [
-        {
-          "id": "f1dc00ad-f629-4816-befc-c19f48d52241",
-          "kind": "cover",
-          "title": "Local Focus, Global Reach",
-          "body": "Full attention lets every token see every other token — at a quadratic price. Sliding window attention trades some of that reach for speed.",
-          "bullets": [],
-          "symbol": "viewfinder"
-        },
-        {
-          "id": "a898bc73-cd9b-47a0-a781-4769407a44f9",
-          "kind": "problem",
-          "title": "Full Attention Doesn't Scale",
-          "body": "In standard self-attention, every token computes a score against every other token, so cost grows as O(n^2) with sequence length n.",
-          "bullets": [
-            "Doubling the context length roughly quadruples the attention compute and memory",
-            "For a 100,000-token sequence, that's on the order of 10 billion pairwise attention scores per layer",
-            "This is the core wall that makes very long context expensive to serve, not just to train"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis"
-        },
-        {
-          "id": "076f8749-ac28-4923-a0e1-fa4a92eac55c",
-          "kind": "solution",
-          "title": "Cap Attention to a Fixed-Size Window",
-          "body": "Instead of attending to all n tokens, each token only attends to the w nearest tokens on either side. Cost drops from O(n^2) to O(n * w) — linear in sequence length.",
-          "bullets": [
-            "Typical window sizes: 512-4096 tokens, depending on the model",
-            "For a 100,000-token sequence with window w=4096, that's about 410 million pairwise scores instead of 10 billion — roughly 24x fewer",
-            "The catch: a single layer can no longer connect two tokens that are farther apart than the window"
-          ],
-          "symbol": "square.dashed"
-        },
-        {
-          "id": "5db4dda3-3712-49ba-a597-9fc70f8f0884",
-          "kind": "comparison",
-          "title": "Two Ways to Recover Long-Range Info",
-          "body": "Losing direct long-range attention in one layer doesn't mean losing it entirely — models recover it either through depth or through hybrid layers.",
-          "bullets": [],
-          "symbol": "arrow.triangle.branch",
-          "table": {
-            "headers": [
-              "Model",
-              "Window",
-              "How Long-Range Info Travels",
-              "Attention Mix"
-            ],
-            "rows": [
-              [
-                "Longformer (2020)",
-                "512-4096 (task-dependent)",
-                "A handful of tokens get 'global attention' to/from everything",
-                "Local + sparse global"
-              ],
-              [
-                "Mistral 7B (2023)",
-                "4096",
-                "Receptive field compounds with depth across 32 layers",
-                "Pure sliding window"
-              ],
-              [
-                "Gemma 2 (2024)",
-                "4096 (local layers)",
-                "Alternates 1:1 with full-attention layers",
-                "Hybrid local/global"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a5649adb-79f2-4af9-b33a-29907c893ba2",
-          "kind": "example",
-          "title": "Stacking Layers to Widen the Reach",
-          "body": "In a pure sliding-window stack like Mistral 7B's, token A in layer 1 only sees tokens within 4096 positions. But layer 2 attends to layer-1 outputs, which already encode information from their own local windows — so the effective receptive field compounds with each added layer.",
-          "bullets": [
-            "Layer 1: each token's representation reflects its immediate 4096-token window",
-            "Layer 2: attending within a 4096-token window now reaches information that already traveled up to 4096 tokens further in layer 1",
-            "After enough layers, the theoretical reach can span well beyond the raw window size — without ever computing a full n x n attention matrix"
-          ],
-          "symbol": "square.stack.3d.up"
-        },
-        {
-          "id": "bd15718a-1e17-4796-aa21-d8b0c2ca0f26",
-          "kind": "concept",
-          "title": "When Windows Miss the Point",
-          "body": "Cheaper attention isn't free — it changes what the model can do in a single hop, and that has real failure modes.",
-          "bullets": [
-            "Pure local windows can struggle with 'needle in a haystack' tasks that need a precise, single-hop link between two distant tokens",
-            "If depth isn't sufficient to compound the receptive field, relevant context outside the window is effectively invisible to that layer",
-            "Hybrid designs (local + periodic global layers) trade back some of the compute savings to guarantee long-range access",
-            "Window size becomes another hyperparameter to tune against your task's actual dependency distance"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "47da2449-4076-4109-88eb-bf445aaf5e0b",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Full self-attention costs O(n^2); sliding window attention costs O(n * w), linear in sequence length",
-            "A single sliding-window layer can't directly connect tokens farther apart than the window",
-            "Models recover long-range reach either by stacking depth (Mistral 7B) or mixing in periodic global-attention layers (Gemma 2, Longformer)",
-            "The tradeoff shows up as a real limitation on tasks needing precise long-distance retrieval in shallow networks"
-          ],
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "0344b102-d2d1-4dab-9145-6ccb17f00772",
-            "prompt": "Why does full self-attention become expensive for long sequences?",
-            "options": [
-              "It requires more GPU memory bandwidth per token than any other layer type",
-              "Its cost grows quadratically (O(n^2)) with sequence length",
-              "It can only run on TPUs, not GPUs",
-              "It requires retraining the tokenizer for every new sequence length"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every token scores against every other token, so the number of pairwise computations scales with n^2 — doubling sequence length roughly quadruples the cost."
-          },
-          {
-            "id": "c3672890-bc3b-4e57-a4b5-00cd371fd529",
-            "prompt": "In a pure sliding-window design like Mistral 7B's (no global layers), how does information from far-away tokens reach a given position?",
-            "options": [
-              "It doesn't — those tokens are permanently inaccessible",
-              "By stacking layers, so the effective receptive field compounds with depth",
-              "Through a separate retrieval index bolted onto the model",
-              "By periodically resetting the window to cover the full sequence"
-            ],
-            "correctIndex": 1,
-            "explanation": "Each layer's window reaches information that already traveled through the window in the previous layer, so the theoretical receptive field grows with the number of layers stacked."
-          },
-          {
-            "id": "b019823b-21c0-40cd-8dcc-ed8a098223af",
-            "prompt": "What's a key pitfall of pure sliding window attention?",
-            "options": [
-              "It cannot be implemented on modern GPUs",
-              "It struggles with tasks needing precise long-range retrieval unless paired with global or hybrid layers",
-              "It always uses more memory than full attention",
-              "It only works with recurrent architectures, not transformers"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because a single layer can't directly connect tokens farther apart than the window, tasks that need one precise long-distance link (like needle-in-a-haystack retrieval) can fail without enough depth or hybrid global-attention layers."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-09-10T18:44:21Z"
-    },
-    {
-      "id": "2850321c-6fb0-4c05-b473-d7bc9f27fc22",
-      "postKind": "paper",
-      "title": "BDH-CQ: A 150M Model That Reasons Without Words",
-      "subtitle": "Pathway's brain-inspired network solves ARC-AGI puzzles by iterating in latent space instead of writing chain-of-thought tokens",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "tags": [
-        "latent reasoning",
-        "arc-agi",
-        "pathway",
-        "dragon hatchling",
-        "reasoning models",
-        "architecture"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain",
-      "summary": "Pathway's BDH-CQ reasons by continuously updating a recurrent latent memory instead of generating chain-of-thought text, and at 150M parameters it broke the ARC-AGI-1 cost-accuracy frontier: about 11x cheaper per task than GPT-5.6 Luna (Low), though still 4.7 points behind on raw accuracy.",
-      "publishedDate": "2026-09-10T12:41:42Z",
-      "slides": [
-        {
-          "id": "0ef1700c-86e9-4bc3-9563-be023be26b30",
-          "kind": "cover",
-          "title": "A Model That Thinks Without Ever Writing a Word",
-          "body": "150 million parameters. No chain-of-thought. It still cracks ARC-AGI-1 puzzles for a fraction of a cent each.",
-          "bullets": [
-            "29.5% pass@2 on ARC-AGI-1",
-            "$0.0007 per task in compute",
-            "Built on the brain-inspired 'Dragon Hatchling' architecture"
-          ],
-          "symbol": "brain"
-        },
-        {
-          "id": "2ed04e99-bec5-48a6-b735-9ed82845fff6",
-          "kind": "problem",
-          "title": "Chain-of-Thought Reasoning Is Paid For By the Token",
-          "body": "Most reasoning models 'think out loud': every intermediate step is a generated token, and every generated token is billed.",
-          "bullets": [
-            "GPT-5.6 Luna at low reasoning effort costs about $0.040 per ARC-AGI-1 task",
-            "Longer reasoning traces mean higher latency and cost, not just better answers",
-            "The reasoning itself is never stored anywhere except as generated text"
-          ],
-          "symbol": "text.bubble.fill"
-        },
-        {
-          "id": "03f6c6d9-03ed-49f2-b970-b4719581de01",
-          "kind": "architecture",
-          "title": "Dragon Hatchling: Reasoning as a Recurrent Latent State",
-          "body": "BDH-CQ is built on BDH ('Baby Dragon Hatchling'), a post-transformer architecture inspired by local, Hebbian-like neuron interactions instead of pure attention over a growing cache.",
-          "bullets": [
-            "Inputs at inference time continuously update a recurrent associative memory",
-            "The model iterates on that latent state to solve a query — no text is generated as scratch work",
-            "A sequence of in-context examples gets compressed into a fixed-size memory representation, not a growing KV cache"
-          ],
-          "symbol": "arrow.triangle.2.circlepath"
-        },
-        {
-          "id": "060c9ab5-9c51-46be-aaf7-81a7d0495a5f",
-          "kind": "comparison",
-          "title": "Cheaper, Not Better — a Real Tradeoff",
-          "body": "Pathway's claim is precise: BDH-CQ breaks the cost-accuracy Pareto frontier, not the accuracy record.",
-          "bullets": [
-            "Numbers are from Pathway's public ARC-AGI-1 evaluation, September 2026"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Model",
-              "ARC-AGI-1 pass@2",
-              "Cost / task"
-            ],
-            "rows": [
-              [
-                "BDH-CQ (150M)",
-                "29.5%",
-                "$0.0007"
-              ],
-              [
-                "GPT-5.6 Luna (Low)",
-                "34.2%",
-                "~$0.040 (~11x more)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "342bf33c-90f1-4842-b93b-b4f15272ecc1",
-          "kind": "example",
-          "title": "Solving a Puzzle Without Narrating It",
-          "body": "Picture an ARC-AGI grid task: a handful of example input/output grid pairs, then a new input grid to complete.",
-          "bullets": [
-            "BDH-CQ reads the example pairs and folds their pattern into its recurrent latent memory as it goes",
-            "For the new query grid, it iterates internally in that latent space — refining a hidden representation of 'the rule'",
-            "It emits only the final answer grid; there is no intermediate 'first I notice X, then Y' text to inspect"
-          ],
-          "symbol": "square.grid.3x3.fill"
-        },
-        {
-          "id": "0e10b04d-6c60-49ae-b9e4-66523b5c85d5",
-          "kind": "problem",
-          "title": "Where This Breaks Down",
-          "body": "Cheap and clever isn't the same as ready to replace chain-of-thought everywhere.",
-          "bullets": [
-            "It's still 4.7 accuracy points behind Luna on the same benchmark — the frontier is about efficiency, not superiority",
-            "No text reasoning trace means no easy way to audit *why* it answered as it did — a real cost for debugging or safety review",
-            "Proven so far only at 150M parameters on ARC-AGI-1; scaling experiments (1B–600B) show promising trends but aren't yet a finished product"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "79b0b5f4-74c6-40eb-bf19-b8996959a3fd",
-          "kind": "takeaways",
-          "title": "Why It's Worth Watching",
-          "body": "BDH-CQ doesn't kill chain-of-thought reasoning, but it's real evidence that verbalizing every reasoning step isn't the only path to solving reasoning tasks.",
-          "bullets": [
-            "A genuinely different reasoning mechanism — recurrent latent iteration — not just a bigger or better-tuned transformer",
-            "If it scales past 150M while keeping its cost advantage, it changes the economics of cheap, high-volume reasoning workloads",
-            "Interpretability and the accuracy gap are the two things to watch before it's production-ready"
-          ],
-          "symbol": "flag.checkered"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "017d2087-8c20-4187-b6c1-1ef69a091fcc",
-            "prompt": "What does BDH-CQ do differently from typical chain-of-thought reasoning models?",
-            "options": [
-              "It uses a much larger KV cache than usual",
-              "It reasons through iterative computation in a recurrent latent space without generating intermediate text tokens",
-              "It requires human-written reasoning traces at inference time",
-              "It only works through a paid API with no open weights"
-            ],
-            "correctIndex": 1,
-            "explanation": "BDH-CQ continuously updates a recurrent latent memory and iterates on it internally — it never writes out a chain-of-thought, which is exactly what makes it cheap."
-          },
-          {
-            "id": "40131806-c22c-4c48-b189-1a68df3fd7ce",
-            "prompt": "On ARC-AGI-1, how does BDH-CQ's cost-accuracy tradeoff compare to GPT-5.6 Luna (Low)?",
-            "options": [
-              "Same accuracy and same cost",
-              "About 11x cheaper per task, but roughly 4.7 points lower pass@2 accuracy",
-              "Higher accuracy and higher cost",
-              "Lower accuracy and higher cost"
-            ],
-            "correctIndex": 1,
-            "explanation": "BDH-CQ scores 29.5% vs Luna's 34.2% pass@2, but costs about $0.0007 per task versus Luna's ~$0.040 — roughly 11x cheaper, with a real accuracy gap, not a free win."
-          },
-          {
-            "id": "66b75abb-e30d-49e6-883e-90ca21ace158",
-            "prompt": "What underlies the 'Dragon Hatchling' (BDH) architecture's design?",
-            "options": [
-              "A standard multi-head transformer with a larger context window",
-              "Brain-inspired local, Hebbian-like interactions with sparse, persistent activation state",
-              "A retrieval-augmented lookup table over a document index",
-              "Diffusion-based denoising of the output tokens"
-            ],
-            "correctIndex": 1,
-            "explanation": "BDH draws on neuroscience principles — local interaction, sparse activity, and a persistent state that updates continually — rather than attention over an ever-growing cache."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3cb56c40-4965-4e5f-a03c-fd1de78da843",
-          "title": "BDH-CQ: In-Context Learning with Recurrent Latent Reasoning (arXiv:2608.09888)",
-          "url": "https://arxiv.org/abs/2608.09888"
-        },
-        {
-          "id": "4359ec23-51e8-47d4-aef3-11bbc70c06c0",
-          "title": "Pathway: 150M-Parameter Model Breaks the ARC-AGI-1 Cost-Efficiency Frontier",
-          "url": "https://pathway.com/blog/pathway-150m-model-breaks-arc-agi-1-cost-efficiency-frontier"
-        }
-      ]
-    },
-    {
-      "id": "95ca874e-9884-46b5-9978-2fe239f1fd31",
-      "postKind": "release",
-      "title": "AlphaGenome Atlas: Every DNA Change, Pre-Scored",
-      "subtitle": "Google DeepMind precomputed molecular-effect predictions for all 9 billion possible single-letter DNA variants",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "tags": [
-        "genomics",
-        "alphagenome",
-        "deepmind",
-        "variant effect prediction",
-        "biology ai",
-        "distillation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "atom",
-      "summary": "DeepMind's AlphaGenome Atlas precomputes molecular-effect predictions for all ~9 billion possible single-nucleotide human DNA variants into a 1-petabyte, freely searchable resource, using a distilled student model and a combined AVI impact score — already surfacing new disease-linked genomic regions in a UK Biobank analysis.",
-      "publishedDate": "2026-09-10T12:41:42Z",
-      "slides": [
-        {
-          "id": "e4a9c98f-8299-42ad-9e0f-c5da701bddf4",
-          "kind": "cover",
-          "title": "9 Billion DNA Variants, Every Effect Pre-Scored",
-          "body": "Instead of running a model on demand for every DNA variant a researcher cares about, DeepMind just scored all of them in advance.",
-          "bullets": [
-            "~9 billion single-nucleotide variants covered",
-            "1 petabyte of precomputed predictions",
-            "Free browser access for research use"
-          ],
-          "symbol": "atom"
-        },
-        {
-          "id": "83e4a1bd-6161-4ed9-9f90-af0d7ddda03f",
-          "kind": "problem",
-          "title": "On-Demand Variant Scoring Doesn't Scale",
-          "body": "AlphaGenome, DeepMind's sequence model, predicts how a DNA change affects gene expression, splicing, and chromatin from a 1-megabase window of context — but running it fresh for every variant a study needs is slow and compute-heavy.",
-          "bullets": [
-            "Rare-disease and GWAS follow-up studies often need scores for thousands to millions of candidate variants at once",
-            "Each on-demand query means re-running a large model over a long DNA window",
-            "That cost discourages exploring variants outside a study's original hypothesis"
-          ],
-          "symbol": "hourglass"
-        },
-        {
-          "id": "952bffa5-c28a-4197-88ce-5b1ea45e2a4d",
-          "kind": "architecture",
-          "title": "Precompute Everything, Then Just Look It Up",
-          "body": "The Atlas runs AlphaGenome across every genome position and every possible substitution, then serves the results as a lookup rather than a live inference call.",
-          "bullets": [
-            "A large teacher ensemble's predictions are distilled into a faster student model, completing all-modality predictions for one variant in under a second on an H100",
-            "Results for all ~3 billion positions × 3 possible substitutions (~9B variants) are stored at 1 petabyte scale — over 30x the size of the AlphaFold Database",
-            "A new AlphaGenome Variant Impact (AVI) score merges AlphaGenome's regulatory predictions with AlphaMissense's protein-coding predictions into one number per variant"
-          ],
-          "symbol": "square.stack.3d.up.fill"
-        },
-        {
-          "id": "c2aa4659-0868-4e3b-8c89-5b4f71e6421c",
-          "kind": "comparison",
-          "title": "How Big Is 1 Petabyte of Genome Predictions?",
-          "bullets": [
-            "Scale comparison to DeepMind's earlier structural-biology resource"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Resource",
-              "Scope",
-              "Scale"
-            ],
-            "rows": [
-              [
-                "AlphaFold Database",
-                "~200M+ predicted protein structures",
-                "Baseline"
-              ],
-              [
-                "AlphaGenome Atlas",
-                "~9B DNA variant-effect predictions",
-                "1 PB — over 30x AlphaFold DB"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e3cc5cb0-b9fd-4ce5-a514-5253e86ea63a",
-          "kind": "example",
-          "title": "What It Found in the UK Biobank",
-          "body": "DeepMind applied the Atlas's precomputed scores to genetic data from over 54,000 UK Biobank participants as a test case.",
-          "bullets": [
-            "Turned up 22% more non-coding trait associations than prior analysis methods found",
-            "Identified 19 genomic regions linked to BMI that weren't well characterized before",
-            "The signal came from variants outside protein-coding genes — exactly where per-query scoring is least likely to be run by default"
-          ],
-          "symbol": "person.3.fill"
-        },
-        {
-          "id": "b005909e-749c-4243-86e1-a2b4cbfafd70",
-          "kind": "problem",
-          "title": "What the Atlas Isn't",
-          "body": "A precomputed score is a hypothesis, not a diagnosis.",
-          "bullets": [
-            "Predictions are computational estimates, not experimentally validated for every one of the 9 billion variants",
-            "The fast student model trades some accuracy for speed versus running the full teacher ensemble directly",
-            "Free access today is for non-commercial/academic use; commercial availability via Google Cloud is described as coming later, so it isn't yet a drop-in for clinical production pipelines"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "32f8d3b1-5c43-4a88-9630-9ddce87afda9",
-          "kind": "takeaways",
-          "title": "A New Default for Variant Research",
-          "body": "The Atlas shifts genomics workflows from 'run the model per query' to 'look up a precomputed atlas' — the same pattern that made AlphaFold Database transformative for structural biology.",
-          "bullets": [
-            "Biggest impact is likely in non-coding regions, historically the hardest to interpret and the least queried",
-            "Watch for commercial/clinical availability and independent validation of specific high-impact predictions",
-            "The AVI score gives researchers one number to triage millions of candidate variants before deeper follow-up"
-          ],
-          "symbol": "flag.checkered"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a6489df7-4aff-4fd1-af84-f902965f1af3",
-            "prompt": "What does the AVI (AlphaGenome Variant Impact) score combine?",
-            "options": [
-              "AlphaFold's structure-confidence metric alone",
-              "AlphaGenome's regulatory-effect predictions with AlphaMissense's protein-coding impact predictions",
-              "A raw population allele-frequency estimate",
-              "Clinical trial outcome data"
-            ],
-            "correctIndex": 1,
-            "explanation": "AVI merges AlphaGenome's predictions about non-coding, regulatory effects with AlphaMissense's predictions about protein-altering variants into a single per-variant score."
-          },
-          {
-            "id": "c7bca1e0-efae-4d72-b06e-d5721aee2718",
-            "prompt": "Roughly how large is the AlphaGenome Atlas dataset compared to the AlphaFold Database?",
-            "options": [
-              "1 petabyte — over 30x the size of the AlphaFold Database",
-              "1 gigabyte — much smaller than the AlphaFold Database",
-              "Exactly the same size as the AlphaFold Database",
-              "1 exabyte — about 1,000x larger"
-            ],
-            "correctIndex": 0,
-            "explanation": "The Atlas stores predictions across roughly 9 billion variants at 1 petabyte scale, more than 30 times larger than the AlphaFold Database."
-          },
-          {
-            "id": "81fd6cb5-067c-457b-b158-2dd281f0c2ae",
-            "prompt": "In the UK Biobank case study, what did applying the Atlas newly reveal?",
-            "options": [
-              "Nothing beyond what prior GWAS analysis already found",
-              "22% more non-coding trait associations and 19 genomic regions linked to BMI",
-              "A confirmed cure for a specific rare disease",
-              "That non-coding DNA has no functional role"
-            ],
-            "correctIndex": 1,
-            "explanation": "Applied to over 54,000 UK Biobank participants, the Atlas surfaced 22% more non-coding associations and 19 BMI-linked regions — signal that per-query, hypothesis-driven analysis tends to miss."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "0c758081-4421-403e-9dd0-053beffaee30",
-          "title": "AlphaGenome Atlas: Molecular predictions for 9 Billion human DNA variants — Google DeepMind",
-          "url": "https://deepmind.google/blog/alphagenome-atlas-a-predictive-map-of-every-possible-dna-letter-change-in-the-human-genome/"
-        }
-      ]
     }
   ]
 }
