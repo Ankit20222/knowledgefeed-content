@@ -1,6 +1,209 @@
 {
   "posts": [
     {
+      "title": "Grouped-Query Attention: Splitting Heads to Save Memory",
+      "subtitle": "Llama 2, Mistral, and Llama 3 all quietly share one trick: fewer K/V heads than query heads.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "gqa",
+        "attention",
+        "kv-cache",
+        "llm-architecture",
+        "inference-optimization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "rectangle.grid.2x2.fill",
+      "summary": "Grouped-Query Attention shares each Key/Value head across a group of Query heads instead of giving every head its own — shrinking the KV cache by 4-8x with almost none of the quality loss that plain Multi-Query Attention takes. It's why Llama 2 70B, Mistral 7B, and Llama 3 all serve at a fraction of the memory a full multi-head model would need.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The Part of an LLM That Runs Out of Memory First",
+          "body": "It's rarely the model weights that blow up GPU memory during serving — it's the KV cache, the running record of every token's Key and Value vectors that attention needs to look back on.",
+          "bullets": [
+            "A 70B model's weights are a fixed cost; the KV cache grows with every token you generate and every request you batch",
+            "Grouped-Query Attention (GQA) is the architecture change that made long-context, high-batch serving affordable"
+          ],
+          "symbol": "rectangle.grid.2x2.fill",
+          "table": null,
+          "id": "58b613e2-49f9-4143-8609-33fea8ab2e24"
+        },
+        {
+          "kind": "problem",
+          "title": "Multi-Head Attention Pays for a K/V Head It Barely Uses",
+          "body": "Standard multi-head attention (MHA) gives every query head its own private Key and Value projections. That's a lot of redundant state to keep in memory during autoregressive decoding.",
+          "bullets": [
+            "Llama-2-70B has 64 attention heads — full MHA would mean 64 separate K and 64 separate V vectors cached per token, per layer",
+            "KV cache size scales as (batch size) × (sequence length) × (num KV heads) × (head dim) × (layers) × 2 — every one of those factors compounds",
+            "At long context or large batch, the KV cache can dwarf the model weights themselves, capping how many requests fit on a GPU"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null,
+          "id": "c7c37f31-558e-40e8-85e6-1ac12c19b406"
+        },
+        {
+          "kind": "solution",
+          "title": "Share K/V Heads Across Groups of Query Heads",
+          "body": "Multi-Query Attention (MQA, Shazeer 2019) went to the extreme: every query head shares ONE K/V head. Cache shrinks massively, but quality drops and training gets less stable. GQA (Ainslie et al., 2023) is the tunable middle ground.",
+          "bullets": [
+            "Query heads are split into G groups; every head inside a group shares a single K and V projection",
+            "G = number of heads recovers plain MHA exactly; G = 1 recovers MQA exactly — GQA is a dial, not a new mechanism",
+            "Existing MHA checkpoints can be converted via 'uptraining': mean-pool the K/V heads within each target group, then continue pretraining for roughly 5% of the original compute to recover quality"
+          ],
+          "symbol": "circle.grid.2x2.fill",
+          "table": null,
+          "id": "ef584ffe-a112-4dcb-92c1-e36e5592da63"
+        },
+        {
+          "kind": "architecture",
+          "title": "Why the Extra Compute Is Nearly Free",
+          "body": "Cutting K/V heads doesn't cut the number of query heads, so the model's representational capacity for 'what to attend to' is untouched — only the K/V projections and the cache they populate shrink.",
+          "bullets": [
+            "The expensive part of decoding is memory bandwidth (streaming the KV cache from HBM), not FLOPs — GQA directly attacks the bottleneck that matters at inference time",
+            "Fewer K/V projection matrices also means fewer parameters to store and load, a small win on top of the cache savings",
+            "Because grouped heads still each get their own query projection, GQA loses far less expressive power than collapsing to a single shared head (MQA)"
+          ],
+          "symbol": "cpu.fill",
+          "table": null,
+          "id": "ab3a9e50-acb7-4029-bdbd-37371c40734d"
+        },
+        {
+          "kind": "comparison",
+          "title": "MHA vs. GQA vs. MQA, in Real Models",
+          "table": {
+            "headers": [
+              "Scheme",
+              "Query heads",
+              "KV heads",
+              "KV cache vs. MHA"
+            ],
+            "rows": [
+              [
+                "MHA (baseline)",
+                "64",
+                "64",
+                "1x"
+              ],
+              [
+                "GQA — Llama-2-70B",
+                "64",
+                "8",
+                "8x smaller"
+              ],
+              [
+                "GQA — Mistral-7B",
+                "32",
+                "8",
+                "4x smaller"
+              ],
+              [
+                "MQA",
+                "64",
+                "1",
+                "64x smaller"
+              ]
+            ]
+          },
+          "bullets": [
+            "GQA sits deliberately close to MQA's memory savings while staying close to MHA's quality — that's the entire design goal",
+            "The right number of KV heads (8 in both examples above) is a hyperparameter choice, not a fixed rule"
+          ],
+          "symbol": "chart.bar.fill",
+          "id": "19a43822-c50b-4d7a-b4a9-66268387521e"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: What 8x Smaller Actually Buys You",
+          "body": "Take a 70B-class model serving a 32K-token context. With full MHA (64 KV heads), the KV cache for that one sequence would need to store 64 K/V pairs per layer, per token.",
+          "bullets": [
+            "Switch to GQA with 8 KV heads and the exact same request needs only 1/8th the KV memory — an 8x reduction with no change to context length or batch size",
+            "That freed memory converts directly into serving more concurrent requests (bigger batches) on the same GPU, which is the whole economic point of GQA in production",
+            "This is a pure memory win at inference; it does nothing to speed up the one-time prefill pass, which is compute-bound, not bandwidth-bound"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "d44ca7c2-e829-4040-a0a2-72ed6c2a726e"
+        },
+        {
+          "kind": "concept",
+          "title": "When GQA Isn't the Right Knob",
+          "body": "GQA is close to a free lunch, but it's not literally free, and it doesn't solve every memory problem.",
+          "bullets": [
+            "Retrofitting GQA onto an already-trained MHA model still costs real compute (uptraining) — you can't just delete K/V heads at inference and expect the same quality",
+            "Pushing G too low still measurably hurts quality on tasks that need fine-grained, per-head specialization, same failure mode as MQA just less severe",
+            "GQA shrinks the KV cache, not the model weights — for a memory budget dominated by weights (small models, short context), techniques like quantization matter more",
+            "For genuinely extreme memory constraints (edge devices, huge batch serving), MQA or newer compressed-cache methods like MLA can still beat GQA on raw footprint"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "e05fc497-44b7-4ebb-883f-e0f66bd8cc5d"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "The KV cache, not the model weights, is usually the memory bottleneck when serving LLMs at scale",
+            "GQA groups query heads so they share K/V projections — a tunable point between full MHA (best quality) and MQA (smallest cache)",
+            "Llama-2-70B (8 KV heads / 64 query heads) and Mistral-7B (8 KV heads / 32 query heads) both ship with GQA today",
+            "It's a decode-time memory win, not a prefill speedup — and it still needs uptraining compute if retrofit onto an MHA checkpoint"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "0a9c7808-c78a-4cdd-b302-8e7adbd6b95d"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does Grouped-Query Attention actually share to shrink the KV cache?",
+            "options": [
+              "Query projections across all layers",
+              "Key and Value projections across a group of query heads",
+              "The embedding table across attention heads",
+              "A single low-rank compressed cache, as in MLA"
+            ],
+            "correctIndex": 1,
+            "explanation": "GQA splits query heads into groups and has every head in a group share one Key and one Value projection. Compressing the cache with a shared low-rank representation is the (different) idea behind MLA, not GQA.",
+            "id": "e12d2930-43f4-41d2-b8c3-058fbd0bb6c0"
+          },
+          {
+            "prompt": "Llama-2-70B has 64 query heads. How many KV heads does its GQA setup use, and what does that give you?",
+            "options": [
+              "64 KV heads — identical to plain multi-head attention",
+              "1 KV head — the same cache size as Multi-Query Attention",
+              "8 KV heads — an 8x smaller KV cache than full multi-head attention",
+              "32 KV heads — a 2x smaller KV cache"
+            ],
+            "correctIndex": 2,
+            "explanation": "Llama-2-70B groups its 64 query heads into 8 groups, each sharing one KV head — an 8x reduction in KV cache size versus giving every query head its own K/V pair.",
+            "id": "25db374c-a810-4159-9dcb-cd1065dd383f"
+          },
+          {
+            "prompt": "Why does GQA mainly help decoding rather than the initial prefill pass?",
+            "options": [
+              "Prefill doesn't use attention at all",
+              "Decoding is bottlenecked by streaming the KV cache from memory, which GQA shrinks; prefill is compute-bound instead",
+              "GQA only activates after the first 1,000 tokens",
+              "Prefill already uses a different, cheaper attention mechanism"
+            ],
+            "correctIndex": 1,
+            "explanation": "Autoregressive decoding is memory-bandwidth bound — every step re-reads the whole KV cache — so shrinking that cache directly speeds it up. Prefill processes the whole prompt in parallel and is limited by compute (FLOPs), not by KV cache size.",
+            "id": "ed983c90-a0ef-42e1-a693-2bbe2c6a52c8"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)",
+          "url": "https://arxiv.org/abs/2305.13245",
+          "id": "4d9685ae-2ca0-45c5-bb36-af0f4f089297"
+        }
+      ],
+      "id": "781d0251-e3bf-47da-ab5e-296f0d481f90",
+      "publishedDate": "2026-09-20T12:44:52Z"
+    },
+    {
       "title": "Agent Memory: Giving LLM Agents a Memory Beyond the Prompt",
       "subtitle": "The context window is working memory, not storage — long-running agents need somewhere to put what they've learned.",
       "category": "AI Agents",
@@ -11138,179 +11341,6 @@
         }
       ],
       "publishedDate": "2026-09-13T04:44:39Z"
-    },
-    {
-      "id": "c7fee6ac-dfbb-473b-9bf7-2c0481fa4402",
-      "title": "Agent Sandboxes: Letting a Model Run Code Safely",
-      "subtitle": "Generating code is the easy part for an AI agent — running it without owning your host is the hard part.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "agents",
-        "sandboxing",
-        "security",
-        "microvm",
-        "isolation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "lock.shield.fill",
-      "summary": "Any agent that can write and execute its own code needs an isolation boundary, because a bug or a successful prompt injection in that code can actually run — not just produce a wrong chat answer. Containers, gVisor, and Firecracker microVMs trade boot latency for progressively stronger isolation, and none of them alone limit what a legitimately permitted tool call can do.",
-      "slides": [
-        {
-          "id": "12c95d43-c874-4a24-a552-ec0e0ce36e02",
-          "kind": "cover",
-          "title": "Running code is where an agent stops being just a chatbot",
-          "body": "The moment an LLM agent executes its own code, that code needs the same isolation you'd give a stranger's code.",
-          "bullets": [],
-          "symbol": "lock.shield.fill"
-        },
-        {
-          "id": "79daaf07-83c5-4496-9046-b5a964cd27e7",
-          "kind": "problem",
-          "title": "Generated code is untrusted input, not a chat response",
-          "body": null,
-          "bullets": [
-            "A wrong chat answer is annoying; a wrong shell command that actually executes (rm -rf, an unbounded loop, a curl exfiltrating a secret) is an incident",
-            "Prompt injection turns \"the agent decided to write this code\" into \"an attacker decided what code runs\" — the agent doesn't have to be malicious for the outcome to be",
-            "Long-running, multi-turn agents (the kind managed agent harnesses like OpenAI's Agents API are built for) widen the exposure window simply by running code across more turns"
-          ],
-          "symbol": "exclamationmark.shield.fill"
-        },
-        {
-          "id": "55dff1d2-2175-4105-af77-bc389787edad",
-          "kind": "solution",
-          "title": "Three layers of isolation, in increasing order of strength",
-          "body": null,
-          "bullets": [
-            "Container (namespaces + cgroups + seccomp): fast, but shares the host kernel — a kernel exploit escapes it",
-            "gVisor: a user-space kernel that intercepts syscalls before they reach the host kernel, created by Google — no shared kernel, moderate overhead",
-            "Firecracker microVM: each sandbox gets its own separate kernel via hardware-enforced KVM isolation, built by AWS in Rust — boots in as little as ~125ms with under 5MiB of memory overhead, and is what powers AWS Lambda",
-            "Session-scoped sandboxes tie one sandbox to one agent session, so a compromised run can't reach another user's data"
-          ],
-          "symbol": "shield.lefthalf.filled"
-        },
-        {
-          "id": "e207bbe6-b91a-429a-a855-0eeb0015144d",
-          "kind": "comparison",
-          "title": "Speed vs. isolation strength",
-          "body": null,
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Isolation",
-              "Shares host kernel?",
-              "Typical boot time",
-              "What escapes it"
-            ],
-            "rows": [
-              [
-                "Bare process",
-                "Yes",
-                "~0ms",
-                "Almost anything"
-              ],
-              [
-                "Container",
-                "Yes",
-                "~50-200ms",
-                "A host kernel exploit"
-              ],
-              [
-                "gVisor",
-                "No (userspace kernel)",
-                "~150-300ms",
-                "A gVisor implementation bug"
-              ],
-              [
-                "Firecracker microVM",
-                "No (own kernel via KVM)",
-                "~125ms",
-                "A hypervisor-level exploit"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "b5466243-dbe7-471a-8699-0b4e272e10dc",
-          "kind": "example",
-          "title": "\"Fix the failing test\" gone wrong, two ways",
-          "body": null,
-          "bullets": [
-            "In a bare subprocess: the agent's fix script shells out to pip install a package name it hallucinated; if that name exists and is malicious, it now runs with the same permissions as your CI runner",
-            "In a Firecracker microVM with no outbound egress and a read-only mount of everything except /workspace: the same script can only affect its own throwaway filesystem — worst case, you discard one microVM",
-            "The isolation layer didn't make the agent smarter about picking package names — it just made the blast radius of a bad pick tiny"
-          ],
-          "symbol": "terminal.fill"
-        },
-        {
-          "id": "c10a9383-7444-46d8-8f32-d208769c2742",
-          "kind": "problem",
-          "title": "What sandboxing doesn't fix",
-          "body": null,
-          "bullets": [
-            "Stronger isolation costs more boot latency and infra complexity — most agent frameworks default to containers and only reach for microVMs at real multi-tenant scale",
-            "A sandbox with open outbound internet access defeats half the point: it stops filesystem/process escape, not data leaving over an allowed network call",
-            "Sandboxing execution doesn't sandbox tool calls — an agent with a send_email tool doesn't need a sandbox escape to cause damage, it just needs to call the tool",
-            "Don't build a custom sandbox if a well-audited managed one already fits the threat model — a homegrown isolation layer is its own security risk"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "e84504ae-6d7c-4332-8bc3-729ae0a1f1e7",
-          "kind": "takeaways",
-          "title": "What to take away",
-          "body": null,
-          "bullets": [
-            "Treat any code an LLM agent writes as untrusted input, and isolate its execution the same way you'd isolate a stranger's code",
-            "Pick isolation by threat model: containers for trusted-ish single-tenant use, gVisor or microVMs once multiple untrusted sessions share infrastructure",
-            "Execution sandboxing is necessary but not sufficient — tool permissions and network egress rules need their own boundaries"
-          ],
-          "symbol": "checkmark.shield.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cf81af6e-18ae-4b87-b407-3b4eddc2fb05",
-            "prompt": "Why should code an LLM agent generates be treated as untrusted input?",
-            "options": [
-              "Because LLMs are inherently malicious",
-              "Because a bug or a successful prompt injection in that code can actually execute — not just produce a wrong chat answer",
-              "Because generated code is always slower than human-written code",
-              "Because it can't be unit tested"
-            ],
-            "correctIndex": 1,
-            "explanation": "A wrong chat response is a bad answer; a wrong or attacker-influenced command that actually runs can delete files, exfiltrate data, or worse — the risk is in execution, not the source of the code."
-          },
-          {
-            "id": "e6550dc2-2892-495b-bf61-251dbb436e64",
-            "prompt": "What's the key architectural difference between a container and a Firecracker microVM?",
-            "options": [
-              "Containers always use more memory than microVMs",
-              "A container shares the host's kernel; a microVM boots its own separate kernel via hardware-enforced virtualization",
-              "MicroVMs can't run Linux workloads",
-              "Containers boot slower than microVMs in every case"
-            ],
-            "correctIndex": 1,
-            "explanation": "Containers isolate processes but still share one kernel with the host, so a kernel exploit can escape a container. A Firecracker microVM gives each sandbox its own kernel through KVM, at the cost of some boot latency."
-          },
-          {
-            "id": "4d93f43d-2eeb-4d4f-8fcc-fcb94910a02f",
-            "prompt": "Which of these is actually solved by sandboxing an agent's code execution?",
-            "options": [
-              "A compromised sandboxed process trying to touch files outside its mount",
-              "A tool call the agent is legitimately permitted to make, like sending an email",
-              "The model hallucinating a wrong fact",
-              "Data leaving over a network call the sandbox's egress rules still allow"
-            ],
-            "correctIndex": 0,
-            "explanation": "Sandboxing bounds the blast radius of code execution itself — filesystem and process access. It does nothing about a permitted tool call, a factual hallucination, or exfiltration through network access the sandbox was configured to allow."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-09-13T02:44:39Z"
     }
   ]
 }
