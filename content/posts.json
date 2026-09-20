@@ -1,6 +1,200 @@
 {
   "posts": [
     {
+      "title": "Context Engineering: Curating What the Model Actually Sees",
+      "subtitle": "Agents don't fail from too little context — they fail from too much of the wrong context",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "context-engineering",
+        "agents",
+        "context-window",
+        "memory",
+        "rag"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "tray.full.fill",
+      "summary": "Context engineering is the practice of actively deciding what goes into an agent's context window at each step, instead of just appending everything. Four core moves — compaction, offloading, just-in-time retrieval, and sub-agent isolation — keep an agent's working context small and relevant even as a task grows, which matters because models attend far better to a short, curated context than to a long one stuffed with stale tool output.",
+      "slides": [
+        {
+          "id": "0b619c83-f9d3-4e42-a1ea-4e0eb61cbb2f",
+          "kind": "cover",
+          "title": "Prompt Engineering Wrote the Message. Context Engineering Curates the Whole Window.",
+          "body": "As agents run longer — calling tools, reading files, chaining subtasks — the hard problem stops being 'what do I say to the model' and becomes 'what does the model see right now, out of everything that has happened so far.' That curation is context engineering.",
+          "bullets": [
+            "Prompt engineering: craft one message",
+            "Context engineering: manage an entire, growing working memory"
+          ],
+          "symbol": "tray.full.fill",
+          "table": null
+        },
+        {
+          "id": "681ffbd4-87cb-47da-943d-45bb8717f673",
+          "kind": "problem",
+          "title": "More Context Isn't Free — It's a Liability",
+          "body": "An agent that reads files, calls tools, and searches the web accumulates a transcript where most tokens are stale noise by the time the task finishes. That noise isn't harmless: it costs money and latency, and it actively competes with the tokens that matter.",
+          "bullets": [
+            "'Lost in the middle': models attend best to the start and end of context, worst to facts buried in the middle of a long transcript",
+            "Every extra token is paid for at every subsequent step, not just once",
+            "A model can't tell which of 50 old tool outputs is still relevant unless something tells it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "a4fe5bc3-da28-4a1c-9d07-0a78a22af074",
+          "kind": "solution",
+          "title": "Four Levers: Compact, Offload, Retrieve Just-in-Time, Isolate",
+          "body": "None of these require a different model — they're all about what you choose to feed it at each step.",
+          "bullets": [
+            "Compaction: periodically collapse old turns and tool outputs into a short running summary, then drop the raw transcript",
+            "Offloading: write large artifacts (diffs, search results, logs) to a file or scratchpad; keep only a reference in the live context",
+            "Just-in-time retrieval: fetch the specific chunk or tool result only when it's needed, instead of stuffing everything upfront",
+            "Sub-agent isolation: hand a subtask to a subagent with its own fresh context; only its final summary returns to the parent"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "da70b6a8-4095-4e7b-bfee-fde7c44e958c",
+          "kind": "architecture",
+          "title": "A Concrete Compaction Loop",
+          "body": "One common implementation: the agent tracks its own context budget and compacts before it ever gets close to full.",
+          "bullets": [
+            "Append each tool call's raw output to a working buffer as it happens",
+            "When the buffer nears a set fraction of the context budget (e.g. ~20%), ask the model to compress it into a short structured summary — decisions made, open questions, key facts",
+            "Discard the raw buffer; keep the summary plus a pointer to where the full detail was saved",
+            "If a later step needs the exact detail again, re-open the saved file rather than trusting a compressed memory of it"
+          ],
+          "symbol": "arrow.down.doc.fill",
+          "table": null
+        },
+        {
+          "id": "ed47102c-9305-4168-b2b9-24fa822f969a",
+          "kind": "example",
+          "title": "A Coding Agent: 200 Files Touched, Context Stays Flat",
+          "body": "An autonomous coding agent is asked to refactor a large repo. Without context engineering, every file read, diff, and test log stays in the transcript — by file 30 the window is dominated by stale diffs, and the agent starts losing track of the original instructions.",
+          "bullets": [
+            "With context engineering, the agent keeps a running plan (a few hundred tokens) plus short per-file summaries",
+            "Every diff is written to disk immediately; the transcript keeps only the file path and a one-line result",
+            "Need the exact code again? Re-read the file from disk — cheap and exact — instead of relying on a fuzzy memory of it",
+            "Result: context size stays roughly flat even after touching 200 files, because the filesystem is the source of truth, not the transcript"
+          ],
+          "symbol": "folder.fill",
+          "table": null
+        },
+        {
+          "id": "001446aa-779d-4d45-92f9-f4034f551902",
+          "kind": "comparison",
+          "title": "Stuff-Everything vs. Context-Engineered",
+          "table": {
+            "headers": [
+              "Dimension",
+              "Stuff Everything In",
+              "Context Engineered"
+            ],
+            "rows": [
+              [
+                "Context growth",
+                "Linear with every action taken",
+                "Bounded by a compaction budget"
+              ],
+              [
+                "Cost per step",
+                "Rises steadily through the run",
+                "Roughly flat"
+              ],
+              [
+                "Typical failure",
+                "Forgets early instructions; reasons from stale data",
+                "Can lose a detail if compaction is too aggressive"
+              ],
+              [
+                "Recovering a fact",
+                "Scan the entire history and hope it's there",
+                "Re-fetch the specific artifact by its saved reference"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "body": null,
+          "bullets": []
+        },
+        {
+          "id": "f51ab305-9b8f-4119-9bc8-ab11240053d6",
+          "kind": "concept",
+          "title": "When Context Engineering Backfires",
+          "body": "Every lever above trades something away, and the tradeoff is invisible until it fails.",
+          "bullets": [
+            "Over-compaction can silently drop a constraint the model needed 10 steps later — the failure only shows up as a wrong later action, far from its cause",
+            "Sub-agent isolation adds real coordination overhead (extra tokens and round-trips to delegate and merge); it only pays off when the subtask is genuinely separable",
+            "Just-in-time retrieval trades recall for precision — if the retrieval step misses the right chunk, the agent never sees it at all, whereas 'stuff everything' at least had it somewhere",
+            "Rule of thumb: add these levers once context bloat is causing measurable failures or cost, not preemptively for a short, single-turn task"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "bc8ae5c6-8762-4a53-88ec-639a11d62fa0",
+          "kind": "takeaways",
+          "title": "Treat the Context Window Like Working Memory, Not a Log",
+          "body": "The context window is the model's entire working memory for that step — every token in it is competing for attention, and every token left out is a fact the model can't use.",
+          "bullets": [
+            "Context engineering = actively deciding what the model sees at each step, not appending everything and hoping",
+            "Four core moves: compact, offload, retrieve just-in-time, isolate into subagents",
+            "External storage (a file, a database) is more reliable long-term memory than the transcript itself",
+            "Start simple — add these levers only once context bloat is an observed problem"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "cb53fed3-01c7-4c8a-bfbc-c137dc6a9400",
+            "prompt": "What does \"lost in the middle\" describe?",
+            "options": [
+              "Models run out of GPU memory once context gets too long",
+              "Models attend well to the start and end of a long context but poorly to information buried in the middle",
+              "A tokenizer bug that drops the middle third of a document",
+              "Agents forgetting their goal after a system restart"
+            ],
+            "correctIndex": 1,
+            "explanation": "It's a measured attention pattern: LLMs use facts near the beginning or end of a long context far more reliably than facts placed in the middle — so simply appending everything to context doesn't guarantee the model will actually use it."
+          },
+          {
+            "id": "40314c5b-6282-4211-930d-b5ef905c47bb",
+            "prompt": "In the four-levers framework, what does \"offloading\" mean?",
+            "options": [
+              "Permanently deleting old context so it can never be recovered",
+              "Writing large intermediate artifacts to storage and keeping only a reference or short summary in the live context",
+              "Sending context to a smaller, cheaper model to process instead",
+              "Splitting one prompt across several parallel model calls"
+            ],
+            "correctIndex": 1,
+            "explanation": "Offloading keeps the live context small by moving bulky raw data — full file contents, tool logs — out to external storage, retrievable by reference whenever the agent actually needs the full detail again."
+          },
+          {
+            "id": "ac4ebcf8-a2e7-41e7-8ff4-bfe0a98cb589",
+            "prompt": "Per the pitfalls slide, why doesn't sub-agent isolation always pay off?",
+            "options": [
+              "Subagents can't call tools, only the parent agent can",
+              "Spinning up and coordinating a subagent adds its own token and latency overhead, which only pays off when the subtask is genuinely separable",
+              "Subagents share the exact same context window as the parent, so nothing is actually isolated",
+              "Subagents are always restricted to a less capable model"
+            ],
+            "correctIndex": 1,
+            "explanation": "Delegating to a subagent costs extra round-trips and tokens to hand off the subtask and merge its result back — worthwhile only when the subtask's own context genuinely shouldn't pollute the parent's."
+          }
+        ]
+      },
+      "references": [],
+      "id": "cc1193a1-abfd-45f0-a2fb-cfc4c5bfa741",
+      "publishedDate": "2026-09-20T18:44:18Z"
+    },
+    {
       "title": "Grouped-Query Attention: Splitting Heads to Save Memory",
       "subtitle": "Llama 2, Mistral, and Llama 3 all quietly share one trick: fewer K/V heads than query heads.",
       "category": "LLMs",
@@ -11170,177 +11364,6 @@
         }
       ],
       "publishedDate": "2026-09-13T06:44:39Z"
-    },
-    {
-      "id": "19012255-f94c-4fe4-8cc6-07b816f84e65",
-      "title": "OpenAI's Agents API: Codex's Own Harness, Opened Up",
-      "subtitle": "Durable sessions, context compaction, and hosted sandboxes — billed by usage, not by platform fee.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "openai",
-        "agents",
-        "api",
-        "sandboxes",
-        "codex"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "terminal.fill",
-      "summary": "OpenAI opened a public beta of its Agents API, exposing the same managed harness that runs Codex: durable multi-turn sessions, automatic context compaction, native MCP connections, multi-agent delegation, and hosted or self-hosted sandboxes for code execution — with no extra platform fee beyond tokens and the tools an agent actually uses.",
-      "slides": [
-        {
-          "id": "e8cddaa9-ec74-4a37-8408-ff9173fddcac",
-          "kind": "cover",
-          "title": "The infrastructure behind Codex is now a public API",
-          "body": "OpenAI's Agents API packages session management, context compaction, and sandboxed execution into one billed-by-usage endpoint.",
-          "bullets": [],
-          "symbol": "terminal.fill"
-        },
-        {
-          "id": "7bad62e7-a638-4d54-af16-7e81f3721504",
-          "kind": "problem",
-          "title": "Every team building a serious agent rebuilds the same plumbing",
-          "body": null,
-          "bullets": [
-            "Session state has to persist and resume across many turns, not just one request-response pair",
-            "A long-running agent eventually fills its context window and needs something to summarize or drop older turns — most teams write this by hand",
-            "Running model-generated code safely means standing up your own sandbox, and coordinating hand-offs to sub-agents means writing your own orchestration layer",
-            "Recovery logic for a failed step (retry? escalate? abort?) is usually bespoke per project"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "b15a3e0a-7f9c-4112-8e23-f0c9846fae52",
-          "kind": "solution",
-          "title": "One API surface for sessions, compaction, tools, and execution",
-          "body": "It's the same harness that runs Codex and ChatGPT's agentic features, exposed directly.",
-          "bullets": [
-            "Durable sessions: continue an agent's work across turns without re-sending the full history yourself",
-            "Managed context compaction: the API handles trimming/summarizing older turns as a session grows, instead of the agent silently running out of context",
-            "Native MCP server connections and streaming progress updates while an agent works",
-            "Multi-agent delegation: hand off a sub-task to a sub-agent as a first-class API feature",
-            "Hosted sandboxes for code execution, file editing, and artifact generation — or bring your own via workspace/capability directories; Cloudflare, Vercel, and Oracle also offer sandbox environments for it"
-          ],
-          "symbol": "gearshape.2.fill"
-        },
-        {
-          "id": "6b5f3bd4-d355-4598-8d02-b5c168b56cfd",
-          "kind": "comparison",
-          "title": "No platform fee — but usage adds up",
-          "body": null,
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Component",
-              "Cost"
-            ],
-            "rows": [
-              [
-                "Agents API itself",
-                "No extra fee — pay for tokens + tools used"
-              ],
-              [
-                "Hosted Shell / sandbox session",
-                "Billed per minute, 5-minute minimum"
-              ],
-              [
-                "Code Interpreter",
-                "$0.03 per session"
-              ],
-              [
-                "File Search storage",
-                "$0.10 per GB per day"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "4f813601-be43-4d0d-abfe-58a44bc7fce7",
-          "kind": "example",
-          "title": "A support-triage agent, without custom infrastructure",
-          "body": "Illustrative scenario, not an official case study.",
-          "bullets": [
-            "A ticket-triage agent keeps one durable session open across a multi-day back-and-forth with a customer",
-            "As the thread grows past dozens of turns, the API compacts older messages automatically instead of the agent losing early context",
-            "The agent calls a hosted sandbox to reproduce a bug from attached logs, then delegates fix-verification to a sub-agent — all through the same API, with no bespoke session store or sandbox to run"
-          ],
-          "symbol": "flowchart.fill"
-        },
-        {
-          "id": "1cb6b098-dffc-444a-b563-5b54f866ac1b",
-          "kind": "problem",
-          "title": "Where the managed harness doesn't help",
-          "body": null,
-          "bullets": [
-            "It's a public beta — expect rough edges and API changes before general availability",
-            "\"No platform fee\" still means real costs: the 5-minute minimum per sandbox session is a real floor even for a 10-second task",
-            "Packaging session/sandbox/delegation infrastructure doesn't remove the need to scope what an agent's tools are allowed to do — permissioning is still on you",
-            "A simple single-turn chatbot gains little from this machinery; it's built for multi-turn, tool-using, potentially long-running agents like Codex-style coding assistants"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "3b4744b4-15d3-4ce5-b052-eebf4a45f2c6",
-          "kind": "takeaways",
-          "title": "What to take away",
-          "body": null,
-          "bullets": [
-            "The Agents API is the actual Codex harness, not a simplified developer version of it",
-            "Sessions, context compaction, MCP connections, delegation, and sandboxes are now one billed-by-usage API instead of bespoke infrastructure per team",
-            "Third-party sandbox partners (Cloudflare, Vercel, Oracle) mean execution isn't locked to OpenAI-hosted infrastructure"
-          ],
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "80185efa-778e-463b-8bb9-a5cf98e4dda8",
-            "prompt": "Besides model tokens, what does the Agents API actually charge for?",
-            "options": [
-              "Nothing — it's entirely free beyond your existing model usage",
-              "A flat monthly platform fee",
-              "Tool/sandbox usage — hosted session minutes, Code Interpreter, and File Search storage",
-              "A per-agent software license"
-            ],
-            "correctIndex": 2,
-            "explanation": "There's no separate platform fee for the Agents API itself, but hosted sandbox time (billed per minute, 5-minute minimum), Code Interpreter ($0.03/session), and File Search storage ($0.10/GB/day) are billed on top of token usage."
-          },
-          {
-            "id": "5ffb6566-af0c-4d8b-9b0c-19c353cfac84",
-            "prompt": "What problem does managed \"context compaction\" solve?",
-            "options": [
-              "Encrypting an agent's conversation history",
-              "Keeping a long-running session within its context window as turns accumulate",
-              "Compressing model weights for faster inference",
-              "Reducing the number of API calls an app makes"
-            ],
-            "correctIndex": 1,
-            "explanation": "As a durable session accumulates turns, it eventually risks overflowing the context window — compaction trims or summarizes older turns automatically so the agent doesn't lose the ability to keep going."
-          },
-          {
-            "id": "d2ddae87-ad8d-4aed-8a31-f44d9b7ba51f",
-            "prompt": "Besides OpenAI's own hosted sandboxes, which providers also offer sandbox environments for the Agents API?",
-            "options": [
-              "AWS, GCP, and Azure",
-              "Cloudflare, Vercel, and Oracle",
-              "Only self-hosted Docker",
-              "Snowflake and Databricks"
-            ],
-            "correctIndex": 1,
-            "explanation": "Cloudflare, Vercel, and Oracle offer additional sandbox environments that plug into the Agents API, alongside OpenAI-hosted sandboxes and fully self-hosted options via workspace/capability directories."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "c0db1a08-5ef2-4242-b4a7-6ff624e4ead6",
-          "title": "Introducing the Agents API — OpenAI",
-          "url": "https://openai.com/index/introducing-the-agents-api/"
-        }
-      ],
-      "publishedDate": "2026-09-13T04:44:39Z"
     }
   ]
 }
