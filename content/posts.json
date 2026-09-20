@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "title": "PagedAttention: The KV Cache as Virtual Memory",
+      "subtitle": "vLLM borrows a 1960s OS trick to stop LLM servers from reserving gigabytes they'll never use.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "pagedattention",
+        "vllm",
+        "kv-cache",
+        "llm-serving",
+        "memory-management",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "memorychip.fill",
+      "summary": "PagedAttention (the idea behind vLLM) splits each request's KV cache into fixed-size blocks stored non-contiguously in GPU memory, addressed through a per-sequence block table — exactly like OS virtual memory pages. That single change removes the need to reserve worst-case memory per request, lets identical prefixes share blocks via copy-on-write, and is why modern LLM servers can pack far more concurrent requests onto the same GPU.",
+      "publishedDate": "2026-09-20T00:44:30Z",
+      "id": "7360c689-0c51-4b87-81c4-2ae622d79fd2",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The KV Cache Problem Nobody Optimizes",
+          "body": "Every token an LLM generates needs its key/value vectors kept around for every future attention step. That cache grows linearly with sequence length and, in most serving systems, wastes most of the memory it reserves.",
+          "bullets": [
+            "The original PagedAttention paper (Kwon et al., 2023, UC Berkeley) found existing serving systems wasting the majority of their KV cache memory to fragmentation and over-reservation",
+            "vLLM built around this idea and became the reference implementation most production LLM servers now imitate"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null,
+          "id": "0b82bb30-3e61-4e37-90f7-70a1e0fce0f4"
+        },
+        {
+          "kind": "problem",
+          "title": "Naive Allocation Reserves for the Worst Case",
+          "body": "A server can't know in advance how many tokens a request will generate, so a naive contiguous allocator reserves memory for the maximum possible sequence length the moment a request arrives.",
+          "bullets": [
+            "Internal fragmentation: a request that stops at 200 tokens still holds its full 2048-token reservation for its entire lifetime — the unused tail is dead weight",
+            "External fragmentation: variable-length reservations packed side-by-side in memory leave gaps too small for the next request, just like a fragmented disk",
+            "No sharing: beam search or parallel sampling from one prompt duplicates that prompt's entire KV cache once per candidate, even though the candidates start identical"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null,
+          "id": "72ab27a4-5eb0-4261-8ff2-eca4794e80cb"
+        },
+        {
+          "kind": "solution",
+          "title": "Treat the Cache Like OS Virtual Memory",
+          "body": "PagedAttention splits each sequence's KV cache into fixed-size blocks (16 tokens by default in vLLM) that live non-contiguously in GPU memory, allocated on demand as generation proceeds rather than reserved upfront.",
+          "bullets": [
+            "Each sequence keeps a block table mapping logical block index -> physical block address, the same abstraction an OS page table uses for virtual-to-physical memory",
+            "Blocks are handed out one at a time as the sequence grows, so a request that finishes early simply stops requesting new blocks",
+            "The attention kernel gathers the correct physical blocks through the table at compute time — the math is identical to a contiguous cache, only the addressing changed"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null,
+          "id": "c09465de-68c5-4307-883d-8bad28580e70"
+        },
+        {
+          "kind": "concept",
+          "title": "Copy-on-Write Lets Requests Share a Prefix",
+          "body": "When multiple sequences share an identical prefix — a system prompt, or the shared input in beam search and parallel sampling — their block tables can point at the exact same physical blocks.",
+          "bullets": [
+            "Every physical block carries a reference count of how many logical block tables point at it",
+            "A shared block stays shared until one sequence needs to write a new, divergent token into it — only then does that sequence get its own private copy (classic copy-on-write, borrowed from OS design)",
+            "This is why sampling n candidates from one prompt in vLLM costs close to 1x the prompt's KV memory, not n times"
+          ],
+          "symbol": "doc.on.doc.fill",
+          "table": null,
+          "id": "9662f7e3-687f-42b7-a4c9-5718ab22cd4b"
+        },
+        {
+          "kind": "comparison",
+          "title": "Paged vs. Contiguous KV Cache",
+          "table": {
+            "headers": [
+              "",
+              "Contiguous allocation",
+              "PagedAttention"
+            ],
+            "rows": [
+              [
+                "Memory reserved per request",
+                "max sequence length, upfront",
+                "grown block-by-block as tokens are generated"
+              ],
+              [
+                "Fragmentation",
+                "internal + external, reported as the majority of memory in early serving systems",
+                "bounded to under one block's worth per sequence"
+              ],
+              [
+                "Sharing across requests",
+                "not possible — duplicated per candidate",
+                "shared via block table + copy-on-write"
+              ],
+              [
+                "Reported throughput gain (vLLM paper vs. then-SOTA serving)",
+                "baseline",
+                "2-4x at the same latency, per the original paper"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "bullets": [],
+          "id": "e26b16ec-d03a-4447-8b65-be6c712b3da8"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: 100 Concurrent Requests on One GPU",
+          "body": "Say a request's KV cache costs roughly 1MB per token (varies by model size and head count). A server that reserves 2048 tokens per request for 100 concurrent requests locks up close to 200GB no matter how many tokens actually get generated.",
+          "bullets": [
+            "With 16-token blocks, a request that only ever generates 200 tokens allocates about 13 blocks (208 slots) instead of a fixed 2048-slot reservation",
+            "The memory that would've sat idle in the unused reservation gets handed to other requests' block tables instead",
+            "More reclaimed memory means the scheduler can admit more sequences into each batch — that's the actual source of the throughput gain, not a faster attention kernel"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "d41d72e5-2b89-42ce-ada4-7b0eaa0db70e"
+        },
+        {
+          "kind": "problem",
+          "title": "Where Paging Costs Something — and Where It Doesn't Help",
+          "body": "Paging isn't free, and it isn't universally useful. Knowing its limits matters as much as knowing the mechanism.",
+          "bullets": [
+            "Every attention step now does an extra indirection: a block-table lookup plus a non-contiguous gather, instead of one contiguous read — a small but real per-step overhead",
+            "Block size is a tuning knob: smaller blocks shrink internal fragmentation further but add more per-block bookkeeping; vLLM's default of 16 tokens balances the two",
+            "Low-concurrency, single-request deployments see little benefit — the win comes from packing many concurrent sequences tightly, so it matters most under real serving load",
+            "Copy-on-write sharing only pays off when sequences actually share a prefix; fully distinct prompts get zero sharing benefit"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "3cd2a399-e764-4eca-a759-82205399fba4"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "PagedAttention borrows OS virtual memory paging: fixed-size KV cache blocks, a per-sequence block table, and copy-on-write sharing",
+            "It changes how K/V tensors are stored and addressed in GPU memory — not the attention math itself",
+            "The payoff is a higher achievable batch size: more concurrent sequences fit in the same GPU memory once reservations stop being worst-case",
+            "It's the core idea behind vLLM, and the reason most production LLM servers (TensorRT-LLM, TGI, SGLang) now implement some form of paged KV cache management"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "4d557e77-d3f5-40b7-acc7-98c60c44b5df"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "aec928cc-16f4-4385-84a1-8052461c482b",
+            "prompt": "What does PagedAttention actually change about how attention is computed?",
+            "options": [
+              "It changes the attention formula to reduce FLOPs",
+              "It changes only how the K/V cache is stored and addressed in memory, not the underlying math",
+              "It removes the need for a KV cache entirely",
+              "It compresses K/V vectors to a lower precision"
+            ],
+            "correctIndex": 1,
+            "explanation": "PagedAttention is a memory-management technique, not a new attention algorithm — the kernel still computes the same dot products, just gathering K/V from non-contiguous physical blocks via a block table instead of one contiguous buffer. (Contrast with FlashAttention, which changes the compute pattern itself.)"
+          },
+          {
+            "id": "27c57821-5b88-4b60-96af-c674f639301a",
+            "prompt": "Why does naive contiguous KV cache allocation waste so much memory?",
+            "options": [
+              "GPUs have too little memory to fit any large cache",
+              "It has to reserve space for the maximum possible sequence length upfront, before knowing how many tokens will actually be generated",
+              "It stores keys and values in duplicate for safety",
+              "It always uses full 32-bit precision for the cache"
+            ],
+            "correctIndex": 1,
+            "explanation": "Since the eventual output length is unknown when a request starts, a contiguous allocator reserves worst-case space per request. Most requests finish well short of that limit, and the reserved-but-unused tail sits idle for the request's whole lifetime."
+          },
+          {
+            "id": "c0ea50c7-5761-4a8f-b182-7842d5147fa4",
+            "prompt": "What lets vLLM serve parallel sampling or beam search cheaply?",
+            "options": [
+              "Running each candidate on a separate GPU",
+              "Quantizing the KV cache to int8",
+              "Copy-on-write sharing of physical blocks across sequences that share a prefix",
+              "Skipping attention for repeated tokens"
+            ],
+            "correctIndex": 2,
+            "explanation": "Candidates that share an identical prefix (the same prompt) point their block tables at the same physical blocks. A private copy is only made once a candidate needs to write a new, divergent token — so n candidates cost close to 1x the prompt's memory, not n times."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "ed445dbb-d84b-4126-83c9-b0a2809c4539",
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "id": "5d588a4c-57e9-4b51-87fb-ead6844e54e7",
+          "title": "vLLM project (official implementation)",
+          "url": "https://github.com/vllm-project/vllm"
+        }
+      ]
+    },
+    {
       "title": "RoPE: Teaching Attention Where Tokens Are",
       "subtitle": "Rotary embeddings encode position as a rotation, not an addition — which is why the math falls out so cleanly.",
       "category": "LLMs",
@@ -11124,189 +11325,6 @@
       },
       "references": [],
       "publishedDate": "2026-09-13T00:40:51Z"
-    },
-    {
-      "id": "eb544b21-042d-4517-a181-44c0071bbac4",
-      "title": "GPT-Image-2.5: One Model, Two Speeds",
-      "subtitle": "OpenAI splits its image API into a fast default and a slower, more precise sibling.",
-      "category": "AI News",
-      "difficulty": "Beginner",
-      "postKind": "release",
-      "tags": [
-        "image generation",
-        "openai",
-        "api pricing",
-        "multimodal",
-        "product update"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "photo.on.rectangle.angled",
-      "summary": "OpenAI shipped GPT-Image-2.5 on September 8, 2026, rolling out to ChatGPT, ChatGPT Work, Codex, and the API as two variants: Flare, a faster default with up to 50% lower latency than Images 2.0, and Sunburst, a slower tier built for precise, multi-turn edits — both billed on the same token rates.",
-      "slides": [
-        {
-          "id": "73fecbe1-1a04-4ae7-8f40-949563f00d95",
-          "kind": "cover",
-          "title": "OpenAI ships GPT-Image-2.5 as two variants, not one model",
-          "body": "Instead of a single upgrade, OpenAI split its image model into Flare (speed) and Sunburst (precision) — a bet that image generation needs different models for different jobs.",
-          "bullets": [
-            "Released September 8, 2026",
-            "Rolls out to ChatGPT, ChatGPT Work, Codex, and API",
-            "Up to 50% lower latency than Images 2.0"
-          ],
-          "symbol": "photo.on.rectangle.angled",
-          "table": null
-        },
-        {
-          "id": "f4c7e594-70ef-498d-a4fd-ffee773033d0",
-          "kind": "problem",
-          "title": "The old tradeoff: fast generation or reliable edits, not both",
-          "body": "Images 2.0 forced a single model to serve both high-volume, cheap generation and careful, multi-turn editing — a job that has very different latency and precision needs.",
-          "bullets": [
-            "High-volume apps (product photos, social content) need speed above all",
-            "Careful creative edits need the model to hold up across many follow-up turns",
-            "One model tuned for both tends to be mediocre at each"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "5f41d8e7-6998-4e8a-b06d-c5ee4fb58635",
-          "kind": "solution",
-          "title": "Flare for volume, Sunburst for precision",
-          "body": "Flare is the new default: tuned for fast, high-volume everyday generation. Sunburst runs 1.5–2x slower but is aimed at demanding creative work needing tighter edit control across multiple turns.",
-          "bullets": [
-            "Flare: default API choice, lower latency, built for scale",
-            "Sunburst: same quality gains, slower, prioritizes precise instruction-following on edits",
-            "Both improve natural lighting, texture, and subject preservation over Images 2.0"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "f5821d49-43c0-4f96-9254-ccbbcd5fba98",
-          "kind": "comparison",
-          "title": "Same token pricing, different speed/precision tradeoff",
-          "body": "OpenAI didn't price Sunburst higher per token — you pay the same rate either way and choose based on what you're optimizing for.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Flare",
-              "Sunburst"
-            ],
-            "rows": [
-              [
-                "Relative speed",
-                "Baseline (fastest)",
-                "~1.5–2x slower"
-              ],
-              [
-                "Best for",
-                "High-volume, everyday generation",
-                "Precise, multi-turn creative edits"
-              ],
-              [
-                "Image-output tokens",
-                "$30 / million",
-                "$30 / million"
-              ],
-              [
-                "Image-input tokens",
-                "$8 / million ($2/million cached)",
-                "$8 / million ($2/million cached)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a5b2957f-2012-4af5-a70b-85ff6bc1031e",
-          "kind": "example",
-          "title": "A concrete workflow: an e-commerce listing",
-          "body": "A seller generating 500 product-background variants for a catalog uses Flare to keep latency and cost predictable at scale. For the one hero image going on the homepage, they switch to Sunburst and iterate through several rounds of precise edits — same account, same token price, different model for the job.",
-          "bullets": [
-            "Bulk / high-volume → Flare",
-            "One high-stakes asset with several edit rounds → Sunburst",
-            "No pricing penalty for picking the 'slow' model when it's warranted"
-          ],
-          "symbol": "cart.fill",
-          "table": null
-        },
-        {
-          "id": "139dd0ed-ff9f-4a1a-a180-4a916623f071",
-          "kind": "takeaways",
-          "title": "Where this can bite you",
-          "body": "Because both variants share pricing, cost isn't the signal to route on — latency budget is. Defaulting to Sunburst for a high-volume pipeline will silently double your wall-clock time for no quality gain if you don't actually need multi-turn edit precision.",
-          "bullets": [
-            "Don't pick Sunburst 'to be safe' for bulk jobs — it only pays off on iterative edits",
-            "Per-image cost still varies by resolution/quality setting: roughly $0.006 to $0.211 for a 1024×1024 image depending on quality tier",
-            "Multi-turn instruction-following improved, but is not unlimited — very long edit chains can still drift"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "02492cae-2947-45ce-896f-62e3b80c8f11",
-          "kind": "takeaways",
-          "title": "The takeaway",
-          "body": "GPT-Image-2.5 treats speed and precision as a routing decision, not a single tradeoff baked into one model — a pattern likely to spread as image and video models mature.",
-          "bullets": [
-            "Two variants, one price sheet, pick by workload",
-            "50% latency cut is the headline for high-volume users",
-            "Watch for competitors mirroring this fast/precise split"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "90caf63b-aa69-45a5-9b2c-2a6df3ace3c5",
-            "prompt": "What's the main difference between GPT-Image-2.5 Flare and Sunburst?",
-            "options": [
-              "Sunburst costs more per token",
-              "Flare is faster and tuned for high-volume generation; Sunburst is slower and tuned for precise multi-turn edits",
-              "Flare only works in ChatGPT, not the API",
-              "Sunburst can't generate photorealistic images"
-            ],
-            "correctIndex": 1,
-            "explanation": "Both variants share the same token pricing — the real choice is speed (Flare) versus precision on iterative edits (Sunburst), roughly a 1.5–2x speed difference."
-          },
-          {
-            "id": "5246ebc8-7ae1-4088-be73-96611273580c",
-            "prompt": "For a pipeline generating thousands of product background variants quickly, which variant fits and why?",
-            "options": [
-              "Sunburst, because higher precision is always better",
-              "Flare, because it's tuned for fast, high-volume generation at the same token price",
-              "Neither — GPT-Image-2.5 can't be used for e-commerce",
-              "Sunburst, because it's cheaper per image"
-            ],
-            "correctIndex": 1,
-            "explanation": "Flare is the default, faster option built for high-volume everyday work, and since pricing is identical to Sunburst, there's no cost reason to pick the slower model for bulk generation."
-          },
-          {
-            "id": "2a66ca76-9070-4bbc-bf1a-756ed5935830",
-            "prompt": "How much lower is GPT-Image-2.5's latency compared to Images 2.0?",
-            "options": [
-              "No change",
-              "Up to 50% lower",
-              "2x higher",
-              "10% lower"
-            ],
-            "correctIndex": 1,
-            "explanation": "OpenAI states GPT-Image-2.5 delivers higher-quality images than Images 2.0 at up to 50% lower latency, a headline improvement for real-time and high-volume use cases."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "db388228-f35f-4f0e-a3fd-d84618e44ded",
-          "title": "OpenAI releases ChatGPT Images 2.5 with 'sharper details' and 'more precise editing'",
-          "url": "https://9to5mac.com/2026/09/08/openai-releases-chatgpt-images-2-5-with-sharper-details-and-more-precise-editing/"
-        }
-      ],
-      "publishedDate": "2026-09-12T22:40:51Z"
     }
   ]
 }
