@@ -1,6 +1,531 @@
 {
   "posts": [
     {
+      "title": "LoRA: Fine-Tuning Big Models by Training a Tiny Fraction of Weights",
+      "subtitle": "Freeze the giant matrix, learn a thin detour around it",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "qlora",
+        "peft",
+        "adapters"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "square.stack.3d.down.forward",
+      "summary": "LoRA fine-tunes huge models by freezing the original weights and training a small low-rank detour matrix instead — cutting trainable parameters by 10,000x with no extra inference cost. QLoRA pushes it further by quantizing the frozen base model to 4-bit, making it possible to fine-tune a 65B model on one GPU.",
+      "slides": [
+        {
+          "id": "1d37d6fa-3b93-4f40-a6b4-e6e8f427467a",
+          "kind": "cover",
+          "title": "Full fine-tuning of a 175B model needs a 175B-parameter update",
+          "body": "That's a full duplicate copy of the model's optimizer state per task. LoRA asks: what if the *change* the model needs is much smaller than the model itself?",
+          "bullets": [],
+          "symbol": "square.stack.3d.down.forward"
+        },
+        {
+          "id": "05132ded-eaee-4690-b197-6291f4c6b753",
+          "kind": "problem",
+          "title": "Full fine-tuning doesn't scale past one model, one task",
+          "body": "Every fine-tuned checkpoint of a 175B-parameter model costs ~350GB to store and needs its own copy of Adam's optimizer state (2x the parameter count) during training.",
+          "bullets": [
+            "Want 20 task-specific versions of GPT-3? That's 20 full 175B-parameter checkpoints.",
+            "Switching tasks at serving time means swapping the entire model in and out of GPU memory.",
+            "Training itself needs 3-4x the model's memory just for gradients and optimizer state."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "2fb1b553-c5c4-4ee8-bd1a-222d406c6a37",
+          "kind": "concept",
+          "title": "The weight update ΔW is assumed to have low 'intrinsic rank'",
+          "body": "Instead of learning a full ΔW the same size as the frozen weight matrix W, LoRA factors it into two small matrices: ΔW = B·A, where B is d×r and A is r×k, with r as small as 4-8.",
+          "bullets": [
+            "W (frozen, pretrained) stays untouched — only B and A are trained.",
+            "r (the rank) is tiny compared to d and k — e.g. r=8 vs. d=12,288 in GPT-3.",
+            "At inference, W + B·A is merged into one matrix — zero extra latency vs. the base model."
+          ],
+          "symbol": "function"
+        },
+        {
+          "id": "b96a6377-388e-4f38-ac90-dd37f5812c9a",
+          "kind": "example",
+          "title": "GPT-3 175B: 10,000x fewer trainable parameters, 3x less GPU memory",
+          "body": "In the original LoRA paper (Hu et al., 2021), applying rank-4 LoRA adapters to just the query and value attention projections of GPT-3 matched or beat full fine-tuning on downstream tasks.",
+          "bullets": [
+            "Trainable parameters: ~18M instead of 175B — a 10,000x reduction.",
+            "GPU memory during training: cut by roughly 3x since Adam no longer tracks state for frozen weights.",
+            "No added inference latency, unlike adapter layers that insert extra sequential computation."
+          ],
+          "symbol": "bolt.fill"
+        },
+        {
+          "id": "1731323d-8f40-4f49-9285-657fab08d209",
+          "kind": "solution",
+          "title": "QLoRA: quantize the frozen model, keep the adapters in higher precision",
+          "body": "QLoRA (Dettmers et al., 2023) quantizes the frozen base model to 4-bit (NF4) and backpropagates through it into full-precision LoRA adapters, plus double quantization and paged optimizers to avoid memory spikes.",
+          "bullets": [
+            "Fine-tunes a 65B-parameter model on a single 48GB GPU.",
+            "Their Guanaco model reached 99.3% of ChatGPT's quality on the Vicuna benchmark after 24 hours on one GPU.",
+            "The frozen 4-bit weights never need gradients — only the small adapters do."
+          ],
+          "symbol": "cube.fill"
+        },
+        {
+          "id": "1b221b70-cccb-4e2e-bdc0-32e4e3f6e89d",
+          "kind": "comparison",
+          "title": "Where you put the adapters changes the result",
+          "table": {
+            "headers": [
+              "Target modules",
+              "Trainable params",
+              "Typical quality"
+            ],
+            "rows": [
+              [
+                "Query + Value projections only",
+                "Smallest",
+                "Matches full fine-tuning (per LoRA paper)"
+              ],
+              [
+                "All attention projections (Q,K,V,O)",
+                "Small",
+                "Slightly more headroom on harder tasks"
+              ],
+              [
+                "Attention + MLP layers",
+                "Larger",
+                "Best quality, closer to full fine-tuning cost"
+              ]
+            ]
+          },
+          "bullets": [],
+          "symbol": "tablecells"
+        },
+        {
+          "id": "712bb50e-4091-4908-b654-536144c6460d",
+          "kind": "takeaways",
+          "title": "Pitfalls: rank too low underfits, merging isn't always free",
+          "body": "LoRA isn't magic — a rank that's too small caps how much the model can actually learn, and swapping many adapters at serving time (unmerged) adds real latency.",
+          "bullets": [
+            "Rank 4-8 is enough for style/format shifts; deep domain shifts often need r=32-64+.",
+            "Keeping adapters unmerged (for multi-tenant serving) reintroduces a small latency cost.",
+            "LoRA adapts what the base model already knows — it won't teach genuinely new facts as reliably as continued pretraining.",
+            "Not a fit when you need to change the model's tokenizer, architecture, or add new modalities."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "7d33a442-767e-477d-a98c-07bffe5667f3",
+            "prompt": "What does LoRA actually train during fine-tuning?",
+            "options": [
+              "The full pretrained weight matrix W",
+              "Two small low-rank matrices B and A that approximate the weight update",
+              "Only the model's embedding layer",
+              "A separate reward model"
+            ],
+            "correctIndex": 1,
+            "explanation": "LoRA freezes W entirely and learns ΔW ≈ B·A, where B and A are much smaller than W — that's the whole trick behind the parameter savings."
+          },
+          {
+            "id": "5597390c-d8dc-453d-8217-3cc214bec760",
+            "prompt": "Why doesn't LoRA add inference latency, unlike adapter layers?",
+            "options": [
+              "It runs on a separate GPU",
+              "B·A can be merged directly into W before serving, producing one matrix",
+              "It skips the forward pass entirely",
+              "It only works during training, never during inference"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because ΔW = B·A has the same shape as W, you can just compute W_new = W + B·A once and deploy that — no extra sequential layers at inference time."
+          },
+          {
+            "id": "b11f4183-ef10-4163-8c00-93033b4a0ad8",
+            "prompt": "What does QLoRA add on top of LoRA?",
+            "options": [
+              "A bigger rank r for every layer",
+              "Quantizing the frozen base model to 4-bit while keeping adapters in higher precision",
+              "Removing the need for a frozen base model entirely",
+              "Training on synthetic data only"
+            ],
+            "correctIndex": 1,
+            "explanation": "QLoRA's key idea is 4-bit NF4 quantization of the frozen weights plus double quantization and paged optimizers — letting you fine-tune a 65B model on one 48GB GPU."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)",
+          "url": "https://arxiv.org/abs/2106.09685",
+          "id": "57a35993-7f51-4360-a6c6-c519f9399355"
+        },
+        {
+          "title": "QLoRA: Efficient Finetuning of Quantized LLMs (Dettmers et al., 2023)",
+          "url": "https://arxiv.org/abs/2305.14314",
+          "id": "708d20ec-e4ae-4365-9823-2fe0fae2edc9"
+        }
+      ],
+      "id": "e96de56d-cea4-4447-9d2d-1a947852f663",
+      "publishedDate": "2026-09-21T00:48:28Z"
+    },
+    {
+      "title": "When EOS Tokens Disagree: Why Distilled Models Ramble",
+      "subtitle": "A student and teacher can agree on the rules and still disagree on when to stop",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "distillation",
+        "on-policy distillation",
+        "eos tokens",
+        "reasoning models",
+        "training dynamics"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.trianglehead.2.clockwise.rotate.90",
+      "summary": "A September 2026 paper from UNC Chapel Hill, BYU, and Microsoft finds that 'length inflation' in on-policy distillation isn't caused by reward hacking — it's caused by student and teacher models placing their stopping probability on different EOS tokens, even when their declared stop-token sets are identical. Aggregating functionally-equivalent EOS tokens into one shared 'stop' signal substantially reduces the problem.",
+      "slides": [
+        {
+          "id": "518f4ea5-3b80-4c6f-a9e4-3da1381dbdea",
+          "kind": "cover",
+          "title": "A student model reaches the right answer at token 1,094 — then keeps going for 7,098 more",
+          "body": "That's the kind of length inflation researchers were seeing in on-policy distillation. The paper traces it to a surprisingly specific cause: which exact token the model uses to say 'stop.'",
+          "bullets": [],
+          "symbol": "arrow.trianglehead.2.clockwise.rotate.90"
+        },
+        {
+          "id": "b60640e3-437f-49e3-8cd9-a3f4bec4865d",
+          "kind": "problem",
+          "title": "On-policy distillation trains a student on its own generations",
+          "body": "Unlike classic distillation (train on the teacher's outputs), on-policy distillation (OPD) has the student generate its own responses, then scores them against a stronger teacher model — cheaper and often more effective for reasoning tasks.",
+          "bullets": [
+            "But OPD-trained students frequently balloon in response length, sometimes exhausting the entire generation budget without emitting a stop token.",
+            "That's expensive at inference time and can silently truncate otherwise-correct answers.",
+            "The paper tests this across three model families: Qwen3, Llama, and Gemma."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "d3d5d02d-9d4e-4db8-a4a2-f25432b6063a",
+          "kind": "concept",
+          "title": "The real cause: termination-token mismatch, not verbosity",
+          "body": "Every model has a declared 'stopping set' — the token IDs allowed to end generation. The paper's finding: a base student and its post-trained teacher can have the *same* declared stopping set but place almost all their actual stopping probability on *different* tokens within that set.",
+          "bullets": [
+            "Training nudges the student toward the teacher's preferred continuations token-by-token.",
+            "If the teacher rarely uses the student's preferred EOS token, that update quietly erodes the student's own tendency to stop.",
+            "The stopping sets matching each other says nothing about where the probability mass actually sits."
+          ],
+          "symbol": "arrow.left.arrow.right"
+        },
+        {
+          "id": "1e88bdc0-a9b9-43a1-a985-9873cba08f77",
+          "kind": "example",
+          "title": "1,094 tokens to the right answer, then 7,098 more",
+          "body": "The paper documents a concrete case on a math reasoning task: the student's response contains the correct final answer at token 1,094, then continues generating redundant content for another 7,098 tokens before hitting the budget limit.",
+          "bullets": [
+            "This isn't rare noise — it's the pattern the paper set out to explain systematically.",
+            "It shows up across all three tested model families, not one architecture quirk.",
+            "The cost compounds: every redundant token is billed and adds latency at serving time."
+          ],
+          "symbol": "ellipsis.circle.fill"
+        },
+        {
+          "id": "529be2b2-59a0-401a-97c8-0d34acd4dc46",
+          "kind": "solution",
+          "title": "The fix: treat equivalent EOS tokens as one shared action",
+          "body": "Simply forcing the student and teacher to declare the same allowed stop-token set isn't enough — the paper shows this directly. What works: aggregating the probabilities of functionally-equivalent EOS tokens into a single 'semantic stopping action' during training.",
+          "bullets": [
+            "This substantially reduces mismatch-induced length inflation across Qwen3, Llama, and Gemma.",
+            "The intervention targets the training signal itself, not just decoding-time constraints.",
+            "Code implementing the fix was released alongside the paper."
+          ],
+          "symbol": "checkmark.circle.fill"
+        },
+        {
+          "id": "5859fdd6-e891-4249-94f5-8a4a60561e52",
+          "kind": "comparison",
+          "title": "Not all fixes address the real cause",
+          "table": {
+            "headers": [
+              "Approach",
+              "What it targets",
+              "Outcome per the paper"
+            ],
+            "rows": [
+              [
+                "No intervention",
+                "Nothing",
+                "Length inflation persists"
+              ],
+              [
+                "Align declared stopping sets only",
+                "Which tokens are *allowed* to stop",
+                "Insufficient on its own"
+              ],
+              [
+                "Aggregate equivalent EOS tokens into one signal",
+                "Where stopping *probability* actually sits",
+                "Substantially mitigates inflation"
+              ]
+            ]
+          },
+          "bullets": [],
+          "symbol": "tablecells"
+        },
+        {
+          "id": "17566efa-b608-471d-84ec-849c620baec7",
+          "kind": "takeaways",
+          "title": "One diagnosed cause, not a full cure",
+          "body": "The authors are explicit about a limitation: length inflation can reappear later in training even after termination alignment, meaning other, still-unexplained dynamics are also at play.",
+          "bullets": [
+            "Don't treat EOS aggregation as a complete fix for verbose OPD-trained models — verify length behavior late in training too.",
+            "If you're building a distillation pipeline, log where stopping probability mass sits, not just whether stop-token sets match.",
+            "This is a training-time fix; decoding-time truncation still helps as a safety net regardless."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "8b968197-1d97-4146-acad-207f7e197664",
+            "prompt": "What did the paper identify as the main cause of length inflation in on-policy distillation?",
+            "options": [
+              "The teacher model rewards longer answers",
+              "Termination-token mismatch: student and teacher put stopping probability on different EOS tokens despite identical stopping sets",
+              "The student model has a smaller vocabulary than the teacher",
+              "Generation temperature is set too high"
+            ],
+            "correctIndex": 1,
+            "explanation": "The paper's core finding is that having the same *set* of allowed stop tokens doesn't mean the two models agree on which one to actually use — that mismatch drives the inflation."
+          },
+          {
+            "id": "54c20a1c-2398-425e-a559-301297124b4a",
+            "prompt": "Why is aligning the declared stopping set alone not enough to fix the problem?",
+            "options": [
+              "Because stopping sets can't be aligned technically",
+              "Because it doesn't change where the actual stopping probability mass sits between the shared tokens",
+              "Because it makes responses too short",
+              "Because it only works for Qwen3 models"
+            ],
+            "correctIndex": 1,
+            "explanation": "The paper shows this experimentally: matching which tokens are allowed to stop doesn't fix the issue if the models still disagree on which of those allowed tokens to actually favor."
+          },
+          {
+            "id": "139ed506-0492-4cdb-a1ad-c3bcd1c4d508",
+            "prompt": "According to the paper's own stated limitation, what is NOT true about the proposed fix?",
+            "options": [
+              "It works across Qwen3, Llama, and Gemma",
+              "It substantially reduces length inflation",
+              "It permanently eliminates length inflation for the rest of training",
+              "It targets training rather than just decoding-time truncation"
+            ],
+            "correctIndex": 2,
+            "explanation": "The authors note length inflation can reappear later in training even after the fix — it's a substantial mitigation, not a permanent cure."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "When EOS Tokens Disagree: Understanding Length Inflation in On-Policy Distillation",
+          "url": "https://arxiv.org/abs/2609.20511",
+          "id": "f2f365a9-7a0d-4f6b-a77b-dd32df3c5048"
+        }
+      ],
+      "id": "66ccceaa-a956-471a-bf4a-5d54a7235caf",
+      "publishedDate": "2026-09-21T00:48:28Z"
+    },
+    {
+      "title": "GPT-6 Astra: Record Benchmarks, Real Independent-Eval Pushback",
+      "subtitle": "OpenAI's biggest training run yet ships with a Critical safety rating and a benchmark dispute attached",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "gpt-6",
+        "openai",
+        "astra",
+        "frontier models",
+        "ai safety"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "sparkles",
+      "summary": "OpenAI shipped GPT-6 Astra in early September 2026, claiming saturating scores on FrontierMath Tier 4, ARC-AGI-3, and ExploitBench — and, for the first time, a Critical cybersecurity rating under its own Preparedness Framework. Independent evaluators dispute how clean those numbers are, and Astra roughly ties its own predecessor on a neutral benchmark.",
+      "slides": [
+        {
+          "id": "6e73abc1-8531-40f8-b284-a75d43036e4c",
+          "kind": "cover",
+          "title": "OpenAI's largest training run ever, on 100,000+ GPUs at Stargate, Texas",
+          "body": "GPT-6 Astra rolled out to approved users on September 3, 2026, with general availability the next day. OpenAI calls it 'the world's most intelligent and aligned model.'",
+          "bullets": [],
+          "symbol": "sparkles"
+        },
+        {
+          "id": "06fae58f-f621-405c-986a-315bdb625983",
+          "kind": "problem",
+          "title": "What OpenAI claims Astra is state-of-the-art at",
+          "body": "OpenAI positions Astra as state-of-the-art on computer use, browsing, software engineering, cybersecurity, science, and professional work — with better focus on task boundaries and multi-step workflows than prior models.",
+          "bullets": [
+            "Available in ChatGPT Plus, Pro, Business, and Enterprise plans.",
+            "Also shipped via the OpenAI API and through Amazon Web Services.",
+            "Marketed as faster and more capable across more tasks than any prior GPT iteration."
+          ],
+          "symbol": "checklist"
+        },
+        {
+          "id": "faf41f14-6865-461e-a2dd-a026bbb35e5f",
+          "kind": "solution",
+          "title": "The headline numbers: three saturated benchmarks",
+          "bullets": [
+            "FrontierMath Tier 4: 98% — OpenAI says it has already helped solve long-standing open math problems.",
+            "ARC-AGI-3: 99.9%.",
+            "ExploitBench: 100%."
+          ],
+          "body": "OpenAI describes all three as 'saturated' — meaning the benchmark is close to maxed out for this model, a threshold few prior models reached simultaneously.",
+          "symbol": "chart.bar.fill"
+        },
+        {
+          "id": "a1a16c7e-93c6-44b5-9cff-ca8cccbb8d55",
+          "kind": "concept",
+          "title": "First model to hit 'Critical' on OpenAI's own Preparedness Framework",
+          "body": "OpenAI classifies Astra as Critical in cybersecurity capability — the top tier of its internal risk framework — High in biological/chemical capability, and below High in AI self-improvement.",
+          "bullets": [
+            "Advanced cyber capabilities are gated behind OpenAI's 'Daybreak' program rather than shipped openly.",
+            "OpenAI has also noted Astra's written chain-of-thought is harder to monitor than prior models, even as it appears more obedient to stated user boundaries.",
+            "This is the first time OpenAI has applied its most severe Preparedness Framework tier to a shipped model."
+          ],
+          "symbol": "lock.shield.fill"
+        },
+        {
+          "id": "acd2f947-2aa2-4780-8424-7249dc86cd29",
+          "kind": "comparison",
+          "title": "Pricing jumped roughly 2.5x over the prior flagship",
+          "table": {
+            "headers": [
+              "Tier",
+              "Input $ / 1M tokens",
+              "Output $ / 1M tokens"
+            ],
+            "rows": [
+              [
+                "Standard",
+                "$10",
+                "$50"
+              ],
+              [
+                "Batch / Flex",
+                "$5",
+                "$25"
+              ],
+              [
+                "Fast mode",
+                "$20",
+                "$100"
+              ],
+              [
+                "Cached input",
+                "$1",
+                "—"
+              ],
+              [
+                ">272K context",
+                "$20",
+                "$75"
+              ]
+            ]
+          },
+          "bullets": [
+            "For comparison, GPT-5.6 Sol's standard API rate was $4 input / $20 output per million tokens."
+          ],
+          "symbol": "dollarsign.circle.fill"
+        },
+        {
+          "id": "5417b44e-82ac-4382-9186-de243dc8fcac",
+          "kind": "example",
+          "title": "Independent evaluators aren't fully on board with the headline numbers",
+          "body": "Epoch AI, which runs FrontierMath, discloses that OpenAI funded its development and has exclusive access to part of the benchmark — and had not independently reproduced the Astra result as of the cutoff.",
+          "bullets": [
+            "On the independent Artificial Analysis Intelligence Index, Astra scores 61.2 — statistically tied with its own predecessor, GPT-5.6 Sol.",
+            "On that same neutral index, Astra trails Claude Fable 5.1, which scores 65.7.",
+            "The gap between OpenAI's saturated in-house benchmarks and a flat result on a third-party index is the central tension in Astra's launch."
+          ],
+          "symbol": "exclamationmark.magnifyingglass"
+        },
+        {
+          "id": "6a273970-d23e-4b87-8c11-e8da0f723f7c",
+          "kind": "takeaways",
+          "title": "Read frontier benchmark claims against who funded and controls them",
+          "body": "Astra is a genuinely significant release — the Critical safety classification alone is a first — but its own headline numbers and a neutral third-party index tell different stories.",
+          "bullets": [
+            "A benchmark run by a lab that also funds the evaluator (Epoch AI/FrontierMath) deserves independent corroboration before treating it as settled.",
+            "A 'saturated' score can coexist with a flat result on a broader, model-agnostic index like Artificial Analysis.",
+            "The Critical cybersecurity rating and gated Daybreak access are the more concrete, verifiable signal here than the raw percentages.",
+            "At ~2.5x the API price of its predecessor, evaluate Astra against your actual task, not just the leaderboard screenshot."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "d57f5ef8-4543-4395-929e-60083c0aed13",
+            "prompt": "What safety classification did GPT-6 Astra receive for the first time under OpenAI's Preparedness Framework?",
+            "options": [
+              "Low in all categories",
+              "Critical in cybersecurity capability",
+              "Critical in AI self-improvement",
+              "Astra was not evaluated under the framework"
+            ],
+            "correctIndex": 1,
+            "explanation": "Astra is the first OpenAI model to hit the Critical tier in cybersecurity capability, which is why its advanced cyber capabilities are gated behind the Daybreak program rather than shipped broadly."
+          },
+          {
+            "id": "2f432ded-9246-4ce7-851b-c2d167321771",
+            "prompt": "What did independent evaluators point out about the FrontierMath 98% score?",
+            "options": [
+              "It was verified by three separate labs",
+              "Epoch AI, which runs FrontierMath, is funded by OpenAI and had exclusive access to part of the benchmark, and had not independently reproduced the result",
+              "The benchmark was retired before Astra launched",
+              "FrontierMath doesn't measure math ability"
+            ],
+            "correctIndex": 1,
+            "explanation": "Epoch AI's conflict of interest (OpenAI funding plus privileged benchmark access) and lack of independent reproduction is the key caveat around the headline FrontierMath number."
+          },
+          {
+            "id": "851d05ec-8420-42d5-942c-2aa49bbf7b7c",
+            "prompt": "How did Astra perform on the independent Artificial Analysis Intelligence Index compared to its own predecessor?",
+            "options": [
+              "It scored dramatically higher",
+              "It scored roughly the same (statistically tied) at 61.2",
+              "It scored lower than every other model on the index",
+              "It was not included in the index"
+            ],
+            "correctIndex": 1,
+            "explanation": "On that neutral, model-agnostic index, Astra's 61.2 is effectively tied with predecessor GPT-5.6 Sol, and trails Claude Fable 5.1's 65.7 — a contrast with OpenAI's own saturated in-house benchmarks."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GPT-6 Astra: A new generation of intelligence (OpenAI)",
+          "url": "https://openai.com/index/gpt-6-astra/",
+          "id": "d6665dc6-a6c2-4ca1-b13d-e53f0747b918"
+        },
+        {
+          "title": "OpenAI announces rollout of GPT-6 Astra model (CNBC)",
+          "url": "https://www.cnbc.com/2026/09/03/open-ai-astra-gpt-6-cyber.html",
+          "id": "eea5d472-2010-4303-bd9b-77b4022008b1"
+        }
+      ],
+      "id": "f082ecf9-733f-4238-834c-6b58706e43fc",
+      "publishedDate": "2026-09-21T00:48:28Z"
+    },
+    {
       "title": "Context Engineering: Curating What the Model Actually Sees",
       "subtitle": "Agents don't fail from too little context — they fail from too much of the wrong context",
       "category": "AI Agents",
@@ -10796,574 +11321,6 @@
       ],
       "id": "3f4aa9cd-572e-4d06-86ad-c16d2e13215a",
       "publishedDate": "2026-09-14T00:44:05Z"
-    },
-    {
-      "id": "c776aad5-51bc-4241-a8d6-431729a07eef",
-      "title": "Continuous Batching: Keeping GPUs Busy Across Requests",
-      "subtitle": "Why LLM servers stopped waiting for the whole batch to finish, and started swapping requests in and out mid-generation.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "llm-serving",
-        "inference-optimization",
-        "batching",
-        "gpu-utilization",
-        "throughput",
-        "vllm"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "rectangle.stack.fill",
-      "summary": "Continuous batching (also called iteration-level scheduling) lets an LLM server add and remove requests from a running batch after every decode step, instead of only at batch boundaries. Because real requests finish at wildly different lengths, this keeps the GPU full instead of idling on the slowest sequence — at the cost of new scheduling complexity around prefill and memory.",
-      "publishedDate": "2026-09-13T18:39:39Z",
-      "slides": [
-        {
-          "id": "771ea178-f734-42ea-9626-0c74a0f2758b",
-          "body": null,
-          "bullets": [],
-          "symbol": "rectangle.stack.fill",
-          "table": null,
-          "kind": "cover",
-          "title": "Stop Waiting for the Slowest Request in the Batch"
-        },
-        {
-          "id": "a84b4975-feaa-4e73-8d74-56fa5a1c2a8b",
-          "body": "Transformers generate one token per forward pass, and GPUs are far more efficient running several sequences through that pass at once than one at a time.",
-          "bullets": [
-            "Static (request-level) batching groups a fixed set of requests, runs them together token by token, and only starts a new batch once every sequence in the current one has finished — including the longest one",
-            "Real prompts and completions vary hugely in length: a one-line chat reply and a 2,000-token essay can land in the same batch, so short requests finish early and then sit idle, holding their GPU slot while the batch limps to the end",
-            "Those idle slots aren't free — the GPU is still doing full-batch-shaped matrix multiplies with padding, so wasted slots burn real compute, not just wall-clock time",
-            "The fix isn't a bigger batch; it's changing when requests are allowed to enter and leave the batch"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Ragged Completions Leave the GPU Half-Empty"
-        },
-        {
-          "id": "0f6d7f7b-205e-425d-baec-151635a7432d",
-          "body": "Continuous batching schedules at the granularity of a single decode iteration, not a whole request.",
-          "bullets": [
-            "After every forward pass, the scheduler checks which sequences just emitted an end-of-sequence token and evicts them immediately, freeing their slot",
-            "A freed slot is backfilled right away from a queue of waiting requests — the batch composition can be different on iteration 41 than it was on iteration 40",
-            "New requests don't need to wait for a batch boundary that might be seconds away; they can join within a single iteration of a slot opening up",
-            "This is also called iteration-level scheduling or in-flight batching — the term vLLM, TensorRT-LLM, and Hugging Face TGI all converged on for the same idea"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "kind": "solution",
-          "title": "Schedule Per Token, Not Per Batch"
-        },
-        {
-          "id": "7843f0d3-3a56-4e96-97c0-639103858762",
-          "body": "Admitting a new request mid-batch means running its prefill (processing its whole prompt in one pass) alongside other sequences that are only doing single-token decode steps.",
-          "bullets": [
-            "Prefill for a long prompt is compute-heavy — it's a full forward pass over every prompt token at once — while decode steps for already-running sequences are cheap, single-token passes",
-            "Naively mixing them means one big prefill can stall the decode steps of every other in-flight request behind it in the same iteration",
-            "Modern schedulers use chunked prefill: they split a long prompt's prefill into pieces and interleave those chunks with other sequences' decode steps, so no single admission blocks the batch for too long",
-            "This only works cleanly with a memory manager that can grow and shrink each sequence's KV cache independently — which is exactly what paged, block-based KV cache allocation (as in PagedAttention) provides"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null,
-          "kind": "architecture",
-          "title": "The Hard Part: Mixing Prefill Into an Active Batch"
-        },
-        {
-          "id": "35ea6830-6088-4b9a-aceb-c769d1262819",
-          "body": "Four requests arrive close together, needing 20, 500, 30, and 800 output tokens respectively.",
-          "bullets": [
-            "Static batching: all four join one batch; the GPU processes 800 decode steps total, because the batch can't shrink — the 20- and 30-token requests hold their slots idle for the other ~97% and ~96% of that time",
-            "Continuous batching: the 20-token request finishes at step 20 and its slot is immediately handed to a fifth request from the queue; the 30-token request finishes at step 30 and does the same — the GPU stays at full occupancy instead of carrying dead weight",
-            "Over a busy server handling hundreds of requests per minute, this difference compounds: idle slots in static batching are lost throughput on every single batch, not a one-time cost",
-            "The gain is biggest exactly when request lengths are most unpredictable — chat and agent workloads — and smallest when every request is roughly the same length"
-          ],
-          "symbol": "list.number",
-          "table": null,
-          "kind": "example",
-          "title": "Four Requests, Four Different Output Lengths"
-        },
-        {
-          "id": "99a38dad-b6ad-4396-9d5a-91d1d3994998",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "",
-              "Static (request-level) batching",
-              "Continuous (iteration-level) batching"
-            ],
-            "rows": [
-              [
-                "New request joins",
-                "Only at the next batch boundary",
-                "As soon as any slot frees up"
-              ],
-              [
-                "Finished request",
-                "Holds its slot until the whole batch ends",
-                "Evicted immediately, slot reused"
-              ],
-              [
-                "GPU idle time",
-                "Grows with output-length variance",
-                "Stays low regardless of variance"
-              ],
-              [
-                "Scheduling complexity",
-                "Simple, fixed batch shape",
-                "Needs chunked prefill + dynamic KV memory"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "The Batch Shape Itself Becomes Dynamic"
-        },
-        {
-          "id": "17d933b4-45cf-4962-a1d0-6526809f37fa",
-          "body": "Continuous batching is a server-side scheduling technique — it doesn't change model quality, and it isn't free.",
-          "bullets": [
-            "It only pays off under real concurrency: a server handling one request at a time, or a batch job where all prompts are the same length, gets no benefit and just inherits the extra scheduler complexity",
-            "Without chunked prefill, admitting a long new prompt mid-batch can spike latency for every other in-flight request in that iteration — teams that only implement the eviction/admission half and skip chunking still see occasional tail-latency stalls",
-            "It couples tightly to memory management: without a block-based KV cache allocator, a batch whose composition changes every iteration fragments memory fast, so continuous batching and paged KV cache tend to ship together, not separately",
-            "Fairness needs its own policy — a naive first-come-first-served admission queue can let a burst of small requests starve one long-running generation of its fair share of decode steps"
-          ],
-          "symbol": "exclamationmark.shield.fill",
-          "table": null,
-          "kind": "concept",
-          "title": "Where It Falls Short"
-        },
-        {
-          "id": "2a8155f7-4f63-4e0e-b1c0-f3487a432609",
-          "body": null,
-          "bullets": [
-            "Continuous batching schedules requests per decode iteration instead of per whole batch, so finished sequences free their slot immediately instead of blocking on the slowest request",
-            "The hard engineering problem is admitting a new request's prefill without stalling other sequences' decode steps — solved with chunked prefill",
-            "It depends on a memory allocator that can grow/shrink each sequence's KV cache independently, which is why it's almost always paired with paged, block-based KV cache management",
-            "The busier and more length-variable the workload, the bigger the win — it does nothing for single-request or uniform-length batch workloads"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "What to Remember About Continuous Batching"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "315b0037-fd10-446c-9743-29b6adb394e4",
-            "prompt": "What specifically does continuous (iteration-level) batching change compared to static batching?",
-            "options": [
-              "It compresses the model weights to fit more requests",
-              "Requests can be added to or evicted from the running batch after every decode step, not just at batch boundaries",
-              "It skips the KV cache entirely to save memory",
-              "It routes every request to a smaller model automatically"
-            ],
-            "correctIndex": 1,
-            "explanation": "Continuous batching moves the scheduling decision from 'per whole batch' to 'per token step' — a finished sequence's slot is freed and refilled immediately instead of waiting for every sequence in the batch to finish."
-          },
-          {
-            "id": "340f2105-0963-4f7f-ab51-bbe0c6f8b351",
-            "prompt": "Why can naively admitting a new request's prefill into an active batch hurt other in-flight requests?",
-            "options": [
-              "Prefill uses a different, incompatible model architecture",
-              "Prefill processes the entire prompt in one heavy pass, which can stall the cheap single-token decode steps of sequences already running in that iteration",
-              "Prefill requires the batch to be static-only",
-              "Prefill always fails silently without warning"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prefill is compute-heavy relative to a single decode step. Mixed naively into a batch, one long prompt's prefill can block everyone else's decode step in that iteration — which is exactly what chunked prefill is designed to avoid."
-          },
-          {
-            "id": "ec2836f6-f664-4517-8e31-950f069c4052",
-            "prompt": "In which scenario does continuous batching provide the least benefit?",
-            "options": [
-              "A chat API serving many concurrent users with wildly different reply lengths",
-              "An agent workload where some tool calls finish fast and others run long",
-              "A single-request, low-concurrency workload where there's rarely more than one sequence in flight",
-              "A high-traffic API with bursty, unpredictable request lengths"
-            ],
-            "correctIndex": 2,
-            "explanation": "Continuous batching's advantage comes from reallocating GPU slots freed by short-finishing requests to waiting ones. With little or no concurrency, there's no idle slot to reclaim and no queue to backfill it from, so the technique has nothing to optimize."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "23a0e6ac-16d2-4261-bc69-091503b8778c",
-          "title": "How continuous batching enables 23x throughput in LLM inference while reducing p50 latency",
-          "url": "https://www.anyscale.com/blog/continuous-batching-llm-inference"
-        },
-        {
-          "id": "70d42d0f-ec2c-4ce4-87b9-d9d8582377e4",
-          "title": "vLLM: Easy, Fast, and Cheap LLM Serving with PagedAttention",
-          "url": "https://blog.vllm.ai/2023/06/20/vllm.html"
-        }
-      ]
-    },
-    {
-      "id": "0a75c9d2-f21b-4a12-97cd-d9a8dfdc51f8",
-      "title": "MCP Sampling: When the Server Borrows Your Model",
-      "subtitle": "The one MCP primitive that flips the usual direction — the server asks the client to run an LLM completion, not the other way around.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "protocol-design",
-        "llm-inference",
-        "client-server",
-        "ai-agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath.circle.fill",
-      "summary": "Sampling is the MCP primitive that lets a server ask the client to run an LLM completion on its behalf, instead of the server needing its own model API key. The client stays in control — it can inspect, edit, or reject every request — which keeps billing, auth, and model choice centralized on the client side.",
-      "publishedDate": "2026-09-13T12:38:32Z",
-      "slides": [
-        {
-          "id": "5e57c31a-c182-4408-85be-af4221f2e588",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath.circle.fill",
-          "table": null,
-          "kind": "cover",
-          "title": "The Server Asks, the Client's Model Answers"
-        },
-        {
-          "id": "8a41db1f-faa0-4066-b551-8bb6f492dc90",
-          "body": "Most MCP servers are dumb pipes: they expose tools, resources, and prompts, but they have no model of their own to reason with.",
-          "bullets": [
-            "A git server that wants to draft a commit message from a diff, or a docs server that wants to summarize a long page, needs an LLM to do that reasoning — not just data plumbing",
-            "The obvious fix is to give the server its own API key to OpenAI, Anthropic, or whoever — but that means every server operator now manages separate billing, separate auth, and picks its own model, disconnected from what the user is already paying for",
-            "It also duplicates cost: the user is already paying for a model session in their client, and now a server behind it is spinning up a second, unrelated one",
-            "MCP needed a way for a server to say 'run this completion for me' without owning any model access itself"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Servers Need Reasoning, Not Just Data Access"
-        },
-        {
-          "id": "f147972c-0c20-43a5-b468-849304150f18",
-          "body": "Sampling inverts the usual request direction: the server sends the request, and the client is the one that calls the model.",
-          "bullets": [
-            "A server sends a sampling/createMessage request containing the messages to complete, an optional systemPrompt, maxTokens, temperature, and stopSequences",
-            "Instead of naming an exact model, the server sends modelPreferences: abstract 0–1 hints for costPriority, speedPriority, and intelligencePriority — the client picks whatever model actually fits, keeping servers portable across model backends",
-            "An includeContext field (none | thisServer | allServers) controls how much of the client's own conversation and other servers' exposed context gets folded into the completion — a privacy dial the server doesn't get to override",
-            "The client returns a standard result: role, content, the model that actually ran, and a stopReason — the server never learns which model it was beyond that"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "kind": "architecture",
-          "title": "sampling/createMessage: Hints, Not Commands"
-        },
-        {
-          "id": "4f5ba633-aa5a-48e7-af4a-4703da32425e",
-          "body": "A git-tools MCP server is asked to prepare a commit for a 200-line diff.",
-          "bullets": [
-            "Instead of shipping its own OpenAI key, it sends sampling/createMessage with the diff text and a system prompt asking for a conventional-commit-style summary, with intelligencePriority set high and speedPriority low",
-            "The client (say, a desktop AI app) intercepts the request and shows the user: 'git-tools wants to generate text using your model' with a preview of the prompt, before it runs anything",
-            "The user approves; the client runs the completion on whatever model it has active, and returns the drafted commit message text to the server",
-            "The server never touched a model API, never needed a key, and the user's own subscription — not a second hidden bill — paid for the tokens"
-          ],
-          "symbol": "checkmark.bubble.fill",
-          "table": null,
-          "kind": "example",
-          "title": "A Commit-Message Server With No Model Key of Its Own"
-        },
-        {
-          "id": "06574b5f-d3d3-4061-8c03-9b4cffe378bf",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal.fill",
-          "table": {
-            "headers": [
-              "Primitive",
-              "Who initiates",
-              "What it moves"
-            ],
-            "rows": [
-              [
-                "Tools",
-                "Client calls server",
-                "An action the model asked to perform"
-              ],
-              [
-                "Resources",
-                "Client reads from server",
-                "Data/context the server exposes"
-              ],
-              [
-                "Prompts",
-                "Client fetches from server",
-                "Reusable instruction templates"
-              ],
-              [
-                "Sampling",
-                "Server calls client",
-                "An LLM completion, run on the client's model"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Sampling Is the One Primitive That Runs Backwards"
-        },
-        {
-          "id": "8fb31adb-ebb9-4736-be83-8a3b210bec2a",
-          "body": "Sampling only pays off when a server truly needs reasoning it can't do itself — and only where a client supports it.",
-          "bullets": [
-            "Every sampling call is a full extra round trip (server → client → model → client → server), so it adds real latency compared to a server that just calls its own model directly",
-            "It's optional: many clients don't implement the sampling capability at all, so a server has to check the negotiated capabilities at connection time and degrade gracefully if it's missing",
-            "Because a sampling request spends the user's own tokens/quota, the spec expects human-in-the-loop review — a client that silently auto-approves every request opens the door to a misbehaving server draining the user's usage",
-            "Skip sampling if the server needs a guaranteed specific model's behavior (modelPreferences are only hints) or already has its own model access and no reason to share billing with the client"
-          ],
-          "symbol": "exclamationmark.shield.fill",
-          "table": null,
-          "kind": "concept",
-          "title": "The Cost Is Latency, and Trust Is Load-Bearing"
-        },
-        {
-          "id": "49368313-6095-43c9-980c-9b082e9f21a1",
-          "body": null,
-          "bullets": [
-            "Sampling lets a server request an LLM completion from the client instead of holding its own model API key",
-            "modelPreferences are soft hints (cost/speed/intelligence priority), not a pinned model — the client always makes the final call",
-            "includeContext lets a server ask for surrounding conversation context, but the client decides how much to actually share",
-            "Because it spends the user's own tokens, treat every sampling request as something the user should see and approve, not a silent background call"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "What to Remember About Sampling"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "c90af29e-714b-4600-9bdd-92bf5bb0a6ea",
-            "prompt": "In MCP's sampling flow, who sends the sampling/createMessage request?",
-            "options": [
-              "The client, to the server",
-              "The server, to the client",
-              "The end user, directly to the model",
-              "One server, to another server"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sampling reverses the usual direction: the server sends sampling/createMessage to the client, asking the client to run the completion — the opposite of how Tools, Resources, and Prompts work."
-          },
-          {
-            "id": "13b2e1e3-f291-4445-8ea8-92fc7882ddc2",
-            "prompt": "What do a sampling request's modelPreferences (costPriority, speedPriority, intelligencePriority) actually control?",
-            "options": [
-              "They pin the exact model the client must use",
-              "They're soft 0–1 hints the client can weigh however it wants when picking a model",
-              "They set the dollar budget for the request",
-              "They select which MCP server handles the request"
-            ],
-            "correctIndex": 1,
-            "explanation": "modelPreferences are abstract hints, not a model name — the client is free to pick whatever model it has available that best fits those priorities, which is what keeps servers portable across different backends."
-          },
-          {
-            "id": "a2c71587-befe-4e53-ae38-cd63e32a758f",
-            "prompt": "Why does the MCP spec expect human-in-the-loop approval before a client fulfills a sampling request?",
-            "options": [
-              "Because sampling requests are always malformed",
-              "Because the completion runs on the user's own model access and spends their tokens/quota, so a misbehaving server shouldn't be able to spend it silently",
-              "Because only administrators are allowed to use MCP servers",
-              "Because sampling requests bypass encryption"
-            ],
-            "correctIndex": 1,
-            "explanation": "A sampling call consumes the user's own model quota. Without a review step, a compromised or careless server could rack up usage the user never intended to authorize."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "341b58fb-f061-419e-ae32-f25223439cd3",
-          "title": "Sampling – Model Context Protocol Specification",
-          "url": "https://modelcontextprotocol.io/specification/2025-06-18/client/sampling"
-        }
-      ]
-    },
-    {
-      "id": "fd2f532f-7c1c-498c-bfd8-531f4c477523",
-      "title": "Qwen3.8-Flash-Next: 1/9th the FLOPs, 397B-Level Scores",
-      "subtitle": "A 125B MoE with 6B active params trades some quality for a hybrid attention stack — and mostly keeps it.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "moe",
-        "attention",
-        "architecture",
-        "qwen",
-        "efficiency"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cpu.fill",
-      "summary": "Alibaba's Qwen team built a 125B-parameter MoE (6B activated) that leads its own 397B-A17B predecessor on 8 of 14 benchmarks using roughly 1/3 the training tokens and 1/9 the training FLOPs, by mixing linear attention (Gated DeltaNet) with sparse attention (QSA) in a 3:1 ratio and widening the residual stream into a gated, multi-branch path.",
-      "slides": [
-        {
-          "id": "1727e8f5-e362-4fbe-bd98-af87e38ef7fb",
-          "kind": "cover",
-          "title": "Beating a 397B model at 1/9th the training compute",
-          "body": "Qwen's architecture paper on 3.8-Flash-Next shows how far a smaller, hybrid-attention MoE can push — without a bigger base model.",
-          "bullets": [],
-          "symbol": "cpu.fill"
-        },
-        {
-          "id": "7bc18339-f645-4430-bbb8-14655926325c",
-          "kind": "problem",
-          "title": "Full attention doesn't scale its training budget forever",
-          "body": null,
-          "bullets": [
-            "Full (quadratic) attention gets more expensive per token as context grows — the cost you pay scales with n²",
-            "Pure linear-attention models (plain DeltaNet, Mamba-style) recover the speed but historically give up a few points on recall-heavy tasks",
-            "Qwen's own prior flagship, the 397B-A17B model, needed 3x the activated parameters and roughly 9x the training FLOPs of the new model to compete"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "e2525e17-23ec-46d9-9f9b-73fe02a77169",
-          "kind": "solution",
-          "title": "A 3:1 hybrid of linear and sparse attention, plus a wider residual",
-          "body": "The hidden stack repeats 12 times: three Gated DeltaNet blocks feeding an MoE, then one Qwen Sparse Attention block feeding an MoE.",
-          "bullets": [
-            "Gated DeltaNet (GDN) layers do cheap linear-attention token mixing for 3 out of every 4 blocks",
-            "Qwen Sparse Attention (QSA) layers replace full attention in the 4th block: they score context at micro-block granularity through a compressed, lightweight indexer instead of attending to every token",
-            "Gated Residual (GR): the residual stream is widened into four parallel branches, then recombined through an elementwise gate — a small change the paper credits with real training-stability gains",
-            "An extra 51B parameters live in n-gram embedding tables kept off the accelerator — cheap lookup-based capacity that doesn't add matmul cost"
-          ],
-          "symbol": "square.stack.3d.up.fill"
-        },
-        {
-          "id": "51b47a36-59a5-483b-8aaf-1224bbd85351",
-          "kind": "comparison",
-          "title": "Smaller, cheaper to train, and ahead more often than not",
-          "body": null,
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Metric",
-              "3.8-Flash-Next",
-              "397B-A17B predecessor"
-            ],
-            "rows": [
-              [
-                "Total parameters",
-                "125B",
-                "397B"
-              ],
-              [
-                "Activated per token",
-                "6B",
-                "17B"
-              ],
-              [
-                "Training tokens",
-                "baseline (1x)",
-                "~3x"
-              ],
-              [
-                "Training FLOPs",
-                "~1/9x",
-                "baseline (1x)"
-              ],
-              [
-                "Benchmarks led (of 14)",
-                "8",
-                "6"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "f2429edf-03a7-4957-b1f7-ded6af7c2990",
-          "kind": "example",
-          "title": "Why 6B activated instead of 17B matters at serving time",
-          "body": "Activated parameters, not total parameters, drive inference cost per token.",
-          "bullets": [
-            "Same hardware, same batch size: a model that activates 6B params per token does roughly 1/3 the matmul work per token of one activating 17B",
-            "3 of every 4 attention blocks are linear-attention (GDN), which needs a constant-size recurrent state instead of a KV cache that grows with sequence length",
-            "Net effect: a team that swaps a dense-attention 17B-activated model for this hybrid can serve meaningfully longer contexts on the same GPU memory budget, at the cost of adopting a less battle-tested attention pattern"
-          ],
-          "symbol": "wrench.and.screwdriver.fill"
-        },
-        {
-          "id": "610cf9ef-115c-4064-9633-ce2c1edde51d",
-          "kind": "takeaways",
-          "title": "What actually generalizes from this paper",
-          "body": null,
-          "bullets": [
-            "Hybrid linear + sparse attention (3:1 ratio here) recovers most of full attention's quality at a fraction of the compute — it doesn't need to be all-or-nothing",
-            "The paper still reports trailing the bigger model by up to 2.6 points on 6 of 14 benchmarks — the tradeoff is real, just small",
-            "Gated Residual (widen, then gate) is a cheap architectural lever for training stability, independent of the attention choice",
-            "The new architecture also shifted the optimal learning rate and batch size upward and removed the need for batch-size warmup — a recipe change, not just an architecture change"
-          ],
-          "symbol": "checkmark.seal.fill"
-        },
-        {
-          "id": "bf7f8477-2667-462f-9dce-de58b627cb65",
-          "kind": "problem",
-          "title": "Where this hybrid is a worse fit",
-          "body": null,
-          "bullets": [
-            "It trails the bigger dense-attention model on 6 of 14 benchmarks by up to 2.6 points — for a task that's exactly in that gap, bigger-and-denser can still win",
-            "The 51B n-gram embedding tables need to live off-accelerator: a serving stack without that memory hierarchy loses one of the paper's cheap-capacity tricks",
-            "A 3:1 GDN:QSA ratio was tuned at 125B scale — nothing in the paper says that ratio is optimal at 10x smaller or larger",
-            "Adopting the architecture without adopting the paired Muon-optimizer recipe (shifted LR/batch size, no warmup) risks losing the stability gains it reports"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5d59b66c-bc3c-4631-814c-6f64a8dc62d3",
-            "prompt": "What ratio of linear-attention (GDN) to sparse-attention (QSA) blocks does Qwen3.8-Flash-Next use?",
-            "options": [
-              "1:1",
-              "3:1",
-              "4:1",
-              "1:4"
-            ],
-            "correctIndex": 1,
-            "explanation": "The hidden layout repeats 12 times: three Gated DeltaNet blocks (each feeding an MoE) followed by one Qwen Sparse Attention block (also feeding an MoE) — a 3:1 linear-to-sparse-attention ratio."
-          },
-          {
-            "id": "b31c6d4e-0a7e-4404-945c-d92d85cfadeb",
-            "prompt": "Roughly how much training compute did Qwen3.8-Flash-Next use, compared to the 397B-A17B predecessor it leads on 8 of 14 benchmarks?",
-            "options": [
-              "About the same",
-              "~3x more",
-              "~1/3 as much",
-              "~1/9 as much"
-            ],
-            "correctIndex": 3,
-            "explanation": "It used roughly 1/9th the training FLOPs (and about 1/3 the training tokens and 1/3 the activated parameters) while leading on more than half the benchmarks tested."
-          },
-          {
-            "id": "d8e360c0-2c7b-4f36-b1d0-060dc1f14560",
-            "prompt": "What's the point of keeping 51B parameters in n-gram embedding tables off the accelerator?",
-            "options": [
-              "They add extra model capacity as cheap lookups, not matmuls — but their size makes them impractical to keep on the accelerator itself",
-              "They speed up the attention computation directly",
-              "They replace the MoE router",
-              "They store the KV cache more compactly"
-            ],
-            "correctIndex": 0,
-            "explanation": "Embedding tables are lookups rather than compute-heavy matrix multiplies, so they can add capacity almost for free in FLOPs — the tradeoff is that a 51B-parameter table is large, so it's held off the accelerator (e.g., host memory) instead of on it."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "f3a44f3d-08ab-4bee-8275-6a6c6b1fa02b",
-          "title": "On the Design of Qwen3.8-Next Architecture: Evaluation, Efficiency, and Training Stability (arXiv:2608.30320)",
-          "url": "https://arxiv.org/abs/2608.30320"
-        }
-      ],
-      "publishedDate": "2026-09-13T06:44:39Z"
     }
   ]
 }
