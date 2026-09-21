@@ -1,6 +1,175 @@
 {
   "posts": [
     {
+      "title": "MCP Sampling: Letting a Server Borrow the Client's LLM",
+      "subtitle": "The server asks a question; the client decides who answers it",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "model-context-protocol",
+        "sampling",
+        "llm-agents",
+        "human-in-the-loop"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "MCP's sampling/createMessage lets a server request an LLM completion without holding its own model or API key — the connected client resolves the model, can insert human approval, and returns just the result. It trades server autonomy for shared cost, consistency, and a real security boundary against prompt injection.",
+      "slides": [
+        {
+          "id": "850acdc3-1fd9-4b7e-bc30-23b56ea60a79",
+          "kind": "cover",
+          "title": "An MCP Server Can Ask the Client to Think For It",
+          "body": "Most MCP servers only do deterministic work — search, read a file, hit an API. Sampling is the one primitive where a server can ask for something more: a piece of actual LLM reasoning, without running a model itself.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "d181f567-ca02-4c0a-8710-7a3377d3a1ff",
+          "kind": "problem",
+          "title": "Servers Calling Their Own LLM Duplicate Keys, Cost, and Trust",
+          "body": null,
+          "bullets": [
+            "If every MCP server holds its own OpenAI/Anthropic key, one agent session can spin up N separate subscriptions and N separate places a key can leak.",
+            "A server calling its own API can't see what model, budget, or safety policy the host application actually wants used.",
+            "Without a shared path, servers either skip LLM calls entirely or hardcode a model choice the user never approved."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "fd7f21cb-8ed9-4c51-b46c-75d1f59a1a91",
+          "kind": "concept",
+          "title": "Sampling: the Server Proposes, the Client Disposes",
+          "body": "MCP's sampling/createMessage request lets a server ask the connected client to run a completion on its behalf — using the client's model access and credentials, not the server's own.",
+          "bullets": [
+            "The server sends messages plus modelPreferences (priorities like cost, speed, intelligence) — never a hardcoded model name.",
+            "The client resolves those preferences to an actual model, can show a human the proposed prompt for approval, then runs it.",
+            "The server never sees the client's API key and never picks the model directly — it only expresses intent."
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted"
+        },
+        {
+          "id": "23bb4d29-be9a-406b-a8da-d6a8fcd1af64",
+          "kind": "architecture",
+          "title": "The Round Trip Has Two Hops, Not One",
+          "body": null,
+          "bullets": [
+            "Server -> Client: sampling/createMessage (messages, modelPreferences, maxTokens, optional systemPrompt).",
+            "Client -> Host LLM: the client resolves modelPreferences to a real model, optionally pauses for human approval, then calls it.",
+            "Client -> Server: returns just the generated text (and which model actually ran) as the response.",
+            "A human clicking 'approve' sits inside this loop, so a sampling call can stall a tool invocation for as long as that approval takes."
+          ],
+          "symbol": "arrow.left.arrow.right.circle"
+        },
+        {
+          "id": "846e1908-783e-4dd0-822a-7532b438f844",
+          "kind": "example",
+          "title": "A Code-Review Server With No LLM of Its Own",
+          "body": "Picture an MCP server that exposes a review_diff tool. Instead of calling an LLM API itself, it packages the diff into a sampling request; the client runs it through whatever model the user has configured and hands back a written review.",
+          "bullets": [
+            "The server ships with zero LLM credentials and zero model version to maintain or upgrade.",
+            "If the user swaps their host app's default model, every server using sampling benefits immediately — no server redeploy needed.",
+            "The client sits in the middle of every call, so it can redact or block sensitive diff contents before they ever reach the model."
+          ],
+          "symbol": "doc.text.magnifyingglass"
+        },
+        {
+          "id": "10233463-c779-4c14-8cc0-7093b2562e52",
+          "kind": "comparison",
+          "title": "Sampling Is One of Several Ways a Server Gets Help",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Mechanism",
+              "Who runs the LLM",
+              "Typical use"
+            ],
+            "rows": [
+              [
+                "Tools",
+                "No one — server does its own compute",
+                "Deterministic actions: search, file I/O, calling an API"
+              ],
+              [
+                "Sampling",
+                "Client, on the server's behalf",
+                "Server needs reasoning or generation it can't do itself"
+              ],
+              [
+                "Elicitation",
+                "No one — client asks the human, not a model",
+                "Server is missing a parameter or needs confirmation"
+              ],
+              [
+                "Server calls its own LLM API",
+                "Server, directly",
+                "Server owns its own model/key; no host oversight"
+              ]
+            ]
+          },
+          "symbol": "tablecells"
+        },
+        {
+          "id": "b5e86811-658f-492a-91e3-fac37ccd84b1",
+          "kind": "takeaways",
+          "title": "Sampling Isn't Free: Support, Latency, and Trust Boundaries",
+          "body": "Sampling gives a server influence over what gets generated, not authority — the client can always refuse, edit, or downgrade the request.",
+          "bullets": [
+            "Not every MCP client implements the sampling capability yet — a server depending on it needs a fallback path, not an assumption.",
+            "Because a human may need to approve the prompt first, sampling can be far slower than a direct API call — don't put it in a tight request/response loop.",
+            "The server controls what the model sees, so a buggy or malicious server can still attempt prompt injection through the messages it sends — the client's approval step is a real security boundary, not a formality.",
+            "Sampling suits open-ended 'help me reason about this' requests; for anything deterministic, a plain tool call is simpler and faster."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "274f12ee-2f17-45f6-930e-9746b5aab086",
+            "prompt": "In MCP, who actually chooses which model runs a sampling/createMessage request?",
+            "options": [
+              "The server, since it wrote the prompt",
+              "The client, using the server's modelPreferences as a hint",
+              "Whichever model is cheapest, automatically, with no input from either side",
+              "The end user, who must hardcode it into the server's config file"
+            ],
+            "correctIndex": 1,
+            "explanation": "modelPreferences (priorities like cost, speed, intelligence) are hints the server includes, but the client resolves them to a concrete model — the server never names a model directly."
+          },
+          {
+            "id": "9359961b-bd4e-4fc7-ac2f-d659a5ca3825",
+            "prompt": "Why can a sampling/createMessage call be much slower than the server just calling an LLM API directly?",
+            "options": [
+              "MCP always batches sampling requests in groups of ten",
+              "The client is allowed to insert a human-approval step before running the completion",
+              "Sampling requests are retried five times by default",
+              "Servers must poll for the result once per second"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the client sits between the server and the model, it can pause to show a human the proposed prompt before running it — a safety feature that adds real latency the server can't skip or control."
+          },
+          {
+            "id": "84571040-9777-485a-b192-3974ad88a70c",
+            "prompt": "What's the key difference between MCP Sampling and MCP Elicitation?",
+            "options": [
+              "They are two names for the exact same feature",
+              "Sampling asks the client to run an LLM completion; elicitation asks the client to ask a human for information",
+              "Elicitation has been deprecated in favor of sampling",
+              "Sampling only works when the client and server are made by the same vendor"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sampling routes a completion request through the client's LLM; elicitation routes a request for missing information or confirmation to a human — different destinations for 'I need help finishing this.'"
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-09-21T06:43:19Z",
+      "id": "d06e16cf-b5cb-4344-971f-ee6b4755e1c3"
+    },
+    {
       "title": "LoRA: Fine-Tuning Big Models by Training a Tiny Fraction of Weights",
       "subtitle": "Freeze the giant matrix, learn a thin detour around it",
       "category": "LLMs",
@@ -11122,204 +11291,6 @@
         }
       ],
       "id": "c10bce21-06c3-44b2-b203-6ca34b3b7cdc",
-      "publishedDate": "2026-09-14T00:44:05Z"
-    },
-    {
-      "title": "NCP-ArchPreview: Predicting Concepts, Not Just Tokens",
-      "subtitle": "An 8.9B model that plans in a latent concept space before it emits a token — and matches a bigger baseline's loss on half the tokens.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "latent-space-models",
-        "pretraining",
-        "next-token-prediction",
-        "llm-architecture",
-        "research"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "atom",
-      "summary": "NCP-ArchPreview adds a second, coarser prediction target on top of standard next-token prediction: a product-quantized 'concept' that spans multiple tokens, predicted by a dedicated Concept Module and fed back to guide generation. Trained jointly at 8.9B parameters on 5.73T tokens, it reaches OLMo-3-7B's final pretraining loss using only 51.3% of the token budget and beats it across MMLU, GSM8K, and HumanEval.",
-      "slides": [
-        {
-          "id": "b728c8c8-350e-4983-87ce-e2a81b59cc47",
-          "body": null,
-          "bullets": [],
-          "symbol": "atom",
-          "table": null,
-          "kind": "cover",
-          "title": "A Model That Predicts Ideas, Not Just the Next Word"
-        },
-        {
-          "id": "28d67530-217a-47a9-b155-fbfadf3a1d0d",
-          "body": "Standard autoregressive pretraining scores a model one token at a time — 'the' gets the same kind of gradient signal as the load-bearing word in a proof.",
-          "bullets": [
-            "A token-level objective has no notion of a multi-token 'idea' — it can't directly reward the model for committing to the right high-level plan before spelling it out",
-            "Easy, predictable tokens (function words, punctuation) still consume a full forward pass's worth of training signal, diluting what the model learns per token processed",
-            "Frontier pretraining runs are now measured in trillions of tokens, so any objective that extracts more signal per token directly reduces compute cost",
-            "This motivated The Intern-NCP Team (Shanghai AI Lab + LUMIA Lab, Shanghai Jiao Tong University) to add a second, coarser-grained prediction target on top of standard next-token prediction (NTP)"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Next-Token Prediction Treats Every Token the Same"
-        },
-        {
-          "id": "a144f2e5-b149-47b4-99bb-c6cb16cde8b8",
-          "body": "NCP-ArchPreview builds its own 'concept vocabulary' out of its hidden states, then trains the model to predict the next concept the same way it predicts the next token.",
-          "bullets": [
-            "The architecture stacks a 16-layer token encoder, an 8-layer Concept Module, and a 16-layer token decoder around a standard transformer backbone",
-            "The concept vocabulary is a product-quantized codebook — 32 codebooks whose combinations turn continuous hidden states into discrete 'concepts', built directly from the model's own representations rather than from human labels",
-            "The Concept Module predicts the next concept as a differentiable weighted combination of codewords, trained against a stop-gradient target so the concept-prediction loss doesn't corrupt the underlying representations",
-            "Next-token prediction and Next-concept prediction are trained jointly, end-to-end, at 8.9B parameters on 5.73T tokens from the Dolma-3 corpus — the largest latent-space language model demonstrated to date"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "kind": "solution",
-          "title": "Next Concept Prediction: A Second Target Above the Token"
-        },
-        {
-          "id": "f090e238-334e-435f-b3a7-c05d6ca212ea",
-          "body": "The concept path isn't just an auxiliary loss that's thrown away after training — its output is wired back into the generation path.",
-          "bullets": [
-            "Each predicted next-concept vector is fed back to the token-level decoder, giving it a coarse 'plan' to condition on before it commits to individual tokens",
-            "Because the codebook is learned end-to-end from hidden states, individual codes aren't guaranteed to map to human-interpretable ideas — this is a representational tool, not a symbolic planner",
-            "The base transformer design otherwise follows OLMo-3-7B's token-level architecture, which is what makes the head-to-head comparison to OLMo-3-7B a controlled one",
-            "Hierarchical residual connections tie the concept-level and token-level pathways together so gradients from both objectives can shape the shared backbone"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "kind": "architecture",
-          "title": "Predicted Concepts Feed Back Into Token Generation"
-        },
-        {
-          "id": "f40ae6d9-6f46-4951-9e85-427d146237b1",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "OLMo-3-7B",
-              "NCP-ArchPreview (8.9B)"
-            ],
-            "rows": [
-              [
-                "Downstream overall avg",
-                "46.59",
-                "49.04"
-              ],
-              [
-                "MMLU",
-                "62.22",
-                "64.80"
-              ],
-              [
-                "GSM8K",
-                "39.27",
-                "45.26"
-              ],
-              [
-                "HumanEval",
-                "baseline",
-                "+4.28 pts"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Same Backbone, Better Numbers at Matched Scale"
-        },
-        {
-          "id": "9b93a8e1-23a9-40ba-8dea-ad0698884934",
-          "body": "The headline efficiency claim is a training-compute comparison, not a qualitative one.",
-          "bullets": [
-            "Both models are trained toward the same eventual token budget on Dolma-3 (5.73T tokens total for NCP-ArchPreview's run)",
-            "NCP-ArchPreview reaches OLMo-3-7B's final pretraining loss after consuming only 51.3% of that token budget — roughly half the compute-equivalent tokens to hit the same point on the loss curve",
-            "That saved compute is the direct payoff of the extra concept-level signal: every training step extracts more usable gradient information than plain NTP alone",
-            "The downstream benchmark gains (GSM8K, MMLU, HumanEval) come on top of that — the full run still uses the full 5.73T tokens, it just gets there having learned faster"
-          ],
-          "symbol": "gauge.with.dots.needle.50percent",
-          "table": null,
-          "kind": "example",
-          "title": "Reaching the Same Loss on Half the Token Budget"
-        },
-        {
-          "id": "d5c76e41-2a53-4a21-808d-e7f3ad728103",
-          "body": "A 8.9B-parameter demonstration is real evidence, but it's a preview, not a settled architecture.",
-          "bullets": [
-            "This is the largest latent-space LM shown so far, but 8.9B is still far below frontier scale (100B+) — whether the token-efficiency gap holds or shrinks at that scale is untested",
-            "The Concept Module adds real training and inference complexity (extra layers, a codebook, a joint loss) for a benefit that's currently measured only against one baseline architecture (OLMo-3-7B) on one data mix (Dolma-3)",
-            "Learned concepts aren't human-interpretable, so this doesn't deliver an interpretability win alongside the efficiency win — it's a representational trick, not a transparency one",
-            "The 32-codebook product quantization is a specific hyperparameter choice; the report doesn't establish how sensitive the results are to that choice"
-          ],
-          "symbol": "exclamationmark.shield.fill",
-          "table": null,
-          "kind": "concept",
-          "title": "What's Still Unproven"
-        },
-        {
-          "id": "aa867c8b-6161-4f6b-84bc-f3f3fd05d01b",
-          "body": null,
-          "bullets": [
-            "It adds Next Concept Prediction — a product-quantized, multi-token 'concept' target — as a second objective trained jointly with standard next-token prediction",
-            "At 8.9B parameters on 5.73T Dolma-3 tokens, it matches OLMo-3-7B's final pretraining loss using only 51.3% of the token budget",
-            "It beats OLMo-3-7B on downstream benchmarks: 49.04 vs 46.59 overall average, with the largest single jump on GSM8K (45.26 vs 39.27)",
-            "It's the largest latent-space language model demonstrated to date, but still a preview at sub-frontier scale with real added architectural complexity"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "What to Remember About NCP-ArchPreview"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "d4f1faaf-2c95-41fb-bddf-80af2c73d71b",
-            "prompt": "What does NCP-ArchPreview's 'Next Concept Prediction' objective add on top of standard next-token prediction?",
-            "options": [
-              "A second loss that predicts a product-quantized, multi-token concept built from the model's own hidden states",
-              "A human-labeled taxonomy of topics the model must classify text into",
-              "A retrieval step that looks up concepts from an external database",
-              "A larger tokenizer vocabulary with longer subword tokens"
-            ],
-            "correctIndex": 0,
-            "explanation": "NCP builds its concept vocabulary via product quantization directly from the model's own hidden states — no external labels — and trains a dedicated Concept Module to predict the next one jointly with standard next-token prediction."
-          },
-          {
-            "id": "78f01d99-3389-4917-b0f7-a4566c1fde63",
-            "prompt": "What is the headline training-efficiency result for NCP-ArchPreview versus OLMo-3-7B?",
-            "options": [
-              "It uses a completely different, smaller dataset",
-              "It reaches OLMo-3-7B's final pretraining loss using only about 51.3% of the token budget",
-              "It skips pretraining entirely and fine-tunes from OLMo-3-7B",
-              "It matches OLMo-3-7B's loss using twice as many tokens"
-            ],
-            "correctIndex": 1,
-            "explanation": "Both models train on Dolma-3, but the added concept-level signal lets NCP-ArchPreview extract more gradient information per token, reaching OLMo-3-7B's final pretraining loss after consuming roughly half its eventual token budget."
-          },
-          {
-            "id": "2124d8c4-a8c2-4a81-a632-a3b2474cdee3",
-            "prompt": "What is a genuine limitation the report doesn't resolve?",
-            "options": [
-              "Whether the learned 'concepts' are human-interpretable, and whether the efficiency gain holds at frontier scale beyond 8.9B parameters",
-              "Whether the model can generate text at all",
-              "Whether it was trained on any real dataset",
-              "Whether it outperforms every other model ever published"
-            ],
-            "correctIndex": 0,
-            "explanation": "The learned codebook concepts are not guaranteed to be human-interpretable, and this is the largest latent-space LM shown so far but still well below frontier scale — so scale-transfer of the token-efficiency result is untested."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "6f73bc6a-9b23-4285-8bde-efc2b09c440c",
-          "title": "NCP-ArchPreview Technical Report: Moving towards Latent Space Language Models through Next Concept Prediction",
-          "url": "https://arxiv.org/abs/2609.10715"
-        }
-      ],
-      "id": "3f4aa9cd-572e-4d06-86ad-c16d2e13215a",
       "publishedDate": "2026-09-14T00:44:05Z"
     }
   ]
