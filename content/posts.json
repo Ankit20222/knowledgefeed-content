@@ -1,6 +1,207 @@
 {
   "posts": [
     {
+      "title": "Continuous Batching: Stop Waiting for the Slowest Sequence",
+      "subtitle": "Static batches idle a GPU until the longest request finishes. Iteration-level scheduling never lets it sit still.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "continuous-batching",
+        "llm-serving",
+        "inference-optimization",
+        "vllm",
+        "throughput",
+        "scheduling"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "tray.full.fill",
+      "summary": "Continuous batching (a.k.a. iteration-level or in-flight scheduling) reforms the GPU batch after every decoding step instead of after every sequence in a batch finishes. Finished requests exit and new ones enter mid-batch, so the GPU never idles waiting for the one slow sequence to catch up. It's the scheduling half of the throughput story behind vLLM, TGI, and TensorRT-LLM — distinct from, and complementary to, memory tricks like PagedAttention.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Autoregressive Generation Wastes GPU Cycles by Default",
+          "body": "LLMs generate one token per step, and different requests in the same batch almost never finish at the same step — one prompt needs 20 tokens, another needs 800. Naive batching handles that mismatch badly.",
+          "bullets": [
+            "A serving system that groups requests into fixed batches processes the whole batch in lockstep, tied to whichever request takes longest",
+            "This is a scheduling problem, separate from memory management (PagedAttention) — the two are usually deployed together but solve different bottlenecks"
+          ],
+          "symbol": "tray.full.fill",
+          "table": null,
+          "id": "e409b92c-8840-4e90-9461-28e462564344"
+        },
+        {
+          "kind": "problem",
+          "title": "Static Batching Blocks on the Slowest Request",
+          "body": "Request-level (static) batching forms a batch, runs it to completion, and only then forms the next one. Every short request in that batch pays for the longest one.",
+          "bullets": [
+            "A request that finishes generating at step 20 either sits idle (occupying a batch slot with padding) or gets dropped, wasting the compute already spent on it, until the whole batch completes",
+            "Throughput is capped by the slowest member of each batch, not by the GPU's actual capacity",
+            "New requests can't join an in-flight batch — they queue behind it even if there's spare capacity mid-batch (head-of-line blocking)"
+          ],
+          "symbol": "hourglass",
+          "table": null,
+          "id": "8632a565-7e0a-494b-8a33-192a8621ad6d"
+        },
+        {
+          "kind": "solution",
+          "title": "Reschedule the Batch Every Single Step",
+          "body": "Continuous batching (the idea popularized by the Orca serving system and adopted by vLLM, TGI, and TensorRT-LLM) treats each decoding iteration — not each full request — as the scheduling unit.",
+          "bullets": [
+            "After every forward pass, the scheduler checks which sequences just emitted an end-of-sequence token and evicts them immediately, freeing their batch slot",
+            "Freed slots are filled right away from the waiting queue, so a new request can start generating within one iteration of a slot opening up — not after the whole batch drains",
+            "The GPU always runs a full batch of active sequences (up to the max batch size), so utilization stays high regardless of how unevenly requests finish"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "51458b68-6dbf-4128-a001-e2543cc73521"
+        },
+        {
+          "kind": "concept",
+          "title": "Prefill vs. Decode: Why the Scheduler Has Two Jobs",
+          "body": "Serving an LLM request has two phases with very different compute profiles, and continuous batching has to schedule both without one starving the other.",
+          "bullets": [
+            "Prefill: processing the whole input prompt in one shot — compute-heavy, parallel across tokens, done once per request",
+            "Decode: generating one new token per step — memory-bandwidth-bound, sequential, done many times per request",
+            "A newly arrived long prompt's prefill can stall every in-flight decode step if scheduled naively; production schedulers mitigate this with chunked prefill, splitting a big prompt's prefill across several iterations so it interleaves with ongoing decodes instead of blocking them"
+          ],
+          "symbol": "square.split.2x1",
+          "table": null,
+          "id": "0913d652-5716-446a-b0f6-2fc03c49dd8f"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: 4 Requests, Wildly Different Lengths",
+          "body": "Say a batch admits 4 requests needing 10, 50, 200, and 800 output tokens respectively, and the server can only run 4 sequences at once.",
+          "bullets": [
+            "Static batching: the batch runs 800 steps total (bound by the longest request); requests A, B, and C finish early but their slots sit unused — 3 out of 4 slots are wasted for most of those 800 steps",
+            "Continuous batching: request A's slot frees at step 10 and a new waiting request immediately takes it; same for B at step 50 and C at step 200 — the batch stays at 4 active sequences almost the entire time",
+            "Net effect: the GPU does close to 4x the useful work per step on average, without any change to the model or the hardware"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "80a889e7-4b1c-4b4c-887d-15e7a08b2386"
+        },
+        {
+          "kind": "comparison",
+          "title": "Static vs. Continuous Batching",
+          "table": {
+            "headers": [
+              "",
+              "Static batching",
+              "Continuous batching"
+            ],
+            "rows": [
+              [
+                "Scheduling unit",
+                "whole batch",
+                "single decoding step"
+              ],
+              [
+                "New request admitted",
+                "only after batch fully drains",
+                "as soon as any slot frees"
+              ],
+              [
+                "GPU idle time from uneven lengths",
+                "high — bounded by the longest sequence",
+                "low — slots refill immediately"
+              ],
+              [
+                "Scheduler overhead",
+                "negligible (runs once per batch)",
+                "real — a scheduling decision every step"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "bullets": [],
+          "id": "5ee9d795-5595-425f-b87d-4ce99deaa956"
+        },
+        {
+          "kind": "problem",
+          "title": "Where It Costs Something, and Where It Doesn't Help",
+          "body": "Continuous batching isn't free, and it isn't the right fit for every workload.",
+          "bullets": [
+            "Per-step scheduling adds real CPU-side overhead — deciding admissions/evictions every iteration, not once per batch — so a poorly optimized scheduler can itself become the bottleneck",
+            "Without a priority policy, a flood of new short requests can keep bumping a long-running request's turn — most production schedulers add fairness rules or first-come priority to prevent starvation",
+            "Offline batch jobs where every request is the same fixed length (e.g. scoring a fixed dataset) gain little — static batching already keeps the GPU full when lengths are uniform",
+            "It solves a scheduling problem, not a memory one — without paged/chunked KV cache allocation alongside it, a bigger active batch can still hit an out-of-memory wall"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "2fabe1b0-b1d6-4008-b625-789b2246c996"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Continuous batching reschedules the active batch after every decoding step instead of after every full batch completes",
+            "Finished requests exit and queued requests enter mid-batch, eliminating the idle time static batching wastes on uneven request lengths",
+            "Chunked prefill keeps a big new prompt from stalling in-flight decode steps by splitting its prefill across iterations",
+            "It's a scheduling technique, complementary to (not a substitute for) memory techniques like PagedAttention — production servers like vLLM, TGI, and TensorRT-LLM run both together"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "21b28c8d-4732-4e48-8d97-0723c3840167"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What's the core difference between static and continuous batching?",
+            "options": [
+              "Continuous batching uses a different attention algorithm",
+              "Continuous batching reschedules which requests are active after every decoding step, instead of waiting for the whole batch to finish",
+              "Continuous batching only works with quantized models",
+              "Static batching runs requests on multiple GPUs simultaneously"
+            ],
+            "correctIndex": 1,
+            "explanation": "Static batching treats the whole batch as the scheduling unit — it runs to completion before the next batch forms. Continuous batching treats each decoding step as the scheduling unit, evicting finished sequences and admitting new ones every iteration.",
+            "id": "28c45fa6-60a8-493a-a479-067ba6218bdb"
+          },
+          {
+            "prompt": "Why does static batching waste GPU capacity when request lengths vary a lot?",
+            "options": [
+              "GPUs can't process variable-length sequences at all",
+              "The batch is bound by its slowest (longest) request, so slots from requests that finish early sit idle until the whole batch completes",
+              "Static batching requires re-loading model weights for every request",
+              "It always uses smaller batch sizes than continuous batching"
+            ],
+            "correctIndex": 1,
+            "explanation": "A request that finishes at step 10 in an 800-step batch still occupies a slot (padded or otherwise) until step 800, because the next batch can't start until the current one fully drains.",
+            "id": "e8c0c242-09a3-4503-8d91-665825952ee6"
+          },
+          {
+            "prompt": "What problem does chunked prefill address in a continuous-batching scheduler?",
+            "options": [
+              "It reduces the model's memory footprint",
+              "It prevents a newly arrived long prompt's prefill from stalling every other request's decode step by splitting the prefill across iterations",
+              "It compresses the KV cache to save GPU memory",
+              "It increases the maximum context length the model can handle"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prefill (processing a whole new prompt) is compute-heavy and can hog a full iteration if run in one shot, blocking every in-flight decode step. Chunked prefill splits it into smaller pieces interleaved with ongoing decode steps.",
+            "id": "03e5ab8d-c3be-4602-8885-90c29628dce5"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (vLLM paper — combines continuous batching with paged KV cache allocation)",
+          "url": "https://arxiv.org/abs/2309.06180",
+          "id": "8cc7f252-9ca7-44fc-972d-b3626a0d25d3"
+        },
+        {
+          "title": "vLLM project (reference implementation of continuous batching + PagedAttention)",
+          "url": "https://github.com/vllm-project/vllm",
+          "id": "b1be13f6-8dac-4d5a-9da6-be81026282d3"
+        }
+      ],
+      "id": "30c59f2b-e535-4fea-9cd2-0d4be90cd29f",
+      "publishedDate": "2026-09-22T12:49:41Z"
+    },
+    {
       "title": "NCP-ArchPreview: Predicting Concepts, Not Just Tokens",
       "subtitle": "Shanghai AI Lab's 8.9B model beats a 7B baseline using half the training tokens",
       "category": "AI Innovations",
@@ -11121,195 +11322,6 @@
       },
       "references": [],
       "publishedDate": "2026-09-15T06:45:43Z"
-    },
-    {
-      "id": "a3174a2f-20a1-455a-a47a-c37d3a1614ba",
-      "title": "Mixture of Experts: Scaling Params Without the FLOPs",
-      "subtitle": "How sparse routing lets trillion-parameter models run like much smaller ones",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mixture-of-experts",
-        "moe",
-        "sparse-models",
-        "llm-architecture",
-        "routing",
-        "inference-efficiency"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "A Mixture-of-Experts layer swaps one big feed-forward block for many smaller 'expert' blocks plus a router that sends each token to only a few of them. Total parameters explode, but the FLOPs per token stay small — the trick behind most of today's largest open models.",
-      "slides": [
-        {
-          "id": "584b00b1-1652-431f-8a01-1a9ba36f52d5",
-          "kind": "cover",
-          "title": "A Model With Hundreds of Billions of Params That Runs Like a Small One",
-          "body": null,
-          "bullets": [
-            "Mixture of Experts (MoE) replaces a single dense feed-forward block with many parallel 'expert' blocks",
-            "A learned router sends each token to only a handful of them, not all",
-            "Result: massive total capacity, but a fraction of the compute per token"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "d8d3c3d2-871b-4c68-a7c7-f672e5ec8d71",
-          "kind": "problem",
-          "title": "Dense Models Force Every Token Through Every Parameter",
-          "body": "In a standard ('dense') transformer, every token activates every weight in every feed-forward layer. Want more knowledge and capacity? You add parameters — but every one of them now costs compute on every single token, forever, at both training and inference time.",
-          "bullets": [
-            "Compute cost scales linearly with total parameter count in a dense model",
-            "Doubling capacity means roughly doubling FLOPs per token, and doubling inference latency/cost",
-            "Most of a huge dense model's knowledge is irrelevant to any given token, yet you still pay to compute it"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "8dfa046e-d154-489b-b17d-e494f00d3fe2",
-          "kind": "solution",
-          "title": "Split the Feed-Forward Layer Into Experts, Route Instead of Broadcast",
-          "body": "An MoE layer replaces the single feed-forward block with N smaller feed-forward blocks ('experts') plus a lightweight router (a small learned linear layer + softmax). For each token, the router scores every expert and activates only the top-k highest-scoring ones — typically k=1 or k=2 out of 8, 16, even 256 experts.",
-          "bullets": [
-            "Router output picks the top-k experts per token; only those experts do a forward pass for that token",
-            "The token's representation is a weighted sum of the outputs of just those k experts",
-            "Everything else in the transformer (attention layers, embeddings) usually stays dense — only the FFN sub-layer is sparse"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "efdb63e5-a070-4b39-86a9-690fff4829e8",
-          "kind": "architecture",
-          "title": "Why Routing Alone Isn't Enough: Load Balancing",
-          "body": "Left unconstrained, a router quickly collapses onto a handful of favorite experts — they get better because they're used more, so the router picks them even more, starving the rest. Training adds an auxiliary load-balancing loss that penalizes uneven expert usage across a batch, pushing the router toward a roughly even split.",
-          "bullets": [
-            "Without balancing: a few experts overtrain, most experts undertrain and stay useless",
-            "The auxiliary loss is added to the main next-token loss with a small weight so it nudges, not dominates, training",
-            "Some designs cap each expert's 'capacity' (max tokens it'll accept per batch) and drop overflow tokens, trading a little accuracy for guaranteed balance"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "id": "524e93b9-5b14-46de-a82d-72dbfaca7f68",
-          "kind": "example",
-          "title": "Worked Example: Routing One Token Through an 8-Expert Layer",
-          "body": "Say a layer has 8 experts and top-k=2. For the token 'photosynthesis', the router computes 8 scores, softmaxes them, and picks the 2 highest — maybe a 'biology/science' expert and a 'general vocabulary' expert. Only those two run their full feed-forward computation on this token; the other 6 do nothing for it.",
-          "bullets": [
-            "Router cost: one small matmul (hidden_size x num_experts) — negligible next to the experts themselves",
-            "Compute for this token's FFN sub-layer: 2/8 = 25% of what a dense layer with the same total FFN parameters would cost",
-            "Different tokens in the same batch route to different expert pairs — 'the' might hit different experts than 'photosynthesis'"
-          ],
-          "symbol": "text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "2ca4df39-8c2a-47a6-b531-da45025aee55",
-          "kind": "comparison",
-          "title": "Total Parameters vs. Active Parameters — the Number That Actually Matters",
-          "body": "MoE models are usually described by two numbers: total parameters (everything stored on disk/in memory) and active parameters (what actually runs per token). Active parameters is the number that predicts inference speed and per-token FLOPs — total parameters predicts memory footprint.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Model type",
-              "What scales with param count",
-              "What you pay per token"
-            ],
-            "rows": [
-              [
-                "Dense",
-                "Total params = active params",
-                "Full FFN compute, every token"
-              ],
-              [
-                "MoE (top-k of N experts)",
-                "Total params = N x expert size",
-                "Only k/N of the FFN compute, every token"
-              ],
-              [
-                "MoE tradeoff",
-                "Needs all experts resident in memory/VRAM",
-                "But inference latency tracks active params, not total"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "0b366769-6e2a-4a33-8e1e-55ccf28c7fcf",
-          "kind": "problem",
-          "title": "Where Sparsity Bites Back",
-          "body": "MoE isn't a free lunch. The savings are in compute, not memory — you still have to hold every expert in VRAM even though most sit idle for any given token, since you don't know in advance which ones a batch will need.",
-          "bullets": [
-            "Memory cost is closer to the dense equivalent of the total parameter count, not the active count — this is the classic MoE tradeoff",
-            "In distributed training/serving, experts often live on different devices, so routing decisions trigger all-to-all network communication that can bottleneck throughput",
-            "Fine-tuning MoE models is trickier: with less data flowing through any one expert, individual experts are more prone to overfitting or instability than in dense fine-tuning",
-            "Don't reach for MoE at small scale — the routing/balancing overhead and engineering complexity only pay off once the model is large enough that dense compute becomes the real bottleneck"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "210254a7-bdd9-4d7b-953c-903b9da94818",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "MoE swaps one dense FFN for many small experts plus a router that activates only the top-k per token",
-            "Total params (capacity) and active params (compute cost) decouple — that's the entire point",
-            "A load-balancing auxiliary loss keeps the router from collapsing onto a few favorite experts",
-            "The cost you save in FLOPs, you partly pay back in VRAM (all experts must stay resident) and in routing/communication overhead",
-            "It's the architecture behind most of today's largest open-weight models, because it's the practical way to keep scaling capacity once dense compute stops being affordable"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "785da01e-fb0e-42e0-a72b-bb198eaadf0b",
-            "prompt": "In a Mixture-of-Experts layer with 8 experts and top-k=2, what happens to a single token?",
-            "options": [
-              "It's processed by all 8 experts and the results are averaged",
-              "The router scores all 8 experts and only the 2 highest-scoring experts process the token",
-              "One random expert is chosen for each token",
-              "The token skips the feed-forward layer entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "The router computes a score per expert and routes the token to only the top-k (here, 2) highest-scoring experts — the rest do no work for that token, which is exactly where the compute savings come from."
-          },
-          {
-            "id": "9eda675f-08c9-4d64-b605-1d813bf66a2b",
-            "prompt": "Why does MoE training add an auxiliary load-balancing loss?",
-            "options": [
-              "To make the model's total parameter count smaller",
-              "To speed up the router's matmul",
-              "To stop the router from collapsing onto a few favorite experts while the rest go undertrained",
-              "To remove the need for a router entirely"
-            ],
-            "correctIndex": 2,
-            "explanation": "Without a balancing signal, a few experts get picked more, get better because they're trained more, and get picked even more — a feedback loop that leaves most experts undertrained and useless."
-          },
-          {
-            "id": "a87dc974-c72c-4bb3-9030-0208258ca355",
-            "prompt": "What's the key tradeoff MoE makes compared to a dense model of equivalent total parameter count?",
-            "options": [
-              "MoE uses less memory but the same compute per token",
-              "MoE reduces compute per token (only active experts run), but still needs all experts resident in memory",
-              "MoE eliminates the need for a feed-forward layer",
-              "MoE is strictly better with no downsides"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE decouples capacity (total params, which drives memory footprint) from per-token compute (active params) — you save FLOPs, but you still have to keep every expert loaded since you don't know in advance which ones each token will need."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-09-15T00:39:52Z"
     }
   ]
 }
