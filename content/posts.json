@@ -1,6 +1,408 @@
 {
   "posts": [
     {
+      "title": "Google Open-Sources AX: A Kubernetes for AI Agents",
+      "subtitle": "Agents aren't stateless microservices — they hold state for hours and need sandboxes. AX is built around that difference.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "ai-agents",
+        "kubernetes",
+        "orchestration",
+        "open-source",
+        "agent-infrastructure"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "terminal.fill",
+      "summary": "Google open-sourced AX (Agent Executor), an Apache-2.0 declarative orchestrator purpose-built to run autonomous AI agent workloads instead of stateless microservices. It borrows Kubernetes' kubectl-shaped interface but adds agent-native primitives — Task, Workspace, Gateway, Model — plus sub-second suspend/resume for long-lived, stateful agent sessions. It's pre-stable and its 'billions of agents' framing has drawn skepticism, but it's a serious signal of where agent infrastructure is headed.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "An Agent Isn't a Microservice, So Why Run It Like One?",
+          "body": "Kubernetes was built to schedule stateless, short-lived containers. An AI agent working a coding task can run for hours, accumulate state, pause mid-task waiting on a tool call, and needs to be resumed exactly where it left off.",
+          "bullets": [
+            "Google open-sourced AX (Agent Executor) — an Apache-2.0 licensed, declarative orchestrator built specifically for autonomous agent workloads",
+            "It's deliberately kubectl-shaped (apply, get, watch, delete) but adds agent-specific verbs on top, like suspend, resume, and ssh"
+          ],
+          "symbol": "terminal.fill",
+          "table": null,
+          "id": "7058e2d8-12e8-4ba7-a1d7-8affca9e78af"
+        },
+        {
+          "kind": "problem",
+          "title": "Kubernetes Pods Assume Work Is Stateless and Disposable",
+          "body": "A Kubernetes Pod running a batch job or web request can be killed and rescheduled with little cost — it's stateless, or its state lives elsewhere. An agent mid-task is not.",
+          "bullets": [
+            "Evicting a Pod mid-work loses everything it was holding in memory — for a long-running agent, that means losing hours of accumulated context and progress",
+            "Kubernetes has no native concept of 'pause this unit of work and resume it later from the exact same point'",
+            "Running untrusted, LLM-generated code (an agent calling shell commands or writing files) needs stronger default isolation than a typical microservice pod gets"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "822f6389-0062-49d2-b7f1-126f66180914"
+        },
+        {
+          "kind": "solution",
+          "title": "Four Primitives Purpose-Built for Agent Workloads",
+          "body": "AX runs on top of a runtime called Agent Substrate and organizes everything around four core resources instead of Kubernetes' Pods and Deployments.",
+          "bullets": [
+            "Task — the unit of work: untrusted agent code running in an isolated sandbox with CPU/memory limits, checkpointable mid-execution",
+            "Workspace — pre-wires a Git repo, MCP servers, and skill packages ahead of time so a Task starts warm instead of cold-cloning and reconnecting every run",
+            "Gateway — restricts a Task's outbound network traffic to an explicit host allowlist, so a compromised or misbehaving agent can't reach arbitrary endpoints",
+            "Model — configures which LLM the agent calls and injects API credentials from Kubernetes secrets, rather than baking keys into agent code"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null,
+          "id": "4619cd9e-5214-40c1-9105-bdc46f9fdf3e"
+        },
+        {
+          "kind": "architecture",
+          "title": "Sub-Second Suspend and Resume, Not Just Restart",
+          "body": "The headline capability is treating agents as long-lived stateful actors rather than jobs that either run to completion or die.",
+          "bullets": [
+            "`ax suspend` checkpoints a running Task's state; `ax resume` picks it back up — designed for agents that block on a slow tool call or external approval step",
+            "`ax ssh` gives an operator interactive shell access into a running agent's sandbox for live debugging, something you can't cleanly do with a Kubernetes Pod running unattended code",
+            "The control plane talks over gRPC to an Agent Substrate API, deploys into an `ax-system` namespace, and uses Redis to track task state and `ko` to build the container images"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "bce91b01-c146-4f34-9181-bcf83b322f7f"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: A Fleet of Repo-Fixing Agents",
+          "body": "Say a platform team wants to run thousands of agents that each check out a repo, use an MCP server for test tooling, and call an LLM to propose a fix.",
+          "bullets": [
+            "A Workspace pre-wires the Git checkout and MCP server connection once, so each new Task starts already connected instead of re-cloning and re-authenticating",
+            "A Gateway on that Workspace allowlists only github.com and the model provider's API host — the agent physically cannot exfiltrate data anywhere else, even if the LLM is tricked into trying",
+            "When an agent's fix needs a slow CI run to validate, the operator suspends the Task instead of holding a reserved slot idle, then resumes it the moment CI reports back — capacity is freed for other agents in the meantime"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "14087f82-f875-4865-ab23-927e175aa93c"
+        },
+        {
+          "kind": "comparison",
+          "title": "Kubernetes Pods vs. AX Tasks",
+          "table": {
+            "headers": [
+              "",
+              "Kubernetes (Pods/Jobs)",
+              "AX (Tasks)"
+            ],
+            "rows": [
+              [
+                "Assumed unit of work",
+                "stateless microservice or finite batch job",
+                "long-lived, stateful agent session"
+              ],
+              [
+                "Suspend / resume",
+                "not native — eviction discards in-memory state",
+                "sub-second checkpoint/resume via `ax suspend` / `ax resume`"
+              ],
+              [
+                "Network isolation",
+                "NetworkPolicy, cluster-wide and coarse-grained",
+                "per-Task Gateway with an explicit outbound host allowlist"
+              ],
+              [
+                "Live debugging",
+                "`kubectl exec` into a container",
+                "`ax ssh` into a running agent sandbox"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "bullets": [],
+          "id": "220d4823-a8c0-43dd-86cd-c860b28cd7e1"
+        },
+        {
+          "kind": "problem",
+          "title": "It's Pre-Stable, and the Scale Claims Are Contested",
+          "body": "AX is a serious piece of infrastructure, but it isn't a drop-in answer for every team, and its own maintainers are candid about where it stands.",
+          "bullets": [
+            "Google's own README warns it is 'still actively refining core concepts, protocols, and specifications' and expects breaking changes before a stable release — not something to bet production on yet",
+            "It inherits full Kubernetes operational overhead (a control plane, Redis, `ko`-built images) — heavy for a team running a handful of agents rather than thousands",
+            "AX's marketing around running 'billions of autonomous agent workloads' drew public skepticism (including from Hacker News commenters) as an aspirational target rather than a demonstrated production number",
+            "A misconfigured Gateway allowlist silently defeats the isolation model — the security benefit only holds if operators actually scope it tightly per Workspace"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "54781491-0156-43b1-9eda-32f2f6a8f8d2"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "AX reframes agent orchestration around stateful, long-lived Tasks instead of Kubernetes' stateless Pods — with native suspend/resume and per-Task network isolation via Gateway",
+            "Its four primitives — Task, Workspace, Gateway, Model — map directly onto real agent needs: sandboxed execution, warm starts, network containment, and credential management",
+            "It's open-source (Apache 2.0) but pre-stable — expect breaking changes, and treat the 'billions of agents' framing as a design target, not a proven benchmark",
+            "It's a strong signal that agent infrastructure is diverging from generic container orchestration, not just reusing it"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "1265fb1f-304a-452d-9410-fbf040f40f8f"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the core problem AX's Task/suspend/resume model is designed to solve?",
+            "options": [
+              "Making container images build faster",
+              "Letting a long-running, stateful agent pause mid-work and resume later without losing its accumulated state",
+              "Replacing Redis with a faster in-memory store",
+              "Reducing the number of Kubernetes nodes needed per cluster"
+            ],
+            "correctIndex": 1,
+            "explanation": "Kubernetes Pods are built for stateless, disposable work — evicting one loses everything it held. AX treats an agent as a stateful actor, so `ax suspend`/`ax resume` checkpoint and restore that state instead of discarding it.",
+            "id": "3906b3f0-c9ee-481f-894c-8ae2844c4df1"
+          },
+          {
+            "prompt": "Which AX primitive is responsible for restricting an agent's outbound network access?",
+            "options": [
+              "Task",
+              "Workspace",
+              "Gateway",
+              "Model"
+            ],
+            "correctIndex": 2,
+            "explanation": "Gateway defines an explicit allowlist of hosts a Task can reach outbound. Task is the sandboxed unit of work, Workspace pre-wires repos/MCP servers, and Model configures which LLM and credentials the agent uses.",
+            "id": "581aae38-e36b-44f6-982f-ccf3c1c30bb0"
+          },
+          {
+            "prompt": "Why does the article treat AX's claim of orchestrating 'billions of autonomous agent workloads' with some caution?",
+            "options": [
+              "Because AX has no public repository",
+              "Because AX only supports a single agent per cluster",
+              "Because the project itself says it's still pre-stable with expected breaking changes, and outside commentators pushed back on the scale claim as aspirational rather than demonstrated",
+              "Because Kubernetes cannot run more than a thousand pods"
+            ],
+            "correctIndex": 2,
+            "explanation": "AX's own README describes it as still refining core concepts ahead of a stable release, and public reaction (e.g. on Hacker News) questioned whether the billions-scale framing reflects real production use yet.",
+            "id": "69fb8fde-0895-4a54-aa2a-b0c97e0d953e"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "google/ax: Google's open agentic orchestrator (GitHub)",
+          "url": "https://github.com/google/ax",
+          "id": "66e5a0ab-ad91-46f1-8ad2-3fcf056be1fd"
+        }
+      ],
+      "id": "c95607c4-44de-419b-8a82-2b172cf48c63",
+      "publishedDate": "2026-09-22T18:55:00Z"
+    },
+    {
+      "title": "Mixture of Experts: Bigger Models Without Bigger Compute",
+      "subtitle": "Route each token to a handful of specialists instead of the whole network — that's how trillion-parameter-class models stay affordable to run.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture-of-experts",
+        "moe",
+        "sparse-models",
+        "routing",
+        "llm-architecture"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.2x2.fill",
+      "summary": "Mixture of Experts (MoE) replaces a transformer's single feed-forward block with many parallel 'expert' feed-forward networks plus a learned router that sends each token to only a few of them. Total parameter count can grow into the hundreds of billions while the compute spent per token stays close to that of a much smaller dense model — the core trick behind Mixtral, DeepSeek-V3, and other large open models.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A Dense Transformer Touches Every Parameter, Every Token",
+          "body": "In a standard ('dense') transformer, every single token passes through every weight in every layer. Double the parameters and you roughly double the compute needed per token too — scaling one forces you to scale the other.",
+          "bullets": [
+            "That coupling is why dense frontier models get expensive to serve: more knowledge capacity always means more FLOPs per token, with no way to decouple the two",
+            "Mixture of Experts (MoE) breaks that coupling by making most of the network's parameters optional per token"
+          ],
+          "symbol": "square.grid.2x2.fill",
+          "table": null,
+          "id": "1deaf9a0-3256-41c3-b11c-a6e199614f23"
+        },
+        {
+          "kind": "problem",
+          "title": "More Capacity Has Always Meant More Compute — Until Now",
+          "body": "If you want a model to know more, the dense-scaling playbook is simple but expensive: add parameters, pay for them on every forward pass, forever.",
+          "bullets": [
+            "A 175B-parameter dense model activates all 175B parameters for every token it processes, whether that token needed all that capacity or not",
+            "Serving cost and latency scale with active compute, not with how much the model 'knows' — so capacity and cost are locked together",
+            "Most of a large network's knowledge is only relevant to a subset of inputs (a token about French grammar doesn't need the weights specialized for Python syntax) — dense models pay for all of it anyway"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "c60850ce-b3a7-4c2b-886b-2030227452a7"
+        },
+        {
+          "kind": "solution",
+          "title": "Replace One Big FFN With Many Small Ones Plus a Router",
+          "body": "MoE swaps the transformer's feed-forward block for N parallel 'expert' feed-forward networks and adds a small learned router in front of them.",
+          "bullets": [
+            "For each token, the router computes a score for every expert (usually a softmax over a small linear layer) and picks the top-k highest-scoring experts — commonly top-1 or top-2",
+            "Only those k experts actually run their weights on that token; the rest sit idle for that token, contributing zero compute",
+            "The token's output is a weighted combination of the selected experts' outputs, weighted by the router's scores — so the routing decision itself is differentiable and learnable"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "8fe15799-576f-456e-9594-d4c13d720692"
+        },
+        {
+          "kind": "concept",
+          "title": "The Router's Hidden Danger: Expert Collapse",
+          "body": "A router trained with no extra pressure will happily send almost every token to the same one or two 'favorite' experts, because early in training those experts get slightly more gradient signal and improve fastest — a rich-get-richer spiral.",
+          "bullets": [
+            "Left unchecked, this collapses an N-expert model into an effectively 1-or-2-expert model, wasting most of the added parameters",
+            "The standard fix is a load-balancing auxiliary loss added during training that penalizes uneven routing and pushes tokens toward underused experts",
+            "DeepSeek-V3 instead uses an auxiliary-loss-free strategy: a learned per-expert bias term is nudged up or down after each batch based on how overloaded or underused that expert was, avoiding the accuracy cost that balancing losses can impose"
+          ],
+          "symbol": "scale.3d",
+          "table": null,
+          "id": "3d1bf627-2f5b-4d41-bd1d-4f5b1f213ead"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: One Token Through an 8-Expert Layer",
+          "body": "Take a layer with 8 experts and top-2 routing, processing the token 'integral' in a math-heavy sentence.",
+          "bullets": [
+            "The router scores all 8 experts against this token's hidden state and picks the top 2 — say Expert 3 (math/symbolic patterns) and Expert 7 (general academic prose)",
+            "Only Experts 3 and 7 run their feed-forward weights on this token; Experts 1, 2, 4, 5, 6, and 8 do zero work for it",
+            "The token's final representation is (router weight for Expert 3) × Expert 3's output + (router weight for Expert 7) × Expert 7's output — a learned blend, not a hard switch",
+            "Compute cost for this token: roughly 2/8 of what running all 8 experts densely would cost, even though the model still carries all 8 experts' parameters in memory"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "a807eae8-89be-447c-ac51-65b6e4e3123e"
+        },
+        {
+          "kind": "comparison",
+          "title": "Dense vs. MoE, by the Numbers",
+          "table": {
+            "headers": [
+              "",
+              "Dense (e.g. Llama-3.1 70B)",
+              "MoE (Mixtral 8x7B)",
+              "MoE (DeepSeek-V3)"
+            ],
+            "rows": [
+              [
+                "Total parameters",
+                "70B",
+                "46.7B",
+                "671B"
+              ],
+              [
+                "Active parameters per token",
+                "70B (all of them)",
+                "~12.9B",
+                "~37B"
+              ],
+              [
+                "Experts per MoE layer",
+                "n/a",
+                "8, top-2 routing",
+                "256 routed + shared experts, top-8"
+              ],
+              [
+                "Memory to serve",
+                "scales with total params",
+                "must still hold all 46.7B in memory",
+                "must still hold all 671B in memory"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "bullets": [],
+          "id": "4dcb24f1-0b10-4636-849b-325d92dbcba7"
+        },
+        {
+          "kind": "problem",
+          "title": "The Catch: Compute Shrinks, Memory Doesn't",
+          "body": "MoE is not a free lunch — it trades one bottleneck for a different one, and it isn't the right fit everywhere.",
+          "bullets": [
+            "Every expert must be loaded into GPU memory regardless of routing, because you don't know in advance which tokens will need which expert — so VRAM requirements track total parameters, not active parameters",
+            "Serving an MoE model efficiently across multiple GPUs requires expert parallelism, which means shipping tokens between GPUs mid-layer (all-to-all communication) — a real network bottleneck that dense models never have to pay",
+            "Fine-tuning is trickier: a small fine-tuning dataset can easily starve rarely-used experts of gradient signal, leaving them undertrained relative to popular ones",
+            "For small models or latency-insensitive batch workloads where memory isn't the constraint, the added routing complexity and infrastructure cost may not pay for itself over a simple dense model"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "c64091bf-1452-4556-8f1d-632a39211a11"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "MoE decouples total parameter count from per-token compute by routing each token through only a handful of expert feed-forward networks instead of the whole network",
+            "A learned router picks the top-k experts per token; without a load-balancing mechanism, training collapses onto a few favorite experts",
+            "Real models bear this out: Mixtral 8x7B activates ~13B of its 47B parameters per token, and DeepSeek-V3 activates ~37B of 671B",
+            "The tradeoff is memory, not compute — every expert must stay resident in GPU memory, and multi-GPU serving pays a real cross-GPU communication cost for routing tokens to the right expert"
+          ],
+          "symbol": "checklist",
+          "table": null,
+          "id": "fe382599-7179-461b-b170-7f7cafad93c8"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "In an MoE layer with 8 experts and top-2 routing, how many experts does a single token actually run through?",
+            "options": [
+              "1",
+              "2",
+              "4",
+              "All 8"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-2 routing means the router selects the 2 highest-scoring experts for each token; the token's output is a weighted blend of just those two experts' results.",
+            "id": "37a037fa-8832-42ec-9c22-3e609c418f78"
+          },
+          {
+            "prompt": "Why does an MoE model still need as much GPU memory as its total parameter count, even though it only activates a fraction of those parameters per token?",
+            "options": [
+              "Because the router itself is extremely large",
+              "Because which experts a token needs isn't known in advance, so every expert must stay loaded in memory to be available for routing",
+              "Because MoE models don't support quantization",
+              "Because GPUs cannot unload weights between forward passes"
+            ],
+            "correctIndex": 1,
+            "explanation": "Routing is data-dependent and decided per token at inference time, so there's no way to predict which experts to keep resident and which to evict — all of them must be available, which is why MoE saves compute but not memory.",
+            "id": "217cf9ed-3c97-4d82-ac82-2d9f1bc40d3a"
+          },
+          {
+            "prompt": "What problem does a load-balancing auxiliary loss (or DeepSeek-V3's bias-adjustment alternative) address during MoE training?",
+            "options": [
+              "GPU memory fragmentation",
+              "Slow tokenization speed",
+              "The router collapsing onto a small subset of 'favorite' experts and leaving the rest undertrained",
+              "Numerical overflow in attention scores"
+            ],
+            "correctIndex": 2,
+            "explanation": "Without balancing pressure, experts that get slightly more traffic early in training keep improving faster and attract even more traffic — a feedback loop that wastes most of the model's added expert capacity.",
+            "id": "175e9bf5-1a8f-4502-bdeb-f117583a73f3"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Mixtral of Experts (Mistral AI)",
+          "url": "https://arxiv.org/abs/2401.04088",
+          "id": "c25ab654-24c4-415a-9603-96accc3d1937"
+        },
+        {
+          "title": "DeepSeek-V3 Technical Report",
+          "url": "https://arxiv.org/abs/2412.19437",
+          "id": "521b3a56-29e9-46ad-b002-74829a5f2b53"
+        }
+      ],
+      "id": "4b24771a-3272-4bb4-9831-70d0a25b2625",
+      "publishedDate": "2026-09-22T18:55:00Z"
+    },
+    {
       "title": "Continuous Batching: Stop Waiting for the Slowest Sequence",
       "subtitle": "Static batches idle a GPU until the longest request finishes. Iteration-level scheduling never lets it sit still.",
       "category": "LLMs",
@@ -10968,360 +11370,6 @@
         }
       ],
       "publishedDate": "2026-09-15T06:45:45Z"
-    },
-    {
-      "id": "88caa779-2f31-4ed7-b383-4fc2a8d846ef",
-      "title": "Shieldstral: A 3B Safety Model That Reads Your Policy",
-      "subtitle": "Mistral's open guard model takes your moderation rules as a prompt, not as training data",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "safety",
-        "content-moderation",
-        "open-weights",
-        "guard-models",
-        "multimodal"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "checkmark.shield.fill",
-      "summary": "Mistral AI released Shieldstral 1.0, a 3B-parameter open-weights safety classifier that judges text and images against a moderation policy written in plain language at inference time, rather than a fixed harm taxonomy baked in during training. Built on Ministral-3-3B with a native Pixtral vision encoder, Mistral reports it matches guard models roughly 7x its size on text safety and leads on multimodal moderation.",
-      "slides": [
-        {
-          "id": "06e7bc19-cf5d-45b2-b288-e3cb04da812d",
-          "kind": "cover",
-          "title": "A Guard Model You Configure With a Sentence, Not a Fine-Tune",
-          "body": "Mistral AI open-sourced Shieldstral 1.0: a 3B-parameter safety classifier for text and images, released under Apache 2.0 with weights on Hugging Face.",
-          "bullets": [
-            "3B parameters, runs on a single 16GB GPU",
-            "Covers 12 languages, judges text and images through one interface",
-            "Apache 2.0 — open weights, not just an API"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "3d162f4e-9c5f-4d45-86ad-16e89297cfe9",
-          "kind": "problem",
-          "title": "Fixed-Taxonomy Guard Models Don't Travel",
-          "body": "Most safety classifiers are trained against a fixed list of harm categories. That works for a generic policy, but every product and platform has its own rules — what counts as 'graphic violence' on a news app is different from a game with cartoon combat. Adapting a fixed-taxonomy model to a new policy usually means collecting labeled data and retraining.",
-          "bullets": [
-            "Harm categories are frozen at training time",
-            "A new or platform-specific rule requires a new training run",
-            "Slow to keep pace with fast-moving product and regulatory requirements"
-          ],
-          "symbol": "xmark.octagon",
-          "table": null
-        },
-        {
-          "id": "8f36b7ec-a58e-43b0-a57f-740f46412960",
-          "kind": "solution",
-          "title": "Moderation Reframed as Yes/No Question Answering",
-          "body": "Shieldstral takes three inputs: an <Instruct> block (the evaluation context, strictness level, and optionally a definition of what counts as unsafe), a <Query> (a single yes/no question, e.g. 'Does this content promote physical violence?'), and a <Document> (the content to judge — a prompt, a response, a prompt-response pair, or an image with optional text).",
-          "bullets": [
-            "The policy lives in the prompt, not in the model's weights",
-            "Change the policy by changing the <Instruct> text — no retraining",
-            "Same interface handles pure text, pure image, or mixed content"
-          ],
-          "symbol": "text.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "c36fffb1-8946-4b1d-9cca-ac3399bfff32",
-          "kind": "architecture",
-          "title": "Built on Ministral-3-3B With a Native Vision Encoder",
-          "body": "Shieldstral is built on Ministral-3-3B-Base-2512 with a Pixtral vision encoder folded into the same model, so text and image moderation share one interface instead of two separate pipelines. That native multimodality is what lets a single <Document> field accept either modality.",
-          "bullets": [
-            "Base model: Ministral-3-3B-Base-2512",
-            "Vision: native Pixtral encoder, not a bolted-on OCR step",
-            "One forward pass judges text, images, or both together"
-          ],
-          "symbol": "eye.fill",
-          "table": null
-        },
-        {
-          "id": "3032d0f8-c9b4-4ddf-898d-c51865a47fee",
-          "kind": "comparison",
-          "title": "Small Model, Reported Parity With a Much Bigger One",
-          "body": "Mistral's announcement reports Shieldstral matching much larger guard models on text safety while leading on multimodal safety — figures corroborated by multiple independent write-ups of the release.",
-          "table": {
-            "headers": [
-              "Model",
-              "Size",
-              "Reported result (per Mistral's announcement)"
-            ],
-            "rows": [
-              [
-                "GPT-OSS-Safeguard-20B",
-                "20B",
-                "Baseline text-safety guard model"
-              ],
-              [
-                "Shieldstral-1.0",
-                "3B (~7x smaller)",
-                "~84.9% avg F1 on text safety — roughly matches the 20B baseline"
-              ],
-              [
-                "Shieldstral-1.0 (multimodal)",
-                "3B",
-                "~83.8% F1 on multimodal safety — ahead of evaluated baselines"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.fill",
-          "bullets": []
-        },
-        {
-          "id": "5fcfcbb0-116c-4d87-ad7b-2e44b9b96398",
-          "kind": "example",
-          "title": "Same Model, Two Different Platforms' Rules",
-          "body": "A game platform wants to allow stylized cartoon combat but block real-world violence glorification; a news platform wants the opposite bias — permissive on real reporting of violence, strict on gratuitous gore. With a fixed-taxonomy classifier, that's two training runs. With Shieldstral, it's two different <Instruct> strings sent to the same weights, evaluated with the same <Query>.",
-          "bullets": [
-            "Policy experiments become prompt edits, not ML projects",
-            "Useful for platforms that need per-tenant or per-region policy variation"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "dcc066c8-c29f-4ef7-88b9-f5d282a8d293",
-          "kind": "takeaways",
-          "title": "Where a Prompted Judge Falls Short",
-          "body": "Shieldstral outputs a binary yes/no signal per query, not a nuanced severity score, and — like any prompted model — its accuracy depends on how clearly the policy is written. It's a single-purpose classifier: useful as one layer of a moderation pipeline, not a replacement for human review on ambiguous or appealed cases.",
-          "bullets": [
-            "Binary yes/no per query, not graded severity",
-            "Prompt-sensitive: vague policy wording gives vague judgments",
-            "Best used as one signal alongside human review, not a full replacement",
-            "Released under Apache 2.0 with weights on Hugging Face"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "584561cc-691b-45ff-8f28-923588823060",
-            "prompt": "What makes Shieldstral different from a typical fixed-taxonomy safety classifier?",
-            "options": [
-              "It has far more parameters than typical guard models",
-              "It takes the moderation policy as part of the input prompt instead of baking fixed categories in during training",
-              "It only works on images, never text",
-              "It requires no inference compute at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "Shieldstral's <Instruct>/<Query>/<Document> format means the policy is an input, not a training target — so changing the policy means changing the prompt, not retraining."
-          },
-          {
-            "id": "bd3ee95e-cd99-4930-9daa-03ce77724900",
-            "prompt": "What lets Shieldstral moderate both text and images through a single interface?",
-            "options": [
-              "A native Pixtral vision encoder built into the same model",
-              "Two separate models chained together with a router",
-              "An external OCR service called before inference",
-              "It doesn't actually support images"
-            ],
-            "correctIndex": 0,
-            "explanation": "Shieldstral is built on Ministral-3-3B with a native Pixtral vision encoder folded in, so one model and one prompt format cover both modalities."
-          },
-          {
-            "id": "5b2ac424-7019-4a42-b9e7-b13733758ac9",
-            "prompt": "Per Mistral's announcement, roughly how does the 3B Shieldstral compare to the 20B GPT-OSS-Safeguard on text safety?",
-            "options": [
-              "It performs far worse despite being smaller",
-              "It's roughly on par (~84.9% avg F1) despite being about 7x smaller",
-              "It scores twice as high",
-              "The two aren't comparable on any benchmark"
-            ],
-            "correctIndex": 1,
-            "explanation": "Mistral reports Shieldstral reaching about 84.9% average F1 on text safety, matching a guard model roughly 7x its parameter count."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "492187d5-f2ba-4622-9bc9-adabace8f155",
-          "title": "Introducing Shieldstral",
-          "url": "https://mistral.ai/news/shieldstral/"
-        }
-      ],
-      "publishedDate": "2026-09-15T06:45:44Z"
-    },
-    {
-      "id": "e9df4f02-8833-48e5-a2c0-d47ed3a9902f",
-      "title": "ReAct: Why Agents Think Between Every Action",
-      "subtitle": "Interleaving reasoning traces with tool calls stops agents from spiraling on a bad step",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "agents",
-        "react",
-        "reasoning",
-        "tool-use",
-        "prompting"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "ReAct (Yao et al., 2022) interleaves short reasoning traces ('thoughts') with tool-calling actions and their observations in a repeating loop, instead of reasoning alone or acting alone. The thought step acts as working memory that lets an agent notice when an observation contradicts its plan and adjust — which is exactly what pure chain-of-thought and pure tool-calling agents can't do on their own.",
-      "slides": [
-        {
-          "id": "bc86c89d-fa58-4e51-a339-7e7628f9d414",
-          "kind": "cover",
-          "title": "Reasoning and Acting, One Step at a Time",
-          "body": "ReAct, introduced by Yao et al. in 2022, prompts a language model to generate a short reasoning trace and a tool-calling action at every step, feed the tool's result back in as an observation, and repeat — instead of picking only reasoning or only acting.",
-          "bullets": [
-            "Core loop: Thought -> Action -> Observation, repeated",
-            "Now the default pattern behind most tool-using LLM agents"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "8b3dded9-0e7b-4838-9559-9fd330ec8fb5",
-          "kind": "problem",
-          "title": "Pure Reasoning Can't Touch the World; Pure Acting Can't Course-Correct",
-          "body": "Chain-of-thought-only prompting reasons fluently but is stuck with whatever the model already 'knows' — it can't look anything up, so it can confidently reason its way to a wrong answer. Act-only agents (tool calls with no visible reasoning) tend to lock onto a plausible-looking action and, without a visible plan to check against, struggle to notice when an observation contradicts what they assumed.",
-          "bullets": [
-            "CoT alone: no way to verify or update against the real world",
-            "Act-only: no persistent plan to notice or diagnose a bad step",
-            "Neither approach supervises its own trajectory"
-          ],
-          "symbol": "xmark.octagon",
-          "table": null
-        },
-        {
-          "id": "a0317955-93e3-4952-a892-1b2e5a15d38a",
-          "kind": "concept",
-          "title": "The Thought -> Action -> Observation Loop",
-          "body": "At each step the model emits a Thought (a short plan or rationale), then an Action (a tool call — search, calculator, an API), and receives an Observation (the tool's result), which gets appended to the context before the next step. The loop ends when the model emits a Finish action with the final answer.",
-          "bullets": [
-            "The Thought is working memory: it tracks the plan across steps",
-            "Each Observation can change the next Thought, not just the next Action",
-            "One model plays planner and actor in the same context window"
-          ],
-          "symbol": "list.number",
-          "table": null
-        },
-        {
-          "id": "0ba30434-af7c-41d1-a5c5-8e9b537a5547",
-          "kind": "architecture",
-          "title": "What Actually Goes Into the Prompt",
-          "body": "In practice this is implemented with a few-shot prompt (or a system prompt for instruction-tuned models) showing example Thought/Action/Observation trajectories, plus a defined set of callable tools. No separate planner model is required — the same model that reasons also emits the structured action calls.",
-          "bullets": [
-            "Few-shot exemplars or a system-prompt description of the loop",
-            "A fixed tool interface the model's actions must conform to",
-            "No extra planning model — one context window, one model, both roles"
-          ],
-          "symbol": "text.alignleft",
-          "table": null
-        },
-        {
-          "id": "15d27ca4-4e5a-4a09-ab83-6fe1bb73c5a2",
-          "kind": "comparison",
-          "title": "Three Ways to Build an Agent",
-          "table": {
-            "headers": [
-              "Approach",
-              "Can use tools?",
-              "Can course-correct mid-task?",
-              "Typical failure mode"
-            ],
-            "rows": [
-              [
-                "Chain-of-thought only",
-                "No",
-                "N/A — no tools to observe",
-                "Confidently reasons from stale or wrong internal knowledge"
-              ],
-              [
-                "Act-only (tool calls, no visible reasoning)",
-                "Yes",
-                "Poorly",
-                "Locks onto a bad early action, can't diagnose why it failed"
-              ],
-              [
-                "ReAct (thought + action + observation loop)",
-                "Yes",
-                "Yes",
-                "Extra reasoning tokens add latency and cost per step"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.fill",
-          "body": null,
-          "bullets": []
-        },
-        {
-          "id": "f8f545a6-2c2c-4032-adc6-b7937efc9491",
-          "kind": "example",
-          "title": "Answering a Question That Needs Two Lookups",
-          "body": "Question: \"What's the population of the city that hosted the 2024 Olympics closing ceremony?\" Thought: I need the host city first. Action: search(\"2024 Olympics host city\"). Observation: \"Paris.\" Thought: Now I need Paris's population. Action: search(\"Paris population\"). Observation: \"~2.1 million.\" Thought: I have what I need. Action: Finish[\"~2.1 million\"].",
-          "bullets": [
-            "Each Thought is decided using what the previous Observation just revealed",
-            "No fixed upfront plan — the second lookup query depends on the first result",
-            "A plan-once, act-many agent would have to guess both queries in advance"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "1e1d3538-22ce-49bb-9d40-9b9a6a2600d3",
-          "kind": "takeaways",
-          "title": "When the Loop Isn't Worth It",
-          "body": "Every Thought is extra tokens, which means extra latency and cost per step — for a single, simple lookup, plain tool-calling with no visible reasoning is faster and cheaper. Reasoning traces can also hallucinate a wrong plan and lock into it just as confidently as a right one, so ReAct reduces certain failure modes without eliminating them, and needs a max-step guard so it can't loop forever on a task that isn't converging.",
-          "bullets": [
-            "Skip the loop for simple, single-tool lookups — it just adds overhead",
-            "Always cap max steps; nothing stops a stuck agent from looping",
-            "Truncate large observations (e.g. full HTML) or they'll blow the context window",
-            "Now the default pattern behind LangChain, most agent frameworks, and tool-calling APIs"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "02daf97a-40a1-45bb-9b79-3f6082563495",
-            "prompt": "What are the three repeating parts of the ReAct loop?",
-            "options": [
-              "Plan, Execute, Review",
-              "Thought, Action, Observation",
-              "Prompt, Response, Feedback",
-              "Query, Retrieve, Generate"
-            ],
-            "correctIndex": 1,
-            "explanation": "ReAct repeats a Thought (reasoning), an Action (a tool call), and an Observation (the tool's result) until the model finishes with an answer."
-          },
-          {
-            "id": "51dfbc64-cc09-4517-83f4-a35df3146dfb",
-            "prompt": "Why do act-only agents (tool calls with no visible reasoning) tend to struggle when a step fails?",
-            "options": [
-              "They technically can't call tools at all",
-              "There's no persistent reasoning trace tracking the plan, so the agent can't diagnose or adjust when a result contradicts its assumption",
-              "They always use more tokens than ReAct agents",
-              "They can only call one tool per task"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without a visible Thought step, there's no working memory of the plan to check new observations against, so the agent can't notice or correct a bad path as easily."
-          },
-          {
-            "id": "8e17682d-a99f-4bda-b30f-6220ce36578e",
-            "prompt": "What's a real cost of adding a Thought before every Action?",
-            "options": [
-              "It removes the model's ability to call tools",
-              "Extra reasoning tokens increase latency and cost at every step",
-              "It requires training a second, separate model",
-              "It prevents the agent from ever finishing a task"
-            ],
-            "correctIndex": 1,
-            "explanation": "Each Thought is more generated tokens, so for simple single-lookup tasks the overhead of reasoning at every step can cost more than it saves."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-09-15T06:45:43Z"
     }
   ]
 }
