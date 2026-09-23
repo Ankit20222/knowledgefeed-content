@@ -1,6 +1,209 @@
 {
   "posts": [
     {
+      "title": "Contextual Retrieval: Fixing RAG's Chunking Blind Spot",
+      "subtitle": "Prepend a few sentences of context to every chunk before indexing it, and retrieval failures drop by up to 67%.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "contextual-retrieval",
+        "embeddings",
+        "bm25",
+        "reranking",
+        "chunking"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "Standard RAG chunking strips away the surrounding text that gives a chunk its meaning, so a sentence like \"revenue grew 3%\" becomes unfindable once you don't know which company or quarter it's about. Contextual Retrieval fixes this by having an LLM prepend a short, chunk-specific explanation before it's embedded and indexed — cutting Anthropic's own top-20 retrieval failure rate from 5.7% to 1.9% once combined with BM25 and reranking.",
+      "id": "d96a6ae9-3059-43f8-9a7e-18e7d69f7ffe",
+      "publishedDate": "2026-09-23T18:51:07Z",
+      "heroImageURL": null,
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A Chunk Out of Context Is a Chunk That Can't Be Found",
+          "body": "RAG pipelines split documents into small chunks so they fit in an embedding model's window — but splitting also strips out the surrounding text that told you what the chunk was even about.",
+          "bullets": [
+            "A chunk reading \"the company's revenue grew by 3% over the previous quarter\" says nothing about which company or which quarter",
+            "Embedding and BM25 both index the chunk in isolation, so a semantically perfect query can still miss it",
+            "Anthropic's fix: make the LLM re-attach that missing context before the chunk is ever indexed"
+          ],
+          "symbol": "doc.on.doc",
+          "table": null,
+          "id": "dcf65344-b3ea-45cd-86f0-d2450f32d332"
+        },
+        {
+          "kind": "problem",
+          "title": "Splitting Documents Destroys the Referents That Make Text Findable",
+          "body": "Chunking is necessary — you can't embed a 50-page filing as one vector — but naive chunking treats every chunk as if it were a standalone document.",
+          "bullets": [
+            "Pronouns, company names, dates, and section headers usually live in a different chunk than the sentence that needs them",
+            "Embedding models and BM25 keyword search both operate purely on the text inside the chunk — they can't see what got cut",
+            "Result: a query for \"ACME Q2 2023 revenue growth\" can fail to retrieve a chunk that answers it perfectly, just because the chunk itself never says \"ACME\" or \"Q2 2023\""
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "5ddfc4b7-114b-4040-bea5-db3be0084b4b"
+        },
+        {
+          "kind": "solution",
+          "title": "Prepend Chunk-Specific Context Before You Index Anything",
+          "body": "Contextual Retrieval runs every chunk through an LLM once, at indexing time, asking it to write a short paragraph situating that chunk within the whole document.",
+          "bullets": [
+            "Contextual Embeddings: the 50-100 token generated context is prepended to the chunk before it's embedded, so the vector reflects what the chunk is actually about",
+            "Contextual BM25: the same contextualized text is also used to build the keyword index, so exact-match search benefits too",
+            "Because the whole source document is fed to the model on every chunk, this only becomes affordable with prompt caching — Anthropic reports $1.02 per million document tokens for 800-token chunks across an 8,000-document corpus",
+            "The context-generation step runs once per chunk at indexing time, not on every query — it doesn't add any latency to retrieval itself"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "32d5ada7-3838-4d10-b29b-9696fbe7fd68"
+        },
+        {
+          "kind": "architecture",
+          "title": "Two Different Moments: Indexing Time vs. Query Time",
+          "body": "The technique only touches the indexing pipeline — the query path stays a normal hybrid-search-plus-rerank pipeline.",
+          "bullets": [
+            "Indexing time (once per chunk): feed the LLM the full document + the chunk → get back a short context blurb → prepend it → embed the result and add it to the BM25 index",
+            "Query time (every request): embed the query, run combined embedding + BM25 retrieval to pull the top ~150 candidates",
+            "Query time, step 2: a reranker scores those 150 candidates against the query and keeps only the top 20",
+            "Only those final 20 contextualized chunks get passed into the model's context window to generate the answer"
+          ],
+          "symbol": "square.stack.3d.up",
+          "table": null,
+          "id": "b685de2c-b53a-4429-806e-6a8eb65be1d3"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: An SEC Filing Chunk Before and After",
+          "body": "Original chunk: \"The company's revenue grew by 3% over the previous quarter.\" On its own, that's useless to retrieve against.",
+          "bullets": [
+            "Contextualized version: \"This chunk is from an SEC filing on ACME corp's performance in Q2 2023; the previous quarter's revenue was $314 million. The company's revenue grew by 3% over the previous quarter.\"",
+            "The added sentence names the company, the filing type, the quarter, and even the prior baseline number — all facts that lived elsewhere in the source document",
+            "Now a query like \"ACME's Q2 2023 revenue growth\" matches both semantically (embedding) and lexically (BM25 on \"ACME\", \"Q2 2023\", \"revenue\")",
+            "Nothing about the underlying chunk changed — only what gets indexed alongside it"
+          ],
+          "symbol": "text.badge.checkmark",
+          "table": null,
+          "id": "4d32107e-fdd5-415a-b245-33777968465d"
+        },
+        {
+          "kind": "comparison",
+          "title": "Each Layer Compounds the Failure-Rate Reduction",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Retrieval setup",
+              "Top-20 failure rate",
+              "Reduction vs. baseline"
+            ],
+            "rows": [
+              [
+                "Baseline (embeddings only)",
+                "5.7%",
+                "—"
+              ],
+              [
+                "+ Contextual Embeddings",
+                "3.7%",
+                "35%"
+              ],
+              [
+                "+ Contextual Embeddings + Contextual BM25",
+                "2.9%",
+                "49%"
+              ],
+              [
+                "+ Reranking on top",
+                "1.9%",
+                "67%"
+              ]
+            ]
+          },
+          "id": "14ed7b36-1f68-4bf9-b5f7-585eda756fbb"
+        },
+        {
+          "kind": "problem",
+          "title": "When the Cost and Complexity Aren't Worth It",
+          "body": "Contextual Retrieval is an indexing-time investment, not a free win — it's the wrong tool for some corpora.",
+          "bullets": [
+            "It's an offline, per-chunk preprocessing cost — every chunk in the corpus needs an LLM call before it's ever queried, so it's cheapest with prompt caching and gets expensive without it",
+            "If your documents are already short enough to fit whole in the model's context window, skip chunked retrieval entirely rather than contextualizing chunks you don't need",
+            "Reranking the retrieved candidates adds a real latency hop on every query — fine for a chat assistant, potentially too slow for a sub-100ms autocomplete-style lookup",
+            "Corpora that are already unambiguous per-chunk (e.g. short, self-contained FAQ entries) see much smaller gains, since there's little missing context to restore"
+          ],
+          "symbol": "gauge.with.dots.needle.67percent",
+          "table": null,
+          "id": "e420e1ff-ba9d-43c8-8b7e-658f91b6164f"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Chunking for RAG throws away the context that made a passage findable in the first place — Contextual Retrieval re-attaches it before indexing, not at query time",
+            "Contextual Embeddings + Contextual BM25 + reranking stack: each layer independently reduces top-20 retrieval failures, from 5.7% down to 1.9% in Anthropic's own benchmark",
+            "Prompt caching is what makes contextualizing every chunk economically viable — without it, feeding the whole document per chunk would be far more expensive",
+            "It's a preprocessing change, not an architecture change: the query-time pipeline (embed → hybrid retrieve → rerank → generate) stays exactly the same"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "0dc79025-e025-4b8b-b583-b2144ff5c551"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What specific problem does Contextual Retrieval address in standard RAG pipelines?",
+            "options": [
+              "Embedding models are too slow for large corpora",
+              "Chunks lose the surrounding context (names, dates, referents) that made them findable once split from the source document",
+              "BM25 keyword search can't be combined with embeddings",
+              "LLMs can't process more than one chunk at a time"
+            ],
+            "correctIndex": 1,
+            "explanation": "Splitting a document into chunks strips out the referents — company names, dates, section context — that lived in nearby text, so a chunk like \"revenue grew 3%\" becomes unmatchable to a query that mentions the company or quarter by name.",
+            "id": "6891b350-db9e-415c-ab58-4f711c5d8325"
+          },
+          {
+            "prompt": "In Anthropic's reported numbers, what happens to the top-20 retrieval failure rate when Contextual Embeddings and Contextual BM25 are combined (before reranking)?",
+            "options": [
+              "It rises from 5.7% to 8%",
+              "It stays flat at 5.7%",
+              "It drops from 5.7% to 2.9%, a 49% reduction",
+              "It drops to 0%"
+            ],
+            "correctIndex": 2,
+            "explanation": "The baseline embeddings-only failure rate of 5.7% drops to 3.7% with Contextual Embeddings alone, and further to 2.9% (a 49% relative reduction) once Contextual BM25 is added on top.",
+            "id": "f4ae79ac-f333-4be4-a337-ffe5c54b013c"
+          },
+          {
+            "prompt": "Why is prompt caching essential to making Contextual Retrieval practical at scale?",
+            "options": [
+              "It replaces the need for an embedding model entirely",
+              "It removes the need for reranking",
+              "Each chunk's context is generated by feeding the LLM the whole source document, so caching that document avoids re-paying for it on every chunk",
+              "It speeds up the query-time retrieval step"
+            ],
+            "correctIndex": 2,
+            "explanation": "Generating context for every chunk requires giving the LLM the full document as reference each time; without caching that document's tokens, contextualizing thousands of chunks per document would be far more expensive — Anthropic cites $1.02 per million document tokens with caching enabled.",
+            "id": "15254935-79e0-46ba-9796-d006cc41d221"
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "5add16c6-464b-4351-8c62-064d4c9668d9",
+          "title": "Introducing Contextual Retrieval",
+          "url": "https://www.anthropic.com/news/contextual-retrieval"
+        }
+      ]
+    },
+    {
       "title": "MiMo-V2.6: Xiaomi Ships a 1T-Parameter Open-Weight Omnimodel",
       "subtitle": "Text, image, video, and audio in one open-weight family — no official launch blog to go with it.",
       "category": "AI News",
@@ -11215,205 +11418,6 @@
         }
       ],
       "publishedDate": "2026-09-16T12:40:46Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "111fe9e1-e0de-4bcb-b771-5dc46043d84a",
-      "title": "Constrained Decoding: Forcing LLMs to Output Valid JSON",
-      "subtitle": "Stop asking nicely in the prompt — make illegal tokens unsampleable.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "constrained-decoding",
-        "structured-output",
-        "json-schema",
-        "grammars",
-        "tool-calling",
-        "inference"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "curlybraces",
-      "summary": "Constrained decoding compiles a JSON Schema or grammar into an automaton and masks illegal tokens before sampling, so an LLM's output is guaranteed to parse and match your schema. It guarantees syntax, never semantics — hallucinated values still need downstream validation.",
-      "slides": [
-        {
-          "id": "5cedee7b-fd13-4e38-8ca2-864c37843d94",
-          "kind": "cover",
-          "title": "Constrained Decoding: Forcing LLMs to Output Valid JSON",
-          "body": "Every agent that calls tools or fills a schema hits the same wall: LLMs sample freely, so they occasionally emit malformed JSON. Constrained decoding fixes this at the token level, not the prompt level.",
-          "bullets": [],
-          "symbol": "curlybraces",
-          "table": null
-        },
-        {
-          "id": "58341003-45f3-4cee-88a8-800499f5f489",
-          "kind": "problem",
-          "title": "Prompting for JSON Only Gets You So Far",
-          "body": "Telling a model 'respond only in JSON' relies on the model choosing to comply — it's a suggestion, not a guarantee.",
-          "bullets": [
-            "Common failures: trailing commas, unescaped quotes, wrong types (a string where a number belongs), stray prose before or after the JSON",
-            "Retrying on a parse failure burns latency and tokens, sometimes repeatedly",
-            "Failure rate climbs as schemas nest deeper or the model runs under time or token pressure"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "3c52c8bc-9594-4fff-a3dd-0fbdecf36821",
-          "kind": "solution",
-          "title": "Mask Out Every Token That Would Break the Grammar",
-          "body": "Constrained decoding compiles your JSON Schema (or any context-free grammar) into an automaton. At each decoding step it computes which tokens are legal given the current parse state, and sets the logits for everything else to -infinity before sampling.",
-          "bullets": [
-            "The model still chooses freely among the tokens the grammar allows — it just can't emit an illegal one",
-            "The automaton is compiled once per schema, then walked incrementally: one state transition per generated token, not a full reparse",
-            "It layers under any decoding strategy — greedy, top-p, beam search — since it only edits the logit distribution before sampling runs"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "2c4a966c-5fd0-40fc-a039-b6465533d7b1",
-          "kind": "architecture",
-          "title": "From Regex to a Full JSON Schema: How the Automaton Is Built",
-          "body": "Libraries like Outlines and XGrammar turn a schema into a pushdown automaton over the tokenizer's actual vocabulary, then precompute which tokens are valid from each state.",
-          "bullets": [
-            "Naive approach: try appending each candidate token and re-validate the whole string — far too slow to run every step",
-            "Fast approach: precompute a token-to-transition table offline, so the per-step cost is a vocabulary-sized bitmask, not a parse",
-            "Nested objects and arrays need a pushdown automaton, not a plain finite-state machine, to track unbounded nesting depth"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "a841580a-af58-43a4-941d-c3bdf4065c97",
-          "kind": "comparison",
-          "title": "Three Ways to Get Structured Output",
-          "body": "The three common approaches trade guarantees for flexibility differently.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Approach",
-              "Guarantees syntax?",
-              "Per-step overhead",
-              "Expressiveness"
-            ],
-            "rows": [
-              [
-                "Prompt only (\"respond in JSON\")",
-                "No — best effort",
-                "None",
-                "Anything you can describe"
-              ],
-              [
-                "JSON-mode (braces balance)",
-                "Braces balance, not your schema",
-                "Low",
-                "Any JSON, not your specific shape"
-              ],
-              [
-                "Grammar-constrained (schema/CFG)",
-                "Yes — always parses and matches schema",
-                "Small per-token mask",
-                "Whatever the grammar can express"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "840ca504-5c84-4327-9d54-67c2fe4aa37f",
-          "kind": "example",
-          "title": "Extracting an Order From a Messy Customer Email",
-          "body": "Schema: { id: string, items: [{ sku: string, qty: integer }], total: number }. Mid-generation, right after \"qty\": 3, the automaton sits in a state that only allows , or } next.",
-          "bullets": [
-            "If the model's top-ranked token were a rogue \" (starting a new key without closing the array), the automaton masks it out entirely",
-            "The model resamples from what's left — , to add another item, or } to close the object — so it can't derail into invalid JSON",
-            "The email's typos and rambling don't matter; only the schema's shape has to hold"
-          ],
-          "symbol": "envelope.fill",
-          "table": null
-        },
-        {
-          "id": "e9293198-40f9-4ac2-b789-179a8dc6c4e1",
-          "kind": "problem",
-          "title": "What Constrained Decoding Doesn't Buy You",
-          "body": "It guarantees the output parses and matches your schema's shape — it says nothing about whether the values inside are correct.",
-          "bullets": [
-            "A model can still hallucinate a confident but wrong total or invent a SKU that doesn't exist — syntax valid, content wrong",
-            "Very large or deeply recursive schemas (unbounded nested unions) can blow up automaton size and slow compilation",
-            "Skip libraries that re-validate token-by-token instead of precomputing the mask — that naive path carries a real latency tax",
-            "Combining it with speculative decoding takes extra care, since draft tokens must also satisfy the same mask"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "7e9cef28-b2c6-4a4f-a66c-2e12542aa807",
-          "kind": "takeaways",
-          "title": "The Core Idea, in One Line",
-          "body": null,
-          "bullets": [
-            "Constrained decoding moves correctness from 'ask nicely in the prompt' to 'make illegal tokens unsampleable'",
-            "It guarantees syntax and schema shape, never semantic truth — still validate values downstream",
-            "Reach for it whenever a program, not a human, reads the model's output: tool calls, API payloads, structured extraction"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "b074c4ed-cd41-4d57-a1a8-c9b2a7c8f5a2",
-            "prompt": "What does constrained (grammar-based) decoding actually guarantee about a model's output?",
-            "options": [
-              "That the output will always be factually correct",
-              "That the output will always parse and match the given grammar or schema",
-              "That the model will run faster than unconstrained decoding",
-              "That the model no longer needs a system prompt"
-            ],
-            "correctIndex": 1,
-            "explanation": "Constrained decoding only restricts which tokens are legal at each step, so it guarantees syntactic validity, not factual correctness. A model can still confidently fill in a wrong number inside a perfectly valid JSON object."
-          },
-          {
-            "id": "be3e16bc-938b-41ef-81a4-d6b24fc963c5",
-            "prompt": "Mechanically, how does constrained decoding stop a model from emitting an invalid token?",
-            "options": [
-              "It fine-tunes the model on valid examples before generation starts",
-              "It re-runs the whole generation from scratch whenever a token turns out invalid",
-              "It masks the logits of any token that would violate the grammar's current state, before sampling",
-              "It asks a second LLM to fix the output after generation finishes"
-            ],
-            "correctIndex": 2,
-            "explanation": "The automaton tracks a parse state per generated token and computes, ahead of sampling, which vocabulary tokens are legal transitions from that state. Illegal tokens get their logits set to -infinity so they can never be sampled — no retry or post-hoc fixup needed."
-          },
-          {
-            "id": "489779e9-b341-4bd8-888f-7fff09df3510",
-            "prompt": "Which of these is a genuine limitation of constrained decoding?",
-            "options": [
-              "It can't be combined with top-p or beam search",
-              "Deeply recursive or very large schemas can blow up automaton size and slow compilation",
-              "It only works with one specific model provider",
-              "It requires retraining the base model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Constrained decoding sits on top of any sampling strategy and needs no retraining — but a pushdown automaton for a large or deeply recursive schema can have many states, making compilation and mask computation slower and more memory-heavy."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "d72ace92-d845-431a-87ad-94e9ee0beef5",
-          "title": "Outlines: structured outputs for LLMs (GitHub)",
-          "url": "https://github.com/dottxt-ai/outlines"
-        },
-        {
-          "id": "ee9fd8ab-6850-4d56-93cb-e31cccccb4fa",
-          "title": "XGrammar: efficient, flexible, portable structured generation (GitHub)",
-          "url": "https://github.com/mlc-ai/xgrammar"
-        }
-      ],
-      "publishedDate": "2026-09-16T06:40:17Z",
       "heroImageURL": null
     }
   ]
