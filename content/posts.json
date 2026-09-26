@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "id": "02bccd80-aa10-4884-a799-4e416902a536",
+      "title": "Reranking: The Second Filter Fast Retrieval Always Needs",
+      "subtitle": "Why the best RAG pipelines never trust their vector index's top result alone.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "reranking",
+        "cross-encoder",
+        "retrieval",
+        "vector-search"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.up.arrow.down.circle.fill",
+      "summary": "Vector search is fast because it precomputes embeddings and never lets the query and document 'meet' until a cheap dot product at search time — but that speed trick is also why its top-k results are often mediocre. Reranking adds a second, slower stage that lets a cross-encoder read the query and each candidate document together, producing a far more accurate relevance score for a small shortlist. The tradeoff is latency: reranking only pays off on candidates your first-stage retriever already surfaced, so it can polish recall but never fix a search that missed the right document entirely.",
+      "slides": [
+        {
+          "id": "e5459e86-8360-4cab-8d6b-070f983916e5",
+          "kind": "cover",
+          "title": "Your Top-10 Vector Search Results Are a Rough Draft",
+          "body": "Approximate nearest-neighbor search is built for speed, not precision — it hands you plausible candidates, not a verdict on which one actually answers the query.",
+          "bullets": [],
+          "symbol": "arrow.up.arrow.down.circle.fill",
+          "table": null
+        },
+        {
+          "id": "bf6c0de1-3144-4c50-b709-cd7ba87226fa",
+          "kind": "problem",
+          "title": "Bi-Encoders Never Let the Query and Document Actually Interact",
+          "body": "A standard embedding retriever (a 'bi-encoder') encodes the query and every document into vectors separately, then compares them with cosine similarity or a dot product.",
+          "bullets": [
+            "That separation is what makes it fast: document vectors are precomputed once and stored in an index, so query time is just one cheap embedding plus a nearest-neighbor lookup.",
+            "But it means the model never reads the query and a candidate document side by side — it can't notice that a document mentions the right entity in the wrong context, or misses the query's actual intent despite high lexical/semantic overlap.",
+            "The result: the top-k list from a bi-encoder is usually in the right neighborhood, but the exact ranking within it is noisy — genuinely relevant documents often sit at rank 6 or 8, not rank 1."
+          ],
+          "symbol": "xmark.circle.fill",
+          "table": null
+        },
+        {
+          "id": "39360d92-f6c9-4965-9397-d92ac1046ebc",
+          "kind": "solution",
+          "title": "A Cross-Encoder Reads Query and Document Together",
+          "body": "A reranker takes the query and one candidate document concatenated as a single input, and outputs one relevance score for that pair.",
+          "bullets": [
+            "Because query and document tokens attend to each other directly inside the transformer, the model can catch fine-grained relevance signals a separate-encoding bi-encoder throws away — negation, entity disambiguation, exact requirement matching.",
+            "This scoring is far more accurate, but it can't be precomputed: every query needs a fresh forward pass per document, which is why it only runs on a short candidate list, never the whole corpus.",
+            "Standard pipeline: bi-encoder retrieves top 50-200 candidates cheaply, cross-encoder reranks that shortlist, and only the reranked top 3-10 go into the prompt or the results page."
+          ],
+          "symbol": "person.2.wave.2.fill",
+          "table": null
+        },
+        {
+          "id": "dfc02e91-13a1-43a4-bcce-253de765d927",
+          "kind": "architecture",
+          "title": "Why Reranking Can't Just Replace the Vector Index",
+          "body": "Cross-encoder cost scales linearly with the number of documents scored, because there's no way to precompute a joint query-document representation ahead of time.",
+          "bullets": [
+            "Scoring 100 candidates means 100 full transformer forward passes at query time — reranking a shortlist that size typically adds tens to a few hundred milliseconds, depending on model size and hardware, on top of the retrieval step.",
+            "Scoring millions of documents this way per query would be computationally impractical for most production latency budgets — which is exactly why bi-encoder retrieval exists as a fast first stage.",
+            "Some systems use 'late interaction' models (e.g. ColBERT) as a middle ground: they precompute per-token embeddings and defer only the final interaction step, trading some accuracy for much lower query-time cost than a full cross-encoder."
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "bf81a668-3947-4405-aeba-4a455745df2d",
+          "kind": "comparison",
+          "title": "Bi-Encoder vs. Cross-Encoder vs. Late Interaction",
+          "body": "Each stage trades query-time cost for accuracy differently — which is why production systems usually combine more than one.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "Query vs. doc interaction",
+              "Query-time cost",
+              "Where it's used"
+            ],
+            "rows": [
+              [
+                "Bi-encoder",
+                "Encoded separately, compared by vector similarity",
+                "One embedding + ANN lookup",
+                "First-stage retrieval over the full corpus"
+              ],
+              [
+                "Cross-encoder reranker",
+                "Encoded jointly, one forward pass per pair",
+                "Linear in shortlist size",
+                "Second-stage reranking of ~50-200 candidates"
+              ],
+              [
+                "Late interaction (e.g. ColBERT-style)",
+                "Per-token vectors precomputed, interaction deferred",
+                "Higher than bi-encoder, lower than cross-encoder",
+                "Middle ground when full reranking is too slow"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7c0b15cf-ae8f-4aa4-a726-f2c46c2253bd",
+          "kind": "example",
+          "title": "Worked Example: \"Return Policy for Opened Electronics\"",
+          "body": "A support-docs search over thousands of help articles.",
+          "bullets": [
+            "Bi-encoder retrieval returns 100 candidates that all mention 'return policy' or 'electronics' — including generic return-policy pages, shipping FAQs, and warranty pages that just happen to share vocabulary.",
+            "The one article that specifically covers opened-electronics returns might rank 9th, because its embedding is pulled slightly off-topic by a long section about packaging requirements.",
+            "The cross-encoder reads (query, article) pairs directly: it can weigh that this article's title and first paragraph are about exactly 'opened electronics returns,' and pushes it to rank 1 — while a generic warranty page that merely co-occurs with the same keywords drops down."
+          ],
+          "symbol": "cart.fill",
+          "table": null
+        },
+        {
+          "id": "09ae7bc3-548e-4518-83e1-4d1682f3cd59",
+          "kind": "problem",
+          "title": "Reranking Can Only Polish What Retrieval Already Found",
+          "body": "This is the tradeoff that trips people up: reranking is a filter over an existing shortlist, not a second search.",
+          "bullets": [
+            "If the bi-encoder's top 100 never included the actually-relevant document, no reranker can recover it — reranking has a hard recall ceiling set by the first-stage candidate set.",
+            "Widening the candidate list (e.g. top 200 instead of top 50) improves that ceiling but adds real latency, since cross-encoder cost is linear in list size.",
+            "For latency-sensitive paths (sub-100ms autocomplete, high-QPS APIs) a full cross-encoder rerank may not fit the budget — that's when late-interaction models or a lighter/distilled reranker are the right compromise.",
+            "A reranker trained on general web data can underperform on narrow domains (legal, medical, internal codebases) unless fine-tuned — don't assume an off-the-shelf reranker is domain-neutral."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "25a67382-5763-456f-9e5a-8bc58f0faec5",
+          "kind": "takeaways",
+          "title": "Retrieve Wide, Then Rerank Narrow",
+          "body": null,
+          "bullets": [
+            "Bi-encoders retrieve cheaply at corpus scale by precomputing document vectors; cross-encoders score accurately but only at query time, one pair at a time.",
+            "The standard pattern is two stages: cast a wide, cheap net with vector search, then have a cross-encoder rerank the shortlist before anything reaches the prompt or the user.",
+            "Reranking can only reorder what retrieval already surfaced — it raises precision on your candidate list, it can't rescue a query that never got the right document into that list."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2a245623-6b82-4ac3-b13e-7b2e3c5355f9",
+            "prompt": "Why can a bi-encoder retrieve over an entire corpus quickly, while a cross-encoder can only score a short candidate list?",
+            "options": [
+              "Bi-encoders are always larger models than cross-encoders",
+              "Bi-encoders precompute document vectors ahead of time and only embed the query at search time; cross-encoders must run a fresh forward pass per query-document pair",
+              "Cross-encoders don't use neural networks at all",
+              "Bi-encoders only work on short documents"
+            ],
+            "correctIndex": 1,
+            "explanation": "The separation in a bi-encoder is exactly what enables precomputing and indexing document vectors once. A cross-encoder needs the query and document together as one input, so nothing about that pair can be precomputed — cost scales with how many pairs you score."
+          },
+          {
+            "id": "bd8af045-7cc4-4e98-94c5-2739d95871dd",
+            "prompt": "A reranker is given a shortlist of 100 candidates from vector search, but the truly best-matching document was never in that shortlist. What happens?",
+            "options": [
+              "The reranker will still find and surface the missing document",
+              "The reranker can only reorder the 100 candidates it received — it cannot recover a document that first-stage retrieval failed to surface",
+              "The system automatically falls back to a full corpus scan",
+              "Reranking becomes unnecessary in this case"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reranking operates only on the candidate set handed to it. Its recall ceiling is set entirely by the first-stage retriever; a missed document stays missed regardless of how good the reranker is."
+          },
+          {
+            "id": "7f2477b6-ecc2-48ce-bd3e-51ad7b2d2136",
+            "prompt": "Which scenario is the weakest fit for adding a full cross-encoder reranking stage?",
+            "options": [
+              "A support-docs search where result quality matters more than shaving off a few hundred milliseconds",
+              "A sub-100ms autocomplete path with very high query volume, where every extra pair-scored candidate adds latency and compute cost",
+              "A RAG pipeline feeding an LLM, where irrelevant retrieved context directly degrades answer quality",
+              "An enterprise search tool where users tolerate a short delay for materially better top results"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cross-encoder cost is linear in the number of candidates scored, at query time, with no precomputation possible. That's a poor fit for very tight latency budgets and high QPS, which is exactly where lighter or late-interaction rerankers are used instead."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "1ff347a4-dd83-4b56-a31b-50e45ae142ac",
+          "title": "sentence-transformers — Cross-Encoder documentation and models",
+          "url": "https://github.com/UKPLab/sentence-transformers"
+        }
+      ],
+      "publishedDate": "2026-09-26T00:45:36Z"
+    },
+    {
       "id": "d620899a-3909-4c62-83ba-259341addd5d",
       "title": "GigaPath-Flash: A Pathology Model, 50x Cheaper",
       "subtitle": "Microsoft distills a 1B-parameter histopathology model to 43M params at 97% of its accuracy.",
@@ -11035,202 +11227,6 @@
           "id": "199bdaca-7db4-4dad-8986-2d7822154c6d",
           "title": "Claude Fable 5.1 — API Pricing & Benchmarks (OpenRouter)",
           "url": "https://openrouter.ai/anthropic/claude-fable-5.1"
-        }
-      ],
-      "publishedDate": "2026-09-19T00:45:12Z"
-    },
-    {
-      "id": "b08b4cad-af86-4054-9fb1-5307be4c2a95",
-      "title": "Test Impact Analysis: Stop Running Every Test",
-      "subtitle": "When agents write most of your code, running the whole suite on every diff stops scaling.",
-      "category": "System Design",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "ci/cd",
-        "test impact analysis",
-        "system design",
-        "agentic coding",
-        "scaling"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "testtube.2",
-      "summary": "Test impact analysis maps code changes to the specific tests they could affect, so CI runs a small relevant slice instead of the full suite every time. Anthropic's own CI volume grew 25x in six months as agentic coding took off, forcing them to rebuild this system as a horizontally scaled service rather than a single patched-up node.",
-      "slides": [
-        {
-          "id": "c54da94c-906c-47e8-b188-38a6066fdb43",
-          "bullets": [
-            "A real 2026 data point: one lab's CI job volume grew 25x in six months"
-          ],
-          "body": "Running every test on every commit is fine until commit volume stops being human-paced.",
-          "symbol": "testtube.2",
-          "table": null,
-          "kind": "cover",
-          "title": "The Full Test Suite Doesn't Scale With Agents"
-        },
-        {
-          "id": "07a7c8fc-4d44-4c67-9a19-df38880b9758",
-          "bullets": [
-            "More authored code means more PRs, more diffs, more CI runs — not a proportional increase, a compounding one",
-            "Anthropic's own CI job volume grew roughly 25x over six months as this took hold",
-            "Running a fixed-cost full suite against 25x more triggers is a budget and latency problem, not just an inconvenience"
-          ],
-          "body": "Anthropic has reported that its engineers now ship roughly 8x as much code per quarter as in 2021–2025, with Claude authoring around 80% of that code and doing much of the review too.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Agentic Coding Multiplies Commits, Not Just Code"
-        },
-        {
-          "id": "7674cb65-6a0d-48f6-ad22-1e544c3c0639",
-          "bullets": [
-            "Build a dependency graph mapping source files/functions to the tests that exercise them (via coverage instrumentation or static import analysis)",
-            "On each diff, look up which nodes in the graph the changed files touch, and collect only the tests reachable from those nodes",
-            "Run that subset instead of the full suite — often a small fraction of total tests for a small diff"
-          ],
-          "body": "Instead of asking 'did anything break?' by running everything, it asks a narrower question: 'which tests could this specific diff possibly affect?'",
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "kind": "concept",
-          "title": "What Test Impact Analysis Actually Does"
-        },
-        {
-          "id": "ba2bc038-154d-41d9-9fc4-10ce48bcb706",
-          "bullets": [
-            "A single centralized node computing the dependency graph becomes the bottleneck once both request volume and graph size grow together",
-            "Horizontal scaling shards the graph and distributes lookups across workers, instead of one service absorbing all of it",
-            "The lesson: a fix that only adds capacity to one node is a stopgap once growth is compounding, not linear"
-          ],
-          "body": "Anthropic has said it patched its test-impact-analysis service three times as load grew before redesigning it — the patches held for roughly 70 days, then 29 days, then less than a day, before the team moved to a horizontally scaled architecture.",
-          "symbol": "server.rack",
-          "table": null,
-          "kind": "architecture",
-          "title": "Why a Patched-Up Service Stopped Working"
-        },
-        {
-          "id": "be5e6aee-20b9-4ca8-b72a-b189fbc48672",
-          "bullets": [
-            "Full-suite approach: run all 50,000 tests regardless of what changed — could take 40+ minutes",
-            "Impact-analysis approach: the dependency graph shows ~200 tests actually import or exercise that file — run just those",
-            "The other 49,800 tests are skipped not because they're unimportant, but because nothing in the diff could have changed their outcome"
-          ],
-          "body": "Picture a monorepo with 50,000 tests. A diff touches one file in a billing module.",
-          "symbol": "chart.bar.fill",
-          "table": null,
-          "kind": "example",
-          "title": "A Worked Example"
-        },
-        {
-          "id": "8b5e913b-ae01-4d9a-9959-5ab493e45818",
-          "bullets": [],
-          "body": null,
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": {
-            "headers": [
-              "Dimension",
-              "Run Everything",
-              "Test Impact Analysis"
-            ],
-            "rows": [
-              [
-                "Feedback latency",
-                "Fixed, grows with suite size",
-                "Scales with diff size, not suite size"
-              ],
-              [
-                "Compute cost",
-                "Constant per commit",
-                "Much lower per commit, on average"
-              ],
-              [
-                "Safety net",
-                "Complete by construction",
-                "Depends entirely on graph accuracy"
-              ],
-              [
-                "Failure mode",
-                "Slow but rarely wrong",
-                "Fast, but can silently miss a real dependency"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Full Suite vs. Test Impact Analysis"
-        },
-        {
-          "id": "74528199-4e37-4ea6-ae0e-966a6eac4a60",
-          "bullets": [
-            "Stale or incomplete graphs cause false negatives: a test that should have run gets skipped, and a real regression slips through",
-            "Highly dynamic or reflective code (runtime dispatch, string-based imports) is hard to map statically — the graph can miss real edges",
-            "Mitigation: run the full suite periodically (e.g., nightly or pre-release) as a backstop, and rebuild the graph on structural changes",
-            "Skip this entirely for small codebases where a full run already finishes in seconds — the added system is pure overhead there"
-          ],
-          "body": "The entire approach is only as trustworthy as the dependency graph behind it.",
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Where It Breaks — and When Not to Use It"
-        },
-        {
-          "id": "478ed838-ccde-4c26-8042-2b9da719d8de",
-          "bullets": [
-            "Test impact analysis trades suite-wide certainty for diff-scoped speed, by running only tests reachable from what changed",
-            "It becomes necessary, not optional, once commit volume grows faster than your infrastructure — which is exactly what agentic coding does",
-            "A centralized implementation will eventually need to become horizontally scaled; that transition is the hard part, not the initial idea",
-            "Always keep a full-suite safety net — the technique fails silently, not loudly, when its graph is wrong"
-          ],
-          "body": null,
-          "symbol": "checkmark.circle.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "What to Actually Remember"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4cab7dd6-626b-4d36-990c-64d0642ef42d",
-            "explanation": "It narrows the question from 'run everything to be safe' to 'run only what this diff could have touched,' using a dependency graph from code to the tests that exercise it.",
-            "prompt": "What question does test impact analysis ask, instead of 'did anything break?'",
-            "options": [
-              "Which tests were slowest last time?",
-              "Which tests could this specific diff possibly affect?",
-              "Which tests have the most historical failures?",
-              "Which tests does the CI budget allow this month?"
-            ],
-            "correctIndex": 1
-          },
-          {
-            "id": "7d471b5f-f393-4b16-be27-ca2b8f3cb9df",
-            "explanation": "Each patch bought less time than the last (about 70 days, then 29, then under a day) because load was compounding, not growing steadily — the fix that actually held was moving to a horizontally scaled architecture.",
-            "prompt": "In Anthropic's reported experience, why did a single patched-up test-impact service stop working?",
-            "options": [
-              "The tests themselves became flaky",
-              "Request volume and graph size grew together, so a centralized node became a compounding bottleneck rather than a linear one",
-              "The company switched programming languages",
-              "Cloud costs were capped by finance"
-            ],
-            "correctIndex": 1
-          },
-          {
-            "id": "f2281ee6-15b0-474a-9808-40df049464bd",
-            "explanation": "The technique is only as good as its dependency graph. If the graph misses a real edge (common with dynamic dispatch or reflection), a test that should run gets skipped — the failure is silent, not a crash, which is why a periodic full-suite backstop matters.",
-            "prompt": "What is the main risk of relying on test impact analysis instead of running the full suite?",
-            "options": [
-              "It's always slower than running everything",
-              "It requires paying for more CI machines",
-              "A stale or incomplete dependency graph can cause a real regression's test to be silently skipped",
-              "It only works with statically typed languages"
-            ],
-            "correctIndex": 2
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "ad255b67-d195-4ec7-bd61-71841848952a",
-          "title": "Agentic coding is straining CI. Here's how we scaled test impact analysis at Anthropic",
-          "url": "https://claude.com/blog/agentic-coding-is-straining-ci-heres-how-we-scaled-test-impact-analysis-at-anthropic"
         }
       ],
       "publishedDate": "2026-09-19T00:45:12Z"
