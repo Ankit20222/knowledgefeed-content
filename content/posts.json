@@ -1,6 +1,562 @@
 {
   "posts": [
     {
+      "title": "Consistent Hashing: Scaling Without a Full Reshuffle",
+      "subtitle": "How a hash ring lets distributed systems add or remove nodes while moving only a fraction of the data.",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "consistent-hashing",
+        "distributed-systems",
+        "sharding",
+        "load-balancing",
+        "system-design"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Naive hash(key) % N sharding remaps almost every key when a cluster resizes. Consistent hashing places servers and keys on the same ring so a resize only moves roughly 1/N of the keys, and virtual nodes fix the uneven-load problem that a plain ring introduces.",
+      "slides": [
+        {
+          "id": "7cf84610-489a-4c3a-8b39-b2e981478964",
+          "kind": "cover",
+          "title": "One Extra Server Shouldn't Break Your Cache",
+          "body": "Consistent hashing is the trick behind how systems like DynamoDB, Cassandra, and memcached clusters add or remove nodes without remapping nearly every key.",
+          "bullets": [
+            "Naive hash-based sharding remaps almost everything when cluster size changes",
+            "Consistent hashing moves only about 1/N of the keys on average",
+            "Powers real systems: DynamoDB, Cassandra, Riak, many CDN and load-balancer designs"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "0967e3da-bde4-45e7-a599-e23178670b14",
+          "kind": "problem",
+          "title": "The Naive Approach: hash(key) % N",
+          "body": "The obvious way to shard data across N servers is server = hash(key) % N. It's simple and spreads load evenly — until N changes.",
+          "bullets": [
+            "Go from 4 servers to 5, and N changes in the modulo for every key",
+            "Almost every key's hash(key) % N result changes too — roughly (N-1)/N of all keys move",
+            "With 4 → 5 servers, that's about 80% of keys relocating for a 25% capacity increase",
+            "Every one of those keys triggers a cache miss or a data migration at the same moment"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "35e550ff-d9e9-4c83-a98d-123b038db6a8",
+          "kind": "solution",
+          "title": "Put Servers and Keys on the Same Ring",
+          "body": "Consistent hashing hashes both the servers and the keys onto the same circular space (e.g., 0 to 2^32-1). A key belongs to the first server found walking clockwise from its position on the ring.",
+          "bullets": [
+            "Server positions are fixed points on the ring; keys are just other points",
+            "Removing a server only affects the keys that were mapped to it — they move to the next server clockwise",
+            "Adding a server only steals keys from its immediate clockwise neighbor — everyone else is untouched",
+            "On average, only about 1/N of keys move per node added or removed, not (N-1)/N"
+          ],
+          "symbol": "circle.grid.3x3.fill"
+        },
+        {
+          "id": "724f7d0c-715b-4d0a-ad62-758bcad3ae3c",
+          "kind": "architecture",
+          "title": "Virtual Nodes Fix the Hot-Spot Problem",
+          "body": "A raw hash ring with one point per server can land unevenly — some servers get a bigger arc of the ring than others just by chance. Real systems place each physical server at many points on the ring instead.",
+          "bullets": [
+            "Cassandra and DynamoDB assign each physical node roughly 100-256 virtual points (vnodes) around the ring",
+            "More vnodes means smoother load distribution, since each server's share is an average over many small arcs instead of one lucky/unlucky one",
+            "Vnodes also speed up rebalancing: a failed node's data spreads thinly across many other nodes, not onto one neighbor",
+            "Tradeoff: more vnodes means more metadata to track and more bookkeeping per lookup"
+          ],
+          "symbol": "gearshape.fill"
+        },
+        {
+          "id": "f58ad2d8-e550-4c1c-b1d1-08c4bb08225a",
+          "kind": "comparison",
+          "title": "Modulo vs. Consistent Hashing vs. Consistent Hashing + Vnodes",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Approach",
+              "Keys moved on resize",
+              "Load balance",
+              "Complexity"
+            ],
+            "rows": [
+              [
+                "hash(key) % N",
+                "~(N-1)/N of all keys",
+                "Even, if hashes are uniform",
+                "Very simple"
+              ],
+              [
+                "Consistent hashing (1 pt/node)",
+                "~1/N of keys",
+                "Can be uneven — some nodes get bigger arcs",
+                "Moderate"
+              ],
+              [
+                "Consistent hashing + vnodes",
+                "~1/N of keys",
+                "Smooth, even at small N",
+                "Highest — more ring metadata"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "9a334fb6-8aae-4f24-98f2-80113960cc55",
+          "kind": "example",
+          "title": "Walking Through a 4-Node Cache Cluster",
+          "body": "Say a memcached cluster has 4 nodes (A, B, C, D) on a hash ring, holding 1 million cached keys total.",
+          "bullets": [
+            "With plain modulo sharding, adding a 5th node E changes N from 4 to 5 for every key's hash(key) % N — roughly 800,000 keys suddenly map to a different node, mostly cache misses at once",
+            "With consistent hashing, node E claims a single arc on the ring, taking only the keys between its new position and its clockwise neighbor — roughly 200,000 keys move, the rest stay exactly where they were",
+            "The other 800,000 keys never move at all, so the cache mostly stays warm through the resize"
+          ],
+          "symbol": "cylinder.split.1x2.fill"
+        },
+        {
+          "id": "4dc69dd2-fd00-4d64-9115-fdfa57bb389f",
+          "kind": "concept",
+          "title": "When Consistent Hashing Is Overkill",
+          "body": "It solves a real problem, but it's not free, and not every system needs it.",
+          "bullets": [
+            "Small, rarely-resized clusters (e.g., a fixed 3-node database) may not justify the extra ring bookkeeping",
+            "Without enough virtual nodes, load can still be surprisingly uneven — a common production bug",
+            "Consistent hashing alone doesn't handle replication or quorum reads/writes — those are separate design decisions layered on top (e.g., a replication factor)",
+            "It optimizes for minimizing data movement, not for perfectly equal load — those two goals can be in tension"
+          ],
+          "symbol": "scalemass.fill"
+        },
+        {
+          "id": "ed0e86cd-e538-4019-8b7e-082d3a8b0222",
+          "kind": "takeaways",
+          "title": "The Core Idea in One Line",
+          "body": "Put servers and keys in the same hash space so that changing the number of servers only reshuffles the keys physically adjacent to the change, not the whole dataset.",
+          "bullets": [
+            "Naive modulo sharding: ~(N-1)/N of keys move on any resize",
+            "Consistent hashing: ~1/N of keys move on any resize",
+            "Virtual nodes fix uneven load distribution at the cost of more ring bookkeeping",
+            "Used in DynamoDB, Cassandra, Riak, and countless load balancers and CDNs"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4dab74ef-924f-4b4c-b916-1664b3187c01",
+            "prompt": "Why does naive hash(key) % N sharding break down when a server is added?",
+            "options": [
+              "Changing N changes the modulo result for nearly every key, forcing almost all keys to move",
+              "It doesn't break down — modulo hashing is optimal",
+              "Because hash functions become slower with more servers",
+              "Because % N only works for a prime number of servers"
+            ],
+            "correctIndex": 0,
+            "explanation": "Since every key's target server is hash(key) % N, changing N recalculates that result for essentially every key, not just the keys that logically belong on the new server."
+          },
+          {
+            "id": "9bf82108-17d7-442f-85b2-8f42b8e9391f",
+            "prompt": "In consistent hashing, what happens when you add one new server to the ring?",
+            "options": [
+              "Only the keys between the new server and its clockwise neighbor move to it",
+              "All keys are rehashed across every server",
+              "Only the keys stored on the two most-loaded servers move",
+              "Nothing moves until the next scheduled rebalance"
+            ],
+            "correctIndex": 0,
+            "explanation": "A new server only claims the arc of the ring between its position and the next server clockwise, so only those keys — roughly 1/N of the total — need to move."
+          },
+          {
+            "id": "ea270fcd-d0a8-44df-820e-9e2f0cde05c1",
+            "prompt": "What problem do virtual nodes (vnodes) solve in a consistent hashing ring?",
+            "options": [
+              "Uneven load distribution caused by a server's single ring position landing in a larger-than-average arc",
+              "Slow hash function performance",
+              "The need for data replication",
+              "Running out of ring positions"
+            ],
+            "correctIndex": 0,
+            "explanation": "With just one point per physical server, random placement on the ring can give some servers much bigger arcs (and thus more load) than others. Assigning each server many virtual points averages this out."
+          }
+        ]
+      },
+      "references": [],
+      "id": "1ac954eb-a138-40bd-b22b-6bbb9b93cc08",
+      "publishedDate": "2026-09-28T18:46:45Z"
+    },
+    {
+      "title": "Game Arena: Grading LLMs on Chess, Poker, and Lies",
+      "subtitle": "Google DeepMind and Kaggle's new benchmark makes models play real games — because static Q&A tests stopped being hard.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "paper",
+      "tags": [
+        "llm-evaluation",
+        "benchmarks",
+        "kaggle",
+        "google-deepmind",
+        "game-theory"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "gamecontroller.fill",
+      "summary": "Kaggle and Google DeepMind published the Game Arena technical report on arXiv (Sept 28, 2026), formalizing a live benchmark platform where LLMs compete head-to-head in Chess, Poker, and Werewolf instead of answering static questions. The pitch: adversarial play scales its own difficulty as models improve, so the benchmark never saturates.",
+      "slides": [
+        {
+          "id": "91dce0e4-8efd-41f2-8f5a-a067418777eb",
+          "kind": "cover",
+          "title": "Why Grade LLMs on a Test When You Can Make Them Play?",
+          "body": "Kaggle and Google DeepMind's Game Arena technical report (arXiv, published September 28, 2026, 62 co-authors) formalizes a platform where models compete head-to-head in real games instead of answering static questions.",
+          "bullets": [
+            "Three pilot environments: Chess, Heads-Up No-Limit Hold'em Poker, and Werewolf",
+            "Each spans a different information setting: perfect, imperfect, and multiplayer/hidden-role",
+            "Built by Kaggle in partnership with Google DeepMind"
+          ],
+          "symbol": "gamecontroller.fill"
+        },
+        {
+          "id": "d5390f0d-27b1-4821-8629-433f002c6a9d",
+          "kind": "problem",
+          "title": "Static Benchmarks Have a Saturation Problem",
+          "body": "Fixed test sets eventually get memorized, leak into training data, or simply get solved — once every frontier model scores 95%+, the benchmark stops separating good models from great ones.",
+          "bullets": [
+            "A multiple-choice benchmark has a hard ceiling: 100% correct, no more signal after that",
+            "Static benchmarks can't measure adaptive skills like negotiation, bluffing, or reading an opponent",
+            "Contamination risk: a test question can leak into training data and inflate scores"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "27c42978-bfb9-4b46-9524-e3e4d2ee5a55",
+          "kind": "solution",
+          "title": "Make the Opponent the Difficulty Curve",
+          "body": "In Game Arena, models play live matches against other models. As the field improves, the bar automatically rises — there's no fixed ceiling to saturate, because the 'test' is however good the current best opponent is.",
+          "bullets": [
+            "Chess: perfect information — tests calculation and long-horizon planning",
+            "Poker (Heads-Up No-Limit Hold'em): imperfect information — tests risk management and probability under uncertainty",
+            "Werewolf: multiplayer, hidden roles — tests natural-language social reasoning, persuasion, and deception detection",
+            "Rankings behave like a live, Elo-style leaderboard, not a one-shot score"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "49b05d48-bee8-4ecb-a90a-534561b9da1e",
+          "kind": "comparison",
+          "title": "Three Games, Three Different Skills",
+          "body": null,
+          "bullets": [
+            "On Kaggle's live leaderboards, no single model dominates every game — different chess leaderboard variants have been topped by different frontier models, underscoring these are distinct capabilities, not one general score"
+          ],
+          "table": {
+            "headers": [
+              "Game",
+              "Information type",
+              "What it measures"
+            ],
+            "rows": [
+              [
+                "Chess",
+                "Perfect information",
+                "Calculation, long-horizon planning"
+              ],
+              [
+                "Poker (Heads-Up NLHE)",
+                "Imperfect information",
+                "Risk management under uncertainty"
+              ],
+              [
+                "Werewolf",
+                "Multiplayer, hidden roles",
+                "Persuasion, deception detection, theory of mind"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "77c7693d-0f01-42de-be56-9fba4ac81795",
+          "kind": "example",
+          "title": "What a Werewolf Match Actually Looks Like",
+          "body": "In Werewolf, some agents are secretly 'werewolves' hidden among 'villagers.' Each round, agents discuss in natural language and vote to eliminate a suspect; werewolves must lie convincingly while villagers try to catch inconsistencies.",
+          "bullets": [
+            "A villager-agent must track who accused whom, and whether accusations hold up logically over multiple rounds",
+            "A werewolf-agent must actively construct a false but coherent narrative under questioning",
+            "There's no single 'correct' output — success depends on reading and manipulating other agents in real time"
+          ],
+          "symbol": "person.3.fill"
+        },
+        {
+          "id": "3f698773-0b82-4e8f-9bdd-cb12fba28fe4",
+          "kind": "concept",
+          "title": "Where This Kind of Benchmark Gets Messy",
+          "body": "Live, adversarial evaluation trades the clean reproducibility of static tests for something noisier but harder to game.",
+          "bullets": [
+            "Results are noisier: a single match has high variance, so rankings need many games to stabilize",
+            "Expensive to run at scale — every match burns real inference tokens against a live opponent",
+            "Performance depends heavily on the surrounding agent harness (prompting, tool access), not just the base model",
+            "A model can overfit to a specific opponent pool's style without that reflecting true general skill"
+          ],
+          "symbol": "scalemass.fill"
+        },
+        {
+          "id": "550c70d8-9490-4460-98ce-28ff15473884",
+          "kind": "takeaways",
+          "title": "Why It Matters for How We'll Grade Models Next",
+          "body": "As frontier models keep saturating static leaderboards, expect more evaluation to move toward live, adversarial, or interactive settings, where difficulty scales automatically with the field.",
+          "bullets": [
+            "Game Arena is explicitly designed to keep expanding with new game environments over time",
+            "It targets skills static QA benchmarks structurally can't measure: negotiation, deception, adaptive strategy",
+            "Open leaderboards on Kaggle let anyone compare frontier models under identical, live conditions",
+            "Worth watching as a template other benchmark efforts are likely to copy"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c582f611-c189-42be-b704-4c06f7869f92",
+            "prompt": "What core limitation of static benchmarks is Game Arena designed to address?",
+            "options": [
+              "That they saturate — once models max out the score, there's no more signal",
+              "That they take too long to grade",
+              "That they only work for coding tasks",
+              "That they require human graders"
+            ],
+            "correctIndex": 0,
+            "explanation": "Once every top model scores near 100% on a fixed test, the benchmark can no longer distinguish better models from worse ones. Live play against other models raises the bar automatically as the field improves."
+          },
+          {
+            "id": "16f99b26-334a-432a-a91e-846253325318",
+            "prompt": "Which of the three pilot games specifically tests deception and persuasion in natural language?",
+            "options": [
+              "Werewolf",
+              "Chess",
+              "Poker",
+              "None of them"
+            ],
+            "correctIndex": 0,
+            "explanation": "Werewolf is a hidden-role, multiplayer social deduction game — agents must lie convincingly or catch others lying, which chess and poker don't require."
+          },
+          {
+            "id": "fff75625-192a-4fb4-9cf4-7cdb90e245ac",
+            "prompt": "Why does Poker (Heads-Up No-Limit Hold'em) test a different skill than Chess in Game Arena?",
+            "options": [
+              "Chess is perfect information; Poker is imperfect information, requiring risk management under uncertainty",
+              "Poker has no rules, so it tests creativity",
+              "Chess only tests memory, not planning",
+              "Poker is solved, so it tests nothing"
+            ],
+            "correctIndex": 0,
+            "explanation": "Chess gives both players full information about the board, rewarding calculation and planning. Poker hides opponents' cards, so success requires estimating probabilities and managing risk under uncertainty — a distinct capability."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "1dde9abb-37bb-411a-879a-0807631bac7d",
+          "title": "Game Arena: Strategic LLM Evaluation in Competitive Environments",
+          "url": "https://arxiv.org/abs/2609.31473"
+        },
+        {
+          "id": "d379ac31-ddd6-49b1-b69b-e6b9d6f261ed",
+          "title": "Game Arena — Kaggle",
+          "url": "https://www.kaggle.com/game-arena"
+        }
+      ],
+      "id": "0edaca2a-0d45-4abe-afab-9a9252fe3204",
+      "publishedDate": "2026-09-28T18:46:45Z"
+    },
+    {
+      "title": "Claude Sonnet 5.5: Same Price, Real Agentic Gains",
+      "subtitle": "It runs 30%+ faster, costs up to 30% less per task, and nearly matches Opus 5.5 on real-world work.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "claude",
+        "anthropic",
+        "sonnet-5-5",
+        "agentic-coding",
+        "llm-pricing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "Anthropic shipped Claude Sonnet 5.5 on September 28, 2026: same price per token as Sonnet 5, 30%+ faster, and a huge jump on agentic coding (Terminal-Bench 4.0: 10.3% to 70.6%). It's positioned as the fast, cheap default for scoped work, not a new frontier reasoning model.",
+      "slides": [
+        {
+          "id": "8fceabd2-8fb2-45a0-b392-f1554d9a3c96",
+          "kind": "cover",
+          "title": "Sonnet Just Got a Lot Faster — and Sharper",
+          "body": "On September 28, 2026, Anthropic shipped Claude Sonnet 5.5: the second model in the 5.5 family, built to run 30%+ faster and cost up to 30% less per task than Sonnet 5 — at the exact same per-token price.",
+          "bullets": [
+            "30%+ faster token generation than Sonnet 5",
+            "Up to 30% less cost per completed task",
+            "Same list price: $2/M input, $10/M output tokens",
+            "First Sonnet with Opus-grade cybersecurity safeguards"
+          ],
+          "symbol": "bolt.fill"
+        },
+        {
+          "id": "5ac6c5c0-503a-4fad-89fe-cd1b7346d914",
+          "kind": "problem",
+          "title": "Sonnet 5 Was Fast but Fell Behind on Long Agentic Work",
+          "body": "Opus 5.5 (Sept 22) had already shown a mid-cycle refresh could cut cost without a big capability jump. Teams running long agentic coding sessions still needed a cheaper tier that didn't burn tokens re-reading context or fail multi-step tool chains.",
+          "bullets": [
+            "Sonnet 5 scored just 10.3% on Terminal-Bench 4.0, a multi-step agentic coding eval",
+            "Longer tasks meant more tokens, more tool calls, more chances to drift off-task",
+            "Devs reached for Opus for sustained autonomy — at Opus prices"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "adc43bba-2f3a-4e12-b12e-fa8aeea85c3c",
+          "kind": "solution",
+          "title": "The Fix Wasn't a Bigger Model — It Was a Sharper One",
+          "body": "Sonnet 5.5 needs far fewer tokens to reach the same answer, which is where both the speed and cost gains come from — the per-token price didn't move.",
+          "bullets": [
+            "Terminal-Bench 4.0 (agentic coding): 10.3% → 70.6%",
+            "FrontierCode 1.1 (Main, Max effort): 42.4% → 46.2%",
+            "CursorBench 4.0: 55.5%",
+            "GDPval-AA v2.1 (real-world knowledge work): 1,449 → 1,844",
+            "At High effort on FrontierCode: 10 points higher than Sonnet 5, at about 1/15th the cost per task"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis"
+        },
+        {
+          "id": "33856762-3f1b-4dbf-ba22-4fee4e5a04db",
+          "kind": "comparison",
+          "title": "Where 5.5 Lands Next to Sonnet 5",
+          "body": null,
+          "bullets": [
+            "Also scores just two points below Opus 5.5 on GDPval-AA's percentage-based version — for a fraction of the price",
+            "On OSWorld 2.1 (computer use), it hits 80.1% partial completion"
+          ],
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Sonnet 5",
+              "Sonnet 5.5"
+            ],
+            "rows": [
+              [
+                "Terminal-Bench 4.0 (agentic coding)",
+                "10.3%",
+                "70.6%"
+              ],
+              [
+                "FrontierCode 1.1 (Main, Max effort)",
+                "42.4%",
+                "46.2%"
+              ],
+              [
+                "GDPval-AA v2.1 (real-world work)",
+                "1,449",
+                "1,844"
+              ],
+              [
+                "CursorBench 4.0",
+                "—",
+                "55.5%"
+              ],
+              [
+                "Output speed vs. Sonnet 5",
+                "baseline",
+                "30%+ faster"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "69007063-f055-4146-a8b5-ae3492095f69",
+          "kind": "example",
+          "title": "One Team's Numbers: 4x Fewer Tokens on the Same Finance Tasks",
+          "body": "On Anthropic's internal suite of 2,441 finance tasks (Q&A, extraction, analysis, forecasting), Sonnet 5.5 was more accurate than Sonnet 5, 2.4x faster, and used about 121k tokens per answer versus Sonnet 5's 497k.",
+          "bullets": [
+            "121k tokens/answer vs. 497k for Sonnet 5 — roughly 4x fewer tokens for a better answer",
+            "Coding evals: a third fewer tool calls, roughly half the shell commands to finish a task",
+            "App-building: matched Opus 5's output quality in 3.6 iterations vs. Opus 5's 7.7"
+          ],
+          "symbol": "clock.fill"
+        },
+        {
+          "id": "c884c193-99b0-4a7a-abdb-8c7e86c7d856",
+          "kind": "concept",
+          "title": "Not a New Frontier Model — a Sharper Mid-Tier One",
+          "body": "Anthropic is explicit this isn't meant to leapfrog Opus 5.5 on the hardest reasoning problems. It's the fast, cheap default for scoped work — and its expanded safeguards only cover a narrow set of high-risk requests.",
+          "bullets": [
+            "Best fit: bug fixes, docs/slides/spreadsheets, everyday coding agents, high-volume automation",
+            "Still about 2 points behind Opus 5.5 on GDPval-AA's broad real-world-work eval",
+            "Cybersecurity safeguards now match Opus 5.5's, but only for a narrow set of high-risk requests",
+            "For the single strongest reasoning, Opus 5.5 remains Anthropic's pick"
+          ],
+          "symbol": "scalemass.fill"
+        },
+        {
+          "id": "931ac401-d9da-492a-b7de-adf8b73b842e",
+          "kind": "takeaways",
+          "title": "Why This Release Matters",
+          "body": "Sonnet 5.5 shows efficiency gains at frontier labs are increasingly about doing more with the same tokens, not just bigger models. Same price, 30%+ faster, and a big agentic-coding jump make it the new default for cost-sensitive agent workloads.",
+          "bullets": [
+            "Live now on Anthropic's API, AWS, Google Cloud, and Azure as claude-sonnet-5-5",
+            "Pricing unchanged: $2/M input, $10/M output, $0.20/M cache reads",
+            "Biggest single jump: Terminal-Bench 4.0 agentic coding, 10.3% → 70.6%",
+            "If you're on Sonnet 5 today, this is a straightforward upgrade at no extra cost"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2b81e1fa-b136-4a34-a616-c41bbc680266",
+            "prompt": "What is Claude Sonnet 5.5's price compared to Sonnet 5?",
+            "options": [
+              "Same price per token, but faster and needs fewer tokens per task",
+              "20% more expensive due to better accuracy",
+              "A flat monthly subscription replacing per-token pricing",
+              "Free for the first million tokens"
+            ],
+            "correctIndex": 0,
+            "explanation": "Anthropic kept list pricing identical ($2/M input, $10/M output) — the up-to-30% cost savings per task comes from Sonnet 5.5 needing far fewer tokens to finish the same work, not a price cut."
+          },
+          {
+            "id": "73d0e34c-c153-4d8e-bfdc-e7cb9f1d3ddd",
+            "prompt": "On which benchmark did Sonnet 5.5 show its largest jump over Sonnet 5?",
+            "options": [
+              "Terminal-Bench 4.0 (agentic coding): 10.3% → 70.6%",
+              "FrontierCode 1.1: 42.4% → 46.2%",
+              "CursorBench 4.0: no prior score to compare",
+              "OSWorld 2.1: 80.1% → 81%"
+            ],
+            "correctIndex": 0,
+            "explanation": "Terminal-Bench 4.0 saw by far the biggest gain, roughly 7x higher than Sonnet 5 — the clearest signal Sonnet 5.5 was tuned for sustained, multi-step tool use."
+          },
+          {
+            "id": "8ea795eb-5134-4e0c-bbd8-1f82c804c33f",
+            "prompt": "According to Anthropic, how should teams think about choosing Sonnet 5.5 vs. Opus 5.5?",
+            "options": [
+              "Sonnet 5.5 for fast, well-scoped everyday work; Opus 5.5 when you need the strongest reasoning",
+              "Opus 5.5 is being deprecated in favor of Sonnet 5.5",
+              "They are interchangeable on every benchmark",
+              "Sonnet 5.5 should only be used for image generation"
+            ],
+            "correctIndex": 0,
+            "explanation": "Sonnet 5.5 closes much of the gap on real-world work (about 2 points behind Opus 5.5 on GDPval-AA) but Anthropic still positions Opus 5.5 as the top pick for the hardest reasoning tasks."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "b2b0451d-4494-4161-b9c4-5c72d00714ed",
+          "title": "Introducing Claude Sonnet 5.5",
+          "url": "https://www.anthropic.com/claude-sonnet-5-5"
+        }
+      ],
+      "id": "93936219-be90-44bc-814a-3dde10c8406d",
+      "publishedDate": "2026-09-28T18:46:45Z"
+    },
+    {
       "title": "RoPE: Encoding Position by Rotating Vectors",
       "subtitle": "How rotary embeddings give transformers a sense of relative distance for free.",
       "category": "LLMs",
@@ -10630,605 +11186,6 @@
       ],
       "id": "f805223a-23a5-44e0-913d-cde754eef966",
       "publishedDate": "2026-09-23T00:52:08Z"
-    },
-    {
-      "title": "DPO: Skipping the Reward Model Entirely",
-      "subtitle": "The math trick that turns 'your language model is secretly a reward model' into a training recipe.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "dpo",
-        "llm-alignment",
-        "rlhf",
-        "fine-tuning",
-        "preference-learning"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "scalemass.fill",
-      "summary": "Direct Preference Optimization (DPO) reframes RLHF's reward-model-plus-PPO pipeline as a single classification loss over preference pairs. By exploiting a closed-form relationship between the optimal policy and its reward under a KL constraint, DPO trains directly on 'chosen vs. rejected' response pairs — no reward model, no RL rollouts, no PPO instability — while matching or beating PPO-based RLHF on tasks like summarization and dialogue.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "What If You Never Trained a Reward Model?",
-          "body": "Standard RLHF trains a separate reward model on human preference data, then runs reinforcement learning (typically PPO) to optimize a policy against it. DPO's core claim: you can skip the reward model and the RL loop entirely and get the same result from a simple loss function.",
-          "bullets": [
-            "Introduced in 'Direct Preference Optimization: Your Language Model is Secretly a Reward Model' (NeurIPS 2023)",
-            "Trains directly on pairs of (chosen, rejected) responses to the same prompt — the same kind of data RLHF's reward model would have used"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null,
-          "id": "178a95f4-4318-4a97-b460-443fb1b1ce81"
-        },
-        {
-          "kind": "problem",
-          "title": "RLHF's Pipeline Is Powerful but Fragile",
-          "body": "Classic RLHF has three stages, each adding cost and instability.",
-          "bullets": [
-            "Stage 1 — supervised fine-tuning (SFT) on demonstration data",
-            "Stage 2 — train a separate reward model to score how much a human would prefer one response over another",
-            "Stage 3 — run PPO to maximize that reward, while a KL penalty keeps the policy from drifting too far from the SFT model (and from 'reward hacking' the reward model)",
-            "Each stage adds engineering surface: PPO needs online sampling, a value function, and careful hyperparameter tuning to avoid collapse"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "bc182f73-9178-47b5-ae87-2454a454b968"
-        },
-        {
-          "kind": "solution",
-          "title": "The Reparameterization That Makes This Work",
-          "body": "PPO's constrained reward-maximization problem (maximize reward, subject to a KL penalty against a reference policy) has a known closed-form optimal solution.",
-          "bullets": [
-            "That closed form lets you express the reward function purely in terms of the policy itself and the reference policy — you never need to fit a separate reward model at all",
-            "Substituting that expression into the standard preference-modeling objective (Bradley-Terry: probability that humans prefer response A over B) turns training into a direct classification problem on the policy's own log-probabilities"
-          ],
-          "symbol": "function",
-          "table": null,
-          "id": "c99bbcd2-3307-43d2-a95f-2d5ffad960e1"
-        },
-        {
-          "kind": "solution",
-          "title": "The Loss, in Plain Terms",
-          "body": "DPO's loss is a binary cross-entropy over how much more likely the policy makes the chosen response versus the rejected one, relative to a frozen reference model.",
-          "bullets": [
-            "For each (prompt, chosen, rejected) triple, compute the log-probability ratio of chosen vs. rejected under the current policy, and the same ratio under the frozen reference model",
-            "The loss pushes the policy's ratio up relative to the reference's ratio — increasing preference for the chosen response without ever sampling new rollouts",
-            "A single hyperparameter, beta, controls how far the policy is allowed to move from the reference model — playing the same role PPO's KL penalty coefficient plays, but inside a supervised-style loss"
-          ],
-          "symbol": "chart.xyaxis.line",
-          "table": null,
-          "id": "bb7ccbf6-cda6-4a5e-979e-c33bec99ef35"
-        },
-        {
-          "kind": "comparison",
-          "title": "DPO vs. PPO-Based RLHF",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "",
-              "PPO-based RLHF",
-              "DPO"
-            ],
-            "rows": [
-              [
-                "Reward model",
-                "Trained separately, then frozen",
-                "Not needed — implicit in the policy"
-              ],
-              [
-                "Sampling during training",
-                "Online rollouts from the policy each step",
-                "Offline — trains on a fixed preference dataset"
-              ],
-              [
-                "Stability",
-                "Sensitive to PPO hyperparameters, value function",
-                "Simple binary cross-entropy, generally more stable"
-              ],
-              [
-                "Adaptability",
-                "Can explore beyond the fixed dataset via rollouts",
-                "Bounded by whatever the preference dataset covers"
-              ]
-            ]
-          },
-          "id": "25b06490-26ff-4290-b767-514be6d77a7e"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: Aligning a Support Chatbot",
-          "body": "Say you have 50,000 prompts, each with two candidate responses and a human label for which one is better.",
-          "bullets": [
-            "RLHF path: train a reward model on those 50,000 pairs, then run PPO for many more steps, generating fresh rollouts from the live policy and scoring them with the reward model each time",
-            "DPO path: directly fine-tune the SFT model on the same 50,000 pairs with the DPO loss — one training pass, no reward model checkpoint to maintain, no rollout infrastructure",
-            "The original DPO paper reported it matching or exceeding PPO-based RLHF on controlled sentiment generation, summarization, and single-turn dialogue tasks, while being substantially simpler to tune"
-          ],
-          "symbol": "bubble.left.and.bubble.right.fill",
-          "table": null,
-          "id": "25a75670-a79d-40ac-969a-ec4b6b2dfed4"
-        },
-        {
-          "kind": "problem",
-          "title": "Where DPO Bites You",
-          "body": "Simplicity doesn't remove every failure mode — it trades some for others.",
-          "bullets": [
-            "DPO is entirely offline: it can only learn from the preference pairs it's given, and can't explore new responses the way PPO's online rollouts can",
-            "It's sensitive to the choice of reference model and to beta — too small a beta lets the policy drift far from the reference; too large and it barely moves",
-            "It inherits any bias baked into the preference data — a common failure is length bias, where the policy learns 'longer responses are preferred' if the labeled data skews that way, rather than learning genuine quality",
-            "It doesn't fully eliminate reward-hacking-like behavior — it shifts where that risk lives, which is why variants like IPO, KTO, and ORPO exist to address specific known DPO failure modes"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "e805c059-2cf5-4b03-9106-f425f2dd39bd"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "DPO replaces RLHF's reward-model-plus-PPO pipeline with a single binary cross-entropy loss over (chosen, rejected) response pairs",
-            "It works because the KL-constrained reward-maximization problem PPO solves has a closed-form solution, letting the reward be reparameterized in terms of the policy itself",
-            "It's simpler and more stable to train than PPO-based RLHF, but purely offline — it can't explore beyond its fixed preference dataset the way online RL can",
-            "It's sensitive to preference-data quality and the beta hyperparameter, and inherits data biases (like length bias) directly — later variants (IPO, KTO, ORPO) exist to patch specific gaps"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "cbc22e32-f070-4cee-9f99-9de2bf6e7dd7"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the key mathematical insight that lets DPO skip training a separate reward model?",
-            "options": [
-              "Reward models are unnecessary because human preferences are random",
-              "The KL-constrained reward-maximization problem PPO solves has a closed-form optimal solution, letting the reward be expressed directly in terms of the policy and a reference policy",
-              "DPO uses a bigger reference model instead of a reward model",
-              "DPO removes the KL constraint entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO's derivation shows the reward function can be reparameterized purely in terms of the policy itself (relative to a reference policy), eliminating the need to ever fit a separate reward model.",
-            "id": "5bd7abda-c229-4570-91dd-47d0db777898"
-          },
-          {
-            "prompt": "Why is DPO training described as 'offline' compared to PPO-based RLHF?",
-            "options": [
-              "It requires no internet connection",
-              "It trains on a fixed preference dataset without generating new rollouts from the live policy during training, unlike PPO's online sampling",
-              "It only runs on CPUs",
-              "It skips the SFT stage entirely"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO computes its loss directly from a fixed set of (chosen, rejected) pairs — it never samples new rollouts from the policy during training the way PPO does, which is also why it can't explore beyond what's in that dataset.",
-            "id": "91c4b46a-c846-4fb2-bcac-075b85cc8973"
-          },
-          {
-            "prompt": "What is a known failure mode of DPO mentioned as a reason variants like IPO and KTO exist?",
-            "options": [
-              "DPO cannot run on GPUs",
-              "DPO can inherit biases from the preference data, such as learning that longer responses are preferred regardless of actual quality",
-              "DPO requires more compute than PPO",
-              "DPO cannot be applied to chat models"
-            ],
-            "correctIndex": 1,
-            "explanation": "DPO directly optimizes against whatever the preference-pair data implies, so if that data skews toward preferring longer responses, DPO will learn that spurious pattern rather than genuine quality — a known issue later variants target.",
-            "id": "4119737e-6579-464c-87f3-ccb08a7bc048"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (arXiv:2305.18290)",
-          "url": "https://arxiv.org/abs/2305.18290",
-          "id": "7dab4d80-16d8-4218-b3c8-92cbbb81278f"
-        }
-      ],
-      "id": "f62e89c3-b014-448a-a4cd-563cb777b384",
-      "publishedDate": "2026-09-23T00:52:08Z"
-    },
-    {
-      "title": "Google Open-Sources AX: A Kubernetes for AI Agents",
-      "subtitle": "Agents aren't stateless microservices — they hold state for hours and need sandboxes. AX is built around that difference.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "ai-agents",
-        "kubernetes",
-        "orchestration",
-        "open-source",
-        "agent-infrastructure"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "terminal.fill",
-      "summary": "Google open-sourced AX (Agent Executor), an Apache-2.0 declarative orchestrator purpose-built to run autonomous AI agent workloads instead of stateless microservices. It borrows Kubernetes' kubectl-shaped interface but adds agent-native primitives — Task, Workspace, Gateway, Model — plus sub-second suspend/resume for long-lived, stateful agent sessions. It's pre-stable and its 'billions of agents' framing has drawn skepticism, but it's a serious signal of where agent infrastructure is headed.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "An Agent Isn't a Microservice, So Why Run It Like One?",
-          "body": "Kubernetes was built to schedule stateless, short-lived containers. An AI agent working a coding task can run for hours, accumulate state, pause mid-task waiting on a tool call, and needs to be resumed exactly where it left off.",
-          "bullets": [
-            "Google open-sourced AX (Agent Executor) — an Apache-2.0 licensed, declarative orchestrator built specifically for autonomous agent workloads",
-            "It's deliberately kubectl-shaped (apply, get, watch, delete) but adds agent-specific verbs on top, like suspend, resume, and ssh"
-          ],
-          "symbol": "terminal.fill",
-          "table": null,
-          "id": "7058e2d8-12e8-4ba7-a1d7-8affca9e78af"
-        },
-        {
-          "kind": "problem",
-          "title": "Kubernetes Pods Assume Work Is Stateless and Disposable",
-          "body": "A Kubernetes Pod running a batch job or web request can be killed and rescheduled with little cost — it's stateless, or its state lives elsewhere. An agent mid-task is not.",
-          "bullets": [
-            "Evicting a Pod mid-work loses everything it was holding in memory — for a long-running agent, that means losing hours of accumulated context and progress",
-            "Kubernetes has no native concept of 'pause this unit of work and resume it later from the exact same point'",
-            "Running untrusted, LLM-generated code (an agent calling shell commands or writing files) needs stronger default isolation than a typical microservice pod gets"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "822f6389-0062-49d2-b7f1-126f66180914"
-        },
-        {
-          "kind": "solution",
-          "title": "Four Primitives Purpose-Built for Agent Workloads",
-          "body": "AX runs on top of a runtime called Agent Substrate and organizes everything around four core resources instead of Kubernetes' Pods and Deployments.",
-          "bullets": [
-            "Task — the unit of work: untrusted agent code running in an isolated sandbox with CPU/memory limits, checkpointable mid-execution",
-            "Workspace — pre-wires a Git repo, MCP servers, and skill packages ahead of time so a Task starts warm instead of cold-cloning and reconnecting every run",
-            "Gateway — restricts a Task's outbound network traffic to an explicit host allowlist, so a compromised or misbehaving agent can't reach arbitrary endpoints",
-            "Model — configures which LLM the agent calls and injects API credentials from Kubernetes secrets, rather than baking keys into agent code"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "id": "4619cd9e-5214-40c1-9105-bdc46f9fdf3e"
-        },
-        {
-          "kind": "architecture",
-          "title": "Sub-Second Suspend and Resume, Not Just Restart",
-          "body": "The headline capability is treating agents as long-lived stateful actors rather than jobs that either run to completion or die.",
-          "bullets": [
-            "`ax suspend` checkpoints a running Task's state; `ax resume` picks it back up — designed for agents that block on a slow tool call or external approval step",
-            "`ax ssh` gives an operator interactive shell access into a running agent's sandbox for live debugging, something you can't cleanly do with a Kubernetes Pod running unattended code",
-            "The control plane talks over gRPC to an Agent Substrate API, deploys into an `ax-system` namespace, and uses Redis to track task state and `ko` to build the container images"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "id": "bce91b01-c146-4f34-9181-bcf83b322f7f"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A Fleet of Repo-Fixing Agents",
-          "body": "Say a platform team wants to run thousands of agents that each check out a repo, use an MCP server for test tooling, and call an LLM to propose a fix.",
-          "bullets": [
-            "A Workspace pre-wires the Git checkout and MCP server connection once, so each new Task starts already connected instead of re-cloning and re-authenticating",
-            "A Gateway on that Workspace allowlists only github.com and the model provider's API host — the agent physically cannot exfiltrate data anywhere else, even if the LLM is tricked into trying",
-            "When an agent's fix needs a slow CI run to validate, the operator suspends the Task instead of holding a reserved slot idle, then resumes it the moment CI reports back — capacity is freed for other agents in the meantime"
-          ],
-          "symbol": "number",
-          "table": null,
-          "id": "14087f82-f875-4865-ab23-927e175aa93c"
-        },
-        {
-          "kind": "comparison",
-          "title": "Kubernetes Pods vs. AX Tasks",
-          "table": {
-            "headers": [
-              "",
-              "Kubernetes (Pods/Jobs)",
-              "AX (Tasks)"
-            ],
-            "rows": [
-              [
-                "Assumed unit of work",
-                "stateless microservice or finite batch job",
-                "long-lived, stateful agent session"
-              ],
-              [
-                "Suspend / resume",
-                "not native — eviction discards in-memory state",
-                "sub-second checkpoint/resume via `ax suspend` / `ax resume`"
-              ],
-              [
-                "Network isolation",
-                "NetworkPolicy, cluster-wide and coarse-grained",
-                "per-Task Gateway with an explicit outbound host allowlist"
-              ],
-              [
-                "Live debugging",
-                "`kubectl exec` into a container",
-                "`ax ssh` into a running agent sandbox"
-              ]
-            ]
-          },
-          "symbol": "tablecells",
-          "bullets": [],
-          "id": "220d4823-a8c0-43dd-86cd-c860b28cd7e1"
-        },
-        {
-          "kind": "problem",
-          "title": "It's Pre-Stable, and the Scale Claims Are Contested",
-          "body": "AX is a serious piece of infrastructure, but it isn't a drop-in answer for every team, and its own maintainers are candid about where it stands.",
-          "bullets": [
-            "Google's own README warns it is 'still actively refining core concepts, protocols, and specifications' and expects breaking changes before a stable release — not something to bet production on yet",
-            "It inherits full Kubernetes operational overhead (a control plane, Redis, `ko`-built images) — heavy for a team running a handful of agents rather than thousands",
-            "AX's marketing around running 'billions of autonomous agent workloads' drew public skepticism (including from Hacker News commenters) as an aspirational target rather than a demonstrated production number",
-            "A misconfigured Gateway allowlist silently defeats the isolation model — the security benefit only holds if operators actually scope it tightly per Workspace"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "54781491-0156-43b1-9eda-32f2f6a8f8d2"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "AX reframes agent orchestration around stateful, long-lived Tasks instead of Kubernetes' stateless Pods — with native suspend/resume and per-Task network isolation via Gateway",
-            "Its four primitives — Task, Workspace, Gateway, Model — map directly onto real agent needs: sandboxed execution, warm starts, network containment, and credential management",
-            "It's open-source (Apache 2.0) but pre-stable — expect breaking changes, and treat the 'billions of agents' framing as a design target, not a proven benchmark",
-            "It's a strong signal that agent infrastructure is diverging from generic container orchestration, not just reusing it"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "1265fb1f-304a-452d-9410-fbf040f40f8f"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the core problem AX's Task/suspend/resume model is designed to solve?",
-            "options": [
-              "Making container images build faster",
-              "Letting a long-running, stateful agent pause mid-work and resume later without losing its accumulated state",
-              "Replacing Redis with a faster in-memory store",
-              "Reducing the number of Kubernetes nodes needed per cluster"
-            ],
-            "correctIndex": 1,
-            "explanation": "Kubernetes Pods are built for stateless, disposable work — evicting one loses everything it held. AX treats an agent as a stateful actor, so `ax suspend`/`ax resume` checkpoint and restore that state instead of discarding it.",
-            "id": "3906b3f0-c9ee-481f-894c-8ae2844c4df1"
-          },
-          {
-            "prompt": "Which AX primitive is responsible for restricting an agent's outbound network access?",
-            "options": [
-              "Task",
-              "Workspace",
-              "Gateway",
-              "Model"
-            ],
-            "correctIndex": 2,
-            "explanation": "Gateway defines an explicit allowlist of hosts a Task can reach outbound. Task is the sandboxed unit of work, Workspace pre-wires repos/MCP servers, and Model configures which LLM and credentials the agent uses.",
-            "id": "581aae38-e36b-44f6-982f-ccf3c1c30bb0"
-          },
-          {
-            "prompt": "Why does the article treat AX's claim of orchestrating 'billions of autonomous agent workloads' with some caution?",
-            "options": [
-              "Because AX has no public repository",
-              "Because AX only supports a single agent per cluster",
-              "Because the project itself says it's still pre-stable with expected breaking changes, and outside commentators pushed back on the scale claim as aspirational rather than demonstrated",
-              "Because Kubernetes cannot run more than a thousand pods"
-            ],
-            "correctIndex": 2,
-            "explanation": "AX's own README describes it as still refining core concepts ahead of a stable release, and public reaction (e.g. on Hacker News) questioned whether the billions-scale framing reflects real production use yet.",
-            "id": "69fb8fde-0895-4a54-aa2a-b0c97e0d953e"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "google/ax: Google's open agentic orchestrator (GitHub)",
-          "url": "https://github.com/google/ax",
-          "id": "66e5a0ab-ad91-46f1-8ad2-3fcf056be1fd"
-        }
-      ],
-      "id": "c95607c4-44de-419b-8a82-2b172cf48c63",
-      "publishedDate": "2026-09-22T18:55:00Z"
-    },
-    {
-      "title": "Mixture of Experts: Bigger Models Without Bigger Compute",
-      "subtitle": "Route each token to a handful of specialists instead of the whole network — that's how trillion-parameter-class models stay affordable to run.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mixture-of-experts",
-        "moe",
-        "sparse-models",
-        "routing",
-        "llm-architecture"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.grid.2x2.fill",
-      "summary": "Mixture of Experts (MoE) replaces a transformer's single feed-forward block with many parallel 'expert' feed-forward networks plus a learned router that sends each token to only a few of them. Total parameter count can grow into the hundreds of billions while the compute spent per token stays close to that of a much smaller dense model — the core trick behind Mixtral, DeepSeek-V3, and other large open models.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A Dense Transformer Touches Every Parameter, Every Token",
-          "body": "In a standard ('dense') transformer, every single token passes through every weight in every layer. Double the parameters and you roughly double the compute needed per token too — scaling one forces you to scale the other.",
-          "bullets": [
-            "That coupling is why dense frontier models get expensive to serve: more knowledge capacity always means more FLOPs per token, with no way to decouple the two",
-            "Mixture of Experts (MoE) breaks that coupling by making most of the network's parameters optional per token"
-          ],
-          "symbol": "square.grid.2x2.fill",
-          "table": null,
-          "id": "1deaf9a0-3256-41c3-b11c-a6e199614f23"
-        },
-        {
-          "kind": "problem",
-          "title": "More Capacity Has Always Meant More Compute — Until Now",
-          "body": "If you want a model to know more, the dense-scaling playbook is simple but expensive: add parameters, pay for them on every forward pass, forever.",
-          "bullets": [
-            "A 175B-parameter dense model activates all 175B parameters for every token it processes, whether that token needed all that capacity or not",
-            "Serving cost and latency scale with active compute, not with how much the model 'knows' — so capacity and cost are locked together",
-            "Most of a large network's knowledge is only relevant to a subset of inputs (a token about French grammar doesn't need the weights specialized for Python syntax) — dense models pay for all of it anyway"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "c60850ce-b3a7-4c2b-886b-2030227452a7"
-        },
-        {
-          "kind": "solution",
-          "title": "Replace One Big FFN With Many Small Ones Plus a Router",
-          "body": "MoE swaps the transformer's feed-forward block for N parallel 'expert' feed-forward networks and adds a small learned router in front of them.",
-          "bullets": [
-            "For each token, the router computes a score for every expert (usually a softmax over a small linear layer) and picks the top-k highest-scoring experts — commonly top-1 or top-2",
-            "Only those k experts actually run their weights on that token; the rest sit idle for that token, contributing zero compute",
-            "The token's output is a weighted combination of the selected experts' outputs, weighted by the router's scores — so the routing decision itself is differentiable and learnable"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "8fe15799-576f-456e-9594-d4c13d720692"
-        },
-        {
-          "kind": "concept",
-          "title": "The Router's Hidden Danger: Expert Collapse",
-          "body": "A router trained with no extra pressure will happily send almost every token to the same one or two 'favorite' experts, because early in training those experts get slightly more gradient signal and improve fastest — a rich-get-richer spiral.",
-          "bullets": [
-            "Left unchecked, this collapses an N-expert model into an effectively 1-or-2-expert model, wasting most of the added parameters",
-            "The standard fix is a load-balancing auxiliary loss added during training that penalizes uneven routing and pushes tokens toward underused experts",
-            "DeepSeek-V3 instead uses an auxiliary-loss-free strategy: a learned per-expert bias term is nudged up or down after each batch based on how overloaded or underused that expert was, avoiding the accuracy cost that balancing losses can impose"
-          ],
-          "symbol": "scale.3d",
-          "table": null,
-          "id": "3d1bf627-2f5b-4d41-bd1d-4f5b1f213ead"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: One Token Through an 8-Expert Layer",
-          "body": "Take a layer with 8 experts and top-2 routing, processing the token 'integral' in a math-heavy sentence.",
-          "bullets": [
-            "The router scores all 8 experts against this token's hidden state and picks the top 2 — say Expert 3 (math/symbolic patterns) and Expert 7 (general academic prose)",
-            "Only Experts 3 and 7 run their feed-forward weights on this token; Experts 1, 2, 4, 5, 6, and 8 do zero work for it",
-            "The token's final representation is (router weight for Expert 3) × Expert 3's output + (router weight for Expert 7) × Expert 7's output — a learned blend, not a hard switch",
-            "Compute cost for this token: roughly 2/8 of what running all 8 experts densely would cost, even though the model still carries all 8 experts' parameters in memory"
-          ],
-          "symbol": "number",
-          "table": null,
-          "id": "a807eae8-89be-447c-ac51-65b6e4e3123e"
-        },
-        {
-          "kind": "comparison",
-          "title": "Dense vs. MoE, by the Numbers",
-          "table": {
-            "headers": [
-              "",
-              "Dense (e.g. Llama-3.1 70B)",
-              "MoE (Mixtral 8x7B)",
-              "MoE (DeepSeek-V3)"
-            ],
-            "rows": [
-              [
-                "Total parameters",
-                "70B",
-                "46.7B",
-                "671B"
-              ],
-              [
-                "Active parameters per token",
-                "70B (all of them)",
-                "~12.9B",
-                "~37B"
-              ],
-              [
-                "Experts per MoE layer",
-                "n/a",
-                "8, top-2 routing",
-                "256 routed + shared experts, top-8"
-              ],
-              [
-                "Memory to serve",
-                "scales with total params",
-                "must still hold all 46.7B in memory",
-                "must still hold all 671B in memory"
-              ]
-            ]
-          },
-          "symbol": "tablecells",
-          "bullets": [],
-          "id": "4dcb24f1-0b10-4636-849b-325d92dbcba7"
-        },
-        {
-          "kind": "problem",
-          "title": "The Catch: Compute Shrinks, Memory Doesn't",
-          "body": "MoE is not a free lunch — it trades one bottleneck for a different one, and it isn't the right fit everywhere.",
-          "bullets": [
-            "Every expert must be loaded into GPU memory regardless of routing, because you don't know in advance which tokens will need which expert — so VRAM requirements track total parameters, not active parameters",
-            "Serving an MoE model efficiently across multiple GPUs requires expert parallelism, which means shipping tokens between GPUs mid-layer (all-to-all communication) — a real network bottleneck that dense models never have to pay",
-            "Fine-tuning is trickier: a small fine-tuning dataset can easily starve rarely-used experts of gradient signal, leaving them undertrained relative to popular ones",
-            "For small models or latency-insensitive batch workloads where memory isn't the constraint, the added routing complexity and infrastructure cost may not pay for itself over a simple dense model"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "c64091bf-1452-4556-8f1d-632a39211a11"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "MoE decouples total parameter count from per-token compute by routing each token through only a handful of expert feed-forward networks instead of the whole network",
-            "A learned router picks the top-k experts per token; without a load-balancing mechanism, training collapses onto a few favorite experts",
-            "Real models bear this out: Mixtral 8x7B activates ~13B of its 47B parameters per token, and DeepSeek-V3 activates ~37B of 671B",
-            "The tradeoff is memory, not compute — every expert must stay resident in GPU memory, and multi-GPU serving pays a real cross-GPU communication cost for routing tokens to the right expert"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "fe382599-7179-461b-b170-7f7cafad93c8"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "In an MoE layer with 8 experts and top-2 routing, how many experts does a single token actually run through?",
-            "options": [
-              "1",
-              "2",
-              "4",
-              "All 8"
-            ],
-            "correctIndex": 1,
-            "explanation": "Top-2 routing means the router selects the 2 highest-scoring experts for each token; the token's output is a weighted blend of just those two experts' results.",
-            "id": "37a037fa-8832-42ec-9c22-3e609c418f78"
-          },
-          {
-            "prompt": "Why does an MoE model still need as much GPU memory as its total parameter count, even though it only activates a fraction of those parameters per token?",
-            "options": [
-              "Because the router itself is extremely large",
-              "Because which experts a token needs isn't known in advance, so every expert must stay loaded in memory to be available for routing",
-              "Because MoE models don't support quantization",
-              "Because GPUs cannot unload weights between forward passes"
-            ],
-            "correctIndex": 1,
-            "explanation": "Routing is data-dependent and decided per token at inference time, so there's no way to predict which experts to keep resident and which to evict — all of them must be available, which is why MoE saves compute but not memory.",
-            "id": "217cf9ed-3c97-4d82-ac82-2d9f1bc40d3a"
-          },
-          {
-            "prompt": "What problem does a load-balancing auxiliary loss (or DeepSeek-V3's bias-adjustment alternative) address during MoE training?",
-            "options": [
-              "GPU memory fragmentation",
-              "Slow tokenization speed",
-              "The router collapsing onto a small subset of 'favorite' experts and leaving the rest undertrained",
-              "Numerical overflow in attention scores"
-            ],
-            "correctIndex": 2,
-            "explanation": "Without balancing pressure, experts that get slightly more traffic early in training keep improving faster and attract even more traffic — a feedback loop that wastes most of the model's added expert capacity.",
-            "id": "175e9bf5-1a8f-4502-bdeb-f117583a73f3"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Mixtral of Experts (Mistral AI)",
-          "url": "https://arxiv.org/abs/2401.04088",
-          "id": "c25ab654-24c4-415a-9603-96accc3d1937"
-        },
-        {
-          "title": "DeepSeek-V3 Technical Report",
-          "url": "https://arxiv.org/abs/2412.19437",
-          "id": "521b3a56-29e9-46ad-b002-74829a5f2b53"
-        }
-      ],
-      "id": "4b24771a-3272-4bb4-9831-70d0a25b2625",
-      "publishedDate": "2026-09-22T18:55:00Z"
     }
   ]
 }
