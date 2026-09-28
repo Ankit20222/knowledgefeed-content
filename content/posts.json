@@ -1,6 +1,392 @@
 {
   "posts": [
     {
+      "title": "RoPE: Encoding Position by Rotating Vectors",
+      "subtitle": "How rotary embeddings give transformers a sense of relative distance for free.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "positional-encoding",
+        "transformers",
+        "llm-architecture",
+        "attention"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "rotate.3d",
+      "summary": "Self-attention has no built-in sense of word order, so every transformer needs a positional encoding scheme. RoPE rotates each query/key vector by an angle proportional to its position, which makes attention scores depend only on relative distance — with zero extra parameters. It's why LLaMA, Mistral, Qwen, and DeepSeek all use it by default.",
+      "slides": [
+        {
+          "id": "76225baa-ffb8-4b7b-89e4-f874966909ac",
+          "kind": "cover",
+          "title": "Transformers Don't Know Word Order — Unless You Tell Them",
+          "body": "Self-attention computes a weighted sum over all tokens at once; shuffle the input tokens and, without positional information, the output shuffles identically. Something has to inject position.",
+          "bullets": [
+            "Self-attention is permutation-invariant by construction",
+            "RoPE (Rotary Position Embedding) is the dominant fix in modern open LLMs",
+            "Used by default in LLaMA, Mistral, Qwen, and DeepSeek"
+          ],
+          "symbol": "rotate.3d"
+        },
+        {
+          "id": "dd7f63ca-7cec-4c6e-bde0-9d4e2af9a3e5",
+          "kind": "problem",
+          "title": "The Older Fixes Didn't Generalize Well",
+          "bullets": [
+            "Original Transformer: fixed sinusoidal vectors added to input embeddings — absolute position, no relative structure",
+            "BERT / GPT-2: a learned absolute position embedding table — capped at max training length, can't extrapolate",
+            "T5: a learned relative position bias added directly to attention scores — extra parameters, awkward to extend"
+          ],
+          "symbol": "xmark.circle"
+        },
+        {
+          "id": "83b33946-55af-49fa-8f3b-abe8135fa531",
+          "kind": "concept",
+          "title": "Rotate the Query and Key Instead",
+          "body": "RoPE (Su et al., RoFormer, 2021) splits each attention head's dimensions into pairs and rotates every pair by an angle that grows with token position.",
+          "bullets": [
+            "For position m, pair i rotates by angle θᵢ·m, where θᵢ = base^(-2i/d) shrinks for later pairs",
+            "The rotation is applied to Q and K right before the dot product — never to V",
+            "No learned position table: it's a fixed, deterministic transform"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "fa675758-e11e-4a6d-a850-b3807cabfcd1",
+          "kind": "architecture",
+          "title": "Why the Dot Product Only Sees Relative Distance",
+          "body": "Rotating two vectors by angles θm and θn and then taking their dot product is mathematically identical to rotating just one of them by θ(m−n) — a basic property of 2D rotation matrices.",
+          "bullets": [
+            "So attention(q at position m, k at position n) depends only on (m − n), never on m or n alone",
+            "This relative-position property falls straight out of trigonometry — no training required to get it",
+            "It holds independently in every attention head and every layer"
+          ],
+          "symbol": "function"
+        },
+        {
+          "id": "3152ffd4-0e7d-45ad-89a5-d1dc8560a2b7",
+          "kind": "comparison",
+          "title": "Positional Encoding Schemes, Side by Side",
+          "table": {
+            "headers": [
+              "Scheme",
+              "Learned?",
+              "Relative?",
+              "Extrapolates?",
+              "Used by"
+            ],
+            "rows": [
+              [
+                "Sinusoidal (absolute)",
+                "No",
+                "No",
+                "Poor",
+                "Original Transformer"
+              ],
+              [
+                "Learned absolute",
+                "Yes",
+                "No",
+                "No — hard cap",
+                "BERT, GPT-2"
+              ],
+              [
+                "T5 relative bias",
+                "Yes",
+                "Yes",
+                "Limited",
+                "T5"
+              ],
+              [
+                "ALiBi",
+                "No",
+                "Yes",
+                "Good",
+                "BLOOM, MPT"
+              ],
+              [
+                "RoPE",
+                "No",
+                "Yes",
+                "Good, with scaling",
+                "LLaMA, Mistral, Qwen, DeepSeek"
+              ]
+            ]
+          },
+          "symbol": "tablecells",
+          "bullets": []
+        },
+        {
+          "id": "a0a65ca4-4d7b-4706-b8cd-ea882dead730",
+          "kind": "example",
+          "title": "Extending Context Without Retraining From Scratch",
+          "body": "LLaMA-2 pretrained at a 4K context with base=10000. To reach 32K+ tokens, teams don't redesign RoPE — they scale it: Position Interpolation compresses positions to fit the trained range, NTK-aware scaling raises the rotation base so low frequencies stretch further before wrapping, and YaRN blends interpolation and extrapolation per frequency. Llama 3 shipped natively with rope_theta=500000 for exactly this reason.",
+          "symbol": "arrow.up.left.and.arrow.down.right",
+          "bullets": []
+        },
+        {
+          "id": "1b3326b0-5aff-45be-9b13-975ed5ef9cbc",
+          "kind": "problem",
+          "title": "Where RoPE Still Breaks",
+          "bullets": [
+            "Naive use past the trained context length degrades sharply — high-frequency pairs complete extra full rotations and start aliasing",
+            "Scaling tricks (YaRN, NTK-aware base) usually still need a short fine-tune to fully recover quality — not entirely free",
+            "The rotation base is a real hyperparameter: too small hurts long-context behavior, too large can blunt short-context precision",
+            "RoPE fixes position encoding, not 'lost-in-the-middle' attention decay — that's a separate long-context problem"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "a593014f-04e1-49b4-aad5-f846071ff0e9",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "RoPE rotates Q/K vector pairs by a position-dependent angle instead of adding a position vector",
+            "Rotation math guarantees attention scores depend only on relative distance — zero extra parameters",
+            "It's the default in LLaMA, Mistral, Qwen, and DeepSeek because it's cheap and extends reasonably well",
+            "Extending context length is a scaling problem (base value, interpolation, YaRN) — not a RoPE redesign"
+          ]
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "86dedfe7-e917-4636-bff9-24e4d48190fc",
+            "prompt": "Why does rotating Q and K by position-dependent angles make attention scores depend on relative position?",
+            "options": [
+              "Because the model learns to ignore absolute position during training",
+              "Because rotating two vectors and taking their dot product depends only on the angle difference between them — a property of rotation matrices",
+              "Because RoPE removes positional information entirely",
+              "Because Q and K are normalized before the rotation is applied"
+            ],
+            "correctIndex": 1,
+            "explanation": "It's a geometric fact, not a learned one: rotate vector A by θm and vector B by θn, and their dot product is the same as rotating A by θ(m−n) with B unrotated — so the score only ever reflects m−n."
+          },
+          {
+            "id": "24a62452-adfb-4013-8fb1-a57f8cbcdb26",
+            "prompt": "Which technique lets a RoPE-based model handle sequences longer than it was trained on?",
+            "options": [
+              "Increasing the vocabulary size",
+              "Adding more attention heads",
+              "NTK-aware base scaling or YaRN-style frequency interpolation",
+              "Removing the KV cache"
+            ],
+            "correctIndex": 2,
+            "explanation": "NTK-aware scaling raises RoPE's rotation base so low frequencies stretch across a longer range before wrapping, and YaRN blends interpolation and extrapolation per frequency — both let a model handle longer sequences, usually with a short fine-tune."
+          },
+          {
+            "id": "64704fef-a239-4cef-9083-8732bb7ceb6a",
+            "prompt": "How many extra learned parameters does RoPE add to a transformer layer?",
+            "options": [
+              "One embedding vector per position",
+              "A full position embedding table, same as BERT",
+              "Zero — it's a fixed, deterministic rotation applied at attention time",
+              "One scalar per attention head"
+            ],
+            "correctIndex": 2,
+            "explanation": "Unlike learned absolute or relative position embeddings, RoPE's rotation angles are computed from a fixed formula (θᵢ = base^(-2i/d)) — nothing about it is learned or stored as a parameter."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "424592f6-3db1-45c1-a6c8-c738530dad3a",
+          "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding (Su et al., 2021)",
+          "url": "https://arxiv.org/abs/2104.09864"
+        }
+      ],
+      "id": "176c825c-e74f-4b9e-855a-e74e55ceb23f",
+      "publishedDate": "2026-09-28T12:45:59Z"
+    },
+    {
+      "title": "Grok 4.7: xAI's Coding Push Falls Short of the Frontier",
+      "subtitle": "A bigger base model and a new safety stack, but the coding crown stays with Claude and GPT-6.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "xai",
+        "grok",
+        "llm-release",
+        "benchmarks",
+        "ai-safety"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "xAI shipped Grok 4.7 on September 21, 2026: a larger base model with a longer reinforcement-learning run, a new safety stack, and unchanged pricing. It gains meaningfully on agentic knowledge work but still trails GPT-6 Astra and Claude Fable 5.1 badly on autonomous coding benchmarks.",
+      "slides": [
+        {
+          "id": "49335a3a-e7f3-4939-8ec6-fa9826decd65",
+          "kind": "cover",
+          "title": "xAI Ships Grok 4.7",
+          "body": "Released September 21, 2026 — xAI's most capable model yet, built on a larger base model with a longer reinforcement-learning run weighted toward tasks that take hours, not seconds.",
+          "bullets": [
+            "500K token context, text + image input, text output",
+            "Four reasoning levels: low, medium, high (default), xhigh",
+            "Same price as Grok 4.6: $2/M input, $6/M output tokens"
+          ],
+          "symbol": "bolt.fill"
+        },
+        {
+          "id": "97c77fbb-8bbc-408f-b73b-88fc6e249c9d",
+          "kind": "solution",
+          "title": "What Actually Changed Under the Hood",
+          "body": "xAI says the gains come from scale and training recipe, not a new architecture: a larger base model than 4.6, plus a longer RL run on a harder task mix skewed toward multi-hour problems.",
+          "bullets": [
+            "Bigger base model than Grok 4.6",
+            "Longer reinforcement-learning run on harder, longer-horizon tasks",
+            "A 'Fast' variant trades 2x price for 2x output speed — Cursor and Grok Build only, not the public API"
+          ],
+          "symbol": "cpu.fill"
+        },
+        {
+          "id": "2201cf90-488b-4a66-b800-dc558d106eae",
+          "kind": "concept",
+          "title": "The Real Headline Is the Safety Stack",
+          "body": "xAI calls Grok 4.7 its strongest model yet on refusals and jailbreak resistance, built on an entirely new safeguard stack.",
+          "bullets": [
+            "On HackerBench v0.3, it blocks 96.7% of risky dual-use security prompts",
+            "It does so while rarely blocking legitimate security research work",
+            "Model card flags it as unfit for autonomous high-stakes decisions (medicine, law, finance) without human oversight"
+          ],
+          "symbol": "lock.shield.fill"
+        },
+        {
+          "id": "877f2645-2046-41f5-ab8b-b82f44236ee2",
+          "kind": "comparison",
+          "title": "The Benchmarks Tell a Split Story",
+          "body": "Grok 4.7 gains solidly over its predecessor on general and agentic-knowledge benchmarks, but the agentic-coding gap to the frontier barely moved.",
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Grok 4.6",
+              "Grok 4.7",
+              "Frontier leader"
+            ],
+            "rows": [
+              [
+                "AA Intelligence Index",
+                "44",
+                "46",
+                "—"
+              ],
+              [
+                "AA Coding Agent Index",
+                "47",
+                "56",
+                "—"
+              ],
+              [
+                "Terminal-Bench 4.0 (agentic coding)",
+                "—",
+                "26%",
+                "GPT-6 Astra 60%, Claude Fable 5.1 55%"
+              ],
+              [
+                "AA-Briefcase (agentic knowledge, Elo)",
+                "1546",
+                "1657",
+                "Just behind Claude Opus 5 / Fable 5.1"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.fill",
+          "bullets": []
+        },
+        {
+          "id": "7d8316f8-7bca-4c61-9617-e39f983dac76",
+          "kind": "problem",
+          "title": "Same Price, Same Blind Spot",
+          "body": "The marketing frames Grok 4.7 as a coding model, but Terminal-Bench 4.0 puts its agentic coding score at roughly half of GPT-6 Astra's and Claude Fable 5.1's.",
+          "bullets": [
+            "26% vs. 55-60% on autonomous agentic coding — a gap that didn't close with this release",
+            "Pricing doubles above 200K tokens of context: $2/$6 becomes $4/$12 per million tokens",
+            "The cheaper Fast variant isn't available through the public API at all"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "4907f28d-d8b5-471e-bba2-fa617aede262",
+          "kind": "example",
+          "title": "Where a Team Would Actually Route It",
+          "body": "A startup triaging long internal research memos and multi-step knowledge work routes that traffic to Grok 4.7 in Cursor: at $2/$6 per million tokens its AA-Briefcase score (1657 Elo) sits close to the frontier. For an autonomous multi-file refactor, they keep using Claude Fable 5.1 or GPT-6 Astra — the Terminal-Bench gap is too large to risk on unattended coding runs.",
+          "symbol": "arrow.triangle.branch",
+          "bullets": []
+        },
+        {
+          "id": "b3b179f6-7db5-45a1-9922-8f9ec3c9f630",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Grok 4.7 (Sept 21, 2026): bigger base model + longer RL run, not a new architecture",
+            "Real win: agentic knowledge work and price — AA-Briefcase Elo now near-frontier",
+            "Real gap: autonomous coding — Terminal-Bench 4.0 score is roughly half the leaders'",
+            "The safety stack (HackerBench v0.3, 96.7% block rate) is arguably the bigger story than the intelligence gains"
+          ]
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ccc6ddf0-ac53-4a4a-83e0-df7da5461e97",
+            "prompt": "On which benchmark did Grok 4.7 show the widest gap versus the frontier?",
+            "options": [
+              "AA Intelligence Index",
+              "Terminal-Bench 4.0 agentic coding (26% vs. 55-60% for GPT-6 Astra / Claude Fable 5.1)",
+              "AA-Briefcase agentic knowledge work",
+              "HackerBench v0.3 safety evaluation"
+            ],
+            "correctIndex": 1,
+            "explanation": "Despite being marketed around coding, Grok 4.7 scored 26% on Terminal-Bench 4.0's agentic coding test versus 60% for GPT-6 Astra and 55% for Claude Fable 5.1 — its biggest weak spot relative to competitors."
+          },
+          {
+            "id": "50a0c69c-f631-4ad7-affb-a504481864ed",
+            "prompt": "What happens to Grok 4.7's API pricing above 200K tokens of context?",
+            "options": [
+              "It stays the same",
+              "It doubles: $2/$6 per million tokens becomes $4/$12",
+              "It becomes free for cached tokens only",
+              "Only output tokens get more expensive"
+            ],
+            "correctIndex": 1,
+            "explanation": "Standard pricing is $2 input / $6 output per million tokens under 200K context; both prices double past that threshold, an easy cost trap for long-document workloads."
+          },
+          {
+            "id": "1730ba4f-ab31-4f12-8bac-79ff1d2a9ac6",
+            "prompt": "How is the cheaper 'Fast' variant of Grok 4.7 accessed?",
+            "options": [
+              "Through the public Grok API at half price",
+              "Only through Cursor and Grok Build, at 2x the price for 2x the output speed",
+              "It replaces the standard model everywhere by default",
+              "Only for enterprise customers with a signed contract"
+            ],
+            "correctIndex": 1,
+            "explanation": "The Fast variant is served inside Cursor and Grok Build for teams that want faster token throughput, but it isn't exposed on the public API and costs twice as much as the standard model."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "af83c669-77fb-4681-9be3-6260a3928e3c",
+          "title": "Introducing Grok 4.7 — xAI",
+          "url": "https://x.ai/news/grok-4-7"
+        },
+        {
+          "id": "46f8b49b-868f-4b23-a2b7-b457ea9730df",
+          "title": "Grok 4.7 Model Card (xAI, Sept 21, 2026)",
+          "url": "https://media.x.ai/v1/website/4p7card-5eccc980.pdf"
+        },
+        {
+          "id": "3013adf5-9732-4600-9ff9-8338e066f6f9",
+          "title": "Benchmarking Grok 4.7 — Artificial Analysis",
+          "url": "https://artificialanalysis.ai/articles/benchmarking-grok-4-7"
+        }
+      ],
+      "id": "05d96e61-c52f-44d9-b1d0-44ae696e29a9",
+      "publishedDate": "2026-09-28T12:45:59Z"
+    },
+    {
       "title": "FreeToken: A 753B Model on One Gaming GPU",
       "subtitle": "Bandwidth-adaptive execution splits MoE inference between CPU and GPU so frontier models fit on a desktop",
       "category": "AI Innovations",
@@ -10843,385 +11229,6 @@
       ],
       "id": "4b24771a-3272-4bb4-9831-70d0a25b2625",
       "publishedDate": "2026-09-22T18:55:00Z"
-    },
-    {
-      "title": "Continuous Batching: Stop Waiting for the Slowest Sequence",
-      "subtitle": "Static batches idle a GPU until the longest request finishes. Iteration-level scheduling never lets it sit still.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "continuous-batching",
-        "llm-serving",
-        "inference-optimization",
-        "vllm",
-        "throughput",
-        "scheduling"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "tray.full.fill",
-      "summary": "Continuous batching (a.k.a. iteration-level or in-flight scheduling) reforms the GPU batch after every decoding step instead of after every sequence in a batch finishes. Finished requests exit and new ones enter mid-batch, so the GPU never idles waiting for the one slow sequence to catch up. It's the scheduling half of the throughput story behind vLLM, TGI, and TensorRT-LLM — distinct from, and complementary to, memory tricks like PagedAttention.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Autoregressive Generation Wastes GPU Cycles by Default",
-          "body": "LLMs generate one token per step, and different requests in the same batch almost never finish at the same step — one prompt needs 20 tokens, another needs 800. Naive batching handles that mismatch badly.",
-          "bullets": [
-            "A serving system that groups requests into fixed batches processes the whole batch in lockstep, tied to whichever request takes longest",
-            "This is a scheduling problem, separate from memory management (PagedAttention) — the two are usually deployed together but solve different bottlenecks"
-          ],
-          "symbol": "tray.full.fill",
-          "table": null,
-          "id": "e409b92c-8840-4e90-9461-28e462564344"
-        },
-        {
-          "kind": "problem",
-          "title": "Static Batching Blocks on the Slowest Request",
-          "body": "Request-level (static) batching forms a batch, runs it to completion, and only then forms the next one. Every short request in that batch pays for the longest one.",
-          "bullets": [
-            "A request that finishes generating at step 20 either sits idle (occupying a batch slot with padding) or gets dropped, wasting the compute already spent on it, until the whole batch completes",
-            "Throughput is capped by the slowest member of each batch, not by the GPU's actual capacity",
-            "New requests can't join an in-flight batch — they queue behind it even if there's spare capacity mid-batch (head-of-line blocking)"
-          ],
-          "symbol": "hourglass",
-          "table": null,
-          "id": "8632a565-7e0a-494b-8a33-192a8621ad6d"
-        },
-        {
-          "kind": "solution",
-          "title": "Reschedule the Batch Every Single Step",
-          "body": "Continuous batching (the idea popularized by the Orca serving system and adopted by vLLM, TGI, and TensorRT-LLM) treats each decoding iteration — not each full request — as the scheduling unit.",
-          "bullets": [
-            "After every forward pass, the scheduler checks which sequences just emitted an end-of-sequence token and evicts them immediately, freeing their batch slot",
-            "Freed slots are filled right away from the waiting queue, so a new request can start generating within one iteration of a slot opening up — not after the whole batch drains",
-            "The GPU always runs a full batch of active sequences (up to the max batch size), so utilization stays high regardless of how unevenly requests finish"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "id": "51458b68-6dbf-4128-a001-e2543cc73521"
-        },
-        {
-          "kind": "concept",
-          "title": "Prefill vs. Decode: Why the Scheduler Has Two Jobs",
-          "body": "Serving an LLM request has two phases with very different compute profiles, and continuous batching has to schedule both without one starving the other.",
-          "bullets": [
-            "Prefill: processing the whole input prompt in one shot — compute-heavy, parallel across tokens, done once per request",
-            "Decode: generating one new token per step — memory-bandwidth-bound, sequential, done many times per request",
-            "A newly arrived long prompt's prefill can stall every in-flight decode step if scheduled naively; production schedulers mitigate this with chunked prefill, splitting a big prompt's prefill across several iterations so it interleaves with ongoing decodes instead of blocking them"
-          ],
-          "symbol": "square.split.2x1",
-          "table": null,
-          "id": "0913d652-5716-446a-b0f6-2fc03c49dd8f"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: 4 Requests, Wildly Different Lengths",
-          "body": "Say a batch admits 4 requests needing 10, 50, 200, and 800 output tokens respectively, and the server can only run 4 sequences at once.",
-          "bullets": [
-            "Static batching: the batch runs 800 steps total (bound by the longest request); requests A, B, and C finish early but their slots sit unused — 3 out of 4 slots are wasted for most of those 800 steps",
-            "Continuous batching: request A's slot frees at step 10 and a new waiting request immediately takes it; same for B at step 50 and C at step 200 — the batch stays at 4 active sequences almost the entire time",
-            "Net effect: the GPU does close to 4x the useful work per step on average, without any change to the model or the hardware"
-          ],
-          "symbol": "number",
-          "table": null,
-          "id": "80a889e7-4b1c-4b4c-887d-15e7a08b2386"
-        },
-        {
-          "kind": "comparison",
-          "title": "Static vs. Continuous Batching",
-          "table": {
-            "headers": [
-              "",
-              "Static batching",
-              "Continuous batching"
-            ],
-            "rows": [
-              [
-                "Scheduling unit",
-                "whole batch",
-                "single decoding step"
-              ],
-              [
-                "New request admitted",
-                "only after batch fully drains",
-                "as soon as any slot frees"
-              ],
-              [
-                "GPU idle time from uneven lengths",
-                "high — bounded by the longest sequence",
-                "low — slots refill immediately"
-              ],
-              [
-                "Scheduler overhead",
-                "negligible (runs once per batch)",
-                "real — a scheduling decision every step"
-              ]
-            ]
-          },
-          "symbol": "tablecells",
-          "bullets": [],
-          "id": "5ee9d795-5595-425f-b87d-4ce99deaa956"
-        },
-        {
-          "kind": "problem",
-          "title": "Where It Costs Something, and Where It Doesn't Help",
-          "body": "Continuous batching isn't free, and it isn't the right fit for every workload.",
-          "bullets": [
-            "Per-step scheduling adds real CPU-side overhead — deciding admissions/evictions every iteration, not once per batch — so a poorly optimized scheduler can itself become the bottleneck",
-            "Without a priority policy, a flood of new short requests can keep bumping a long-running request's turn — most production schedulers add fairness rules or first-come priority to prevent starvation",
-            "Offline batch jobs where every request is the same fixed length (e.g. scoring a fixed dataset) gain little — static batching already keeps the GPU full when lengths are uniform",
-            "It solves a scheduling problem, not a memory one — without paged/chunked KV cache allocation alongside it, a bigger active batch can still hit an out-of-memory wall"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "2fabe1b0-b1d6-4008-b625-789b2246c996"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Continuous batching reschedules the active batch after every decoding step instead of after every full batch completes",
-            "Finished requests exit and queued requests enter mid-batch, eliminating the idle time static batching wastes on uneven request lengths",
-            "Chunked prefill keeps a big new prompt from stalling in-flight decode steps by splitting its prefill across iterations",
-            "It's a scheduling technique, complementary to (not a substitute for) memory techniques like PagedAttention — production servers like vLLM, TGI, and TensorRT-LLM run both together"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "21b28c8d-4732-4e48-8d97-0723c3840167"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What's the core difference between static and continuous batching?",
-            "options": [
-              "Continuous batching uses a different attention algorithm",
-              "Continuous batching reschedules which requests are active after every decoding step, instead of waiting for the whole batch to finish",
-              "Continuous batching only works with quantized models",
-              "Static batching runs requests on multiple GPUs simultaneously"
-            ],
-            "correctIndex": 1,
-            "explanation": "Static batching treats the whole batch as the scheduling unit — it runs to completion before the next batch forms. Continuous batching treats each decoding step as the scheduling unit, evicting finished sequences and admitting new ones every iteration.",
-            "id": "28c45fa6-60a8-493a-a479-067ba6218bdb"
-          },
-          {
-            "prompt": "Why does static batching waste GPU capacity when request lengths vary a lot?",
-            "options": [
-              "GPUs can't process variable-length sequences at all",
-              "The batch is bound by its slowest (longest) request, so slots from requests that finish early sit idle until the whole batch completes",
-              "Static batching requires re-loading model weights for every request",
-              "It always uses smaller batch sizes than continuous batching"
-            ],
-            "correctIndex": 1,
-            "explanation": "A request that finishes at step 10 in an 800-step batch still occupies a slot (padded or otherwise) until step 800, because the next batch can't start until the current one fully drains.",
-            "id": "e8c0c242-09a3-4503-8d91-665825952ee6"
-          },
-          {
-            "prompt": "What problem does chunked prefill address in a continuous-batching scheduler?",
-            "options": [
-              "It reduces the model's memory footprint",
-              "It prevents a newly arrived long prompt's prefill from stalling every other request's decode step by splitting the prefill across iterations",
-              "It compresses the KV cache to save GPU memory",
-              "It increases the maximum context length the model can handle"
-            ],
-            "correctIndex": 1,
-            "explanation": "Prefill (processing a whole new prompt) is compute-heavy and can hog a full iteration if run in one shot, blocking every in-flight decode step. Chunked prefill splits it into smaller pieces interleaved with ongoing decode steps.",
-            "id": "03e5ab8d-c3be-4602-8885-90c29628dce5"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (vLLM paper — combines continuous batching with paged KV cache allocation)",
-          "url": "https://arxiv.org/abs/2309.06180",
-          "id": "8cc7f252-9ca7-44fc-972d-b3626a0d25d3"
-        },
-        {
-          "title": "vLLM project (reference implementation of continuous batching + PagedAttention)",
-          "url": "https://github.com/vllm-project/vllm",
-          "id": "b1be13f6-8dac-4d5a-9da6-be81026282d3"
-        }
-      ],
-      "id": "30c59f2b-e535-4fea-9cd2-0d4be90cd29f",
-      "publishedDate": "2026-09-22T12:49:41Z"
-    },
-    {
-      "title": "NCP-ArchPreview: Predicting Concepts, Not Just Tokens",
-      "subtitle": "Shanghai AI Lab's 8.9B model beats a 7B baseline using half the training tokens",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "pretraining",
-        "latent-space",
-        "concept-prediction",
-        "llm-architecture",
-        "arxiv"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "square.stack.3d.forward.dottedline",
-      "summary": "NCP-ArchPreview adds a Next Concept Prediction objective on top of standard next-token prediction, letting an 8.9B model match a 7B baseline's pretraining loss on half the tokens and beat it by 2.45 points downstream, with a 5.99-point jump on GSM8K.",
-      "slides": [
-        {
-          "id": "df4eb02c-3dbe-4efd-add6-ed250e56e0e9",
-          "kind": "cover",
-          "title": "NCP-ArchPreview: Predicting Concepts, Not Just Tokens",
-          "body": "A joint team from Shanghai AI Lab and SJTU's LUMIA Lab built a pretraining objective that predicts multi-token concepts alongside individual tokens — and it makes pretraining meaningfully more sample-efficient.",
-          "bullets": [],
-          "symbol": "square.stack.3d.forward.dottedline",
-          "table": null
-        },
-        {
-          "id": "ef6cd5cb-376f-4cb2-a6ec-b293e3459ea6",
-          "kind": "problem",
-          "title": "Next-token prediction wastes capacity on easy tokens",
-          "body": "Most of a sentence is locally predictable — the second half of a compound noun, a function word, a closing punctuation mark. Training a model to labor over predicting each of those one token at a time spends compute on tokens that carry little new information.",
-          "bullets": [
-            "A phrase like 'New York City' is one idea spread across 3+ tokens",
-            "Standard LLMs still predict it token-by-token, re-deriving the obvious",
-            "That redundancy is exactly the training signal NCP tries to compress away"
-          ],
-          "symbol": "text.word.spacing",
-          "table": null
-        },
-        {
-          "id": "9324c545-22f3-464c-9a87-c87706498cdf",
-          "kind": "solution",
-          "title": "A Concept Module predicts ahead, tokens catch up",
-          "body": "NCP-ArchPreview builds a product-quantized 'concept vocabulary' directly from the model's own hidden states, then trains a dedicated 17M-parameter Concept Module to predict future concepts several tokens ahead of the token-level decoder.",
-          "bullets": [
-            "Concept vocabulary is learned, not hand-designed — quantized from hidden states",
-            "Concept Module predicts what's coming at a coarser grain than tokens",
-            "Predicted concepts are fed back into the token stream to steer generation",
-            "Next-token prediction (NTP) and next-concept prediction (NCP) are trained jointly, end-to-end"
-          ],
-          "symbol": "point.3.filled.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "a3f8707c-83c3-4d35-bb88-28ba17ecc8f7",
-          "kind": "comparison",
-          "title": "Same loss, half the tokens",
-          "body": "Benchmarked against OLMo-3-7B, a well-documented open baseline, on downstream macro-average and GSM8K.",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Metric",
-              "OLMo-3-7B",
-              "NCP-ArchPreview (8.9B)"
-            ],
-            "rows": [
-              [
-                "Tokens to reach OLMo-3-7B's final pretraining loss",
-                "5.73T (100%)",
-                "51.3% of that"
-              ],
-              [
-                "Downstream macro-average",
-                "baseline",
-                "+2.45 points"
-              ],
-              [
-                "GSM8K (grade-school math)",
-                "baseline",
-                "+5.99 points"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1073457a-fd96-4ef9-af82-ad5a2d1901a7",
-          "kind": "example",
-          "title": "Worked example: predicting the phrase before the tokens",
-          "body": "Given the prefix 'The capital of France is', a standard model predicts 'Paris' one token (or sub-word piece) at a time. NCP-ArchPreview's Concept Module first commits to the concept 'Paris-the-city' as a single unit, then the token decoder unpacks it — so the hard part (knowing the answer) happens once, at concept granularity, instead of being re-solved at every token boundary.",
-          "bullets": [
-            "Concept-level commitment happens before token-level decoding starts",
-            "Token decoder's job shrinks to 'unpack this concept', not 'guess from scratch'",
-            "That's where the training-token savings come from"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null
-        },
-        {
-          "id": "526b24e8-7b47-4fd4-8624-745387cf644f",
-          "kind": "problem",
-          "title": "Where it's fragile — read before you adopt it",
-          "body": "This is a technical report on an 8.9B-parameter preview, not a production-proven recipe at scale.",
-          "bullets": [
-            "Only demonstrated at 8.9B params — unclear if gains hold at 70B+",
-            "Concept vocabulary is quantized per pretraining run; not obviously transferable across runs",
-            "Adds a second trained module and a joint objective — more moving parts, more places to get the training recipe wrong",
-            "Efficiency gains are measured against OLMo-3-7B specifically, not every architecture family"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "d8b8fc34-b81e-4a9a-ad91-ab0d89fffaa5",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Predicting coarser 'concepts' alongside tokens can cut pretraining tokens roughly in half for the same loss",
-            "The Concept Module is small (17M params) relative to the 8.9B backbone — the win is architectural, not brute scale",
-            "Biggest gains showed up on reasoning-flavored evals like GSM8K, not just perplexity",
-            "Still a preview at sub-10B scale — the real test is whether concept-level pretraining survives scaling to frontier sizes"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "9747de1b-8044-4a58-befb-d3c516931754",
-            "prompt": "What does NCP-ArchPreview's Concept Module predict that a standard decoder-only LLM does not?",
-            "options": [
-              "The next single token, using a bigger vocabulary",
-              "Multi-token 'concepts' several steps ahead of the token decoder",
-              "The identity of the user asking the question",
-              "A translation of the input into another language"
-            ],
-            "correctIndex": 1,
-            "explanation": "The Concept Module predicts coarser-grained concepts (which can span multiple tokens) ahead of the token-level decoder, then feeds those predictions back to guide token generation."
-          },
-          {
-            "id": "8e58c046-17e5-4fb7-990c-5f334cc37579",
-            "prompt": "How is NCP-ArchPreview's efficiency gain over OLMo-3-7B measured in the report?",
-            "options": [
-              "It uses less GPU memory per token",
-              "It reaches OLMo-3-7B's final pretraining loss using only 51.3% of the training tokens",
-              "It has fewer parameters than OLMo-3-7B",
-              "It runs inference twice as fast"
-            ],
-            "correctIndex": 1,
-            "explanation": "The headline efficiency result is token-efficiency during pretraining: matching a 7B baseline's loss with roughly half the training tokens — not a memory or inference-speed claim."
-          },
-          {
-            "id": "607893f9-777e-4878-bd67-5113734c6457",
-            "prompt": "What is a fair caution to apply to NCP-ArchPreview's results?",
-            "options": [
-              "The paper has no benchmark numbers at all",
-              "It was trained on synthetic data only",
-              "It's a technical report at 8.9B params — scaling behavior at much larger sizes is untested",
-              "It replaces next-token prediction entirely, with no token-level decoding left"
-            ],
-            "correctIndex": 2,
-            "explanation": "NTP and NCP are trained jointly (tokens are still predicted), and the results are demonstrated at 8.9B parameters — a preview scale, not yet validated at frontier model sizes."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "9fd71069-9a26-4dc0-9dbc-9ee6784bb5c4",
-          "title": "NCP-ArchPreview Technical Report: Moving towards Latent Space Language Models through Next Concept Prediction (arXiv:2609.10715)",
-          "url": "https://arxiv.org/abs/2609.10715"
-        }
-      ],
-      "id": "3eba44db-aadf-4672-b43e-9ce7ef4abac9",
-      "publishedDate": "2026-09-22T06:52:21Z",
-      "heroImageURL": null
     }
   ]
 }
