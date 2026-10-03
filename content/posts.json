@@ -1,6 +1,181 @@
 {
   "posts": [
     {
+      "id": "aa8c2339-bf89-441d-8889-1961ebc99048",
+      "title": "Reranking: The Second Pass That Fixes Retrieval",
+      "subtitle": "Why the best answer is often buried at position 47, and how to pull it back to the top",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "reranking",
+        "cross-encoder",
+        "retrieval",
+        "embeddings"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.up.arrow.down.circle.fill",
+      "summary": "Bi-encoder vector search is fast but approximate: it embeds the query and each document independently, so it often ranks the truly best match outside the top results. A cross-encoder reranker reads the query and a candidate together in one forward pass, scoring relevance far more accurately, and is used as a cheap second pass over a short candidate list rather than the whole corpus.",
+      "publishedDate": "2026-10-03T18:43:26Z",
+      "slides": [
+        {
+          "id": "bd8dc4f9-0b66-459e-8f31-bd1e0d1b90b0",
+          "kind": "cover",
+          "title": "Vector Search Finds Close. Reranking Finds Right.",
+          "body": "A RAG pipeline that skips reranking is leaving accuracy on the table for a few milliseconds of saved latency.",
+          "bullets": [],
+          "symbol": "arrow.up.arrow.down.circle.fill"
+        },
+        {
+          "id": "124973db-8436-4206-9352-4628bf17dcfd",
+          "kind": "problem",
+          "title": "Independent Embeddings Can't See the Interaction",
+          "body": "A bi-encoder embeds the query and each document separately, then compares them with cosine similarity or a dot product. The two vectors never interact — the model never actually reads the query and the document side by side.",
+          "bullets": [
+            "Similarity is computed AFTER both vectors are frozen, so subtle query-document relationships get averaged away",
+            "A document that shares vocabulary but misses the actual intent can out-score the real answer",
+            "Teams routinely find the correct passage sitting at rank 20-100 of a top-100 vector search, not rank 1"
+          ],
+          "symbol": "questionmark.circle.fill"
+        },
+        {
+          "id": "d40b4c19-36c7-4697-8cc5-3f20b0505f27",
+          "kind": "solution",
+          "title": "A Cross-Encoder Scores the Pair Jointly",
+          "body": "A reranker feeds [query, document] into one transformer as a single input, so every query token can attend to every document token before a single relevance score comes out.",
+          "bullets": [
+            "Output is one scalar relevance score per pair, not a reusable embedding",
+            "Full cross-attention catches negation, entity matching, and intent in a way two separate vectors cannot",
+            "Nogueira & Cho's 'Passage Re-ranking with BERT' (2019) showed this two-stage idea beating pure lexical and embedding baselines on MS MARCO passage ranking"
+          ],
+          "symbol": "arrow.left.arrow.right.circle.fill"
+        },
+        {
+          "id": "9aade531-9757-4894-8997-59bd54baeaa2",
+          "kind": "architecture",
+          "title": "Retrieve Wide, Then Rerank Narrow",
+          "body": "Production pipelines never run a cross-encoder over the full corpus. They use it as stage two, over a short list stage one already pulled out.",
+          "bullets": [
+            "Stage 1: ANN index (HNSW) or hybrid BM25+embedding search pulls the top 50-200 candidates from millions of documents in single-digit milliseconds",
+            "Stage 2: the cross-encoder scores just those 50-200 pairs and re-sorts them",
+            "Only the new top 5-10 go into the LLM's context window"
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "7ad6766d-2591-494b-a913-cfa43557542f",
+          "kind": "example",
+          "title": "Support-Ticket Search, Before and After",
+          "body": "A helpdesk RAG bot searches 2 million resolved tickets for 'customer charged twice after canceling subscription.'",
+          "bullets": [
+            "Bi-encoder top-1: a ticket mentioning 'charged', 'subscription', and 'canceling' heavily, but actually about a billing-date mismatch, not a double charge",
+            "The real double-charge ticket ranks 34th by embedding similarity because it uses different phrasing",
+            "Cross-encoder reranker reads all 100 candidates against the query and promotes the double-charge ticket to rank 1 — it recognizes the matching intent, not just overlapping words"
+          ],
+          "symbol": "bubble.left.and.text.bubble.right.fill"
+        },
+        {
+          "id": "861eb257-976f-4efb-93eb-0793bfd1f198",
+          "kind": "comparison",
+          "title": "Bi-Encoder vs. Cross-Encoder",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Bi-encoder (retrieval)",
+              "Cross-encoder (reranking)"
+            ],
+            "rows": [
+              [
+                "How it scores",
+                "Compares two independent embeddings",
+                "Reads query+doc together, one forward pass per pair"
+              ],
+              [
+                "Cost per query",
+                "One embedding + fast vector lookup",
+                "One full transformer pass per candidate"
+              ],
+              [
+                "Scales to",
+                "Millions of documents via an ANN index",
+                "Only a short candidate list (tens to low hundreds)"
+              ],
+              [
+                "Typical role",
+                "Stage 1: cast a wide net",
+                "Stage 2: sharpen the top of that net"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b3770bcf-ebe3-4d07-be15-61b632412b5b",
+          "kind": "takeaways",
+          "title": "When Reranking Helps, and When It Can't",
+          "body": "Reranking is a precision tool for the candidates you already have, not a fix for a retriever that missed the right document entirely.",
+          "bullets": [
+            "Adds real latency: scoring 100 candidates means 100 forward passes, often tens to low hundreds of milliseconds depending on model size",
+            "Garbage in, garbage out — if stage-1 recall never surfaces the right document in its candidate set, no reranker can promote it",
+            "Skip it (or use a small distilled reranker) when latency budgets are tight or the first-stage results are already clean",
+            "Use it whenever ranking quality at the top matters more than a few extra milliseconds — most production RAG and search systems"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "id": "216edd10-5eab-4b96-b518-dcb72c047543",
+        "questions": [
+          {
+            "id": "f818db8a-de1c-4f38-b9a2-36bb4b69c8c5",
+            "prompt": "What's the key architectural difference between a bi-encoder and a cross-encoder reranker?",
+            "options": [
+              "Cross-encoders use a larger embedding dimension",
+              "Cross-encoders process the query and document together in one forward pass so they can cross-attend; bi-encoders embed them separately",
+              "Bi-encoders only work on images",
+              "There is no real difference, only the training data differs"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cross-attention between every query token and every document token is exactly what a cosine-similarity comparison of two frozen, independently-computed embeddings cannot do — that's the extra signal a reranker buys."
+          },
+          {
+            "id": "4b66b019-8928-4d4e-9051-3aa7c17e6eee",
+            "prompt": "Why don't production systems run a cross-encoder reranker over an entire multi-million-document corpus?",
+            "options": [
+              "Cross-encoders cannot process long documents",
+              "Cost scales with the number of query-document pairs scored, so scoring millions of candidates per query is computationally prohibitive",
+              "Cross-encoders only run on CPUs",
+              "It would violate most vector database licenses"
+            ],
+            "correctIndex": 1,
+            "explanation": "Every candidate needs its own full transformer forward pass, so rerankers are reserved for the short candidate list (tens to low hundreds) a cheap first-stage retriever already narrowed things down to."
+          },
+          {
+            "id": "9500a320-5bc6-4428-8bcc-334110a5a27b",
+            "prompt": "A team adds a reranker to their RAG pipeline but answer quality barely improves. What's the most likely cause?",
+            "options": [
+              "The reranker model is too accurate for the task",
+              "The first-stage retriever never put the correct document in the candidate set, so there was nothing good for the reranker to promote",
+              "Reranking always makes results worse",
+              "The LLM ignores any reranked context"
+            ],
+            "correctIndex": 1,
+            "explanation": "A reranker can only reorder what it's given. If stage-1 recall misses the right document, no amount of reranking the wrong candidates will recover it — fix retrieval recall first."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "9500a320-5bc6-4428-8bcc-334110a5a27c",
+          "title": "Passage Re-ranking with BERT (arXiv:1901.04085)",
+          "url": "https://arxiv.org/abs/1901.04085"
+        }
+      ]
+    },
+    {
       "title": "Gemini 3.8 Live With Avatar: Enterprise Video Agents Go GA",
       "subtitle": "Google Cloud ships lip-synced video avatars on top of its speech-to-speech model, with SynthID watermarks built in",
       "category": "AI News",
@@ -10890,205 +11065,6 @@
         }
       ],
       "id": "2b5298a5-05a9-45c5-88cf-230738c706b3",
-      "publishedDate": "2026-09-28T00:50:26Z"
-    },
-    {
-      "title": "CAP Theorem: Pick Two, Whether You Like It or Not",
-      "subtitle": "Why every distributed database is secretly a CP system or an AP system",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "distributed systems",
-        "cap theorem",
-        "databases",
-        "system design",
-        "consistency",
-        "availability"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "scalemass.fill",
-      "summary": "CAP theorem says a distributed data store can guarantee at most two of Consistency, Availability, and Partition tolerance. Since partitions aren't optional in real networks, the real design choice is CP vs. AP during a partition — and PACELC extends the idea to cover the latency/consistency tradeoff that exists even when nothing is broken.",
-      "body": null,
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Pick Two: The Theorem Every Distributed Database Obeys",
-          "body": "CAP theorem, formalized by Seth Gilbert and Nancy Lynch in 2002 from Eric Brewer's 2000 conjecture, says a distributed data store can't simultaneously guarantee Consistency, Availability, and Partition tolerance — at most two of three, whenever the network is behaving badly.",
-          "bullets": [
-            "C = every read gets the latest write, or an error — this is linearizability",
-            "A = every request to a working node gets a non-error response",
-            "P = the system keeps working even when nodes can't talk to each other"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null,
-          "id": "225edde5-f73f-4b80-bfb4-b137772547df"
-        },
-        {
-          "kind": "problem",
-          "title": "Networks Partition. That's Not Optional.",
-          "body": "The theorem is often mistaught as 'pick any 2 of 3,' but partition tolerance isn't really a choice in a real distributed system — network links fail, packets drop, and nodes go dark. The actual decision you're making is: what happens to the other two properties during a partition?",
-          "bullets": [
-            "A single-node database can be perfectly consistent and available — it has no partition to worry about",
-            "The moment you replicate data across machines or regions, partitions become a when, not an if",
-            "So CAP in practice is really 'CP vs AP': when a partition hits, do you sacrifice consistency or availability?"
-          ],
-          "symbol": "network",
-          "table": null,
-          "id": "7d4989de-32ec-4269-ae2a-d090ae6379e4"
-        },
-        {
-          "kind": "concept",
-          "title": "CP or AP: The Real Fork in the Road",
-          "body": "During a network partition, a CP system refuses to answer (or returns an error) rather than risk serving stale data; an AP system keeps answering with whatever data it has locally, even if it might be out of date.",
-          "bullets": [
-            "CP example: a leader-based system like etcd or ZooKeeper stops accepting writes on the minority side of a partition rather than risk divergence",
-            "AP example: Cassandra or DynamoDB keep serving reads and writes on both sides of a partition, then reconcile once it heals",
-            "Neither choice is 'wrong' — it depends on whether stale data or downtime is more costly for that specific system"
-          ],
-          "symbol": "triangle",
-          "table": null,
-          "id": "b29d1f34-8eb1-432a-a474-3ab93e0a1b5b"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A Bank vs. A Shopping Cart",
-          "body": "A funds-transfer ledger and a shopping cart make opposite CAP choices for good reason.",
-          "bullets": [
-            "Funds transfer (CP-leaning): better to reject a transaction during a partition than risk two nodes both approving a double-spend — Google Spanner uses synchronized atomic clocks (TrueTime) plus a private global network to get strong consistency with very high, not theoretically perfect, availability",
-            "Shopping cart (AP-leaning): better to let a customer add an item during a partition, even if two replicas briefly disagree, than show them an error and lose the sale — Amazon's original Dynamo design explicitly chose availability over strict consistency for the cart",
-            "Same theorem, opposite real-world answer, because the cost of 'wrong' data differs"
-          ],
-          "symbol": "cylinder.split.1x2.fill",
-          "table": null,
-          "id": "d8e82fe8-3b6f-4f41-8aa3-9faf54e0909d"
-        },
-        {
-          "kind": "comparison",
-          "title": "CP vs AP Systems, By Example",
-          "body": "'Spanner beats CAP' is a common myth — it doesn't violate the theorem, it just engineers partitions to be so rare that the CP tradeoff barely shows up in practice.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "System",
-              "CAP choice",
-              "During a partition"
-            ],
-            "rows": [
-              [
-                "etcd / ZooKeeper",
-                "CP",
-                "Minority side stops accepting writes"
-              ],
-              [
-                "Cassandra / DynamoDB (default)",
-                "AP",
-                "Both sides keep serving, reconcile later"
-              ],
-              [
-                "MongoDB (default replica set)",
-                "CP-leaning",
-                "Writes need a majority; minority side degrades to read-only"
-              ],
-              [
-                "Google Spanner",
-                "CP (near-CA in practice)",
-                "TrueTime + private network make partitions extremely rare"
-              ]
-            ]
-          },
-          "id": "5827c453-53c1-4dfd-82dd-4b0f11bad3b6"
-        },
-        {
-          "kind": "concept",
-          "title": "CAP's Blind Spot: What Happens With No Partition?",
-          "body": "CAP only describes behavior during a partition, but distributed systems spend almost all their time not partitioned, and there's still a tradeoff during normal operation. Daniel Abadi's 2010 PACELC extension names it directly.",
-          "bullets": [
-            "PACELC: if Partitioned, choose Availability or Consistency (that's CAP) — Else, choose Latency or Consistency",
-            "Even with a healthy network, waiting for every replica to confirm a write (strong consistency) adds latency that a single-region read wouldn't have",
-            "This is why systems like DynamoDB let you choose 'eventually consistent' vs 'strongly consistent' reads per request — you're picking a point on the latency/consistency line, not just the CAP triangle"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "f8716db8-8af3-479b-a4ee-63887e21ab10"
-        },
-        {
-          "kind": "problem",
-          "title": "Where CAP Gets Misused",
-          "body": "CAP is a theorem about one specific guarantee (linearizable consistency) under one specific failure mode (total network partition) — using it to justify every architecture decision overstates what it actually proves.",
-          "bullets": [
-            "CAP says nothing about latency, throughput, or partial/regional failures — those need PACELC or empirical testing, not CAP alone",
-            "'Eventual consistency' isn't one thing — different AP systems give very different staleness guarantees, so 'we're AP' doesn't tell you much on its own",
-            "Don't default to CP everywhere: most reads in most apps (profile pages, product listings) tolerate slightly stale data just fine, and paying the availability/latency cost for linearizability there is often wasted"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "bf6426a8-7a0c-4344-a4ab-0a2d7ab9ecc8"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "CAP theorem: pick at most 2 of Consistency, Availability, Partition tolerance — but partition tolerance isn't optional for a real distributed system, so the real choice is CP vs AP during a partition",
-            "CP systems (etcd, ZooKeeper, Spanner) refuse or degrade during a partition to protect consistency; AP systems (Cassandra, DynamoDB default) keep answering and reconcile later",
-            "Google Spanner doesn't break CAP — it engineers partitions to be rare enough that the CP cost is barely noticeable",
-            "PACELC fills CAP's gap: even without a partition, every request still trades latency against consistency"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "d51cd1e3-0a73-47c3-8038-363664c9f99a"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "In CAP theorem, what does \"Consistency\" specifically mean?",
-            "options": [
-              "Every node runs the same code version",
-              "Every read receives the most recent write, or an error (linearizability)",
-              "The database schema never changes",
-              "All nodes respond within the same time limit"
-            ],
-            "correctIndex": 1,
-            "explanation": "CAP's \"C\" specifically means linearizability: a read must return the most recent write or an error, not just \"the same value on every node eventually.\"",
-            "id": "f127baae-7106-41ff-bac9-504eb30c3e49"
-          },
-          {
-            "prompt": "Why is \"pick any 2 of 3\" a misleading way to describe CAP in practice?",
-            "options": [
-              "Because all three properties are always achievable together",
-              "Because partition tolerance isn't really optional for a real distributed system — the actual choice is what happens to C or A during a partition",
-              "Because CAP only applies to single-node databases",
-              "Because availability and consistency mean the same thing"
-            ],
-            "correctIndex": 1,
-            "explanation": "Real networks partition regardless of what you'd prefer, so a distributed system can't actually choose to drop P — the meaningful design decision is whether it favors C or A once a partition happens.",
-            "id": "749b98c6-a5d6-44c7-9dbb-2e0b0c11ecf2"
-          },
-          {
-            "prompt": "What gap in CAP theorem does PACELC address?",
-            "options": [
-              "It clarifies that partitions never actually happen in real networks",
-              "It describes a latency-vs-consistency tradeoff that exists even when there's no partition",
-              "It replaces \"Availability\" with \"Authentication\"",
-              "It proves CAP theorem is wrong"
-            ],
-            "correctIndex": 1,
-            "explanation": "PACELC extends CAP by pointing out that even during normal operation (no partition), a system still trades latency against consistency — a tradeoff CAP is silent on.",
-            "id": "5ace0cfb-37a6-4b56-a777-b4b6c4504877"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Perspectives on the CAP Theorem — Seth Gilbert, National University of Singapore (MIT CSAIL)",
-          "url": "https://groups.csail.mit.edu/tds/papers/Gilbert/Brewer2.pdf",
-          "id": "5816e1be-9cef-4b7c-81ac-bea08023349f"
-        }
-      ],
-      "id": "57ffa5f7-0dc4-4844-aa03-c5c2edec12e1",
       "publishedDate": "2026-09-28T00:50:26Z"
     }
   ]
