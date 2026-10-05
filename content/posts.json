@@ -1,6 +1,349 @@
 {
   "posts": [
     {
+      "title": "Mixture of Experts: Routing Tokens Instead of Scaling Dense",
+      "subtitle": "Most of a trillion-parameter model stays asleep on every token — only a handful of experts wake up.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture-of-experts",
+        "moe",
+        "inference-optimization",
+        "transformers",
+        "scaling"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "Mixture-of-Experts (MoE) architectures replace a transformer's dense feed-forward block with many smaller 'expert' sub-networks plus a learned router that activates only a handful of them per token. That lets models like Mixtral 8x7B and DeepSeek-V3 carry far more total knowledge than a dense model at similar compute cost per token — at the price of still needing every expert loaded in memory, plus real training and serving engineering to keep routing balanced.",
+      "slides": [
+        {
+          "id": "72f62595-679a-45c8-8658-73e03bbf9cdf",
+          "bullets": [
+            "Mixtral 8x7B: 46.7B total parameters, only ~12.9B active per token",
+            "DeepSeek-V3: 671B total parameters, only ~37B active per token",
+            "The trick: a learned router sends each token to a handful of specialist sub-networks"
+          ],
+          "body": null,
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "kind": "cover",
+          "title": "Route the Token, Don't Scale the Whole Network"
+        },
+        {
+          "id": "a11c5448-90f7-4506-864a-e811a1fa7dd5",
+          "bullets": [],
+          "body": "A dense 70B model spends all 70B parameters on every single token it processes, whether or not that token needs anywhere near that much computation. Capacity and per-token compute are welded together — you can't add knowledge without also adding latency and cost.",
+          "symbol": null,
+          "table": null,
+          "kind": "problem",
+          "title": "Dense Models Pay Full Price on Every Token"
+        },
+        {
+          "id": "5ca05eb3-f26f-46d6-acab-c65eef1c9bea",
+          "bullets": [
+            "Top-2 routing (Mixtral) or top-1 (the original Switch Transformer): only 1-2 of N experts fire per token",
+            "A capacity factor caps how many tokens any single expert can take per batch; overflow tokens get dropped or passed through unchanged",
+            "An auxiliary load-balancing loss penalizes a router that keeps favoring the same few experts, to stop the rest of the network going unused ('expert collapse')"
+          ],
+          "body": "Each transformer layer's dense feed-forward network is replaced by N smaller expert networks and a tiny router (a linear layer + softmax) that scores all N experts per token and activates only the top few.",
+          "symbol": null,
+          "table": null,
+          "kind": "solution",
+          "title": "Swap the Feed-Forward Block for a Router + Experts"
+        },
+        {
+          "id": "e8bb2902-153f-49eb-9d10-2ab41a18a3e9",
+          "bullets": [
+            "Total parameters: 46.7B, all of which must sit in accelerator memory",
+            "Router picks the top-2 experts for every token",
+            "Active compute per token: ~12.9B parameters worth of FLOPs — close to a dense 13B model's inference cost",
+            "Result: roughly a dense-13B compute bill for closer to a dense-47B model's knowledge capacity"
+          ],
+          "body": "8 experts, each roughly 7B parameters, inside the feed-forward layers, alongside shared attention and embedding layers.",
+          "symbol": null,
+          "table": null,
+          "kind": "example",
+          "title": "Mixtral 8x7B, Worked Through"
+        },
+        {
+          "id": "cf5fcc5c-4b5a-4d46-9270-eb2c56f610af",
+          "bullets": [],
+          "body": null,
+          "symbol": null,
+          "table": {
+            "headers": [
+              "",
+              "Dense 13B",
+              "Mixtral 8x7B (MoE)"
+            ],
+            "rows": [
+              [
+                "Total parameters",
+                "13B",
+                "46.7B"
+              ],
+              [
+                "Active params per token",
+                "13B",
+                "~12.9B"
+              ],
+              [
+                "Experts available",
+                "n/a",
+                "8 (top-2 routed)"
+              ],
+              [
+                "Memory needed to serve it",
+                "~13B worth",
+                "~46.7B worth"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Same Compute Budget, Very Different Capacity"
+        },
+        {
+          "id": "b765fa6c-9df0-4cda-90d5-2be8ad93a2cf",
+          "bullets": [
+            "Every expert must stay resident in memory, since any token could route to any of them — MoE's memory footprint tracks TOTAL parameters, not active ones",
+            "Without a load-balancing loss, training can collapse onto a handful of favorite experts, wasting the rest of the network's capacity",
+            "Serving at scale needs expert parallelism — routing is data-dependent, so communication between devices is uneven and harder to schedule than dense tensor parallelism",
+            "Not worth the complexity for small models or single-request low-latency serving, where memory bandwidth — not compute — is already the bottleneck"
+          ],
+          "body": null,
+          "symbol": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "The Catch: Memory Doesn't Shrink, Only Compute Does"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "f854f27f-6f9f-449a-82b0-51a6aae3f969",
+            "explanation": "Top-2 routing fires exactly 2 of the 8 experts per token. The other 6 stay idle for that token — that gap between 'available' and 'active' is where the compute savings come from.",
+            "prompt": "In a top-2 Mixture-of-Experts layer with 8 experts, how many experts actually run for any given token?",
+            "options": [
+              "2",
+              "8",
+              "1",
+              "4"
+            ],
+            "correctIndex": 0
+          },
+          {
+            "id": "8306de7c-1f3c-4b63-b109-e8ee5aa55a76",
+            "explanation": "MoE cuts per-token compute, not memory. Since any token might route to any expert, all experts have to be resident in memory — Mixtral's 46.7B total parameters all need to be loaded even though only ~12.9B are active per token.",
+            "prompt": "Why doesn't a Mixture-of-Experts model use less GPU memory than a dense model with the same active-parameter count?",
+            "options": [
+              "Because every expert must stay loaded in memory even though only a few run per token",
+              "Because MoE models require larger batch sizes to be efficient",
+              "Because the router network is larger than all the experts combined",
+              "Because MoE models are incompatible with quantization"
+            ],
+            "correctIndex": 0
+          },
+          {
+            "id": "ba2850c5-dc49-4625-8784-7d4c7d409777",
+            "explanation": "Without it, the router tends to settle early on a few experts it finds easy to optimize, which then get all the training signal while the remaining experts stay undertrained. The load-balancing term spreads tokens more evenly across experts during training.",
+            "prompt": "What does an auxiliary load-balancing loss prevent during MoE training?",
+            "options": [
+              "The router collapsing onto a small subset of favorite experts, starving the rest of useful gradient signal",
+              "Overfitting on the training dataset",
+              "Gradient explosion in the attention layers",
+              "The model from routing to too few experts per token by design"
+            ],
+            "correctIndex": 0
+          }
+        ]
+      },
+      "references": [],
+      "id": "ea384780-8fd4-4f61-83a9-8a2cdd958dd5",
+      "publishedDate": "2026-10-05T00:46:20Z",
+      "body": null
+    },
+    {
+      "title": "Your Transformer Is Secretly Thinking Two Thoughts",
+      "subtitle": "Average two unrelated text embeddings and a frozen LLM predicts both next tokens at once — an architectural property, not a trained skill.",
+      "category": "AI Concepts",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "interpretability",
+        "transformers",
+        "superposition",
+        "mechanistic-interpretability",
+        "llms"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "doc.on.doc.fill",
+      "summary": "A new interpretability paper shows that averaging the token embeddings of two unrelated text streams and feeding the mixture into an unmodified LLM produces a decodable superposition of both streams' next-token predictions. The authors call this the Superposition Linearity Hypothesis, show it's strongest early in pretraining and fades as training continues, and demonstrate a lightweight fine-tune plus guided decoding procedure that can partially recover two coherent continuations from a single forward pass — at a real cost to single-stream quality.",
+      "slides": [
+        {
+          "id": "71b02840-db25-4dad-b951-2bd161d46f11",
+          "bullets": [
+            "Average the token embeddings of two unrelated documents, position by position",
+            "Feed that averaged mixture into a standard, completely unmodified LLM",
+            "Both original next-token predictions still show up in the output — simultaneously"
+          ],
+          "body": null,
+          "symbol": "doc.on.doc.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "One Forward Pass, Two Hidden Predictions"
+        },
+        {
+          "id": "77e3534f-688b-4488-81d0-84d73d867518",
+          "bullets": [
+            "No gradient update, no special architecture, no retraining — just an averaged input",
+            "Tested across multiple model families: Pythia, Qwen2.5, and Llama checkpoints"
+          ],
+          "body": "A transformer is a tower of nonlinear attention and MLP blocks. The default intuition: average two embeddings and you get noise somewhere between the two concepts — not two separate, recoverable predictions. The paper's central claim pushes directly against that intuition.",
+          "symbol": null,
+          "table": null,
+          "kind": "problem",
+          "title": "Transformers Are Nonlinear. This Shouldn't Work."
+        },
+        {
+          "id": "c6912499-574f-4c81-8632-1cd4e9fa723b",
+          "bullets": [
+            "Unmodified models: the true next token for BOTH streams lands in the merged top-10 about 30-40% of the time, versus a 2.63% random baseline",
+            "Top-100 recovery reaches 60-65%, versus a 10.41% baseline",
+            "The effect is strongest early in pretraining and decays as training progresses — evidence it's an intrinsic architectural property, not something the model learns to do"
+          ],
+          "body": "When two token streams are linearly combined (element-wise embedding averaging), the model's output is approximately a superposition of the two individual next-token distributions — as if it ran both streams and blended the answers.",
+          "symbol": null,
+          "table": null,
+          "kind": "solution",
+          "title": "The Superposition Linearity Hypothesis"
+        },
+        {
+          "id": "76ac6e16-3a2c-4724-9c6e-bf7f17251ea4",
+          "bullets": [
+            "Average the embeddings of 'The capital of France is' and 'The chemical symbol for gold is', token by token",
+            "A dense model would collapse this into one blurry prediction",
+            "A superposed model keeps both 'Paris' and 'Au' with meaningful probability mass in the same output distribution"
+          ],
+          "body": "The paper tests this with real document pairs, not prompts like this — but the mechanism it describes plays out the same way on any two unrelated continuations.",
+          "symbol": null,
+          "table": null,
+          "kind": "example",
+          "title": "What the Mechanism Predicts, Illustrated"
+        },
+        {
+          "id": "3284b70b-a861-4cac-b3f2-465929014c6d",
+          "bullets": [],
+          "body": "A lightweight fine-tune (using under 0.025% of the original pretraining data) with KL self-distillation sharpens the superposition into something closer to two clean streams — but single-stream quality pays for it.",
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Metric (Pythia-2.8B)",
+              "Before fine-tune",
+              "After fine-tune"
+            ],
+            "rows": [
+              [
+                "Stream-mixing KL ratio (R_KL)",
+                "0.42",
+                "0.06"
+              ],
+              [
+                "LAMBADA accuracy (single-stream)",
+                "0.544",
+                "0.357"
+              ],
+              [
+                "Qwen2.5-3B: median rank of correct token",
+                "284",
+                "5"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Fine-Tuning Recovers It — At a Price"
+        },
+        {
+          "id": "4c0f671c-f1eb-4d96-ad75-ff836ab667cc",
+          "bullets": [
+            "Theoretical framing: roughly 2x inference throughput and half the KV-cache footprint per active stream, since one pass serves two streams",
+            "In practice, a fused two-head decoder on Llama-3B hit 81.5 tokens/sec",
+            "A plain batch-size-2 baseline already hits 81.4 tokens/sec — the fused approach barely beats simple batching",
+            "Sequential (one-stream-at-a-time) decoding was the slow outlier at 41.3 tokens/sec"
+          ],
+          "body": "The authors add a guided decoding procedure that disentangles the superposed output back into two separate, coherent continuations from a single forward pass.",
+          "symbol": null,
+          "table": null,
+          "kind": "architecture",
+          "title": "A Decoder That Un-Mixes the Two Streams"
+        },
+        {
+          "id": "2433ba9c-1e42-4732-b655-37597e541f2d",
+          "bullets": [
+            "The throughput win over naive batching is marginal (81.5 vs 81.4 tok/s) — today this is an interpretability finding, not a deployment trick",
+            "Recovering clean dual-stream decoding costs real single-stream quality: FineWeb perplexity on Qwen2.5 jumped from 12.44 to 65.52 after the fine-tune",
+            "Evaluated only on contexts up to 128 tokens, and not tested on multimodal models — don't assume it generalizes to long-context or vision-language settings",
+            "Don't reach for this to 'double your throughput' in production; reach for it to understand why models sometimes blend unrelated context"
+          ],
+          "body": null,
+          "symbol": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "Pitfalls: Why This Isn't a Free Lunch Yet"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "56c36c08-5b1f-491c-910a-60582ef002be",
+            "explanation": "That's the paper's core finding: the merged output isn't gibberish — both streams' true next tokens remain detectable with far higher probability than chance, as if the model ran both in parallel and blended the results.",
+            "prompt": "What does the Superposition Linearity Hypothesis claim happens when you average the token embeddings of two unrelated text streams?",
+            "options": [
+              "The model's output approximates a superposition of both streams' individual next-token distributions",
+              "The model throws an error because embeddings must come from a single stream",
+              "The model always predicts the first stream's token and ignores the second",
+              "The output collapses into random noise with no recoverable signal from either stream"
+            ],
+            "correctIndex": 0
+          },
+          {
+            "id": "53fe4291-da8d-4837-854e-6a2c03b3002b",
+            "explanation": "The authors observe the effect is strongest early in training and fades as pretraining continues, which they take as evidence that superposition is an intrinsic architectural property rather than a skill the model acquires through learning.",
+            "prompt": "What happens to this superposition property over the course of normal pretraining?",
+            "options": [
+              "It decays as pretraining progresses",
+              "It only appears after pretraining is fully complete",
+              "It strengthens monotonically with more pretraining",
+              "It is unaffected by the amount of pretraining"
+            ],
+            "correctIndex": 0
+          },
+          {
+            "id": "42a8c558-af0a-459f-b03f-c0cf57df9dc3",
+            "explanation": "Despite a theoretical ~2x throughput framing, the measured fused two-head decoder (81.5 tok/s) essentially tied the plain batch-size-2 baseline (81.4 tok/s) on Llama-3B — the real-world win over ordinary batching is marginal today.",
+            "prompt": "How much faster was the paper's fused two-head decoder than simply running two requests at batch size 2?",
+            "options": [
+              "Barely faster at all — 81.5 vs 81.4 tokens/sec",
+              "About 10x faster",
+              "Exactly 2x faster, matching the theoretical throughput claim",
+              "Slower than batch-size-2, making it impractical"
+            ],
+            "correctIndex": 0
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d994d995-dd41-42e2-88dc-ec30045ec190",
+          "title": "Your Transformer Can Hold Two Thoughts at Once: Evidence of Linear Superposition in LLMs (arXiv:2609.29845)",
+          "url": "https://arxiv.org/abs/2609.29845"
+        }
+      ],
+      "id": "771e5ab9-3f8e-4d29-bcc7-f2be02aa2740",
+      "publishedDate": "2026-10-05T00:46:20Z",
+      "body": null
+    },
+    {
       "title": "Claude Sonnet 5.5: Same Price Tag, Fewer Billable Tokens",
       "subtitle": "Anthropic's mid-tier model gets 30% faster without raising the price per token",
       "category": "AI News",
@@ -10613,357 +10956,6 @@
         }
       ],
       "publishedDate": "2026-09-29T06:46:03Z"
-    },
-    {
-      "id": "24076724-5b14-4e01-9781-9157b9533469",
-      "title": "RRSI: Keeping Self-Improving Agents From Overfitting",
-      "subtitle": "When an agent rewrites its own harness, big gains can be a mirage",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "self-improvement",
-        "agent harness",
-        "overfitting",
-        "arxiv paper"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "RRSI adds regularization to the loop where an agent evolves its own harness (prompts, tools, control flow), using a critic to reject benchmark-specific patches and a pruner to cut low-value edits. Across eight benchmarks it gains up to 14.1 points in-distribution and up to 4.7 points out-of-distribution, while cutting policy tokens by 30%.",
-      "slides": [
-        {
-          "id": "dfbe0dd6-8136-4601-864c-c7383781ede3",
-          "kind": "cover",
-          "title": "Can an Agent Safely Rewrite Its Own Harness?",
-          "body": "A paper from Google Cloud AI Research, UNC-Chapel Hill, Stanford, and Washington University in St. Louis (arXiv:2609.24972) says: only with regularization.",
-          "bullets": [
-            "Harness = the prompts, tools, control flow, and memory wrapped around a frozen model",
-            "Recursive self-improvement automates editing that harness — but naive versions overfit"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "9ad48a54-bbae-469b-934a-8bbab8c37d02",
-          "kind": "problem",
-          "title": "Apparent Self-Improvement Can Be a Mirage",
-          "body": "An unregularized evolution loop tends to find edits that exploit quirks of the exact benchmark it's evolving against.",
-          "bullets": [
-            "Large gains on the training split can shrink or vanish entirely on out-of-distribution (OOD) benchmarks",
-            "The harness ends up memorizing benchmark-specific patterns, evaluation noise, or unnecessary complexity — not transferable skill"
-          ],
-          "symbol": "arrow.down.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "743d2154-a525-4ae3-adf0-37cbed5f2a84",
-          "kind": "solution",
-          "title": "Two Regularizers: A Budgeted Proposer, A Critic + Pruner Selector",
-          "body": "RRSI constrains both how candidate harness edits are proposed and how they're selected.",
-          "bullets": [
-            "Proposer: a temporally annealed edit budget limits how many changes a candidate can bundle at once, and nudges the search toward unexplored trajectories",
-            "Selector's critic: screens out proposals that look benchmark-specific rather than generally useful",
-            "Selector's pruner: removes edits that are too small, too expensive, or no longer add value"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "72af9356-fa80-4d0f-a6d7-2dfa3897bbbc",
-          "kind": "comparison",
-          "title": "RRSI vs. Unregularized Evolution",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Metric",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Gain on evolved split (in-distribution)",
-                "up to +14.1 points"
-              ],
-              [
-                "Gain on 5 OOD benchmarks",
-                "up to +4.7 points"
-              ],
-              [
-                "Policy tokens used at inference",
-                "30% fewer than unregularized evolution"
-              ],
-              [
-                "Benchmarks tested",
-                "8, spanning coding, agentic workspace, and engineering design"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "94b1299c-0c67-43f2-ad70-bf18fee3ec94",
-          "kind": "example",
-          "title": "A Coding Agent That Almost Overfit Its Own Fix",
-          "body": "Imagine evolving a bug-fixing agent's harness against one coding benchmark's specific error-message format.",
-          "bullets": [
-            "Unregularized evolution: the harness learns to special-case that exact error format — huge in-distribution score, collapses on a different codebase's error style",
-            "RRSI's critic flags the patch as benchmark-specific and screens it out; the pruner removes redundant tweaks",
-            "What survives is a more general error-parsing improvement that holds up on the 5 OOD benchmarks too"
-          ],
-          "symbol": "hammer.fill",
-          "table": null
-        },
-        {
-          "id": "dc8f947c-f42a-41bb-b50d-e16f94978fdd",
-          "kind": "problem",
-          "title": "Where RRSI Still Has Limits",
-          "body": "Regularization is a tradeoff, not a free lunch.",
-          "bullets": [
-            "The critic and pruner are themselves components that need to be reliable — a bad critic could reject genuinely good, narrow optimizations",
-            "Evaluated on coding, agentic-workspace, and engineering-design tasks — generalization to very different domains is untested",
-            "Still requires running and scoring many candidate harnesses, so it's not a low-compute technique, just a less wasteful one"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "31f91c6c-2095-453c-8b48-594ed2b66450",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Recursive self-improvement of an agent's harness can look like progress while just memorizing the benchmark",
-            "RRSI's fix isn't a new search algorithm — it's regularization: budget the proposer, add a critic to screen for generality, prune low-value edits",
-            "The token-efficiency win (30% fewer policy tokens) is itself a signal: harnesses that generalize tend to be leaner, not just more accurate"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "fbc73f85-ed50-43c8-ba09-f2edbd6b1948",
-            "prompt": "What problem does RRSI's regularization primarily target?",
-            "options": [
-              "GPU memory limits during training",
-              "An evolved agent harness overfitting to the specific benchmark it was evolved against",
-              "Slow model inference speed",
-              "Running out of training data"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper shows unregularized harness evolution can post big in-distribution gains that shrink or vanish on out-of-distribution benchmarks — the classic overfitting signature, applied to agent harnesses instead of model weights."
-          },
-          {
-            "id": "bc2cf4ee-eeb7-4493-a25c-b7c59a0cfb50",
-            "prompt": "What does RRSI's 'critic' do in the selection process?",
-            "options": [
-              "Writes the agent's final response to the user",
-              "Screens out candidate harness edits that look benchmark-specific rather than generally useful",
-              "Compresses the model's weights",
-              "Generates new training data"
-            ],
-            "correctIndex": 1,
-            "explanation": "The critic is paired with a pruner in the selector: the critic filters out overfit-looking proposals, while the pruner removes edits that are too small, costly, or redundant."
-          },
-          {
-            "id": "13238434-5c69-4ad1-bfbc-e180a6b89985",
-            "prompt": "Why is the 30% reduction in policy tokens notable, beyond just being cheaper?",
-            "options": [
-              "It has nothing to do with generalization",
-              "It means RRSI produces a smaller model",
-              "It's a sign the resulting harness relies on more general, less roundabout mechanisms rather than benchmark-specific workarounds",
-              "It only applies during training, never at inference"
-            ],
-            "correctIndex": 2,
-            "explanation": "A harness that needs fewer policy tokens to get the same or better result is doing less special-casing — efficiency and generalization move together in RRSI's results."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "dfae36cf-532b-455e-96c0-9ca7a4f8f6c1",
-          "title": "RRSI: Regularized Recursive Self-Improvement of Agent Harnesses (arXiv:2609.24972)",
-          "url": "https://arxiv.org/abs/2609.24972"
-        }
-      ],
-      "publishedDate": "2026-09-29T06:45:03Z"
-    },
-    {
-      "id": "1e6e112f-8300-4d2f-8636-83be9ed4c8b1",
-      "title": "Multi-Head Latent Attention: Compress the Cache, Not the Heads",
-      "subtitle": "How DeepSeek shrank the KV cache without sharing attention heads",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "kv cache",
-        "llm architecture",
-        "deepseek",
-        "inference optimization"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.down.right.and.arrow.up.left.circle.fill",
-      "summary": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2, compresses keys and values into a small shared latent vector before caching them, then reconstructs per-head K/V on the fly — cutting KV cache size dramatically without the quality cost of head-sharing schemes like GQA.",
-      "slides": [
-        {
-          "id": "51ff3ebe-8707-4657-ae3b-c132d29fd4e3",
-          "kind": "cover",
-          "title": "The KV Cache Problem Has Two Different Fixes",
-          "body": "GQA shrinks the cache by sharing K/V across query heads. MLA takes a different route: compress what gets stored, keep every head.",
-          "bullets": [
-            "Introduced in DeepSeek-V2, used again in DeepSeek-V3",
-            "Cache holds a compressed latent vector instead of full per-head K/V"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null
-        },
-        {
-          "id": "3a0197a0-031c-4e19-89e8-7037e87d54dd",
-          "kind": "problem",
-          "title": "Why the KV Cache Gets Expensive",
-          "body": "Every generated token needs the cached K/V of every prior token, across every layer and every attention head.",
-          "bullets": [
-            "Cache size scales with sequence length × layers × heads × head dimension",
-            "Multi-Query Attention (MQA) and Grouped-Query Attention (GQA) cut this by sharing K/V across heads — cheaper, but heads lose some of their independent representational capacity"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "78976afe-b832-4f27-ba87-9ec7a4925dd8",
-          "kind": "architecture",
-          "title": "Compress First, Reconstruct Per Head at Attention Time",
-          "body": "MLA down-projects each token's K and V into one low-rank latent vector — that's the only thing cached.",
-          "bullets": [
-            "At attention time, up-projection matrices reconstruct full per-head K/V from the cached latent",
-            "Query and key computations are algebraically restructured so the up-projection can be absorbed into existing weight matrices — no extra matmul cost at serving time",
-            "Plain RoPE breaks this trick (rotation depends on absolute position per head), so MLA uses a 'decoupled RoPE': a small separate rotary component carried alongside the compressed latent"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "7b39d4cf-b314-4a93-976e-66ac69f4abdc",
-          "kind": "comparison",
-          "title": "MHA vs. GQA vs. MLA",
-          "body": null,
-          "bullets": [],
-          "symbol": "square.stack.3d.up.fill",
-          "table": {
-            "headers": [
-              "Scheme",
-              "How it shrinks the cache",
-              "Per-head capacity kept?"
-            ],
-            "rows": [
-              [
-                "MHA (baseline)",
-                "No compression",
-                "Yes — full baseline"
-              ],
-              [
-                "GQA",
-                "Shares K/V across groups of query heads",
-                "Reduced — heads in a group share K/V"
-              ],
-              [
-                "MLA",
-                "Caches a low-rank latent, reconstructs full K/V per head",
-                "Yes — every head still gets its own reconstructed K/V"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "363d91a8-eda2-4115-8dfa-914cd2c6f0e2",
-          "kind": "example",
-          "title": "Serving More Users on the Same GPU",
-          "body": "A provider is serving many concurrent 128K-context chat sessions on a fixed GPU memory budget.",
-          "bullets": [
-            "With standard MHA, the KV cache for long sessions crowds out memory, capping how many concurrent users fit",
-            "DeepSeek reports MLA cutting KV cache to roughly 4-14% of the MHA baseline depending on model size — freeing that memory for more concurrent sequences or longer contexts"
-          ],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "00bd33e7-fb2f-4d4f-8427-1b9b01855297",
-          "kind": "problem",
-          "title": "Tradeoffs and Pitfalls",
-          "body": "MLA isn't a free drop-in.",
-          "bullets": [
-            "It's an architectural choice made at pretraining time — you can't bolt MLA onto an already-trained MHA checkpoint without substantial retrofitting",
-            "The decoupled RoPE machinery and fused up-projection math add real implementation complexity versus plain MHA or GQA",
-            "Serving frameworks need explicit MLA-aware kernels to realize the latency benefit — a naive implementation that fully reconstructs K/V before caching gives back the memory savings"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "233d9392-3c71-47d3-92ec-b20cbdd06090",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "GQA shrinks the cache by sharing heads; MLA shrinks it by compressing what each head's K/V looks like in storage",
-            "The trick only works cheaply because the up-projection can be algebraically folded into existing weights — plus a decoupled RoPE term to preserve position info",
-            "Bigger cache compression translates directly into more concurrent users or longer contexts per GPU at serving time"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "11830a54-8f96-417e-9284-9796c92c8172",
-            "prompt": "What does MLA actually store in the KV cache?",
-            "options": [
-              "The full per-head keys and values, just like standard MHA",
-              "Nothing — it recomputes attention from scratch every step",
-              "A single compressed low-rank latent vector per token, later reconstructed into per-head K/V",
-              "Only the value vectors, discarding the keys"
-            ],
-            "correctIndex": 2,
-            "explanation": "MLA down-projects K and V into one shared latent per token for caching, then reconstructs full per-head K/V via up-projection matrices at attention time."
-          },
-          {
-            "id": "556b3b44-922d-4fe9-9e38-7e2004f233ad",
-            "prompt": "How does MLA's approach to shrinking the KV cache differ from GQA's?",
-            "options": [
-              "MLA shares heads across groups, GQA compresses into a latent",
-              "GQA shares K/V across groups of query heads; MLA keeps every head but compresses what's stored for it",
-              "They are the same technique with different names",
-              "MLA only works with MQA, not GQA"
-            ],
-            "correctIndex": 1,
-            "explanation": "GQA reduces cache size by letting groups of query heads share the same K/V. MLA instead keeps every head's own K/V conceptually distinct but stores them compressed as a shared latent, reconstructing them per head when needed."
-          },
-          {
-            "id": "ca25b40e-d8f6-41e6-b25e-8dbcd3706c05",
-            "prompt": "Why can't MLA just use standard RoPE the way MHA does?",
-            "options": [
-              "RoPE is too slow to compute",
-              "Standard RoPE's rotation depends on absolute position per head, which breaks the low-rank latent compression — so MLA uses a separate 'decoupled RoPE' component",
-              "RoPE only works with 8-bit quantization",
-              "MLA doesn't use positional encoding at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "Rotating the full-dimensional keys per head before compression would defeat the point of caching a compact latent, so MLA carries a small decoupled rotary term alongside the compressed latent instead."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "c66244c5-727a-4b42-b455-b55f7d86c9a8",
-          "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model (arXiv:2405.04434)",
-          "url": "https://arxiv.org/abs/2405.04434"
-        }
-      ],
-      "publishedDate": "2026-09-29T06:44:03Z"
     }
   ]
 }
