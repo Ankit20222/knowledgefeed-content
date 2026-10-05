@@ -1,6 +1,526 @@
 {
   "posts": [
     {
+      "title": "TACO: Shrinking the Optimizer, Not the Model",
+      "subtitle": "A ternary, one-sparse optimizer cuts fine-tuning memory 174x without touching accuracy.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "optimizer",
+        "fine-tuning",
+        "memory-efficiency",
+        "llm-training",
+        "quantization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.down.circle.fill",
+      "summary": "TACO (Ternary Absolute-max Column-wise One-sparse Optimizer) replaces AdamW's two full-precision state tensors with a single ternary value per weight column, cutting optimizer memory 174x and peak training memory 2.9x on OPT-13B with comparable accuracy. That headroom lets a 30-32B model fine-tune on one 80GB H100.",
+      "slides": [
+        {
+          "id": "c859f83a-78dd-4610-bc21-2d5c6321cb7d",
+          "kind": "cover",
+          "title": "One Sign Bit Per Column, Not Two Tensors Per Weight",
+          "body": "A new optimizer from UCF and Mohammed VI Polytechnic throws out almost everything AdamW remembers about your model's weights — and still trains it.",
+          "bullets": [],
+          "symbol": "arrow.down.circle.fill",
+          "table": null
+        },
+        {
+          "id": "bc70f8cc-598e-44d0-aea0-df2c7c024fc8",
+          "kind": "problem",
+          "title": "AdamW Spends More Memory on Bookkeeping Than on the Model",
+          "body": "For every parameter, AdamW keeps a first-moment (momentum) and second-moment (variance) estimate in full precision — 2x the model's own memory, before you even count activations.",
+          "bullets": [
+            "On OPT-13B, AdamW8bit's optimizer state alone runs 27.7 GB",
+            "Peak training memory hits 80.6 GB — right at the ceiling of an 80GB H100",
+            "That overhead is why full-parameter fine-tuning gets abandoned for LoRA on anything bigger than ~13B"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "f35f1290-afce-458b-a5c8-576290f0780d",
+          "kind": "solution",
+          "title": "Keep Only the Direction, Throw Away the Magnitude",
+          "body": "TACO computes the exact steepest-descent direction under a dimension-normalized 1-to-1 operator norm by picking just the sign of the largest-magnitude entry in each column of a weight matrix.",
+          "bullets": [
+            "Each column's update collapses to one nonzero entry: +1, -1, or 0 — ternary, one-sparse",
+            "No momentum buffer, no variance buffer, no per-parameter scalar state to store",
+            "Still a principled steepest-descent step, not a heuristic compression trick"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "b7a1dfad-5d67-4d1b-a602-09fffa655fc9",
+          "kind": "comparison",
+          "title": "The Numbers on OPT-13B",
+          "body": "Measured against AdamW8bit, already a compressed baseline — not full-precision AdamW.",
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Metric",
+              "AdamW8bit",
+              "TACO"
+            ],
+            "rows": [
+              [
+                "Optimizer state",
+                "27.7 GB",
+                "0.16 GB (174x smaller)"
+              ],
+              [
+                "Peak training memory",
+                "80.6 GB",
+                "27.5 GB (2.9x smaller)"
+              ],
+              [
+                "Accuracy / runtime",
+                "baseline",
+                "comparable"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "dd7cbf7c-f645-4771-ab5d-36b54bd887b4",
+          "kind": "example",
+          "title": "What 2.9x Less Memory Actually Unlocks",
+          "body": "The paper reports TACO enabling full-parameter fine-tuning of 30-32B-parameter models on a single 80GB H100 — across multiple model families and tasks.",
+          "bullets": [
+            "Before: a 13B full fine-tune already pins an 80GB card near its limit with AdamW8bit",
+            "After: the same card has room for a model more than 2x larger, full-parameter, no LoRA adapters",
+            "Teams without multi-GPU clusters get full fine-tuning back on the table"
+          ],
+          "symbol": "server.rack",
+          "table": null
+        },
+        {
+          "id": "9140c1bc-0f03-49bd-bbed-d79e10aa7df2",
+          "kind": "takeaways",
+          "title": "Why This Matters Beyond One Optimizer",
+          "body": null,
+          "bullets": [
+            "Optimizer state, not weights or activations, is often the real memory bottleneck in fine-tuning",
+            "A ternary, one-sparse update can preserve exact steepest-descent direction — compression doesn't have to mean a heuristic",
+            "174x state reduction turned into 2.9x peak memory reduction: the model and activations still dominate, so expect diminishing returns on smaller models",
+            "Code is open at github.com/Jichao2357/TACO_optimizer for anyone who wants to try it on their own fine-tuning run"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "941805f8-4f67-4283-a8f2-88064cf5bfb0",
+            "prompt": "What does AdamW store per parameter that TACO eliminates?",
+            "options": [
+              "The learning rate schedule",
+              "Full-precision first- and second-moment (momentum and variance) estimates",
+              "A copy of the training data",
+              "The model's attention weights"
+            ],
+            "correctIndex": 1,
+            "explanation": "AdamW keeps two extra full-precision tensors per parameter (momentum + variance) as optimizer state — that's the 2x memory tax TACO targets by reducing each column's update to a single ternary value."
+          },
+          {
+            "id": "e08471e3-2a68-45dc-80a0-af8ae84a4ebc",
+            "prompt": "On OPT-13B, how much did TACO reduce peak training memory compared to AdamW8bit?",
+            "options": [
+              "174x",
+              "2.9x (80.6 GB to 27.5 GB)",
+              "10x",
+              "No change, only optimizer state shrank"
+            ],
+            "correctIndex": 1,
+            "explanation": "Optimizer state itself shrank 174x, but peak training memory — which also includes weights, gradients, and activations — shrank a more modest 2.9x, from 80.6 GB to 27.5 GB."
+          },
+          {
+            "id": "6e8ece60-762f-4559-8647-f676e1c7f16f",
+            "prompt": "What concrete capability does the paper report this memory savings unlocking?",
+            "options": [
+              "Running inference without a GPU",
+              "Full-parameter fine-tuning of 30-32B models on a single 80GB H100",
+              "Training without any labeled data",
+              "Eliminating the need for a learning rate"
+            ],
+            "correctIndex": 1,
+            "explanation": "The freed-up memory headroom lets full-parameter fine-tuning scale to 30-32B-parameter models on one 80GB H100 — previously out of reach without multi-GPU sharding or switching to LoRA."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d5edadfa-3cee-4ed8-a562-c3086ad6a0ac",
+          "title": "TACO: Ternary Absolute-max Column-wise One-sparse Optimizer for LLM Fine-Tuning",
+          "url": "https://arxiv.org/abs/2610.02199"
+        }
+      ],
+      "body": null,
+      "id": "581cb1ab-87cf-4317-8935-0e1e6cd6697d",
+      "publishedDate": "2026-10-05T12:46:00Z"
+    },
+    {
+      "title": "GPT-6.1 Sol: Astra-Level Coding at a Fifth of the Cost",
+      "subtitle": "OpenAI's new coding-focused model closes the gap on its flagship while cutting price and errors.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "openai",
+        "gpt-6.1-sol",
+        "coding-agents",
+        "devday-2026",
+        "api-pricing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "chevron.left.forwardslash.chevron.right",
+      "summary": "At DevDay 2026, OpenAI shipped GPT-6.1 Sol: a coding-focused upgrade that lands within 1.9% error rate of flagship GPT-6 Astra on professional work, while pricing in at roughly a fifth of Astra's cost. A new 'Ultrafast' serving tier pushes token generation up to 8x faster in Codex.",
+      "slides": [
+        {
+          "id": "b86a60b1-83ab-43f2-b3b0-47799c64413f",
+          "kind": "cover",
+          "title": "Nearly Flagship Intelligence, Fraction of the Price",
+          "body": "OpenAI's DevDay 2026 headline model isn't the biggest thing they've shipped — it's the one built to make long agentic coding sessions actually affordable.",
+          "bullets": [],
+          "symbol": "chevron.left.forwardslash.chevron.right",
+          "table": null
+        },
+        {
+          "id": "b55132bc-9f13-4adb-ba61-d1ed095b6f69",
+          "kind": "problem",
+          "title": "Frontier Coding Models Were Too Slow or Too Expensive to Run All Day",
+          "body": "GPT-6 Astra is OpenAI's strongest model, but its price and latency make it a poor fit for hours-long agentic coding sessions. The previous mid-tier, GPT-6 Sol, left real accuracy on the table.",
+          "bullets": [
+            "GPT-6 Sol's factual-error rate sat at 11.4% at low reasoning effort",
+            "Long Codex sessions multiply token usage, so per-token cost compounds fast",
+            "Teams had to choose between Astra's quality and Sol's price — not both"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "b790c444-90ce-4d29-8f1a-6a8e65b811a5",
+          "kind": "solution",
+          "title": "GPT-6.1 Sol Closes the Gap",
+          "body": "The upgrade cuts the factual-error rate from 11.4% to 7.7% at low reasoning effort, and across all reasoning settings stays within 1.9% of GPT-6 Astra's error rate.",
+          "bullets": [
+            "On DeepSWE v1.1 (a complex software-engineering benchmark), it matches Astra at roughly one-fifth of the cost",
+            "It beats GPT-6 Sol's best DeepSWE v1.1 score by 6.4 percentage points",
+            "Ships with a 1-million-token context window"
+          ],
+          "symbol": "arrow.up.right.circle.fill",
+          "table": null
+        },
+        {
+          "id": "1e589ab2-bc8a-49b2-b26e-451b9a30807f",
+          "kind": "comparison",
+          "title": "Pricing and Positioning",
+          "body": null,
+          "bullets": [],
+          "symbol": "dollarsign.circle.fill",
+          "table": {
+            "headers": [
+              "Model",
+              "Input / Output price (per 1M tokens)",
+              "Notes"
+            ],
+            "rows": [
+              [
+                "GPT-6 Sol",
+                "lower, but 11.4% error rate",
+                "superseded"
+              ],
+              [
+                "GPT-6.1 Sol",
+                "$2 / $10 (cached input $0.10)",
+                "1.9% off Astra's error rate"
+              ],
+              [
+                "GPT-6 Astra",
+                "premium flagship pricing",
+                "highest raw accuracy"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "059e1601-705b-43b9-a0bd-62549526873c",
+          "kind": "architecture",
+          "title": "Ultrafast: A Separate Serving Tier for Speed",
+          "body": "Alongside the standard model, OpenAI shipped a GPT-6.1 Sol Ultrafast tier aimed purely at latency-sensitive agentic loops.",
+          "bullets": [
+            "Up to 300 tokens/second generation speed",
+            "Up to 8x faster than standard speed inside Codex",
+            "Up to 6x faster through the general API"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "01caee30-45ac-454d-b814-209cfd2c1e46",
+          "kind": "example",
+          "title": "Where This Actually Changes a Workflow",
+          "body": "A team running an autonomous Codex agent across a large monorepo refactor previously had to budget for Astra-level spend or accept Sol-level error rates.",
+          "bullets": [
+            "With GPT-6.1 Sol: near-Astra accuracy at ~1/5 the cost, so the agent can run longer unsupervised",
+            "With Ultrafast: the same agent iterates through edit-test-fix loops up to 8x faster, cutting wall-clock time, not just dollar cost",
+            "The 1M-token context window means less re-chunking of large codebases mid-session"
+          ],
+          "symbol": "laptopcomputer.and.arrow.down",
+          "table": null
+        },
+        {
+          "id": "fc84b006-38aa-4949-adf7-dc57f65efb82",
+          "kind": "takeaways",
+          "title": "Where GPT-6.1 Sol Fits",
+          "body": null,
+          "bullets": [
+            "It's a cost/latency play, not a new capability ceiling — GPT-6 Astra still holds the top accuracy spot",
+            "The 1.9% error-rate gap to Astra is the headline number: close enough that cost becomes the deciding factor for most coding workloads",
+            "Ultrafast is opt-in and separate from the standard tier — pick it specifically for latency-bound agent loops, not raw accuracy",
+            "Rolled out broadly: ChatGPT Plus/Pro/Business/Enterprise/Edu in Work and Codex, plus general API access"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "46d65444-0549-4c11-bcfc-1a95f7e356a2",
+            "prompt": "How close does GPT-6.1 Sol get to GPT-6 Astra's error rate across reasoning settings?",
+            "options": [
+              "Identical",
+              "Within 1.9%",
+              "Within 20%",
+              "It doesn't improve on GPT-6 Sol at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "OpenAI reports GPT-6.1 Sol's error rate stays within 1.9% of GPT-6 Astra's across all reasoning settings, while costing roughly a fifth as much on coding benchmarks like DeepSWE v1.1."
+          },
+          {
+            "id": "09c238b3-4b6e-4378-86e0-861b6ea3ac06",
+            "prompt": "What is the 'Ultrafast' tier of GPT-6.1 Sol optimized for?",
+            "options": [
+              "Lower price per token",
+              "Higher factual accuracy",
+              "Token generation speed — up to 8x faster in Codex",
+              "A larger context window"
+            ],
+            "correctIndex": 2,
+            "explanation": "Ultrafast is a separate serving tier focused purely on latency: up to 300 tokens/second, up to 8x faster than standard in Codex and 6x faster via the general API — not an accuracy upgrade."
+          },
+          {
+            "id": "33fb1ddf-dacb-4a1e-bfe9-867e34b4ba19",
+            "prompt": "What factual-error rate did GPT-6.1 Sol achieve at low reasoning effort, down from GPT-6 Sol's 11.4%?",
+            "options": [
+              "0%",
+              "7.7%",
+              "15%",
+              "5x higher than before"
+            ],
+            "correctIndex": 1,
+            "explanation": "OpenAI reports the share of responses containing a factual error dropped from 11.4% (GPT-6 Sol) to 7.7% (GPT-6.1 Sol) at low reasoning effort — roughly a one-third relative reduction."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "56b19765-3644-4b93-9be0-e8dec4649002",
+          "title": "Introducing GPT-6.1 Sol",
+          "url": "https://openai.com/index/introducing-gpt-6-1-sol/"
+        }
+      ],
+      "body": null,
+      "id": "674eadb6-828a-4937-9995-8c79ede42284",
+      "publishedDate": "2026-10-05T12:46:00Z"
+    },
+    {
+      "title": "Speculative Decoding: Guess Fast, Verify Once",
+      "subtitle": "A small draft model proposes tokens; the big model checks a whole batch in one forward pass.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "speculative-decoding",
+        "inference-optimization",
+        "llm-serving",
+        "latency",
+        "draft-model"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding speeds up autoregressive generation by having a small, fast draft model propose several tokens ahead, which the large target model then verifies in a single parallel forward pass — accepting correct guesses and only falling back to normal decoding when the draft is wrong, all while producing output statistically identical to standard decoding.",
+      "slides": [
+        {
+          "id": "3c24a45f-fa99-4196-90ad-8d87fa2d92b4",
+          "kind": "cover",
+          "title": "Why Generate One Token at a Time When You Can Check Several at Once?",
+          "body": "Speculative decoding is the trick behind most production LLM speedups you can't see — same output, noticeably faster.",
+          "bullets": [],
+          "symbol": "hare.fill",
+          "table": null
+        },
+        {
+          "id": "73c8bcd2-3699-4d0b-b286-ab8a8eed941c",
+          "kind": "problem",
+          "title": "Autoregressive Decoding Wastes the GPU",
+          "body": "Generating token-by-token means one matrix-vector multiply per step — the GPU spends most of its time moving weights from memory, not computing, because batch size per step is effectively 1.",
+          "bullets": [
+            "Each step is memory-bandwidth bound, not compute bound — the GPU's raw FLOPs sit mostly idle",
+            "A 70B model pays the same per-token latency whether it's generating 1 token or could be verifying 10",
+            "This is why decoding feels slow even on hardware that trains the same model quickly"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "57f22bce-d631-4e01-89fa-5b488be0851f",
+          "kind": "concept",
+          "title": "The Core Trick: Draft, Then Verify in Parallel",
+          "body": "A small, cheap draft model generates K candidate tokens autoregressively. The large target model then runs ONE forward pass over all K candidates at once — parallel verification is compute-bound, so it's nearly free compared to K sequential steps.",
+          "bullets": [
+            "Draft model: fast but less accurate (e.g. a 1B model)",
+            "Target model: slow but authoritative (e.g. a 70B model)",
+            "Verification checks all K draft tokens in the time a single normal step would take"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "6f91e93d-5942-4f29-9eab-99b9f43b6649",
+          "kind": "architecture",
+          "title": "Rejection Sampling Keeps the Output Exact",
+          "body": "The target model doesn't just approve or reject — it uses rejection sampling so the final output distribution is mathematically identical to running the target model alone.",
+          "bullets": [
+            "Accept a draft token if the target model assigns it at least as much probability as the draft did",
+            "If rejected, resample from a corrected distribution (target minus draft, renormalized) — not a retry, a precise correction",
+            "This is why speculative decoding is 'lossless': no quality tradeoff, only a speed one"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "62025b3f-fd48-4178-8054-befb231c53fd",
+          "kind": "example",
+          "title": "Worked Example: K=5 Draft Tokens, 70% Acceptance",
+          "body": "Say a 1B draft model proposes 5 tokens ahead of a 70B target model, and on average 70% of draft tokens get accepted before the first rejection.",
+          "bullets": [
+            "Expected accepted tokens per verification round ≈ 3.5, plus 1 corrected token from the target itself",
+            "That's ~4.5 tokens produced per expensive target forward pass, instead of 1",
+            "Net effect: roughly 2-3x wall-clock speedup in typical production setups, with zero change to output quality"
+          ],
+          "symbol": "speedometer",
+          "table": null
+        },
+        {
+          "id": "46c6b54d-127a-4057-92bb-8868289b59a6",
+          "kind": "comparison",
+          "title": "Standard vs. Speculative Decoding",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Aspect",
+              "Standard decoding",
+              "Speculative decoding"
+            ],
+            "rows": [
+              [
+                "Target-model forward passes",
+                "1 per output token",
+                "~1 per 3-5 output tokens"
+              ],
+              [
+                "Output distribution",
+                "exact",
+                "exact (via rejection sampling)"
+              ],
+              [
+                "Extra infrastructure",
+                "none",
+                "a second, smaller draft model"
+              ],
+              [
+                "Best case speedup",
+                "1x (baseline)",
+                "~2-3x typical"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "43e09397-7d57-4176-8f51-184ab8ea3b59",
+          "kind": "takeaways",
+          "title": "When It Helps — and When It Doesn't",
+          "body": null,
+          "bullets": [
+            "Biggest wins come from a draft model that's well-aligned with the target's distribution — mismatched domains tank the acceptance rate and can make things slower",
+            "Gains shrink at large batch sizes, where decoding is already closer to compute-bound",
+            "Hosting a second model adds operational complexity — not worth it for low-traffic or latency-insensitive workloads",
+            "It's a free lunch on output quality, but not a free lunch on engineering: tuning K and the draft model matters"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "cdc8fdee-7024-4adc-877e-bba3452f771a",
+            "prompt": "Why is standard autoregressive decoding slow on GPUs despite their high compute throughput?",
+            "options": [
+              "GPUs cannot run transformer models",
+              "Each step is memory-bandwidth bound with effective batch size 1, leaving compute idle",
+              "The model must be retrained for every token",
+              "Decoding requires a CPU, not a GPU"
+            ],
+            "correctIndex": 1,
+            "explanation": "Generating one token at a time means moving the full model's weights from memory for a tiny amount of compute per step — the GPU is bottlenecked on memory bandwidth, not FLOPs, leaving most of its compute capacity unused."
+          },
+          {
+            "id": "a8c256c7-780c-40d4-b570-15bf3a8f32b6",
+            "prompt": "How does speculative decoding guarantee the output is statistically identical to standard decoding?",
+            "options": [
+              "It doesn't — there's a small accuracy tradeoff",
+              "By using rejection sampling to accept or correct each draft token against the target model's true distribution",
+              "By averaging the draft and target model's outputs",
+              "By always trusting the draft model's tokens"
+            ],
+            "correctIndex": 1,
+            "explanation": "Rejection sampling accepts a draft token when the target model agrees it's at least as likely, and otherwise resamples from a mathematically corrected distribution — making the technique lossless, not approximate."
+          },
+          {
+            "id": "aa21383f-b6be-42c8-8886-a332062c7ccf",
+            "prompt": "When does speculative decoding provide the LEAST benefit?",
+            "options": [
+              "When the draft model closely matches the target model's behavior",
+              "At large batch sizes, where decoding is already closer to compute-bound",
+              "On a single, low-traffic request",
+              "When K is set to 1"
+            ],
+            "correctIndex": 1,
+            "explanation": "At large batch sizes, GPUs are already better utilized during standard decoding (more compute per memory load), so the parallel-verification advantage of speculative decoding shrinks — the technique shines most at small batch, latency-sensitive serving."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "3d86cc99-b767-4caf-b0ae-63ae75c46565",
+          "title": "Fast Inference from Transformers via Speculative Decoding",
+          "url": "https://arxiv.org/abs/2211.17192"
+        }
+      ],
+      "body": null,
+      "id": "0816c3cc-2bf9-471d-89e3-e31061b68cec",
+      "publishedDate": "2026-10-05T12:46:00Z"
+    },
+    {
       "title": "OneStreamer: A Video Model That Decides What to Remember",
       "subtitle": "It caches events, not frames — and still beats dense-labeled baselines on a quarter of the supervision.",
       "category": "AI Innovations",
@@ -10405,577 +10925,6 @@
       ],
       "body": null,
       "publishedDate": "2026-09-30T00:47:42Z"
-    },
-    {
-      "id": "e67a72cd-c4a9-4337-9d76-114cb50d2f45",
-      "title": "DeepSeek-V4.1-Flash Brings Back the Encoder-Decoder Split",
-      "subtitle": "552B parameters, only 8-16B active at a time, and a KV cache trick that shrinks memory ~8x.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "deepseek",
-        "moe",
-        "encoder-decoder",
-        "long-context",
-        "open-weights"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "bolt.fill",
-      "summary": "DeepSeek-V4.1-Flash splits its 40 transformer layers into a 20-layer encoder and a 20-layer decoder, activating only 8B-16B of its 552B parameters per token. A technique called SWA Bounded Replay shrinks its persistent KV cache to roughly 1/8 of the prior model's, making a 1M-token context window practical to serve.",
-      "slides": [
-        {
-          "id": "94149d56-c0cc-4db6-98c7-80f36d13a4bc",
-          "kind": "cover",
-          "title": "One Model, Two Very Different Halves",
-          "body": "DeepSeek's newest open-weight model revives an old idea — splitting the transformer into an encoder and a decoder — to make long-context inference dramatically cheaper.",
-          "bullets": [],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "226c6d11-4446-4126-918c-5e44f8ff2602",
-          "kind": "problem",
-          "title": "Decoder-Only Models Pay the Same Price Every Token",
-          "body": "Standard decoder-only LLMs re-attend to the full, growing context on every generation step.",
-          "bullets": [
-            "At a 1M-token context, that means an enormous persistent KV cache and real per-token compute, even when most of the context is old and static",
-            "Agentic workloads — long tool-use trajectories, huge retrieved documents — are exactly where this cost hurts most",
-            "DeepSeek-V4.1-Flash's core bet: process the (mostly static) input once, then decode against a compressed representation of it",
-            "Native multimodal input (text + image), autoregressive text output"
-          ],
-          "symbol": "hourglass",
-          "table": null
-        },
-        {
-          "id": "c83e43da-29d0-43e0-831d-ed00e329e30e",
-          "kind": "solution",
-          "title": "Causal Encoder-Decoder: 20 Layers In, 20 Layers Out",
-          "body": "The model's 40 transformer layers split into a 20-layer causal encoder and a 20-layer decoder, totaling 552B parameters.",
-          "bullets": [
-            "Only 8B parameters activate per token during prefill (encoding the input)",
-            "16B parameters activate per token during decode (generating output)",
-            "The encoder reads the input once; the decoder then generates against that processed representation instead of re-scanning raw tokens",
-            "Supports up to a 1,000,000-token context window"
-          ],
-          "symbol": "square.split.2x1",
-          "table": null
-        },
-        {
-          "id": "a40d1ba6-4d1a-49a4-a063-b17b8b528be3",
-          "kind": "concept",
-          "title": "SWA Bounded Replay: Shrinking the KV Cache ~8x",
-          "body": "Sliding-window attention (SWA) layers only look back a fixed window, which normally breaks long-range recall once old context falls out of view.",
-          "bullets": [
-            "SWA Bounded Replay reconstructs the missing SWA KV states on demand by replaying only the most recent n_win tokens, not the entire history",
-            "Result: persistent KV cache footprint drops to roughly 1/8 of DeepSeek-V4-Flash's",
-            "This reconstruct-on-demand approach is what makes serving a 1M-token-context model at reasonable memory cost realistic",
-            "DeepSeek shipped custom FlashMLA attention kernels for this pattern — commodity kernels aren't built for it"
-          ],
-          "symbol": "arrow.down.right.and.arrow.up.left",
-          "table": null
-        },
-        {
-          "id": "8898c7db-221d-4511-8208-57ac14bd88fb",
-          "kind": "comparison",
-          "title": "The Spec Sheet",
-          "body": "",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Spec",
-              "DeepSeek-V4.1-Flash"
-            ],
-            "rows": [
-              [
-                "Total params / active (prefill, decode)",
-                "552B / 8B / 16B"
-              ],
-              [
-                "Context window",
-                "1,000,000 tokens"
-              ],
-              [
-                "Architecture",
-                "40-layer Causal Encoder-Decoder (20 + 20)"
-              ],
-              [
-                "License",
-                "MIT (open weights)"
-              ],
-              [
-                "Released",
-                "September 10, 2026"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "59a486b8-61e0-42fd-9e3f-21e8edd6c43a",
-          "kind": "example",
-          "title": "Why This Matters for a 500-Page Contract Review Agent",
-          "body": "An agent loads a 500-page contract — roughly 300K+ tokens — once as input.",
-          "bullets": [
-            "With a standard decoder-only model, every follow-up question re-attends over that entire history at growing cost",
-            "With V4.1-Flash's split, the contract is encoded once; each follow-up question decodes against that fixed representation instead of re-reading it",
-            "Combined with the ~8x smaller persistent KV cache, this targets input-heavy, long-running agentic sessions — not short chat turns",
-            "The same pattern applies to long tool-call transcripts or large retrieved document sets in a RAG pipeline"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "fce78291-7a78-4bbb-9dc1-6d7828b23d8f",
-          "kind": "concept",
-          "title": "Where the Split Architecture Costs You",
-          "body": "The encoder-decoder split isn't a free upgrade over decoder-only designs.",
-          "bullets": [
-            "It adds real engineering complexity — two distinct parameter pools to serve and route between, instead of one uniform stack",
-            "If your workload is short prompts with long, unpredictable generations (brainstorming, creative writing), the 'encode input once' advantage barely applies",
-            "Real-world kernel support matters: DeepSeek's FlashMLA kernels report up to ~1,430 TFLOPS prefill on B200 GPUs, work that a generic attention kernel doesn't do for free",
-            "552B total parameters still means substantial deployment hardware, even though only 8-16B activate per token"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "acebbc68-9213-46aa-8879-f63b3d91ec84",
-          "kind": "takeaways",
-          "title": "What to Take From This Release",
-          "body": "",
-          "bullets": [
-            "Encoder-decoder splits are making a comeback for LLMs specifically to cut the cost of long, mostly-static context",
-            "SWA Bounded Replay is a general pattern worth knowing: reconstruct-on-demand can beat 'keep everything' or 'drop everything' for windowed attention",
-            "Open MIT-licensed weights at this parameter count and context length is itself notable, separate from the architecture story",
-            "Judge new 'efficient long-context' releases by what fraction of parameters activate per token AND what happens to KV cache size — not context length alone"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "2c44f9c8-e346-47f5-a42d-459e4572247f",
-            "prompt": "What architecture does DeepSeek-V4.1-Flash use instead of a standard decoder-only Transformer?",
-            "options": [
-              "A pure Mixture-of-Experts decoder",
-              "A 40-layer Causal Encoder-Decoder (20 encoder + 20 decoder layers)",
-              "A recurrent state-space model",
-              "A vision-only transformer"
-            ],
-            "correctIndex": 1,
-            "explanation": "It splits its 40 transformer layers into a 20-layer causal encoder and a 20-layer decoder, letting it encode input once and decode against that representation."
-          },
-          {
-            "id": "089074ae-c1ea-4f67-a6a1-295fddbb4c95",
-            "prompt": "What problem does 'SWA Bounded Replay' solve?",
-            "options": [
-              "It speeds up tokenization",
-              "It reconstructs missing sliding-window-attention KV states by replaying only recent tokens, shrinking persistent KV cache",
-              "It compresses the model's weights to INT4",
-              "It translates between languages during decoding"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sliding window attention normally loses far-away context; Bounded Replay reconstructs just enough of it on demand, cutting persistent KV cache to roughly 1/8 of the prior model's footprint."
-          },
-          {
-            "id": "f0a844ea-a526-40c6-be21-b6ee5d2d8331",
-            "prompt": "How many of DeepSeek-V4.1-Flash's 552B total parameters activate per token during decoding?",
-            "options": [
-              "552B (all of them)",
-              "8B",
-              "16B",
-              "1B"
-            ],
-            "correctIndex": 2,
-            "explanation": "During decode, 16B parameters activate per token (8B during prefill) — this Mixture-of-Experts-style sparsity is what keeps a 552B-parameter model cheap to run per step."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "b37d2f12-f104-45dc-b7e2-04216255a335",
-          "title": "DeepSeek-V4.1-Flash model card",
-          "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash"
-        },
-        {
-          "id": "a94b7404-36b3-48f6-aad0-6f7515eb541e",
-          "title": "FlashMLA: Efficient Multi-head Latent Attention Kernels (deepseek-ai)",
-          "url": "https://github.com/deepseek-ai/FlashMLA"
-        }
-      ],
-      "body": null,
-      "publishedDate": "2026-09-30T00:46:42Z"
-    },
-    {
-      "id": "90893740-646d-4379-8583-2698acee0542",
-      "title": "Sliding Window Attention: Fixed Lookback, Fixed Cost",
-      "subtitle": "Why capping how far back each token can see turns quadratic attention into a constant-cost operation.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "sliding-window-attention",
-        "transformers",
-        "efficient-attention",
-        "long-context",
-        "inference"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "rectangle.on.rectangle",
-      "summary": "Sliding window attention caps each token's lookback to a fixed window instead of the entire sequence, turning per-token attention cost from O(n) into O(W). Stacking layers extends the effective range, but pure windowing still loses precise long-range recall — which is why most long-context models mix in a few full-attention layers.",
-      "slides": [
-        {
-          "id": "24f03df9-94cb-4b9a-8f6d-d2a81b8c30e5",
-          "kind": "cover",
-          "title": "Every Token Doesn't Need to See Every Other Token",
-          "body": "Full self-attention lets every token attend to every previous token — powerful, but its cost grows quadratically with sequence length. Sliding window attention caps the lookback instead.",
-          "bullets": [],
-          "symbol": "rectangle.on.rectangle",
-          "table": null
-        },
-        {
-          "id": "9a6b2116-69c2-4d7f-946a-d38906a5aa23",
-          "kind": "problem",
-          "title": "Full Attention Gets Expensive Fast",
-          "body": "Standard self-attention computes a score between every pair of tokens.",
-          "bullets": [
-            "Cost and memory scale O(n²) with sequence length n — manageable at 4K tokens, dominant at 128K+ tokens",
-            "The attention matrix and KV cache become the main cost of serving a long-context model",
-            "Much of that cost goes toward token pairs that are far apart and often not very relevant to each other",
-            "Long-context models need per-token cost to stay roughly constant regardless of how long the sequence gets"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "table": null
-        },
-        {
-          "id": "32d90d6a-ee19-4a27-877d-7c00bc40340f",
-          "kind": "solution",
-          "title": "Cap the Lookback Window",
-          "body": "Each token only attends to the previous W tokens — a fixed window — instead of the entire sequence.",
-          "bullets": [
-            "Attention cost per token becomes O(W) instead of O(n): constant, regardless of total sequence length",
-            "Stacking L transformer layers with window W still lets information propagate roughly L×W tokens back, since each layer's output already summarizes its own window",
-            "Commonly mixed with a few full-attention (or 'global token') layers so the model keeps some long-range access alongside the cheap local layers",
-            "Window size W is set per-model, often in the low thousands of tokens per layer"
-          ],
-          "symbol": "arrow.left.and.right",
-          "table": null
-        },
-        {
-          "id": "5e1cef4a-600a-40d4-8a42-7704b0f952c6",
-          "kind": "comparison",
-          "title": "Cost vs. Range, Side by Side",
-          "body": "",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Attention type",
-              "Cost per token",
-              "Effective range"
-            ],
-            "rows": [
-              [
-                "Full (dense) attention",
-                "O(n) — grows with sequence length",
-                "Entire sequence"
-              ],
-              [
-                "Sliding window (window W)",
-                "O(W) — constant",
-                "~W tokens directly, more via layer stacking"
-              ],
-              [
-                "Sliding window + periodic global layers",
-                "O(W) on most layers, O(n) on global layers",
-                "Local plus selected long-range"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "5584c558-c5e0-4f45-a1ba-2a79d4328aa6",
-          "kind": "example",
-          "title": "Mistral 7B's Original Pitch",
-          "body": "Mistral 7B popularized sliding window attention in open LLMs with a window of 4,096 tokens per layer.",
-          "bullets": [
-            "Stacked across the model's transformer layers, the effective information-mixing range extends well beyond the window itself, layer by layer",
-            "This let a 7B model handle much longer sequences at inference without the memory blowup of full attention",
-            "Later long-context models add a handful of full-attention or 'global' layers on top of mostly-local layers to recover long-range recall pure windowing can miss",
-            "DeepSeek's newer 'SWA Bounded Replay' technique takes this further: it reconstructs missing window states on demand rather than relying only on local layers"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "47ca5ea1-301e-41c5-b9e3-f613c535e9af",
-          "kind": "concept",
-          "title": "The Catch: Degraded Long-Range Recall",
-          "body": "Pure sliding window attention doesn't erase old context instantly, but it does let precision decay.",
-          "bullets": [
-            "Once information falls outside the window, only what nearby tokens already absorbed from it survives — not the original detail",
-            "Tasks needing precise recall of something mentioned far outside the window (like a number given 50K tokens ago) are exactly where pure windowing struggles",
-            "Some sliding-window models also show 'attention sink' behavior, over-relying on the first few tokens of the window as anchors",
-            "This gap is why global/full-attention layers, or reconstruction tricks like Bounded Replay, get added back in"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "a313f470-94e9-45c7-83f2-4782623736b4",
-          "kind": "concept",
-          "title": "When NOT to Reach for Sliding Window Attention",
-          "body": "It's a serving-cost lever, not a universal upgrade.",
-          "bullets": [
-            "Needle-in-a-haystack style tasks — exact retrieval from an arbitrary point in a long document — suffer without global/full-attention layers mixed in",
-            "Short-context workloads (most chat, most coding help under a few thousand tokens) gain little; O(n) vs O(W) barely matters below the window size",
-            "Mixing local and global layers, or adding reconstruction tricks, is real engineering complexity compared to a plain full-attention stack",
-            "Window size W becomes a hyperparameter to tune — too small hurts recall, too large erodes the compute savings you wanted"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "45b7ff63-29ce-4465-9ab5-cfdc8356a174",
-          "kind": "takeaways",
-          "title": "The Core Idea to Keep",
-          "body": "",
-          "bullets": [
-            "Sliding window attention trades unlimited lookback for constant per-token cost — attend to the last W tokens instead of all n",
-            "Stacking layers extends the effective range beyond a single window, but not infinitely or perfectly",
-            "Mixing in a few full/global-attention layers is the common fix for the recall gap pure windowing creates",
-            "Apply it to the workloads where O(n) attention is actually the bottleneck — long-context, high-throughput serving — not as a default everywhere"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "56fee274-1396-4ac5-a62f-c6ae23016283",
-            "prompt": "What does sliding window attention change compared to full self-attention?",
-            "options": [
-              "It removes the softmax function",
-              "Each token only attends to the previous W tokens instead of the entire sequence",
-              "It replaces attention with convolution entirely",
-              "It only works on images, not text"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sliding window attention caps each token's lookback to a fixed window W, turning per-token attention cost from O(n) into O(W)."
-          },
-          {
-            "id": "830cf9db-639d-459f-850a-755ee0b788c6",
-            "prompt": "How can information from outside the current window still reach a token, across multiple layers?",
-            "options": [
-              "It can't — sliding window attention has zero long-range effect",
-              "Each layer's output already summarizes its own window, so stacking layers extends the effective range beyond one window",
-              "The model re-reads the entire sequence at every layer",
-              "Only the first token in the sequence carries long-range information"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because each layer already blends information from its window into every token's representation, stacking L layers with window W lets information propagate roughly L×W tokens back, even though no single layer sees that far directly."
-          },
-          {
-            "id": "4cb5653f-1317-40aa-ac26-8309830b5106",
-            "prompt": "What's a known weakness of pure sliding window attention?",
-            "options": [
-              "It cannot run on GPUs",
-              "It requires more parameters than full attention",
-              "Precise recall of something far outside the current window degrades, since only compressed traces of it survive",
-              "It only supports batch size 1"
-            ],
-            "correctIndex": 2,
-            "explanation": "Once information falls outside the window, only what nearby tokens already absorbed from it survives — exact recall of something specific mentioned far back is exactly what pure windowing struggles with, which is why many models mix in global/full-attention layers."
-          }
-        ]
-      },
-      "references": [],
-      "body": null,
-      "publishedDate": "2026-09-30T00:45:42Z"
-    },
-    {
-      "id": "db7c144e-27b0-49de-872c-a6807024a3bd",
-      "title": "When AI Panels Debate Themselves Into Being Wrong",
-      "subtitle": "A NeurIPS study logs 6,925 LLM debates and catches the exact moment consensus breaks.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "multi-agent",
-        "llm-debate",
-        "self-correction",
-        "evaluation",
-        "neurips"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "bubble.left.and.bubble.right.fill",
-      "summary": "Researchers built an auditable ledger for multi-agent LLM debate and found that debate doesn't just fix wrong answers — it sometimes breaks correct ones. Their fix for that also had a hidden cost: it blocked more corrections than the collapses it prevented.",
-      "slides": [
-        {
-          "id": "dfde86a8-8114-465d-b72d-d8c480a360e9",
-          "kind": "cover",
-          "title": "Three Copies of the Same Model. Three Rounds of Debate.",
-          "body": "A new NeurIPS study puts identical LLM copies in a room together and tracks every flip in the group's answer — not just whether the final vote was right.",
-          "bullets": [],
-          "symbol": "bubble.left.and.bubble.right.fill",
-          "table": null
-        },
-        {
-          "id": "716ad55b-78aa-4eb7-abd6-20c826e2d36e",
-          "kind": "problem",
-          "title": "Debate Is Supposed to Fix Wrong Answers — Does It?",
-          "body": "Multi-agent debate is a popular way to boost LLM accuracy: have several model instances argue over an answer and let the group converge. Most papers only report the final score.",
-          "bullets": [
-            "Setup: 3 identical copies of one model answer a multiple-choice question, then debate for 3 rounds",
-            "No diversity of 'expertise' — any shift in the group answer comes purely from debate dynamics",
-            "Outcomes tracked per debate: preserved, collapsed, corrected, or unrepaired majority",
-            "Final-accuracy numbers alone hide which of these actually happened"
-          ],
-          "symbol": "questionmark.bubble.fill",
-          "table": null
-        },
-        {
-          "id": "8794fa76-9461-4167-9924-bba1b8a5b3d0",
-          "kind": "solution",
-          "title": "A Ledger for Every Debate, Not Just a Final Score",
-          "body": "Instead of only checking if the last-round answer was correct, the authors built a 'transition ledger' that records the group's answer state at every round.",
-          "bullets": [
-            "Collapse: the panel starts with a correct majority and talks itself into a wrong one",
-            "Correction: the panel starts wrong and debates its way to the right answer",
-            "Protocol is fully replayable — schemas, coders, and audits are released so any run can be re-checked",
-            "This reframes debate as a dynamical process with two competing effects, not a single accuracy delta"
-          ],
-          "symbol": "list.bullet.clipboard.fill",
-          "table": null
-        },
-        {
-          "id": "0a7b2bda-a545-4225-adad-eead8b2c8020",
-          "kind": "comparison",
-          "title": "Where the Numbers Come From",
-          "body": "The core result runs on MMLU-Pro, with other benchmarks used as stress tests and extensions.",
-          "bullets": [
-            "6,925 total MMLU-Pro debates logged",
-            "253 collapses found — correct majorities that broke down mid-debate",
-            "An 8-probe cheap screen hit 0.893 Spearman correlation for ranking model families without full debates"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Role in the study"
-            ],
-            "rows": [
-              [
-                "MMLU-Pro",
-                "Primary — 6,925 debates"
-              ],
-              [
-                "GPQA / TruthfulQA / ARC-Challenge",
-                "Stress checks"
-              ],
-              [
-                "GSM8K",
-                "Extension debates"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "2d023768-f577-42ca-88b9-dc318dcfbd61",
-          "kind": "example",
-          "title": "How a Correct Answer Dies in Round 2",
-          "body": "Picture a debate where the panel starts 2-to-1 in favor of the right answer. In round two, the two dissenting copies argue their (wrong) position more confidently and cite plausible-sounding reasoning.",
-          "bullets": [
-            "The lone correct voice doesn't out-argue the confident pair and flips to match them",
-            "By round 3 the majority is now wrong — a collapse, even though no new information entered the debate",
-            "This happens even with zero model diversity, showing it's a dynamics problem, not a 'wisdom of diverse experts' problem",
-            "253 of 6,925 debates (about 3.7%) collapsed this way"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "ef028c44-8734-49c4-b58c-a3f8bd1cbfcf",
-          "kind": "concept",
-          "title": "The Fix That Makes Things Worse",
-          "body": "The authors tested an intervention designed to stop collapses mid-debate. It worked — partially — but at a real cost.",
-          "bullets": [
-            "Prevented 29 of 251 collapses it was tested against",
-            "But also blocked 108 of 804 corrections that would otherwise have happened",
-            "Net effect: −1.21 points of accuracy overall",
-            "Lesson: any anti-collapse intervention also dampens the panel's ability to talk itself INTO the right answer"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "54fce963-90a2-4635-976b-cc29d26f3e8f",
-          "kind": "takeaways",
-          "title": "What This Means If You're Building With Multi-Agent Debate",
-          "body": "Debate isn't free accuracy — it's a process with real failure modes worth measuring directly.",
-          "bullets": [
-            "Log state transitions, not just final accuracy — collapse and correction can cancel each other out in the topline number",
-            "Homogeneous panels (same model, no diversity) still show social-conformity-style dynamics",
-            "'Fixing' collapse without checking correction rates can quietly hurt overall accuracy",
-            "A cheap probe-based screen (0.893 Spearman) can rank model families without running full debates"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6c571c80-9bc0-45b1-9253-ce3b36428088",
-            "prompt": "In this study's protocol, what does a 'collapse' mean?",
-            "options": [
-              "The debate times out without reaching a majority",
-              "A panel majority that started correct becomes incorrect after debate rounds",
-              "All three model copies give different answers",
-              "The model refuses to answer the question"
-            ],
-            "correctIndex": 1,
-            "explanation": "Collapse specifically means a correct majority breaking down into an incorrect one after debate rounds — the paper's core discovery that debate can actively make a right answer wrong."
-          },
-          {
-            "id": "524e8d38-193e-4635-aaf1-b92845b2bb4b",
-            "prompt": "What happened when researchers added an intervention meant to prevent collapses?",
-            "options": [
-              "It eliminated collapses with no downside",
-              "It prevented some collapses but also blocked many corrections, causing a net accuracy drop",
-              "It had no measurable effect on the debates",
-              "It only worked on the GSM8K extension debates"
-            ],
-            "correctIndex": 1,
-            "explanation": "The intervention prevented 29 of 251 collapses but cost 108 of 804 corrections — a net −1.21 point accuracy change, showing collapse-prevention isn't a free win."
-          },
-          {
-            "id": "402e0849-829c-4a97-95e9-c19c2c830ea7",
-            "prompt": "What is a 'homogeneous-panel' debate, as used in this paper?",
-            "options": [
-              "Three different LLMs debating each other",
-              "Three identical copies of the same model debating each other",
-              "A human panel grading LLM answers",
-              "A single model debating itself in one message"
-            ],
-            "correctIndex": 1,
-            "explanation": "The panel is three identical copies of one model — so any shift in the group's answer comes from debate dynamics alone, not from diverse 'expertise,' which is what makes the collapse/correction findings notable."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "4ea247c0-3cfa-472b-ac0d-5d9dcce2b325",
-          "title": "Measuring Collapse and Correction in Homogeneous-Panel LLM Debate (arXiv:2609.35279)",
-          "url": "https://arxiv.org/abs/2609.35279"
-        }
-      ],
-      "body": null,
-      "publishedDate": "2026-09-29T18:45:38Z"
     }
   ]
 }
