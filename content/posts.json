@@ -1,6 +1,359 @@
 {
   "posts": [
     {
+      "title": "vLLM 0.31: NVFP4 KV Cache Becomes the New Default",
+      "subtitle": "A compressed cache, instant-restart weights, and a quiet security fix headline October's release.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "release",
+      "tags": [
+        "vllm",
+        "llm-inference",
+        "kv-cache",
+        "speculative-decoding",
+        "open-source"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "memorychip.fill",
+      "summary": "vLLM v0.31.0 (Oct 5, 2026) makes a 4-bit NVFP4-compressed KV cache the default for DeepSeek-V4.1-Flash on Blackwell-class GPUs, adds a `vllm preload` CLI that keeps post-quantized weights resident across restarts, and extends Model Runner V2 with draft-model speculative decoding. It also tightens a security default around per-request multimodal arguments — read the breaking-changes list before upgrading.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "717 commits, 307 contributors, one default that changes your memory math",
+          "body": "vLLM v0.31.0 shipped October 5, 2026. The headline change: a 4-bit floating-point KV cache (NVFP4) is now the default on NVIDIA's SM100 (Blackwell) GPUs for DeepSeek-V4.1-Flash.",
+          "bullets": [
+            "96 of the 307 contributors were first-time contributors",
+            "Install via `pip install vllm` (CUDA 13.0) or `docker pull vllm/vllm-openai:v0.31.0`"
+          ],
+          "symbol": "shippingbox.fill",
+          "id": "82595d69-8075-4f83-96aa-4949a51e152e"
+        },
+        {
+          "kind": "problem",
+          "title": "The KV cache, not the weights, is what runs out of GPU memory first",
+          "body": "Every token a model generates appends a key and value vector per layer per head to the KV cache. At long context lengths and high concurrency, that cache — not the model weights — is usually what caps how many requests a server can batch together.",
+          "bullets": [
+            "FP16/BF16 caches cost 2 bytes per value; FP8 halves that but still adds up fast at 100K+ token contexts",
+            "Lower batch concurrency means lower throughput per GPU, directly raising serving cost"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "551a7cce-ac6d-4520-a87a-22794e3b5c64"
+        },
+        {
+          "kind": "solution",
+          "title": "FlashMLA + NVFP4: a 4-bit cache designed for Blackwell's native format",
+          "body": "NVFP4 is a 4-bit floating-point format NVIDIA's Blackwell (SM100) tensor cores read natively, unlike earlier software-emulated low-bit formats. vLLM's FlashMLA kernel now compresses the KV cache into NVFP4 by default on SM100 for DeepSeek-V4.1-Flash, roughly quartering cache memory versus FP16 without a separate dequantization pass at read time.",
+          "bullets": [
+            "Default applies specifically to SM100 (Blackwell)-class GPUs — older Ampere/Hopper cards don't get this path",
+            "Frees GPU memory for larger batches or longer context windows at the same hardware footprint"
+          ],
+          "symbol": "cpu.fill",
+          "id": "a7256f00-c970-47d4-87aa-baf81452cda2"
+        },
+        {
+          "kind": "architecture",
+          "title": "Restarts get faster, and speculative decoding gets more flexible",
+          "body": "A new `vllm preload` CLI keeps post-quantized weights resident in GPU memory across engine restarts, skipping the requantization step that used to dominate restart time. Experimental CRIU-based engine snapshots take this further by checkpointing full process state.",
+          "bullets": [
+            "Model Runner V2 now supports draft-model speculative decoding plus custom logits processors",
+            "Large-scale serving gains a new MoE all2all backend, context parallelism, and EPLB weight-transfer improvements",
+            "Scheduling adds a `--max-num-active-seqs` cap independent of `max_num_seqs`, plus an adaptive long-prefill threshold"
+          ],
+          "symbol": "arrow.clockwise",
+          "id": "64564e15-5bba-4770-ad85-898a1cc48004"
+        },
+        {
+          "kind": "comparison",
+          "title": "The release notes' own performance numbers",
+          "body": "These are per-component wins vLLM's maintainers reported for this release, not a single end-to-end benchmark — the right one to check depends on which model and GPU you run.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Component",
+              "Reported improvement"
+            ],
+            "rows": [
+              [
+                "GLM-5.3-Flash metadata ops",
+                "1.6–4.8x faster"
+              ],
+              [
+                "GLM-5.3-Flash indexer decode workspace",
+                "saves 3 GiB"
+              ],
+              [
+                "KimiViT QK RoPE",
+                "up to 29x faster"
+              ],
+              [
+                "MiniMax-M3 Conv3d patch embedding",
+                "~62x faster"
+              ],
+              [
+                "ROCm Hy4 + torch.compile decode",
+                "13x lower latency"
+              ],
+              [
+                "Expert-mapping lookups (DGX Spark)",
+                "saves ~25s of weight loading"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "id": "23789eea-db17-42fd-96bf-03806d83ea11"
+        },
+        {
+          "kind": "example",
+          "title": "A team running DeepSeek-V4.1-Flash on Blackwell upgrades from v0.30",
+          "body": "Before: serving DeepSeek-V4.1-Flash on SM100 GPUs with an FP16 KV cache limited concurrent long-context requests, and a crashed engine meant waiting minutes to reload and requantize weights before traffic could resume.",
+          "bullets": [
+            "After upgrading to v0.31.0: the NVFP4 cache default roughly quarters cache memory per token, letting more requests share the same GPUs",
+            "`vllm preload` keeps the already-quantized weights resident, so a restart skips requantization entirely and traffic resumes faster"
+          ],
+          "symbol": "server.rack",
+          "id": "0fa6e1d9-319a-454c-9a22-dee465b90936"
+        },
+        {
+          "kind": "concept",
+          "title": "Read the breaking changes before you upgrade",
+          "body": "Several defaults changed, and one is a security hardening step that can silently break existing client code rather than erroring loudly in an obvious way.",
+          "bullets": [
+            "Per-request multimodal kwargs are now rejected unless the server is started with `--trust-request-mm-kwargs` — pipelines that passed per-request mm kwargs will start failing requests",
+            "`tokenizer_mode=\"slow\"` and the AllSpark INT8 W8A16 backend were removed outright",
+            "`--enable-mamba-fine-grained-prefix-cache` was renamed to `--enable-mamba-shared-prefix-checkpoint`",
+            "`--enforce-eager` now also disables JIT kernel warmup, which can change eager-mode latency"
+          ],
+          "symbol": "lock.shield.fill",
+          "id": "5057c71e-337e-4e7c-b042-aceace83331d"
+        },
+        {
+          "kind": "takeaways",
+          "title": "What to take away",
+          "body": null,
+          "bullets": [
+            "The NVFP4 KV cache default is a real memory win, but only on SM100 (Blackwell) GPUs for now",
+            "`vllm preload` targets a very specific pain point — slow restarts from requantization — not raw throughput",
+            "This is an incremental-but-substantial point release, not a rewrite: 717 commits across performance, scheduling, and hardening",
+            "Audit the `--trust-request-mm-kwargs` change before upgrading a production multimodal deployment"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "2b7df619-1b6f-47e5-b97c-3d11ad8025e8"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Which hardware specifically gets the new NVFP4 compressed KV cache as the default in vLLM v0.31.0?",
+            "options": [
+              "Any CPU-only deployment",
+              "NVIDIA SM100 (Blackwell)-class GPUs",
+              "AMD ROCm GPUs only",
+              "Apple Silicon"
+            ],
+            "correctIndex": 1,
+            "explanation": "The release notes specify NVFP4 compression becomes the SM100 (Blackwell) default for DeepSeek-V4.1-Flash — older Ampere/Hopper GPUs don't get this specific path.",
+            "id": "9e366ad9-18be-4076-9ab1-a6a22bccbbf4"
+          },
+          {
+            "prompt": "What problem does the new `vllm preload` CLI actually solve?",
+            "options": [
+              "It speeds up initial model training",
+              "It keeps post-quantized weights resident in GPU memory so restarts skip requantization",
+              "It compresses model files on disk",
+              "It enables multi-node training coordination"
+            ],
+            "correctIndex": 1,
+            "explanation": "Requantizing weights after every restart was slow; `vllm preload` keeps the already-quantized weights resident in GPU memory so a restart can skip that step entirely.",
+            "id": "3593709d-facd-41fe-9b46-d5607f4008c9"
+          },
+          {
+            "prompt": "Which v0.31.0 change is a breaking security-hardening default that could silently break an existing deployment?",
+            "options": [
+              "Removal of GPTQ `g_idx` support",
+              "Per-request multimodal kwargs are now rejected unless `--trust-request-mm-kwargs` is set",
+              "FlashInfer all-reduce enabled by default",
+              "The new `sharded_rdt` P2P backend"
+            ],
+            "correctIndex": 1,
+            "explanation": "Clients that relied on passing multimodal kwargs per-request will now have those requests rejected unless the server operator explicitly opts back in with `--trust-request-mm-kwargs`.",
+            "id": "5f89ce25-e69e-494b-b021-361ab6f1264e"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "vLLM v0.31.0 Release Notes",
+          "url": "https://github.com/vllm-project/vllm/releases/tag/v0.31.0",
+          "id": "5329f368-24d4-42b3-8067-28250f3c4203"
+        }
+      ],
+      "id": "9f99917a-b540-4fcc-92ca-cbfc2eae2c92",
+      "publishedDate": "2026-10-08T00:46:25Z"
+    },
+    {
+      "title": "Reflexion: Teaching an Agent to Critique Its Own Failures",
+      "subtitle": "No gradient update required — just a growing note-to-self in the context window.",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "ai-agents",
+        "reflexion",
+        "self-correction",
+        "llm-agents",
+        "reasoning"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Reflexion lets an agent improve across attempts at a task by having it write a short verbal critique of its own failed trajectory and carry that critique forward as memory — no fine-tuning involved. It works best wherever success or failure can be checked automatically and cheaply, and works poorly where it can't.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "An agent that fails, writes itself a note, and tries again",
+          "body": "Reflexion (Shinn et al., 2023) replaces gradient-based reinforcement learning with a verbal feedback loop: the agent reflects on why it failed, in plain text, and keeps that reflection in its context for the next attempt.",
+          "bullets": [
+            "No weight updates — the model stays completely frozen",
+            "Works with any model you can only call through an API"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "50081466-d353-4f46-837c-f229ceb5382d"
+        },
+        {
+          "kind": "problem",
+          "title": "Plain retries repeat the same mistake",
+          "body": "An agent that simply resamples at a higher temperature and tries again has no memory of what went wrong last time — it's equally likely to make the identical error. Fine-tuning the policy with RL fixes this but needs a reward model, many rollouts, and gradient updates you often can't do against a closed API model.",
+          "bullets": [
+            "Resampling changes randomness, not understanding",
+            "RLHF/PPO-style fixes require infrastructure most teams building on top of an API model simply don't have"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "d8049e5b-6d60-47a8-b9f2-e623c08845d5"
+        },
+        {
+          "kind": "solution",
+          "title": "Three roles, one text memory buffer",
+          "body": "Reflexion runs a loop of three roles around the base agent: an Actor that attempts the task (e.g., via ReAct-style tool calls), an Evaluator that scores the resulting trajectory as success or failure, and a Self-Reflection step that reads the failed trajectory plus the evaluator's verdict and writes a short critique of what went wrong and what to try differently.",
+          "bullets": [
+            "That critique gets appended to an episodic memory buffer",
+            "On the next trial, the Actor's prompt includes the buffer — the \"learning\" lives entirely in that growing text, not in any weight"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "id": "24b0ad31-be2a-4c73-89d4-4effd95a828b"
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: a failing HumanEval coding attempt",
+          "body": "Trial 1: the Actor writes a function using `range(n)` where the test expects the last index included; unit tests fail. The Evaluator reports the failing test's output. Self-Reflection writes: \"I used range(n) instead of range(n+1), skipping the last element — check loop bounds against the test's actual boundary conditions.\" Trial 2: the Actor retries with that note in its context and passes.",
+          "bullets": [
+            "The original Reflexion paper reported roughly 91% pass@1 on HumanEval, above GPT-4's reported ~80% pass@1 without this loop"
+          ],
+          "symbol": "chevron.left.forwardslash.chevron.right",
+          "id": "d1b4a099-e724-4c28-bd07-2a2e72a47884"
+        },
+        {
+          "kind": "comparison",
+          "title": "Three ways an agent can \"learn\" between attempts",
+          "body": null,
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Approach",
+              "What changes between attempts",
+              "Cost"
+            ],
+            "rows": [
+              [
+                "Plain retry / resampling",
+                "Nothing — just re-rolls randomness",
+                "Cheap, but repeats the same mistakes"
+              ],
+              [
+                "RLHF / PPO fine-tuning",
+                "Model weights",
+                "Effective, but needs a reward model, gradients, many rollouts"
+              ],
+              [
+                "Reflexion",
+                "A text memory buffer only",
+                "Cheap, model-agnostic, works through a frozen API"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "id": "9ab3ab8a-57d4-48c0-b798-396bed4ee483"
+        },
+        {
+          "kind": "concept",
+          "title": "Where it breaks down",
+          "body": "Reflexion's biggest weakness is that it leans entirely on the Evaluator and the model's own diagnostic honesty — both of which can fail quietly.",
+          "bullets": [
+            "Needs a cheap, reliable success signal: unit tests and exact-match QA are easy; open-ended generation (\"is this essay good?\") is not",
+            "A weak base model may write a confidently wrong self-critique, actively steering the next attempt in the wrong direction",
+            "The memory buffer grows with every trial — left unbounded it bloats the context and the prompt cost; most implementations cap it to the last 1–3 reflections or summarize",
+            "It only helps from the second attempt onward — it adds latency/cost for tasks that usually succeed on the first try"
+          ],
+          "symbol": "hourglass",
+          "id": "e5b1f2b7-e706-418e-8cb9-1154a133c646"
+        },
+        {
+          "kind": "takeaways",
+          "title": "When to reach for it",
+          "body": null,
+          "bullets": [
+            "Best fit: coding, tool-use, and game/decision-making tasks with a cheap automatic pass/fail signal",
+            "Poor fit: subjective, open-ended generation where \"success\" itself needs human judgment",
+            "Treat it as a cheap, no-training alternative to RL fine-tuning for a frozen model — not a replacement when you actually can afford to fine-tune",
+            "Bound the memory buffer; unbounded reflection history is the most common implementation mistake"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "16cd1594-b1f3-4c11-a088-fa8e8a981d5b"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What actually changes between Reflexion trials, if not the model's weights?",
+            "options": [
+              "The sampling temperature only",
+              "Nothing changes between trials",
+              "A growing text memory of self-written critiques fed back into the prompt",
+              "The choice of base model"
+            ],
+            "correctIndex": 2,
+            "explanation": "Reflexion's entire mechanism is a text memory buffer: the model stays frozen, and each trial's self-reflection is appended as context for the next attempt.",
+            "id": "c83254ff-8be1-4944-be85-d56ae1a1cece"
+          },
+          {
+            "prompt": "Which kind of task benefits most from Reflexion?",
+            "options": [
+              "Tasks with a cheap, automatic success signal, like unit tests or exact-match QA",
+              "Purely subjective creative writing with no checkable answer",
+              "Tasks the agent already solves on the first try",
+              "Tasks where no evaluation is possible at all"
+            ],
+            "correctIndex": 0,
+            "explanation": "The Evaluator step needs a reliable, ideally automatic signal to score success — that's cheap for unit tests or exact-match answers and hard for open-ended, subjective output.",
+            "id": "3252d31a-6b7f-4a3b-a780-c3c3081e4e3b"
+          },
+          {
+            "prompt": "What's the main practical risk of letting the reflection memory buffer grow unbounded across many trials?",
+            "options": [
+              "It makes the model's weights too large to serve",
+              "It bloats the context window and prompt cost over repeated trials",
+              "It deletes the original task description",
+              "It guarantees the agent will never succeed"
+            ],
+            "correctIndex": 1,
+            "explanation": "Every trial's critique gets appended to the buffer; without a cap or summarization step, that buffer keeps growing and inflates the context length and cost of every subsequent attempt.",
+            "id": "ecbb140a-0e55-46bb-9b62-d99e8a715032"
+          }
+        ]
+      },
+      "references": [],
+      "id": "6b0fb137-7286-40bb-ab8e-56f1e35c9861",
+      "publishedDate": "2026-10-08T00:46:25Z"
+    },
+    {
       "title": "Claude Haiku 5.5: A Dial for How Hard a Cheap Model Thinks",
       "subtitle": "Anthropic's smallest model gets price cuts up to 90% and the first effort setting on a Haiku-class model.",
       "category": "AI News",
@@ -10496,367 +10849,6 @@
       ],
       "id": "4e5736ba-1404-4e18-b1ea-5e4f8a8af0c9",
       "publishedDate": "2026-10-02T12:44:42Z"
-    },
-    {
-      "title": "AEWM: Editing an Agent's Reasoning Before It Goes Wrong",
-      "subtitle": "A world model that predicts how an agent's own next move will hurt its task, then rewrites that move before it executes.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "llm-agents",
-        "world-models",
-        "reasoning",
-        "agentic-rl"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "AEWM (arXiv:2609.28416, RUC AI Box) targets \"task-state contamination\": the slow rot where a long-horizon agent's unsupported assumptions become accepted facts and partial progress gets mistaken for completion. Its Action Judge classifies each proposed step as Critical, Exploratory, or Noisy; noisy steps get rewritten by State Revision before they ever execute. Wired into real agent loops via EditAct, it lifts six-benchmark average scores by 3.2-6.7 points across three backbones.",
-      "slides": [
-        {
-          "id": "c71aa9ac-91ac-4526-8260-a8efce341e80",
-          "body": null,
-          "bullets": [
-            "Paper: \"Agent-Editing World Model: Rethinking World Modeling for LLM Agents\" (arXiv:2609.28416)",
-            "From RUC AI Box (Renmin University of China); code and benchmark released under Apache-2.0",
-            "Evaluated across 6 benchmarks and 3 agent backbones, including Search, Terminal, and SWE tasks"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null,
-          "kind": "cover",
-          "title": "A World Model That Edits the Agent, Not the Environment"
-        },
-        {
-          "id": "eee1311d-c027-4e71-a5c1-6dd5bd61cc60",
-          "body": "Most \"world models\" for agents try to predict what the environment will show next — the next tool output, the next screen. AEWM's authors point at a different failure mode: task-state contamination, where an agent's own reasoning corrupts its sense of what's true.",
-          "bullets": [
-            "An unsupported assumption made early gets treated as settled fact for the rest of the run",
-            "Plans don't get revised even when later evidence contradicts them",
-            "Partial progress gets reported — and believed — as if the task were finished"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Long agent runs quietly rot from the inside"
-        },
-        {
-          "id": "d176cd27-ab7b-45a1-9294-3300fb58743f",
-          "body": "AEWM predicts how the agent's own upcoming reasoning-and-action step will affect task progress, not what the environment will do. Action Judge scores that step; if it looks harmful, State Revision rewrites it before it ever runs.",
-          "bullets": [
-            "Action Judge classifies each proposed step as Critical, Exploratory, or Noisy",
-            "Noisy steps are rewritten by State Revision before execution, not patched after the fact",
-            "EditAct loop: Propose → Judge → Edit → Act → Log, wired into real environment interaction"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "kind": "solution",
-          "title": "Judge the next step before it executes, then edit it if it's bad"
-        },
-        {
-          "id": "fe67b81b-6de9-4d8c-bb29-46dd15005e04",
-          "body": "On a held-out set of 3,000 agent decisions, Action Judge's classification is the load-bearing signal — and it pays off downstream once EditAct acts on it during real task execution.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Metric",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Action Judge Benchmark (3,000 decisions)",
-                "Macro-F1",
-                "70.5% (+10.6 pts vs. strongest frontier baseline)"
-              ],
-              [
-                "6 benchmarks × 3 agent backbones (avg.)",
-                "Task score with EditAct",
-                "+3.2 to +6.7 points over baseline"
-              ],
-              [
-                "BrowseComp + Terminal-Bench 2.0 + Doc2Repo",
-                "Task score, AEWM-RFT variant",
-                "+2.2 to +2.6 points"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Catching bad decisions early compounds into real task gains"
-        },
-        {
-          "id": "c552d378-6054-48fd-9ec8-efb7246443c2",
-          "body": "A coding agent fixes a failing test, but its next tool call accidentally reruns a stale cached result that still shows green. The agent's following reasoning step is about to declare the task complete. Action Judge flags that step Noisy — the claim doesn't follow from a real passing run — and State Revision rewrites the reasoning to re-verify against a fresh test execution before any completion claim is made.",
-          "bullets": [
-            "The bad step is caught at proposal time, before \"task complete\" is ever logged",
-            "State Revision only touches the flagged step — the rest of the trajectory is untouched",
-            "This is exactly the kind of contamination a pure environment-prediction model wouldn't catch"
-          ],
-          "symbol": "checkmark.circle.trianglebadge.exclamationmark",
-          "table": null,
-          "kind": "example",
-          "title": "Catching a false \"done\" before the agent commits to it"
-        },
-        {
-          "id": "3fff094c-06eb-41fa-85e8-5e6f125981e5",
-          "body": "AEWM adds a classification (and sometimes rewrite) step before every action, which costs latency and compute. Its gains are concentrated in long-horizon tasks where contamination has time to accumulate.",
-          "bullets": [
-            "Every proposed step now costs an extra judge call — overhead that compounds on long runs",
-            "Action Judge is itself a trained component, calibrated on AEWM's own benchmark — not free with any backbone",
-            "Short, single-turn tasks have little contamination to catch, so the overhead buys less"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null,
-          "kind": "concept",
-          "title": "The judge isn't free, and short tasks barely need it"
-        },
-        {
-          "id": "34f1101d-e140-4981-8d1e-75862f07af39",
-          "body": null,
-          "bullets": [
-            "Predicting the effect of the agent's own next move catches a different class of error than predicting environment responses",
-            "Intervening before execution beats detecting the mistake after it's already logged",
-            "A three-way Critical/Exploratory/Noisy split lets the system intervene selectively, not on every single step",
-            "Released with its own Action-Judge benchmark dataset and Apache-2.0 code for reproducing the numbers"
-          ],
-          "symbol": null,
-          "table": null,
-          "kind": "takeaways",
-          "title": "Model what your actions will do to the task, not what the world will show you"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "a17b5c11-5df1-4bb2-bb90-5d918ce649d7",
-            "prompt": "What does the paper mean by \"task-state contamination\"?",
-            "options": [
-              "The training data containing duplicated examples",
-              "An agent's unsupported assumptions becoming accepted facts and partial progress being mistaken for completion",
-              "A GPU running out of memory mid-task",
-              "Two agents overwriting each other's files"
-            ],
-            "correctIndex": 1,
-            "explanation": "Task-state contamination is specifically about an agent's own reasoning corrupting its sense of task state over a long run — not a training-data or infrastructure issue."
-          },
-          {
-            "id": "47d796c1-7c47-4dfb-9c9a-6f08e1e6d4f2",
-            "prompt": "What three categories does Action Judge sort a proposed step into?",
-            "options": [
-              "Fast, Slow, Expensive",
-              "Critical, Exploratory, Noisy",
-              "True, False, Unknown",
-              "Tool-call, Reasoning, Final-answer"
-            ],
-            "correctIndex": 1,
-            "explanation": "Action Judge classifies each proposed decision as Critical, Exploratory, or Noisy — only Noisy steps get rewritten by State Revision."
-          },
-          {
-            "id": "6e410fe6-5865-411a-b3da-d9a3d4176670",
-            "prompt": "What's a genuine limitation of AEWM's approach?",
-            "options": [
-              "It only works on a single benchmark and backbone",
-              "It requires retraining the base LLM from scratch",
-              "It adds a judge-and-possibly-rewrite step before every action, so overhead is highest on short tasks with little contamination to catch",
-              "It cannot be combined with reinforcement fine-tuning"
-            ],
-            "correctIndex": 2,
-            "explanation": "The extra judge call before every proposed step is real overhead; the paper's gains concentrate on long-horizon tasks where contamination has time to accumulate, not short ones."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "bafc1d64-9051-4fa1-8fde-75cc5a8be0b9",
-          "title": "Agent-Editing World Model: Rethinking World Modeling for LLM Agents (arXiv:2609.28416)",
-          "url": "https://arxiv.org/abs/2609.28416"
-        }
-      ],
-      "id": "2c11455b-efae-44d0-b6ec-bb736696d323",
-      "publishedDate": "2026-10-02T07:07:37Z"
-    },
-    {
-      "title": "Claude Code Mods: Rewriting the Agent From Inside",
-      "subtitle": "TypeScript functions that hook into Claude Code's own runtime events — no fork, no waiting for the next release.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "claude-code",
-        "developer-tools",
-        "plugins",
-        "agent-hooks"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "wrench.and.screwdriver.fill",
-      "summary": "Anthropic launched Claude Code mods on October 1, 2026 (tied to CLI v2.1.287): small TypeScript functions that hook into runtime events — tool calls, permission requests, UI rendering — to rewrite prompts, block or approve actions, redact output, or add custom UI. Mods ship inside existing plugins, stack in load order, and on Team/Enterprise plans a built-in sec-default mod loads first so user mods can't override org security policy.",
-      "slides": [
-        {
-          "id": "ef836001-d061-41be-b26c-4a48181fdd71",
-          "body": null,
-          "bullets": [
-            "Announced October 1, 2026 on the official Claude blog, tied to CLI version 2.1.287",
-            "Mods are small TypeScript functions that hook into Claude Code's own runtime events",
-            "Ship inside existing plugins — no separate install mechanism to learn"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null,
-          "kind": "cover",
-          "title": "Claude Code Can Now Be Rewritten From the Inside"
-        },
-        {
-          "id": "a15af1f4-31ba-48ac-aac8-599961ea8b2f",
-          "body": "Before mods, changing how Claude Code behaves mid-run meant waiting for Anthropic to ship that exact feature, or working around the tool from the outside. Teams with specific permission policies, audit needs, or UI requirements had no hook point.",
-          "bullets": [
-            "Prompts, tool calls, and permission prompts were fixed unless Anthropic shipped the change",
-            "No way to inject custom UI — panes, buttons, inputs — into the CLI or desktop app",
-            "Org-specific policies (\"always double-confirm before touching prod\") had nowhere to attach"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "Official releases can't cover every team's workflow"
-        },
-        {
-          "id": "b1f40e5a-195b-466d-b7bc-fa08b0b8b598",
-          "body": "Claude Code now emits events for tool calls, permission requests, and UI rendering. A mod hooks into one of those events and runs before, after, or wrapped around it — rewriting prompts, blocking or retrying tool calls, approving or denying permissions, redacting secrets from output, or swapping in custom UI.",
-          "bullets": [
-            "Mods are plain TypeScript functions — hand-written, or generated by asking Claude Code itself",
-            "Multiple mods stack in load order: the first-loaded mod sees the event first and the result last",
-            "Distributed through the same plugin marketplace and install flow Claude Code already has"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null,
-          "kind": "solution",
-          "title": "Hook into the event, run before/after/around it"
-        },
-        {
-          "id": "b07dafdc-fd0c-4515-9c2a-c97d6c5a1c57",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Hook point",
-              "What a mod can do there"
-            ],
-            "rows": [
-              [
-                "Prompt dispatch",
-                "Rewrite the prompt before it reaches the model"
-              ],
-              [
-                "Tool call",
-                "Block, rewrite, or retry the call"
-              ],
-              [
-                "Permission request",
-                "Auto-approve or auto-deny based on custom logic"
-              ],
-              [
-                "Tool output",
-                "Redact secrets before they're shown or logged"
-              ],
-              [
-                "UI render",
-                "Add or replace panes, buttons, and inputs in CLI/desktop"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Five hook points, five different kinds of control"
-        },
-        {
-          "id": "e7b22799-aa9f-4093-b6f5-70abeb5f3ae9",
-          "body": "A platform team writes a mod that hooks the tool-call event: any call touching a path under /prod/ is blocked unless it carries an extra, explicitly-typed confirmation string, and every approved call gets logged to the team's SIEM through the same hook. On a Team plan, this mod loads after the built-in sec-default mod, which already guarantees no mod — including this one — can silently override a permission denial.",
-          "bullets": [
-            "The rule lives in one TypeScript function, not scattered across onboarding docs",
-            "It stacks under sec-default, which still has the final say on permission denials",
-            "Logging and the confirmation check both hook the same tool-call event, independently"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null,
-          "kind": "example",
-          "title": "An org mod that enforces its own prod-safety rule"
-        },
-        {
-          "id": "b79e5388-f565-4806-b633-287984b9804a",
-          "body": "Mods are arbitrary TypeScript executing inside your Claude Code session, which makes them powerful and a real supply-chain surface at the same time.",
-          "bullets": [
-            "A mod has the same access as the session it's installed into — review untrusted ones like untrusted code",
-            "Load order matters: two mods hooking the same event can conflict rather than compose cleanly",
-            "On Team/Enterprise, sec-default loads first specifically so user-installed mods can't bypass org policy",
-            "Not a fit for a one-off tweak — simple preference changes are still better served by settings"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null,
-          "kind": "concept",
-          "title": "A mod runs with your session's own access — treat it like code, not config"
-        },
-        {
-          "id": "fc88ccc1-21ec-4657-bf0a-4983cc989833",
-          "body": null,
-          "bullets": [
-            "Mods turn Claude Code into something teams can extend without waiting on Anthropic's roadmap",
-            "They ship as plugins, so discovery and distribution reuse the existing marketplace",
-            "Biggest win for org-specific guardrails today: audit logging, prod confirmations, permission policy",
-            "Still code with session-level access — vet a mod before installing it, especially anything touching permissions"
-          ],
-          "symbol": null,
-          "table": null,
-          "kind": "takeaways",
-          "title": "A customizable runtime, not a fork"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e9587c21-6b04-4f24-8b6c-1f18e3e56b47",
-            "prompt": "What is a Claude Code mod, mechanically?",
-            "options": [
-              "A fine-tuned version of the underlying model",
-              "A small TypeScript function that hooks into Claude Code's runtime events",
-              "A separate CLI tool that wraps Claude Code",
-              "A configuration file that only changes color themes"
-            ],
-            "correctIndex": 1,
-            "explanation": "Mods don't touch the model at all — they're TypeScript functions hooking events like tool calls, permission requests, and UI rendering."
-          },
-          {
-            "id": "4be1273c-7e05-454a-86e6-813cb2062fc5",
-            "prompt": "Why does the built-in sec-default mod load first on Team/Enterprise plans?",
-            "options": [
-              "To make Claude Code start up faster",
-              "So it always gets the best UI slot",
-              "So user-installed mods can't override org security policy, like permission denials",
-              "Because it's required for the marketplace listing"
-            ],
-            "correctIndex": 2,
-            "explanation": "sec-default loading first guarantees that no later, user-installed mod can silently override a security policy decision the organization has set, like a permission denial."
-          },
-          {
-            "id": "68dabd1a-7ab1-4738-b1c4-9a224319b78c",
-            "prompt": "How are mods distributed and installed?",
-            "options": [
-              "Through a brand-new installer separate from everything else",
-              "They ship inside existing plugins, reusing Claude Code's current plugin marketplace and install flow",
-              "They must be compiled into the Claude Code binary itself",
-              "Only Anthropic can publish them"
-            ],
-            "correctIndex": 1,
-            "explanation": "Mods ship inside plugins, so they inherit the install, discovery, and marketplace mechanisms Claude Code's plugin system already has — no new distribution channel."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "6fa07373-ce59-4fae-88f0-31c3a0e3c3e9",
-          "title": "Customize Claude Code with mods",
-          "url": "https://claude.com/blog/claude-code-mods"
-        }
-      ],
-      "id": "c9793586-8dd4-4677-8abe-9815ee73c372",
-      "publishedDate": "2026-10-02T07:07:37Z"
     }
   ]
 }
