@@ -1,6 +1,220 @@
 {
   "posts": [
     {
+      "title": "PagedAttention: Virtual Memory for the KV Cache",
+      "subtitle": "The trick that let vLLM serve far more concurrent requests from the same GPU.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "kv-cache",
+        "inference-optimization",
+        "paged-attention",
+        "vllm",
+        "gpu-memory"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Naive LLM serving pre-allocates a full-length KV cache per request and wastes most of it. PagedAttention borrows the OS idea of paging: split the KV cache into small fixed-size blocks, allocate them on demand, and track ownership with a per-sequence block table. That single change is what let vLLM pack dramatically more concurrent sequences onto the same GPU.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "The KV cache is usually the real bottleneck",
+          "body": "Compute (matmuls) is rarely what limits LLM serving throughput at scale. GPU memory for the KV cache is — and most serving systems were wasting a huge share of it.",
+          "bullets": [
+            "Introduced in the vLLM paper, 'Efficient Memory Management for LLM Serving with PagedAttention' (UC Berkeley, SOSP 2023)",
+            "Core move: manage the KV cache the way an OS manages virtual memory"
+          ],
+          "symbol": "memorychip.fill",
+          "id": "35b8dc96-eca2-4dec-bd8f-bd3788ff04e3"
+        },
+        {
+          "kind": "problem",
+          "title": "Pre-allocating the max sequence length wastes memory three ways",
+          "body": "Before PagedAttention, most serving engines reserved one contiguous KV-cache buffer per request, sized for the maximum possible sequence length.",
+          "bullets": [
+            "Reserved (internal) fragmentation: a request that stops after 80 tokens still held memory sized for its max-length budget (often thousands of tokens)",
+            "External fragmentation: variable request lengths leave gaps between buffers that are too small to reuse for the next request",
+            "No sharing: two requests sampling from the same prompt (beam search, parallel sampling) each got their own full copy of that prompt's KV cache",
+            "Net effect: GPU memory — not compute — capped how many requests could run concurrently, well before the GPU was compute-saturated"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "c44f9a47-2290-437a-bc2f-79e19852fe5d"
+        },
+        {
+          "kind": "solution",
+          "title": "Split the KV cache into fixed-size blocks, allocate on demand",
+          "body": "PagedAttention stores each sequence's keys and values in small, fixed-size blocks (vLLM's default is 16 tokens per block) instead of one contiguous buffer.",
+          "bullets": [
+            "A new block is only allocated once the current one fills up — a sequence that stops at 80 tokens only ever holds 5 blocks of 16, not a max-length reservation",
+            "Every sequence gets a block table: a list mapping its logical token positions to physical block addresses, wherever they happen to sit in GPU memory",
+            "Physical blocks don't need to be contiguous in memory — the block table is the indirection layer that makes that invisible to the rest of the model",
+            "Worst-case waste per sequence shrinks to less than one block's worth of tokens, instead of the whole unused max-length reservation"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "id": "79b98660-c834-4a85-8b05-a35a1ac184c7"
+        },
+        {
+          "kind": "architecture",
+          "title": "A custom attention kernel reads scattered blocks directly",
+          "body": "Standard attention kernels expect one contiguous K/V tensor. PagedAttention's kernel instead walks each sequence's block table and gathers the right physical blocks at attention time.",
+          "bullets": [
+            "The indirection costs a kernel-level gather instead of a flat memory read — the paper's custom CUDA kernel is what keeps that overhead low",
+            "Free blocks live in a pool shared across all running sequences; a block is returned to the pool the instant its owning sequence finishes",
+            "Because allocation is now block-granular, the scheduler can admit new requests opportunistically as blocks free up, instead of waiting for a whole buffer-sized slot"
+          ],
+          "symbol": "cpu.fill",
+          "id": "f5e8c65c-2ea8-423c-ab5f-2f8d67c31c23"
+        },
+        {
+          "kind": "concept",
+          "title": "The payoff nobody expects: cheap copy-on-write sharing",
+          "body": "Once the KV cache is block-based, sequences that share a prefix can share the actual physical blocks — not just logically, but in GPU memory.",
+          "bullets": [
+            "Parallel sampling (e.g. generate 8 completions from one prompt) stores the shared prompt's KV cache in one set of blocks, referenced by all 8 block tables",
+            "Each block tracks a reference count; a sequence only forks (copy-on-write) a block once it needs to write something different into it — i.e. once generation diverges",
+            "Beam search gets the same benefit: surviving beams that share ancestry share blocks until their generated tokens actually differ",
+            "This is the same copy-on-write idea operating systems use for process memory after fork() — applied to GPU KV-cache blocks instead of RAM pages"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "id": "ecca4617-bc0f-429b-bd3c-4840a99813ef"
+        },
+        {
+          "kind": "example",
+          "title": "Walking through 3 concurrent requests on one GPU",
+          "body": "Block size = 16 tokens. Three requests arrive with very different lengths.",
+          "bullets": [
+            "Request A: 12-token prompt + stops after 20 generated tokens → needs 2 blocks total (32 token-slots), not a max-length buffer",
+            "Request B: same prompt as A, but asked for 4 parallel samples → the prompt's blocks are shared read-only across all 4 until each sample's generated tokens diverge, forking only the blocks that actually change",
+            "Request C: a long 900-token prompt → allocates ~57 blocks incrementally as it's processed, no upfront reservation for a hypothetical max length",
+            "A naive contiguous allocator sized for, say, a 2048-token max would have reserved far more memory for A and B than they ever used — that unused space is exactly what paging reclaims for other requests"
+          ],
+          "symbol": "list.bullet.rectangle",
+          "id": "880038ec-1f64-4dfd-aebb-af01311b98b3"
+        },
+        {
+          "kind": "comparison",
+          "title": "Contiguous pre-allocation vs. paged allocation",
+          "body": "The original vLLM paper and announcement reported a large throughput gain at the same latency versus the serving systems of the time (HuggingFace Transformers and HuggingFace Text Generation Inference) — driven almost entirely by fitting more concurrent sequences into the same GPU memory, not by faster math.",
+          "bullets": [
+            "Same GPU, same model — the ceiling that moves is 'how many sequences fit,' not FLOPs per token"
+          ],
+          "table": {
+            "headers": [
+              "",
+              "Contiguous pre-allocation",
+              "Paged allocation (PagedAttention)"
+            ],
+            "rows": [
+              [
+                "Memory reserved per request",
+                "Sized for max possible sequence length",
+                "Grows one small block at a time, as needed"
+              ],
+              [
+                "Waste from short sequences",
+                "Can be most of the reservation",
+                "Bounded by under one block's worth of tokens"
+              ],
+              [
+                "Sharing across parallel samples / beams",
+                "Each sequence fully duplicated",
+                "Shared blocks, forked only on copy-on-write"
+              ],
+              [
+                "What limits concurrent requests",
+                "Worst-case memory per request",
+                "Actual memory in use, pooled across requests"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis",
+          "id": "ad9e0316-bda7-44e6-a435-7377c941244b"
+        },
+        {
+          "kind": "concept",
+          "title": "Where paging still costs you",
+          "body": "PagedAttention is a serving-infrastructure win, not a free lunch — it trades some overhead and complexity for memory efficiency.",
+          "bullets": [
+            "Every attention step now does an indirect gather through the block table instead of a flat read — this needs a purpose-built kernel, not the default attention op",
+            "Picking the block size matters: smaller blocks cut waste further but add per-block bookkeeping overhead; too-large blocks bring back the fragmentation they were meant to fix",
+            "It solves memory layout, not compute cost — it won't help a workload that's already compute-bound (e.g. very small batch sizes on a fast GPU)",
+            "Not worth the complexity for single-request, fixed-length batch inference where a simple contiguous buffer already fits comfortably"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "id": "57000321-2999-4781-9708-fd9c6d3543a0"
+        },
+        {
+          "kind": "takeaways",
+          "title": "PagedAttention in four facts",
+          "body": null,
+          "bullets": [
+            "KV cache is split into small fixed-size blocks (vLLM's default: 16 tokens) allocated on demand, not one max-length buffer upfront",
+            "A per-sequence block table maps logical positions to physical blocks — physical blocks need not be contiguous",
+            "Shared prefixes (parallel sampling, beam search) share physical blocks via copy-on-write, forking only once generations diverge",
+            "The result is a memory-management win: more concurrent sequences per GPU, which is why it became the default serving strategy in vLLM"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "4a45663a-7bd8-43df-bce9-cbd0fffc9a50"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the main source of waste that PagedAttention eliminates?",
+            "options": [
+              "Slow matrix multiplications during the forward pass",
+              "Memory reserved up front for the maximum possible sequence length, most of which often goes unused",
+              "Redundant tokenizer vocabulary entries",
+              "Network latency between GPUs in a multi-GPU setup"
+            ],
+            "correctIndex": 1,
+            "explanation": "Contiguous pre-allocation reserves KV-cache memory for a request's worst-case length. Most sequences stop well short of that, so most of the reservation sits idle — that's the waste PagedAttention targets.",
+            "id": "e6e1b772-2101-418b-904e-674f30441330"
+          },
+          {
+            "prompt": "How does a block table work in PagedAttention?",
+            "options": [
+              "It compresses the KV cache into fewer bits per token",
+              "It maps a sequence's logical token positions to physical memory blocks, which don't need to be contiguous",
+              "It stores a lookup table of previously generated tokens for caching whole responses",
+              "It swaps unused model weights out to CPU memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "The block table is the indirection layer: it lets each sequence's KV data live in scattered physical blocks while the attention kernel still finds the right data for each logical position.",
+            "id": "14a46bab-155d-4de9-aa67-1a088be276f4"
+          },
+          {
+            "prompt": "Why does PagedAttention make parallel sampling and beam search cheaper?",
+            "options": [
+              "It skips attention computation for repeated tokens entirely",
+              "It lets sequences that share a prompt or ancestry share the same physical KV blocks, forking a block only via copy-on-write once content diverges",
+              "It reduces the number of beams the model is allowed to generate",
+              "It precomputes all possible completions ahead of time"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the KV cache is block-based, shared prefixes can point multiple block tables at the same physical blocks. A block is only copied once a sequence actually needs to write something different into it.",
+            "id": "28f83690-22ba-416b-af06-7dc0c85dee2a"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., SOSP 2023)",
+          "url": "https://arxiv.org/abs/2309.06180",
+          "id": "f20ea66e-335c-4238-b0a6-85e0272caeab"
+        },
+        {
+          "title": "vLLM documentation",
+          "url": "https://docs.vllm.ai/",
+          "id": "f3f6e0d1-0a29-467d-95d1-2db01d4d7eb7"
+        }
+      ],
+      "id": "e1807dc2-f445-46b7-98c8-ff667c3f513c",
+      "publishedDate": "2026-10-09T00:44:19Z"
+    },
+    {
       "title": "Anthropic Commits $150M to the Genesis Mission",
       "subtitle": "Claude heads into 15+ federal agencies to accelerate fusion, quantum, and frontier science.",
       "category": "AI News",
@@ -10666,185 +10880,6 @@
         }
       ],
       "id": "88eec7fa-5579-42c2-8846-650e37715fa1",
-      "publishedDate": "2026-10-03T06:47:12Z"
-    },
-    {
-      "title": "Grouped-Query Attention: The Middle Ground Between MHA and MQA",
-      "subtitle": "Why Llama 2, Mistral, and most production LLMs share key/value heads in groups",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "attention",
-        "transformers",
-        "inference-optimization",
-        "kv-cache",
-        "llm-architecture"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "rectangle.grid.2x2.fill",
-      "summary": "Grouped-Query Attention (GQA) splits a transformer's query heads into groups that each share one key/value head, sitting between full multi-head attention and multi-query attention. It shrinks the KV cache by the group-size factor while staying much closer to full-MHA quality than MQA, which is why Llama 2 70B and Mistral both ship with it by default.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Set of Keys and Values, Shared by a Group of Query Heads",
-          "body": "Multi-head attention gives every head its own key/value projection. Grouped-Query Attention (GQA) splits heads into groups that share one K/V projection per group — cutting KV-cache memory without multi-query attention's quality hit.",
-          "bullets": [],
-          "symbol": "rectangle.grid.2x2.fill",
-          "id": "1f9c871d-6fa3-4df2-945f-520e10a8e89d",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Multi-Head Attention's KV Cache Doesn't Scale",
-          "body": "Each of a model's attention heads keeps its own cached key and value vectors for every previous token.",
-          "bullets": [
-            "KV-cache size scales with the number of heads, not just the model's parameter count",
-            "At long context lengths, the KV cache can rival or exceed the model weights in memory footprint",
-            "Multi-Query Attention (MQA) fixes this by sharing just one key/value head across all queries — but measurably hurts output quality versus full MHA"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "id": "aeec830e-fbca-45ac-95fc-e3ed5dd52dda",
-          "table": null
-        },
-        {
-          "kind": "solution",
-          "title": "Split Heads Into Groups, Share Within Each Group",
-          "body": "GQA (Ainslie et al., 2023) groups a model's H query heads into G groups, where each group shares a single key/value head.",
-          "bullets": [
-            "G = H recovers standard multi-head attention exactly; G = 1 recovers MQA exactly — GQA is the general form in between",
-            "A common setting: 32 query heads grouped into 8 KV heads, so 4 queries share each KV head",
-            "KV-cache size shrinks by the grouping factor (H / G) versus full MHA, with no change to the query-side computation"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "id": "0c21652f-f90e-472a-9229-64328145a880",
-          "table": null
-        },
-        {
-          "kind": "comparison",
-          "title": "Three Points on the Same Spectrum",
-          "body": "GQA isn't a separate idea from MHA and MQA — it's the tunable middle ground between them.",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Scheme",
-              "KV heads",
-              "KV-cache size vs. MHA",
-              "Quality vs. MHA"
-            ],
-            "rows": [
-              [
-                "MHA (H heads)",
-                "H",
-                "1x (baseline)",
-                "Reference"
-              ],
-              [
-                "GQA (G groups)",
-                "G",
-                "G / H of MHA",
-                "Close to MHA"
-              ],
-              [
-                "MQA (1 head)",
-                "1",
-                "1 / H of MHA",
-                "Noticeably lower"
-              ]
-            ]
-          },
-          "id": "74a576a6-339c-4ef2-9219-46bbbd417793",
-          "symbol": null
-        },
-        {
-          "kind": "example",
-          "title": "Llama 2 70B's Real Numbers",
-          "body": "Llama 2's larger models are the textbook production example of GQA.",
-          "bullets": [
-            "Llama 2 34B and 70B use 8 KV-head groups shared across their query heads — an 8x reduction in cached K/V tensors per layer versus full MHA",
-            "Mistral 7B also ships GQA by default, which helps keep its sliding-window attention cheap over long contexts",
-            "The smaller Llama 2 models (7B, 13B) kept full MHA, since their KV cache was never big enough to be the bottleneck"
-          ],
-          "symbol": "cpu.fill",
-          "id": "74050b2d-4716-4c36-a8bd-43821bc373e3",
-          "table": null
-        },
-        {
-          "kind": "problem",
-          "title": "Not Free: a Fixed Architecture Choice",
-          "body": "GQA is a design decision baked in before training, not a runtime switch.",
-          "bullets": [
-            "The group count is fixed at pretraining time; changing it later needs a conversion or distillation step, not just a config flag",
-            "Fewer KV heads means less per-head specialization in what gets cached — a real, if usually small, capacity cost",
-            "Skip it for small models or short-context use cases where the KV cache was never the memory bottleneck in the first place"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "46caebec-cb7f-43c0-be01-0af87024470a",
-          "table": null
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "GQA is the practical default for large, long-context LLMs because it buys most of MQA's memory savings while keeping almost all of MHA's quality.",
-          "bullets": [
-            "G = H is MHA, G = 1 is MQA — GQA is the tunable spectrum between them",
-            "KV-cache size shrinks by H / G, directly cutting memory and speeding up decoding at long context",
-            "Llama 2 70B: 8 KV-head groups; Mistral 7B: GQA by default",
-            "A pretraining-time architecture choice, not something you toggle after the fact"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "9c5ffe2b-5ce6-4e98-a333-191f91ef0d62",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "In Grouped-Query Attention, what happens when the number of groups G equals the number of query heads H?",
-            "options": [
-              "It becomes multi-query attention (MQA)",
-              "It becomes standard multi-head attention (MHA)",
-              "The model stops using a KV cache entirely",
-              "It triggers sliding-window attention"
-            ],
-            "correctIndex": 1,
-            "explanation": "When G = H, every query head gets its own key/value head — exactly standard multi-head attention. GQA's groups are what let you dial between MHA (G=H) and MQA (G=1).",
-            "id": "72415322-7336-4b5a-abd0-b940e21475a5"
-          },
-          {
-            "prompt": "Why does GQA typically stay closer to full MHA quality than MQA does?",
-            "options": [
-              "It uses a larger vocabulary size",
-              "It only shares KV heads within small groups rather than collapsing all heads to a single shared KV head",
-              "It adds an extra attention layer",
-              "It increases the number of query heads"
-            ],
-            "correctIndex": 1,
-            "explanation": "MQA forces every query head to share one single KV head, a large reduction in representational diversity. GQA only shares within smaller groups, preserving more of the per-head specialization that MHA has.",
-            "id": "a6102585-72b0-4504-808d-6036c325054e"
-          },
-          {
-            "prompt": "How many KV-head groups does Llama 2 70B use for its query heads?",
-            "options": [
-              "1 (full MQA)",
-              "64 (full MHA, no sharing)",
-              "8 KV-head groups",
-              "It doesn't use GQA at all"
-            ],
-            "correctIndex": 2,
-            "explanation": "Llama 2's 34B and 70B models use 8 KV-head groups, giving an 8x reduction in cached key/value tensors per layer compared to full multi-head attention.",
-            "id": "1a4be0d1-6c07-4b6f-af62-69eebb015820"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (arXiv:2305.13245)",
-          "url": "https://arxiv.org/abs/2305.13245",
-          "id": "cdfe82f1-6ff3-4000-b603-41e6880b1a50"
-        }
-      ],
-      "id": "f705e64c-1ff7-4998-a835-e2e87781c6e7",
       "publishedDate": "2026-10-03T06:47:12Z"
     }
   ]
