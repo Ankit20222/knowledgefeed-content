@@ -1,6 +1,360 @@
 {
   "posts": [
     {
+      "id": "9fcac351-4c3b-49c2-98a2-47a549f0af6a",
+      "title": "Grouped-Query Attention: Splitting the Difference",
+      "subtitle": "How Llama 2 and Mistral cut KV cache 8x without losing quality",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "transformers",
+        "kv-cache",
+        "inference",
+        "gqa"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "rectangle.split.3x1",
+      "summary": "Grouped-Query Attention sits between full multi-head attention and multi-query attention, letting groups of query heads share a single key/value head. It's the default in Llama 2/3, Mistral, and Qwen because it cuts KV cache memory sharply while keeping almost all of MHA's quality.",
+      "publishedDate": "2026-10-10T12:47:03Z",
+      "slides": [
+        {
+          "id": "49918432-1c6a-49ba-af7a-67aceb42ee3f",
+          "kind": "cover",
+          "title": "Three Ways to Split Attention Heads",
+          "body": "Multi-head attention gives every head its own keys and values. Multi-query attention gives every head the same ones. Grouped-query attention is the tunable middle ground almost every open LLM now ships with.",
+          "bullets": [
+            "MHA: full quality, full memory cost",
+            "MQA: ~N× smaller cache, noticeable quality loss",
+            "GQA: pick the group size, trade memory for quality on a dial"
+          ],
+          "symbol": "rectangle.split.3x1",
+          "table": null
+        },
+        {
+          "id": "d5911329-3c68-43fd-b402-46e3d2d70bc5",
+          "kind": "problem",
+          "title": "The KV Cache, Not the Weights, Runs Out of Memory First",
+          "body": "During autoregressive decoding, every attention head must keep a key and value vector cached for every previous token. That cache grows with layers × heads × sequence length × batch size — independent of how many parameters the model has.",
+          "bullets": [
+            "Llama 2 70B: 80 layers, originally 64 attention heads, head_dim 128",
+            "With full MHA, a 70B model's KV cache can exceed the size of the model weights at long context + large batch",
+            "Bigger cache means fewer concurrent requests and shorter context fit on the same GPU"
+          ],
+          "symbol": "memorychip",
+          "table": null
+        },
+        {
+          "id": "c49b284f-4529-4658-85a7-980fab15489d",
+          "kind": "solution",
+          "title": "Share Keys and Values Across a Group of Query Heads",
+          "body": "GQA keeps the full count of query heads (so the model still 'looks' at the sequence from many angles) but shrinks the number of distinct key/value heads, grouping several query heads onto each shared KV head.",
+          "bullets": [
+            "Llama 2 70B uses GQA with 8 KV heads for 64 query heads → group size 8",
+            "Mistral 7B uses 8 KV heads for 32 query heads → group size 4",
+            "MQA is GQA's extreme case: 1 KV head shared by every query head",
+            "MHA is the other extreme: group size 1 (no sharing at all)"
+          ],
+          "symbol": "cpu",
+          "table": null
+        },
+        {
+          "id": "20861ec0-9d90-4c95-b91b-bd101783807a",
+          "kind": "concept",
+          "title": "You Don't Have to Retrain From Scratch to Switch",
+          "body": "The original GQA paper (Ainslie et al., 2023) introduced 'uptraining': take an existing MHA checkpoint, mean-pool each group's key/value heads into one shared head, then fine-tune briefly on a small fraction of the original pretraining data.",
+          "bullets": [
+            "Uptraining typically uses ~5% of original pretraining compute to recover most of the quality lost from merging heads",
+            "This is why GQA could be retrofitted onto architectures originally trained with MHA, not just designed in from day one"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "4519686d-89dc-403d-b9f8-48a6a0eca80a",
+          "kind": "example",
+          "title": "Worked Example: Serving 70B at Long Context",
+          "body": "KV cache size scales as 2 (K and V) × layers × kv_heads × head_dim × tokens × batch. Shrinking kv_heads from 64 to 8 shrinks that whole term by 8x.",
+          "bullets": [
+            "At a 32K-token context and a modest batch, an 8x smaller KV cache is the difference between fitting on one GPU and needing to shard just for cache space",
+            "That freed memory converts directly into either more concurrent users or longer context windows on the same hardware",
+            "Compute cost (FLOPs for attention) barely changes — this is a memory optimization, not a speed-of-math one"
+          ],
+          "symbol": "speedometer",
+          "table": null
+        },
+        {
+          "id": "0b08d7ad-a337-45a9-955f-7283302a1297",
+          "kind": "comparison",
+          "title": "Where Each Variant Lands",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Variant",
+              "KV heads",
+              "Cache vs MHA",
+              "Typical quality"
+            ],
+            "rows": [
+              [
+                "MHA (e.g. GPT-3 style)",
+                "= query heads",
+                "1x (baseline)",
+                "Highest, reference point"
+              ],
+              [
+                "MQA (e.g. PaLM)",
+                "1",
+                "~1/N x",
+                "Noticeably degraded"
+              ],
+              [
+                "GQA (Llama 2/3, Mistral, Qwen)",
+                "a divisor of query heads (e.g. 8)",
+                "~1/group-size x",
+                "Close to MHA"
+              ],
+              [
+                "MLA (DeepSeek-V2)",
+                "compressed latent vector, not per-head",
+                "smaller still",
+                "Matches or exceeds MHA"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "c14b83d3-e550-4bd5-8c75-b191428ee1f1",
+          "kind": "takeaways",
+          "title": "When to Reach for Which Variant",
+          "body": "GQA won because it's a single hyperparameter — the number of KV head groups — that lets teams dial memory savings against quality loss without a fundamentally new mechanism.",
+          "bullets": [
+            "Training a model from scratch at small scale where memory isn't the bottleneck → plain MHA is simplest",
+            "Serving at scale with long context and many concurrent users → GQA with group size 4-8 is the standard default today",
+            "Pushing memory to the absolute floor on edge hardware → MQA, accepting the quality hit",
+            "Group size is fixed at pretraining (or uptraining) time — you can't change it post-hoc without retraining"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "27a41b44-7121-4909-a7a4-5d222302b68f",
+            "prompt": "What resource does Grouped-Query Attention primarily save?",
+            "options": [
+              "Total parameter count",
+              "KV cache memory during inference",
+              "Training dataset size",
+              "Tokenizer vocabulary size"
+            ],
+            "correctIndex": 1,
+            "explanation": "GQA doesn't shrink the model's parameters in any major way — it shrinks how many distinct key/value vectors must be cached per token during decoding, which is what actually limits context length and batch size in production serving."
+          },
+          {
+            "id": "8d552edb-4bd7-4da2-8e1c-0ee7d918f40a",
+            "prompt": "A model has 64 query heads and uses GQA with 8 KV heads. How many query heads share each KV head?",
+            "options": [
+              "1",
+              "4",
+              "8",
+              "64"
+            ],
+            "correctIndex": 2,
+            "explanation": "Group size = query heads ÷ KV heads = 64 ÷ 8 = 8. Each shared key/value head serves 8 query heads."
+          },
+          {
+            "id": "f97a59bd-bf7c-4d7d-acb4-3e2637ffb94c",
+            "prompt": "Which statement correctly describes the relationship between MQA and GQA?",
+            "options": [
+              "MQA uses more KV heads than any GQA configuration",
+              "MQA is the extreme case of GQA where there is exactly 1 KV head",
+              "GQA always produces a larger KV cache than MHA",
+              "MQA and MHA are the same mechanism with different names"
+            ],
+            "correctIndex": 1,
+            "explanation": "GQA is a spectrum: group size 1 is plain MHA (no sharing), and group size equal to the total head count is MQA (every head shares one KV head). GQA configurations sit strictly between those two extremes."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
+      "id": "4e782901-1707-4a7b-8a5c-84a86b42c3a6",
+      "title": "Reranking: Retrieval Gets You Close, This Gets You Right",
+      "subtitle": "Why production RAG adds a slower, smarter second pass after vector search",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "reranking",
+        "retrieval",
+        "embeddings",
+        "cross-encoder"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.up.arrow.down",
+      "summary": "Vector search is fast because it embeds queries and documents independently, but that same independence means it misses relevance signals that only show up when a model reads the query and document together. Cross-encoder reranking fixes the ordering of a small candidate set at the cost of extra latency.",
+      "publishedDate": "2026-10-10T12:47:03Z",
+      "slides": [
+        {
+          "id": "d086e022-390a-4380-a2e5-3e83c8b6b102",
+          "kind": "cover",
+          "title": "Fast Retrieval, Then a Slower Second Opinion",
+          "body": "Almost every production RAG pipeline that matters runs two passes: a cheap vector search over the whole corpus, then an expensive reranker over just the top candidates.",
+          "bullets": [
+            "Pass 1 (bi-encoder + ANN index): scans millions of chunks in milliseconds",
+            "Pass 2 (cross-encoder reranker): re-scores dozens of candidates, fixing order mistakes pass 1 made"
+          ],
+          "symbol": "arrow.up.arrow.down",
+          "table": null
+        },
+        {
+          "id": "c801667a-3e64-41db-a6d6-31018a3f7cf4",
+          "kind": "problem",
+          "title": "Bi-Encoders Never Actually Look at Query and Document Together",
+          "body": "A bi-encoder embeds the query and each document independently, then compares vectors with cosine or dot-product similarity. That independence is exactly what makes precomputing and indexing millions of document embeddings possible.",
+          "bullets": [
+            "Because the model never sees the query and document side by side, it can miss negation, exact entity matches, and specific numbers",
+            "In practice, the top-20 results from pure vector search often bury 2-3 truly relevant chunks below less relevant ones that just happen to sit nearby in embedding space"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "ab6be35c-2620-4e26-b8d8-78a44add1ef5",
+          "kind": "solution",
+          "title": "Cross-Encoders Score the Pair Directly",
+          "body": "A cross-encoder concatenates the query and a candidate document into one input sequence and runs it through a single transformer, letting attention flow freely between query tokens and document tokens.",
+          "bullets": [
+            "Output is one relevance score per (query, document) pair, not a pair of independent vectors",
+            "This catches signals a bi-encoder's separate embeddings can't: exact phrase overlap, negation ('not FDA approved' vs 'FDA approved'), numeric precision",
+            "The cost: a fresh forward pass is needed for every pair, every query — nothing about it can be precomputed and stored like embeddings can"
+          ],
+          "symbol": "cpu",
+          "table": null
+        },
+        {
+          "id": "999a25dc-da75-4df6-a248-8e3051b7bbdb",
+          "kind": "architecture",
+          "title": "Inside a Cross-Encoder",
+          "body": "Typical rerankers (MS MARCO MiniLM-style, BGE-reranker, Cohere Rerank) are smaller transformers — tens to a few hundred million parameters — fine-tuned specifically to output a relevance score from a [query, SEP, document] input, usually via a classification head on the pooled output.",
+          "bullets": [
+            "Small size keeps the per-pair latency low enough to score dozens of candidates in one request",
+            "Newer listwise/LLM-based rerankers score or rank a whole candidate list at once instead of pair-by-pair, trading more latency for better calibration across the list"
+          ],
+          "symbol": "square.stack.3d.up",
+          "table": null
+        },
+        {
+          "id": "3e70bbe9-894a-49f7-b4f6-f5ae2db8f9d4",
+          "kind": "example",
+          "title": "Worked Example: A Support-Ticket RAG Pipeline",
+          "body": "A help-desk assistant embeds a user's question and retrieves the top 50 candidate chunks from a vector index in a few milliseconds.",
+          "bullets": [
+            "The cross-encoder reranker then scores all 50 query-chunk pairs, a step that takes on the order of a few hundred milliseconds",
+            "The single most relevant chunk — which raw vector similarity had ranked #18 because it used different wording — moves to #1",
+            "Only the reranked top 5 are passed into the LLM's context, directly reducing the chance it answers from a near-miss chunk instead of the right one"
+          ],
+          "symbol": "list.number",
+          "table": null
+        },
+        {
+          "id": "5259cc77-8eec-4380-be65-4649112b2f0a",
+          "kind": "comparison",
+          "title": "Two Very Different Jobs",
+          "body": null,
+          "bullets": [],
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Stage",
+              "Model type",
+              "Latency",
+              "Scale it covers",
+              "Job"
+            ],
+            "rows": [
+              [
+                "Retrieval",
+                "Bi-encoder + ANN index (HNSW/IVF)",
+                "~ms, even over millions of docs",
+                "Whole corpus",
+                "Cheaply find a plausible candidate set"
+              ],
+              [
+                "Reranking",
+                "Cross-encoder (MiniLM, BGE-reranker, Cohere Rerank)",
+                "~tens to hundreds of ms",
+                "Only the top 20-200 candidates",
+                "Precisely order that shortlist before it reaches the LLM"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "1ff0f0a3-cc78-44c5-9833-7749fa70a6fd",
+          "kind": "takeaways",
+          "title": "When Reranking Earns Its Latency Cost — And When It Doesn't",
+          "body": "Reranking is a precision tool, not a free upgrade: it adds a model call and real latency, so it pays off most when retrieval is the thing failing.",
+          "bullets": [
+            "Skip it when the candidate pool is already tiny and clean (searching <20 documents total), or when the latency budget is sub-100ms",
+            "Add it when the corpus is large, phrasing varies a lot between queries and documents, or you've observed the right chunk showing up just outside the top results",
+            "A general-purpose reranker trained on web/MS MARCO data may underperform on narrow domains (legal, medical) without domain fine-tuning",
+            "Reranking fixes ordering within a candidate set — it can't recover a relevant document that retrieval missed entirely"
+          ],
+          "symbol": "checkmark.seal",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "92476adc-6688-41c0-b194-d0e07920613e",
+            "prompt": "Why can't a cross-encoder be used to search millions of documents directly, the way a vector index does?",
+            "options": [
+              "Cross-encoders can only output embeddings, not scores",
+              "It must process every query-document pair jointly at query time, so cost scales with corpus size instead of being precomputed",
+              "Cross-encoders cannot run on GPUs",
+              "Cross-encoders only work with single-word queries"
+            ],
+            "correctIndex": 1,
+            "explanation": "Bi-encoder embeddings can be computed once per document and indexed for fast lookup later. A cross-encoder needs the specific query present at scoring time, so there's nothing to precompute — running it over an entire corpus per query would be far too slow."
+          },
+          {
+            "id": "e039c37f-f983-4601-9077-a0e85f86b711",
+            "prompt": "What can a cross-encoder 'see' that a bi-encoder's separate embeddings cannot?",
+            "options": [
+              "The document's publication date",
+              "Direct attention between query tokens and document tokens in the same forward pass",
+              "The total length of the corpus",
+              "The embedding model's training data"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the query and document are fed in together, self-attention lets every query token attend to every document token directly — catching things like negation or exact phrase matches that two independently-computed vectors can lose."
+          },
+          {
+            "id": "fc74af12-460e-4368-a799-135f4efb050c",
+            "prompt": "In a typical two-stage pipeline, what's a realistic shape for the two passes?",
+            "options": [
+              "Retrieve top 2 candidates, then rerank all of them",
+              "Retrieve top 50-100 candidates via vector search, then rerank down to the top 5-10",
+              "Rerank the whole corpus, then retrieve from the reranked list",
+              "Run retrieval and reranking in parallel on the full corpus"
+            ],
+            "correctIndex": 1,
+            "explanation": "Retrieval's job is to cheaply narrow millions of documents down to a manageable shortlist; reranking's job is to carefully re-order that shortlist. Reversing the order, or reranking the full corpus, defeats the point of having a fast first stage."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "Claude Frontier Academy: $100M for 10,000 AI Engineers",
       "subtitle": "Anthropic's biggest bet yet: enterprise AI is bottlenecked by people, not models.",
       "category": "AI News",
@@ -10601,379 +10955,6 @@
       ],
       "id": "67a9205b-302b-4b9e-aafe-fc714e6445b0",
       "publishedDate": "2026-10-04T12:46:39Z",
-      "heroImageURL": null
-    },
-    {
-      "title": "Bilibili Open-Sources Index-Translate for 150 Languages",
-      "subtitle": "A full open-weight translation family — text, speech, dubbing, and long documents — under Apache 2.0",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "translation",
-        "open-source",
-        "moe",
-        "multilingual",
-        "quantization"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "translate",
-      "summary": "Bilibili's Index team open-sourced Index-Translate, a Qwen3.5-based translation family covering 150 languages in 2B/9B/35B-A3B sizes, plus sibling models for speech dubbing and long-document translation — all Apache 2.0, with quantized builds and a free API.",
-      "slides": [
-        {
-          "id": "28bcc6a8-8c61-447e-af30-b69d5b38cc71",
-          "kind": "cover",
-          "title": "Frontier translation, fully open",
-          "body": "On September 30, Bilibili's Index LLM team released Index-Translate: a family of multilingual translation models built on Qwen3.5, covering 150 languages, released under Apache 2.0.",
-          "bullets": [
-            "2B, 9B, and 35B-A3B (MoE, preview) sizes",
-            "Weights on Hugging Face and ModelScope",
-            "Technical report, code, and an online demo all public"
-          ],
-          "symbol": "translate",
-          "table": null
-        },
-        {
-          "id": "c2f9e91e-fb07-4597-a760-ae7d3bf1cfde",
-          "kind": "problem",
-          "title": "Good translation has stayed mostly closed",
-          "body": "The strongest multilingual translation quality has largely lived behind closed commercial APIs, while open general-purpose LLMs aren't specifically tuned for translation fidelity, timing, or document-scale consistency.",
-          "bullets": [
-            "Closed APIs: hard to self-host, audit, or fine-tune further",
-            "General LLMs: not optimized for terminology consistency across a long document",
-            "Dubbing and speech translation need timing control that plain text models don't offer"
-          ],
-          "symbol": "lock.fill",
-          "table": null
-        },
-        {
-          "id": "39d2dd49-c69d-4baf-9cc3-da40aadd2561",
-          "kind": "solution",
-          "title": "One family, four specialized siblings",
-          "body": "Built on Alibaba's Qwen3.5, the release isn't one model but a family targeting different translation jobs.",
-          "bullets": [
-            "Index-Translate: core text translation, 150 languages, 2B/9B/35B-A3B",
-            "Index-Echo: speech-to-speech translation",
-            "Index-Homura: syllable-controlled translation for dub timing",
-            "Index-NativeLong: long-document translation, tested to 64K tokens"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "41ccba0f-f758-4718-9d9a-44d27cc33661",
-          "kind": "comparison",
-          "title": "Reported benchmark scores (9B tier)",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "Model",
-              "Benchmark",
-              "Score"
-            ],
-            "rows": [
-              [
-                "Index-Translate-9B",
-                "FLORES",
-                "0.8789"
-              ],
-              [
-                "Index-Translate-9B",
-                "instTrans (instruction-following)",
-                "0.8209"
-              ],
-              [
-                "Index-NativeLong-9B",
-                "GuoFeng documents @ 64K tokens",
-                "0.7891"
-              ],
-              [
-                "Index-Homura-9B",
-                "SandGlass (within 10% of target syllable count)",
-                "81.92%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "06b67d36-edd1-4f08-bc99-7a77822f6d4b",
-          "kind": "example",
-          "title": "Worked example: dubbing a video clip",
-          "body": "Say you're localizing a short video from Mandarin to Spanish for lip-synced dubbing.",
-          "bullets": [
-            "Index-Translate converts the script, preserving meaning and tone",
-            "Index-Homura re-times the Spanish phrasing to land within 10% of the original syllable count, so mouth movement stays roughly in sync",
-            "Index-Echo can instead translate the speech audio directly, skipping the text step entirely",
-            "For a 64K-token script with recurring character names, Index-NativeLong keeps terminology consistent across the whole document"
-          ],
-          "symbol": "waveform",
-          "table": null
-        },
-        {
-          "id": "14ce89e8-3cde-4e73-873e-f8416853ad11",
-          "kind": "architecture",
-          "title": "Built for real deployment, not just a demo",
-          "body": "The release shipped with production concerns already handled.",
-          "bullets": [
-            "GGUF builds for local inference via llama.cpp",
-            "FP8 (W8A8) and NVFP4 (W4A4, Blackwell-optimized) builds for vLLM serving",
-            "October 4: free, OpenAI-compatible public API endpoints for the 35B-A3B model"
-          ],
-          "symbol": "server.rack",
-          "table": null
-        },
-        {
-          "id": "a556ce12-8ae5-4867-9963-ea6899c1c8cf",
-          "kind": "takeaways",
-          "title": "What to watch before you deploy it",
-          "body": "Open and capable doesn't mean free of tradeoffs.",
-          "bullets": [
-            "35B-A3B is explicitly a 'preview' — only 3B of the 35B parameters activate per token, but you still need enough VRAM to hold all the experts",
-            "Homura trades literal accuracy for timing fit — wrong tool when exact meaning matters more than lip-sync (legal, medical)",
-            "Benchmark scores above are the project's own reported numbers, not an independent third-party eval",
-            "Biggest win: a fully open, deployable translation stack with per-use-case specialized siblings instead of one generic model"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "ce1a1a2d-37ac-4737-9c92-4ef5c790ce67",
-            "prompt": "Index-Translate-35B-A3B is a Mixture-of-Experts model. What does the 'A3B' tell you?",
-            "options": [
-              "The model was trained on 3 billion tokens total",
-              "Only 3B of the 35B total parameters are active per token, even though all experts must still fit in memory",
-              "The model runs 3x faster than the 9B dense version",
-              "It supports 3 billion languages"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE models activate a small subset of experts per token (3B here) while the full parameter count (35B) still needs to be loaded — compute scales with active params, memory scales with total params."
-          },
-          {
-            "id": "7fd55aa7-1404-4400-988d-d83ff2dd69c4",
-            "prompt": "Which sibling model would you reach for to keep character names consistent across a 64K-token document?",
-            "options": [
-              "Index-Echo",
-              "Index-Homura",
-              "Index-NativeLong",
-              "Index-Translate-2B"
-            ],
-            "correctIndex": 2,
-            "explanation": "Index-NativeLong is the sibling specifically evaluated on long-document translation (GuoFeng @ 64K tokens), where maintaining terminology consistency across the whole document is the core challenge."
-          },
-          {
-            "id": "7bea2948-c575-4c3c-97e9-17a7302834f3",
-            "prompt": "When is Index-Homura's syllable-controlled translation the wrong choice?",
-            "options": [
-              "When dubbing a video and lip-sync timing matters",
-              "When translating a legal contract where exact meaning must be preserved over timing",
-              "When the target language has a different syllable structure than the source",
-              "When translating short phrases"
-            ],
-            "correctIndex": 1,
-            "explanation": "Homura optimizes phrasing to hit a target syllable count for dub timing, which can nudge wording away from the most literally precise translation — a bad fit when fidelity matters more than timing."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "d25101d6-2ddb-45a5-b1f5-5b3a46711658",
-          "title": "bilibili/Index-Translate — official GitHub repository",
-          "url": "https://github.com/bilibili/Index-Translate"
-        }
-      ],
-      "id": "18f4e9a2-7855-4839-92f9-6535f8a62557",
-      "publishedDate": "2026-10-04T12:46:37Z",
-      "heroImageURL": null
-    },
-    {
-      "title": "Test-Time Compute: Buying Accuracy at Inference",
-      "subtitle": "Why sampling, search, and longer reasoning at answer-time can beat a bigger model",
-      "category": "AI Concepts",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "test-time-compute",
-        "reasoning",
-        "inference",
-        "search",
-        "llms"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "clock.arrow.circlepath",
-      "summary": "Test-time compute scaling spends extra computation at inference — sampling, search, or extended reasoning — instead of growing the model, often recovering accuracy a single greedy pass misses. The gains are real but come with latency and cost tradeoffs, and they saturate on easy problems.",
-      "slides": [
-        {
-          "id": "700844eb-2544-41e7-9145-dc2331aa5c0e",
-          "kind": "cover",
-          "title": "More thinking, same model",
-          "body": "For years, a better answer meant a bigger model trained on more data. Test-time compute takes a different lever: keep the model fixed, spend more computation at the moment it answers.",
-          "bullets": [
-            "Not a training technique — a decoding-time technique",
-            "Trades latency and $ per query for accuracy",
-            "Behind reasoning-heavy models like o1 and R1-style systems"
-          ],
-          "symbol": "clock.arrow.circlepath",
-          "table": null
-        },
-        {
-          "id": "a05adbb7-c992-4307-9d4f-d4cf949cb309",
-          "kind": "problem",
-          "title": "A single greedy pass often knows better than it shows",
-          "body": "A model frequently has the right answer somewhere in its output distribution — it just doesn't surface on the first, cheapest attempt.",
-          "bullets": [
-            "Hard reasoning problems have many ways to slip (one arithmetic error, one skipped case)",
-            "Greedy decoding commits to the first plausible path and never looks back",
-            "The fix doesn't require more parameters — it requires more attempts or more deliberation"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f909f31f-cf33-481b-b018-9b37be12280e",
-          "kind": "concept",
-          "title": "Four ways to spend the extra compute",
-          "body": null,
-          "bullets": [
-            "Best-of-N: sample N full answers, use a verifier/reward model to pick the best",
-            "Self-consistency: sample N reasoning chains, take the majority-vote final answer",
-            "Search (beam / MCTS): explore and prune reasoning steps guided by a process reward model",
-            "Extended chain-of-thought: generate a long internal 'thinking' trace before committing to a final answer (o1/R1-style)"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "cf80f4c6-5d05-444c-a342-70de623fb7fb",
-          "kind": "architecture",
-          "title": "How to spend the budget matters more than how much",
-          "body": "Research on compute-optimal test-time scaling (e.g. Snell et al.) found that for a fixed inference budget, the best allocation — more samples vs. deeper search vs. longer reasoning — depends on how hard the problem is.",
-          "bullets": [
-            "Easy problems saturate fast: extra samples past a point add no accuracy",
-            "Hard problems benefit more from search/verification than from raw sampling",
-            "A well-tuned small model with the right test-time strategy can match a much larger model run once"
-          ],
-          "symbol": "gauge.with.dots.needle.67percent",
-          "table": null
-        },
-        {
-          "id": "b5d7f12b-1f3e-44e2-b669-8102046ae728",
-          "kind": "comparison",
-          "title": "Picking a technique",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "Technique",
-              "Needs a verifier?",
-              "Latency cost",
-              "Best for"
-            ],
-            "rows": [
-              [
-                "Best-of-N",
-                "Yes",
-                "High (N full generations)",
-                "Tasks with a cheap, reliable verifier"
-              ],
-              [
-                "Self-consistency",
-                "No",
-                "Medium (N generations, vote)",
-                "Problems with a clear final answer to vote on"
-              ],
-              [
-                "Beam / MCTS search",
-                "Yes (process reward)",
-                "High (many partial expansions)",
-                "Multi-step reasoning with checkable intermediate steps"
-              ],
-              [
-                "Extended chain-of-thought",
-                "No (self-contained)",
-                "Variable (longer single generation)",
-                "Open-ended reasoning without a separate verifier"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "7d74d510-780d-4dd0-87cf-3321d5698003",
-          "kind": "example",
-          "title": "Worked example: a competition math problem",
-          "body": "A hard AIME-style problem: a single greedy solve makes one arithmetic slip midway and lands on the wrong final number.",
-          "bullets": [
-            "Run the model 32 times independently (best-of-N / self-consistency)",
-            "28 of 32 attempts converge on the same final answer — the slip was attempt-specific, not systematic",
-            "Majority vote (or a verifier scoring each attempt) surfaces the correct answer that any single run had a real chance of missing",
-            "Same idea, different domain: τ0-VLA's robot planner searches candidate subtasks against a world model before committing — test-time compute applied to action planning instead of math"
-          ],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "7292813e-0750-4205-aeeb-fbecb245bbba",
-          "kind": "takeaways",
-          "title": "Know the limits before reaching for it",
-          "body": "Test-time compute is a real lever, not a free one.",
-          "bullets": [
-            "Cost multiplies with N — 32 samples is roughly 32x the tokens of one pass",
-            "Gains saturate: past a point, more samples or deeper search barely move accuracy",
-            "Self-consistency without a verifier just votes — if the model is systematically wrong, the majority is wrong too",
-            "Skip it for easy, low-stakes queries where one pass is already reliable — the extra cost buys nothing"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cabc688e-c9f1-41a2-9e77-d2ae584729a4",
-            "prompt": "What is the core idea behind test-time compute scaling?",
-            "options": [
-              "Train a larger model on more data",
-              "Spend more computation at inference time (sampling, search, longer reasoning) instead of growing the model",
-              "Quantize the model to run faster",
-              "Fine-tune the model on the specific test question"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time compute keeps the trained model fixed and instead spends extra computation when answering — through sampling, search, or extended reasoning — to recover accuracy a single pass would miss."
-          },
-          {
-            "id": "fe771d20-c5aa-4980-9f0e-fff791158584",
-            "prompt": "Which technique relies on a verifier or reward model to choose among several full candidate answers?",
-            "options": [
-              "Self-consistency",
-              "Best-of-N",
-              "Greedy decoding",
-              "Extended chain-of-thought alone"
-            ],
-            "correctIndex": 1,
-            "explanation": "Best-of-N generates N complete answers and uses a separate verifier/reward model to score and pick the best one, unlike self-consistency which just votes on the final answer without a learned scorer."
-          },
-          {
-            "id": "8f791cd8-a2e0-405c-8d8c-52ac71021afe",
-            "prompt": "When should you avoid spending extra test-time compute on a query?",
-            "options": [
-              "When the problem is a hard multi-step reasoning task",
-              "When the query is easy and low-stakes, and a single pass is already reliable",
-              "When you have a good process reward model available",
-              "When the model has a long context window"
-            ],
-            "correctIndex": 1,
-            "explanation": "Extra sampling or search multiplies latency and cost. On easy, low-stakes queries a single greedy pass is already accurate, so the extra spend buys little to nothing."
-          }
-        ]
-      },
-      "references": [],
-      "id": "acd16132-9e02-45ca-b558-2507fb19976e",
-      "publishedDate": "2026-10-04T12:46:35Z",
       "heroImageURL": null
     }
   ]
