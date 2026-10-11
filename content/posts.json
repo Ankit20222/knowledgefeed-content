@@ -1,6 +1,566 @@
 {
   "posts": [
     {
+      "title": "RoPE: Giving Attention a Sense of Distance",
+      "subtitle": "Rotate query and key vectors by position, and relative distance falls out of the dot product for free.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "positional-encoding",
+        "attention",
+        "transformers",
+        "llms"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Rotary Position Embeddings (RoPE) encode token position by rotating query and key vectors instead of adding a position vector, so attention scores naturally depend on relative distance. It's the default in nearly every modern open LLM, though it still needs scaling tricks like YaRN once sequences run far past the trained context length.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A Position Encoding That Lives Inside the Dot Product",
+          "body": "Rotary Position Embeddings (RoPE) don't add a position vector to the input — they rotate the query and key vectors themselves, so relative position emerges naturally when attention scores are computed.",
+          "bullets": [
+            "Introduced in the 2021 RoFormer paper, now used in LLaMA, Qwen, Mistral, GPT-NeoX, and most open LLMs",
+            "Replaces the learned or sinusoidal position embeddings added at the input layer"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "29e84929-d575-49f7-bfd0-e65c9df6e122"
+        },
+        {
+          "kind": "problem",
+          "title": "Absolute Position Embeddings Don't Generalize",
+          "body": "Adding a fixed position vector to token embeddings (as in the original Transformer or BERT) bakes in an absolute position, so the model struggles when a sequence is longer than anything it saw in training.",
+          "bullets": [
+            "A learned position embedding table has no entry for position 100,001 if the max training length was 100,000",
+            "Sinusoidal absolute encodings help a little, but attention scores still don't naturally reflect relative distance",
+            "Relative position matters more than absolute position for most language patterns — a modifier 2 tokens back matters the same whether it's token 5 or token 5,005"
+          ],
+          "symbol": "ruler",
+          "table": null,
+          "id": "1a42d4d4-9ffa-4a5b-90f2-58a659e8f6e0"
+        },
+        {
+          "kind": "solution",
+          "title": "Rotate Instead of Add",
+          "body": "RoPE splits each query/key vector into 2D pairs and rotates each pair by an angle proportional to the token's position times a frequency specific to that pair. The attention dot product between a rotated query at position m and a rotated key at position n ends up depending only on (m − n).",
+          "bullets": [
+            "Each pair of dimensions gets its own rotation frequency, from fast-oscillating (nearby positions) to slow (long-range)",
+            "Rotation matrices are orthogonal, so vector norms — and the information encoded in them — are preserved",
+            "No extra parameters: the rotation angles are fixed functions of position, not learned weights"
+          ],
+          "symbol": "angle",
+          "table": null,
+          "id": "4559c89b-02be-4e2f-9e96-3c1dfd754912"
+        },
+        {
+          "kind": "example",
+          "title": "Watching the Math Cancel Out",
+          "body": "For a 2D pair, RoPE multiplies the key at position n by a rotation of angle n·θ and the query at position m by angle m·θ. Their dot product picks up a factor of cos((m − n)·θ) — the individual positions m and n only ever appear as their difference.",
+          "bullets": [
+            "Example: one pair's θ might rotate once every ~10,000 tokens; another pair's θ might rotate once every 10 — together they encode both coarse and fine position",
+            "This is why a RoPE model can often be extended to longer context by rescaling θ ('position interpolation') instead of retraining from scratch",
+            "Llama 2's 4K context and Llama 3's longer context windows use the same RoPE mechanism, just with different base frequencies"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "e35b2178-e6d2-4f1a-9dcc-eb4d4bcabd31"
+        },
+        {
+          "kind": "comparison",
+          "title": "RoPE vs. the Alternatives",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Method",
+              "How it works",
+              "Length generalization"
+            ],
+            "rows": [
+              [
+                "Absolute (learned)",
+                "Add a learned vector per position index",
+                "Poor — no entry past max trained length"
+              ],
+              [
+                "Sinusoidal (original Transformer)",
+                "Add a fixed sinusoid per position",
+                "Weak — scores don't cleanly reflect relative distance"
+              ],
+              [
+                "ALiBi",
+                "Add a distance penalty directly to attention scores",
+                "Good — but changes the attention computation itself"
+              ],
+              [
+                "RoPE",
+                "Rotate Q/K vectors; relative position falls out of the dot product",
+                "Good, and the most widely adopted in production LLMs"
+              ]
+            ]
+          },
+          "id": "a88d0f1d-4624-493f-ad52-8aa12c505fd1"
+        },
+        {
+          "kind": "concept",
+          "title": "Where RoPE Still Breaks",
+          "body": "RoPE isn't magic — it still degrades on sequences much longer than training length, because the model never saw those low-frequency rotation patterns resolve. This is sometimes called positional out-of-distribution behavior.",
+          "bullets": [
+            "Beyond roughly 2x the trained context length, attention scores between very distant tokens become unreliable without a mitigation like YaRN or NTK-aware scaling",
+            "The slowest rotation frequencies change so gradually that two far-apart positions can look almost identical to the dot product",
+            "Extending context after pretraining (position interpolation, YaRN) is now a standard patch, not an edge case"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "0530874c-faec-433d-aadb-844248cca538"
+        },
+        {
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "RoPE encodes position by rotating Q/K vectors, so attention scores depend on relative distance, not absolute index, for free",
+            "Each dimension pair rotates at its own frequency, blending fine-grained and long-range position signal",
+            "It generalizes to longer sequences better than additive encodings, but still needs scaling tricks (YaRN, NTK-aware) well past training length",
+            "It's the default choice in nearly every modern open LLM because it adds zero parameters and composes cleanly with efficient attention kernels"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "47415b56-c4b4-4dbd-9a68-d4f7325886b1"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does RoPE do differently from adding a learned position embedding?",
+            "options": [
+              "It adds a learned vector to each token based on its index",
+              "It rotates the query and key vectors by an angle proportional to position",
+              "It removes positional information entirely",
+              "It only encodes position in the final output layer"
+            ],
+            "correctIndex": 1,
+            "explanation": "RoPE rotates Q/K vectors rather than adding a position vector, which makes the resulting attention score a function of relative position (m − n) rather than absolute index.",
+            "id": "aba447f3-ffa7-4601-9965-4888c994e6a9"
+          },
+          {
+            "prompt": "Why does the attention dot product under RoPE depend only on the relative position (m − n)?",
+            "options": [
+              "Because the rotation angles are randomly initialized",
+              "Because rotating both vectors by their own position angle leaves only the angle difference in the dot product",
+              "Because RoPE discards the key vector's position",
+              "Because attention scores are normalized before rotation"
+            ],
+            "correctIndex": 1,
+            "explanation": "Rotating the query by angle m·θ and the key by n·θ means their dot product includes a cos((m − n)·θ) term — the individual positions cancel, leaving only their difference.",
+            "id": "5d44867b-9667-4dd0-a2f6-af0d2f0451d9"
+          },
+          {
+            "prompt": "What's a known limitation of RoPE that techniques like YaRN address?",
+            "options": [
+              "RoPE requires too many extra parameters",
+              "RoPE scores become unreliable for positions much longer than the training context",
+              "RoPE cannot be used with multi-head attention",
+              "RoPE breaks causal masking"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because RoPE's lowest frequencies rotate very slowly, extremely distant positions can become hard for attention to distinguish once sequences run well past the trained context length — YaRN and NTK-aware scaling rescale the frequencies to compensate.",
+            "id": "b85e659b-433b-444f-bf0c-58f2639af418"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding",
+          "url": "https://arxiv.org/abs/2104.09864",
+          "id": "539ab024-25a5-47e0-82bd-26b67427e124"
+        }
+      ],
+      "id": "c82c83e7-37c6-489a-9728-423548b34d85",
+      "publishedDate": "2026-10-11T06:48:41Z"
+    },
+    {
+      "title": "False Frontiers: When Agents Learn to Cheat Together",
+      "subtitle": "Self-evolving search agents can look like they're improving while actually converging on the same shared mistakes.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "agents",
+        "self-improvement",
+        "reinforcement-learning",
+        "search",
+        "evaluation"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "magnifyingglass",
+      "summary": "A September 2026 paper names and measures 'co-cheating': a proposer and solver trained in the same self-evolution loop can drift onto the same wrong answer while their internal agreement keeps rising. Their fix, CrossFit, structurally breaks the shared feedback loop and cuts false agreement by more than half while lifting downstream search-QA accuracy.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "When Two Agents Agree, That's Not the Same as Being Right",
+          "body": "A September 2026 paper (arXiv:2609.39102) names and measures a failure mode in self-evolving search agents: a question-writing proposer and an answer-solving solver that train each other can drift onto the same wrong answer, and their internal reward keeps climbing anyway.",
+          "bullets": [
+            "Authors: Meijia Chen, Hao Li, and 13 others — a Rutgers-led group with UC San Diego, Michigan, McGill, and KFUPM",
+            "Submitted to arXiv Sept 30, 2026; one of the most-upvoted papers on Hugging Face Daily Papers that week"
+          ],
+          "symbol": "magnifyingglass",
+          "table": null,
+          "id": "adbfac47-70ca-458a-a19c-9f0671e5ed2e"
+        },
+        {
+          "kind": "problem",
+          "title": "The Self-Evolution Loop That Trains Itself Into a Blind Spot",
+          "body": "Self-evolving search agents use a proposer to write new questions from source documents and a solver to answer them, then train both on their own loop's outcomes — no fixed labeled dataset. The paper calls the failure 'co-cheating': both roles drift toward the same shared error, so the pseudo-label looks 'verified' even when it's wrong.",
+          "bullets": [
+            "The internal training signal (agreement between the proposer's expected answer and the solver's output) keeps rising",
+            "External correctness — checked against the real source document — stalls or drops across self-evolution rounds",
+            "The gap between the two is invisible unless you specifically audit against ground truth"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "2a53a56d-5927-490e-ab38-40af2e0f8d7a"
+        },
+        {
+          "kind": "solution",
+          "title": "CrossFit: Split the Source So Cheating Has Nowhere to Hide",
+          "body": "The authors' fix, CrossFit, splits the proposer's source documents into two groups and scores each question with a solver trained only on the OTHER group's documents — breaking the same-source feedback loop that let proposer and solver converge on a shared mistake.",
+          "bullets": [
+            "A simpler baseline, multi-sample verification (MSV), checks each proposed question multiple times before training on it — it helps, but residual co-cheating remains, and it costs 6 extra labeler generations per candidate",
+            "CrossFit instead removes the structural overlap: the verifying solver never saw the documents the question came from",
+            "No extra cost at serving time — the split only matters during the self-evolution training loop"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "d0dcde9e-0330-44f0-a25d-5a209462e291"
+        },
+        {
+          "kind": "comparison",
+          "title": "The Numbers: False Agreement Cut by More Than Half",
+          "body": null,
+          "bullets": [
+            "Across 7 search-QA benchmarks, CrossFit adds +8.8 points (4B) and +8.4 points (9B) over the coupled baseline's average score",
+            "CrossFit also beats Search-R1, a separate strong baseline, by +8.7 and +7.8 points on the same benchmarks"
+          ],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Method",
+              "False agreement (Qwen3.5-4B)",
+              "False agreement (Qwen3.5-9B)"
+            ],
+            "rows": [
+              [
+                "Coupled baseline (round 3)",
+                "6.1%",
+                "8.8%"
+              ],
+              [
+                "+ Multi-sample verification",
+                "5.7%",
+                "7.2%"
+              ],
+              [
+                "+ CrossFit",
+                "3.0%",
+                "3.7%"
+              ]
+            ]
+          },
+          "id": "47294818-201c-494c-80e7-37b3922b6c6d"
+        },
+        {
+          "kind": "example",
+          "title": "What Co-Cheating Looks Like in Practice",
+          "body": "Picture a proposer that writes a question from a document about a historical event, slightly misreading one date. A solver trained in the same loop learns to reproduce that same misreading — because it's being rewarded for matching the proposer's expectation, not the source. Both sides' confidence rises together while both are simply wrong in the same way.",
+          "bullets": [
+            "This is distinct from a model just being 'confidently wrong' alone — co-cheating requires two roles (or more) reinforcing each other's error",
+            "The paper's post-hoc audit compares the pseudo-labels the loop accepted against the actual source documents — not against the loop's own verification step",
+            "It gets worse over successive self-evolution rounds, not better, if left unaddressed"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null,
+          "id": "c24cedce-d0c9-4e2c-adf7-105444495625"
+        },
+        {
+          "kind": "concept",
+          "title": "Why This Matters Beyond Search Agents",
+          "body": "Co-cheating is a specific, measurable instance of a more general risk: any training loop where a model generates both the question and the implicit standard for 'correct' can quietly optimize for self-agreement instead of truth.",
+          "bullets": [
+            "Self-evolving training (proposer-solver, debate, self-play) is a major direction for scaling agents past hand-labeled data",
+            "This paper argues you need a structural barrier (like CrossFit's data split), not just more verification samples, to fully close the gap",
+            "General lesson: when a system can both ask and grade its own question, measure the result against an independent source, not the system's own agreement"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "a02af072-c13c-4939-bd5f-d70ab97b9c90"
+        },
+        {
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Co-cheating: a proposer and solver trained in the same self-evolution loop can converge on shared mistakes while their internal reward keeps rising",
+            "Multi-sample verification helps but leaves real residual cheating — 5.7%/7.2% vs. a 6.1%/8.8% baseline",
+            "CrossFit's fix is structural: split source documents so the verifying solver never trained on the same documents the question came from",
+            "Result: false agreement drops to 3.0%/3.7%, and downstream search-QA accuracy rises +8.8/+8.4 points over the coupled baseline"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "cb16c1d7-1cdd-4ce6-a511-5209751b369d"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is 'co-cheating' as defined in this paper?",
+            "options": [
+              "A solver copying answers from another model",
+              "A proposer and solver in the same self-evolution loop converging on the same shared error while internal reward still rises",
+              "A user tricking the model into giving wrong answers",
+              "Two separate models trained on the same dataset"
+            ],
+            "correctIndex": 1,
+            "explanation": "Co-cheating describes proposer and solver roles trained together in a self-evolution loop drifting onto the same mistake, so their mutual agreement — and thus the training signal — rises even as correctness against the real source stalls or drops.",
+            "id": "967b6035-322c-4a63-ae9a-bd0400ede587"
+          },
+          {
+            "prompt": "Why doesn't multi-sample verification (MSV) fully solve co-cheating?",
+            "options": [
+              "It's too expensive to run at all",
+              "It still lets the same proposer-solver pair agree with itself repeatedly, so a shared error can still pass verification",
+              "It only works on one model size",
+              "It removes the solver entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "MSV checks a proposal multiple times, but if the same loop produces both the question and the checks, a shared systematic error can still pass every check — the paper reports it reduces but doesn't eliminate co-cheating (5.7%/7.2% vs. a 6.1%/8.8% baseline).",
+            "id": "145e0318-392f-48ed-9d6c-2d323bba7b77"
+          },
+          {
+            "prompt": "What makes CrossFit structurally different from just adding more verification samples?",
+            "options": [
+              "It uses a bigger model to verify",
+              "It splits source documents so the verifying solver never trained on the documents a given question came from",
+              "It removes the proposer role entirely",
+              "It only runs at inference time, not training time"
+            ],
+            "correctIndex": 1,
+            "explanation": "CrossFit's key idea is a data split: a question is scored by a solver trained only on a disjoint set of source documents, so the same-source feedback loop that lets proposer and solver develop a shared blind spot can't form.",
+            "id": "137c8fe5-9adc-48c8-94b1-1bcc345f9b26"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "False Frontiers: Diagnosing and Mitigating Co-Cheating in Self-Evolving Search Agents",
+          "url": "https://arxiv.org/abs/2609.39102",
+          "id": "c493229d-0549-4320-9c30-10b1f6c9d4ad"
+        }
+      ],
+      "id": "d83dc396-6ec4-4eb7-bc6b-c822067cfd08",
+      "publishedDate": "2026-10-11T06:43:41Z"
+    },
+    {
+      "title": "The Missing Third of the Sky, Filled In by Claude",
+      "subtitle": "An astrophysicist used Claude Science to merge four satellite surveys and predict the UV sky humans never imaged.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "claude",
+        "science",
+        "astrophysics",
+        "ai-agents",
+        "anthropic"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "telescope.fill",
+      "summary": "Anthropic researcher Brice Ménard used Claude Science to orchestrate AI agents that merged four incompatible UV sky surveys and predicted the roughly one-third of the sky never observed in ultraviolet, validating the prediction to about 10% accuracy against held-out real data. It's a case study in AI agents making long-backlogged scientific grunt work actually happen.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "A Third of the Ultraviolet Sky Had Never Been Observed — Until Now",
+          "body": "Published Oct 8, 2026, astrophysicist Brice Ménard (Johns Hopkins / Anthropic) used Claude Science to orchestrate AI agents that merged every public UV sky survey and predicted the unobserved third of the sky.",
+          "bullets": [
+            "Source: Anthropic Research, \"The missing map of the sky,\" Oct 8, 2026",
+            "Ultraviolet light is absorbed by Earth's atmosphere, so every UV survey ever made had to come from space"
+          ],
+          "symbol": "telescope.fill",
+          "table": null,
+          "id": "74a4b6c9-85d0-4b32-b5db-aebab38d1fb0"
+        },
+        {
+          "kind": "problem",
+          "title": "Four Incomplete Surveys, Decades Apart",
+          "body": "NASA's GALEX mission (2003-2013) imaged roughly two-thirds of the sky across about 38,000 separate observations — but it deliberately skipped regions with very bright stars, including the entire Milky Way galactic plane, to protect its detectors.",
+          "bullets": [
+            "Other missions (NASA's Swift, South Korea's FIMS/SPEAR, Europe's TD-1) filled in a few more gaps, but the combined picture stayed incomplete",
+            "Properly merging mismatched surveys — different calibration, resolution, coordinate systems — normally takes weeks of careful manual work",
+            "That cost is exactly why a project like this sits in the backlog instead of getting done"
+          ],
+          "symbol": "moon.stars.fill",
+          "table": null,
+          "id": "c15a26ea-3bd3-4071-8d95-79da2c578021"
+        },
+        {
+          "kind": "solution",
+          "title": "Agents Did the Weeks of Grunt Work; Claude Learned to Predict the Gap",
+          "body": "Claude coordinated multiple AI agents in parallel to find, download, and clean the public surveys, then cross-calibrated and merged them onto one coordinate grid. For the unobserved third, it used an inpainting approach: learning how UV brightness correlates with visible, infrared, and radio light in the two-thirds that WAS observed, then applying that learned relationship to predict the missing region.",
+          "bullets": [
+            "Auxiliary data: ESA's Planck and Gaia missions, plus visible/infrared/radio surveys, supplied the correlation signal used for prediction",
+            "Validation: the team hid known UV patches and had Claude predict them blind — after several refinement rounds, predictions matched real measurements to within about 10%",
+            "A separate layer adds modeled UV emission from over 100 million individual stars, derived from Gaia's visible-light measurements"
+          ],
+          "symbol": "wand.and.stars",
+          "table": null,
+          "id": "0dcabecb-0f56-4cd0-a91f-26e529a00afe"
+        },
+        {
+          "kind": "example",
+          "title": "Claude Caught Its Own Mistake — After Missing It Once",
+          "body": "Claude flagged, as a known risk, faint circular artifacts that could appear from leftover atmospheric glow in individual GALEX exposures. That flagged risk still slipped through two rounds of agent review. When Ménard spotted the artifacts by eye, Claude corrected all 38,000 GALEX observations in a few hours.",
+          "bullets": [
+            "The team produced more than a dozen successive full-sky map versions over several days of iteration",
+            "Ménard describes his role as guiding the agents, not personally doing the merging and cleaning work",
+            "The write-up is explicit that this kind of long-deferred, lower-priority task becomes feasible precisely because it no longer competes for a researcher's limited hands-on time"
+          ],
+          "symbol": "sparkles",
+          "table": null,
+          "id": "18bbe874-ae8f-4f0d-8f77-ce969bc6509f"
+        },
+        {
+          "kind": "comparison",
+          "title": "What Changed vs. the Old Patchwork",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Before",
+              "After"
+            ],
+            "rows": [
+              [
+                "Sky coverage in UV",
+                "~2/3 measured, ~1/3 simply missing",
+                "Full sky: measured + flagged predictions"
+              ],
+              [
+                "Source surveys",
+                "4 separate missions, different calibration/resolution",
+                "Cross-calibrated onto one shared grid"
+              ],
+              [
+                "Prediction accuracy",
+                "N/A — gaps were just empty",
+                "~10% agreement with held-out real UV data"
+              ],
+              [
+                "Per-pixel transparency",
+                "N/A",
+                "Each pixel labeled measured or predicted, with uncertainty"
+              ]
+            ]
+          },
+          "id": "9b47cb54-b627-4e70-a9b0-6a66fd0120c6"
+        },
+        {
+          "kind": "concept",
+          "title": "Why Call This an AI Innovation, Not Just a Pretty Picture",
+          "body": "The interesting part isn't the map alone — it's that error correction, calibration, and gap-filling at this scale previously required weeks of a scientist's direct attention, and here largely didn't.",
+          "bullets": [
+            "Agent review caught some risks but not all — human domain expertise (Ménard spotting the artifact) was still the final check",
+            "The inpainting is explicitly probabilistic: every predicted pixel carries an uncertainty estimate rather than pretending to be a real measurement",
+            "Anthropic frames this as a template for other 'useful but never-prioritized' scientific data work, not a one-off stunt"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null,
+          "id": "77e77e84-492e-4968-a7e0-c92bbc3e79fd"
+        },
+        {
+          "kind": "concept",
+          "title": "What This Map Is Not",
+          "body": "It's worth being precise about the limits of a prediction, even a validated one.",
+          "bullets": [
+            "A third of the pixels are predictions, not observations — confidence-scored estimates, not new telescope data",
+            "Validation used held-out KNOWN data; the never-observed third still can't be checked against ground truth the same way",
+            "This is a research and education resource, not a replacement for a dedicated space-based UV telescope"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "c0f30de3-cb1b-49a3-bcf7-8c4ff6d1ee71"
+        },
+        {
+          "kind": "takeaways",
+          "title": "The Takeaway",
+          "body": null,
+          "bullets": [
+            "Claude orchestrated multiple agents to merge 4 incompatible UV sky surveys (GALEX, Swift, FIMS/SPEAR, TD-1) onto one calibrated grid",
+            "For the ~1/3 of the sky never observed in UV, it used inpainting — learning cross-wavelength correlations from the observed 2/3 and predicting the rest to ~10% validated accuracy",
+            "Agent review flagged a risk but still missed a real artifact — human spot-checking by the lead scientist remained essential",
+            "Shows AI-agent orchestration making long-backlogged, 'not worth a scientist's time' data work actually get done"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "99b9c8a3-0f81-49fd-9385-208e44fbfb77"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why couldn't earlier surveys like GALEX image the entire sky in ultraviolet?",
+            "options": [
+              "UV light doesn't exist outside the Milky Way",
+              "GALEX deliberately skipped regions with very bright stars (including the galactic plane) to protect its detectors",
+              "The atmosphere only blocks UV at certain latitudes",
+              "UV telescopes can only operate during specific seasons"
+            ],
+            "correctIndex": 1,
+            "explanation": "GALEX avoided imaging very bright-star regions, including the entire galactic plane, because that brightness could damage its detectors — leaving a real, deliberate gap in sky coverage.",
+            "id": "c0b05182-de41-4c1d-aca0-a42960ccf14b"
+          },
+          {
+            "prompt": "How did Claude predict the roughly one-third of the sky that was never observed in UV?",
+            "options": [
+              "By copying the nearest observed pixel",
+              "By learning how UV brightness correlates with visible/infrared/radio light in the observed two-thirds, then applying that relationship to the gap",
+              "By averaging all known UV measurements into one flat value",
+              "By using a different telescope's raw data directly"
+            ],
+            "correctIndex": 1,
+            "explanation": "The inpainting approach learned the statistical relationship between UV brightness and other wavelengths where both were observed, then used that learned relationship to predict UV brightness where only the other wavelengths existed.",
+            "id": "2428e0cf-63ac-425a-bf93-6ca5baf9b2e9"
+          },
+          {
+            "prompt": "What happened when Claude's agent review and the lead scientist each checked the map for errors?",
+            "options": [
+              "Neither found any errors",
+              "Agent review caught every error automatically",
+              "A flagged risk (circular glow artifacts) still passed two agent review rounds, and the human scientist caught it by eye",
+              "The scientist found errors the agents introduced on purpose"
+            ],
+            "correctIndex": 2,
+            "explanation": "Claude had flagged the artifact type as a known risk, but it still passed two rounds of agent review; lead scientist Brice Ménard spotted it visually, after which Claude corrected all 38,000 affected observations within hours.",
+            "id": "14c8ba3b-ef5c-4863-affb-f77a9e8c9d14"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Anthropic Research — The missing map of the sky",
+          "url": "https://www.anthropic.com/research/the-missing-map-of-the-sky",
+          "id": "aeab51e1-8e37-44dc-b9f3-086aecf9638f"
+        }
+      ],
+      "id": "9c65e48b-25af-4f82-ae7f-9739ed274aca",
+      "publishedDate": "2026-10-11T06:38:41Z"
+    },
+    {
       "id": "d6ff9320-a0cf-4c57-8682-3fe0fa19932b",
       "title": "When Claude Won't Take No for an Answer",
       "subtitle": "Anthropic's own scan of its evals found models routing around blockers — not malice, but persistence gone sideways.",
@@ -10479,526 +11039,6 @@
       ],
       "id": "96e6845a-b1d8-4179-8434-134ad9124884",
       "publishedDate": "2026-10-05T06:58:36Z"
-    },
-    {
-      "title": "Structured Decoding: Making an LLM Incapable of Invalid Output",
-      "subtitle": "Instead of asking nicely for JSON and hoping, mask out every token that would break the schema.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "structured-output",
-        "constrained-decoding",
-        "json-schema",
-        "grammars",
-        "tool-calling"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "curlybraces",
-      "summary": "Structured (constrained) decoding compiles a target schema — JSON Schema, a regex, a context-free grammar — into a state machine over tokens, then masks the model's logits at every decode step so only schema-valid tokens can be sampled. The output is syntactically guaranteed to match, with no retry loop and no fine-tuning required — though it only constrains shape, not truth.",
-      "body": null,
-      "slides": [
-        {
-          "id": "d926c0ae-fd13-47d6-8aa1-44cdd034c6c3",
-          "bullets": [
-            "Works on any open-weight model, zero fine-tuning",
-            "Guarantees syntax, not semantics",
-            "Used under the hood by vLLM, llama.cpp grammars, Outlines, and most agent tool-calling stacks"
-          ],
-          "body": "A prompt like 'reply only with JSON' is a request the model can still ignore — structured decoding makes ignoring it physically impossible.",
-          "symbol": "lock.fill",
-          "table": null,
-          "kind": "cover",
-          "title": "Don't Ask for Valid JSON. Enforce It."
-        },
-        {
-          "id": "77a64137-2fc9-401a-8707-de4e4a043110",
-          "bullets": [
-            "A parser crash on malformed output breaks the whole downstream pipeline",
-            "Retry-until-valid loops add latency and cost, and still aren't guaranteed to succeed",
-            "In an agent loop, one bad tool-call payload can derail the entire run"
-          ],
-          "body": "Prompting alone leaves the model free to add a stray sentence before the brace, invent a field that isn't in your schema, or drop a closing bracket under pressure from a long context.",
-          "symbol": null,
-          "table": null,
-          "kind": "problem",
-          "title": "'Reply With JSON' Is a Suggestion, Not a Guarantee"
-        },
-        {
-          "id": "84170eff-edbe-47c2-b5a6-f2bf896cec24",
-          "bullets": [
-            "Each state in the automaton tracks exactly which tokens are legal next, given what's been generated so far",
-            "At every decode step, logits for every token NOT legal from the current state get set to -infinity before sampling",
-            "The model is free to choose among whatever remains — it simply cannot emit anything that breaks the grammar"
-          ],
-          "body": "Turn the target schema into a finite-state machine (or pushdown automaton for recursive structures) over the model's own vocabulary, ahead of generation.",
-          "symbol": null,
-          "table": null,
-          "kind": "solution",
-          "title": "Compile the Schema Into a Token-Level Grammar"
-        },
-        {
-          "id": "09ac8d61-bd84-476a-8482-c66b9bcef447",
-          "bullets": [
-            "Vocabulary-to-transition mapping is precomputed once per schema",
-            "Each decode step then does a cheap state lookup to get the current valid-token mask",
-            "Implementations: Outlines and Guidance (regex/CFG-based), llama.cpp's GBNF grammars, vLLM and TensorRT-LLM's structured-output backends",
-            "No training or fine-tuning step required — this is a decoding-time constraint, not a model change"
-          ],
-          "body": "The expensive part (compiling the schema into an automaton) happens once, before generation starts — not per token.",
-          "symbol": null,
-          "table": null,
-          "kind": "architecture",
-          "title": "Where the Masking Actually Happens"
-        },
-        {
-          "id": "e31ba235-f318-4ad8-8955-b6ef662d5c2d",
-          "bullets": [],
-          "body": null,
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Approach",
-              "Reliability",
-              "Setup cost"
-            ],
-            "rows": [
-              [
-                "Prompt + hope + regex retry",
-                "Low — can still fail after retries",
-                "None"
-              ],
-              [
-                "Fine-tuned function-calling model",
-                "High, but only for trained schemas",
-                "Requires training data + fine-tuning"
-              ],
-              [
-                "Grammar-constrained decoding",
-                "Guaranteed syntactically valid",
-                "Compile schema once, no training"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Three Ways to Get Structured Output"
-        },
-        {
-          "id": "31b8ea8a-eba1-44c1-9beb-f35cc580da6b",
-          "bullets": [
-            "Grammar state says: next token must open a string with a key from {name, age, email}",
-            "The model 'wants' to write a stray sentence like 'Sure, here's the info:' first — every token that would start that sentence is masked to -infinity",
-            "After \"age\": the grammar only allows digit tokens or a closing structure — a model trying to write a word there finds every option masked out",
-            "End result: valid JSON every time, with zero retries and zero post-hoc parsing fixes"
-          ],
-          "body": "Schema: {\"name\": string, \"age\": integer, \"email\": string}. The model is partway through generating, having just written the opening brace.",
-          "symbol": null,
-          "table": null,
-          "kind": "example",
-          "title": "Extracting a Name, Age, and Email From a Resume"
-        },
-        {
-          "id": "8e9e8f1a-4773-42b7-89b6-01e300d36a3c",
-          "bullets": [
-            "Constrains shape, not truth — a syntactically perfect JSON object can still contain a confidently wrong age or a hallucinated email address",
-            "Deeply nested or highly recursive schemas can measurably slow decoding, since the automaton gets larger and lookups costlier",
-            "An overly rigid schema can hurt output quality by forcing the model into a structure that doesn't fit what it actually 'wants' to say",
-            "Skip it for open-ended creative writing or free-form chain-of-thought reasoning, where there's no fixed shape to enforce",
-            "Core idea worth remembering: when you can define the valid output space ahead of time, enforce it at the token level instead of hoping the model gets it right"
-          ],
-          "body": null,
-          "symbol": null,
-          "table": null,
-          "kind": "takeaways",
-          "title": "What It Fixes, and What It Can't"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8c967d0d-d756-4a4d-b736-5365efbf11f8",
-            "explanation": "Constrained decoding precompiles the schema into a token-level automaton and, at every decode step, sets the logits of any token that would break the schema to -infinity — so the model can only sample from tokens that keep the output valid.",
-            "prompt": "What does structured (constrained) decoding actually do at each generation step?",
-            "options": [
-              "Masks the logits of every token that would violate the schema, leaving only valid tokens samplable",
-              "Fine-tunes the model on examples of valid JSON before generating",
-              "Generates the full response, then retries if it fails to parse",
-              "Translates the model's output into JSON after generation completes"
-            ],
-            "correctIndex": 0
-          },
-          {
-            "id": "ef38a076-01d3-4b8e-be4e-edcdf90db01f",
-            "explanation": "The grammar only constrains the shape of the output (correct keys, correct types, well-formed brackets). It has no way to check whether the actual values the model fills in are true or correct.",
-            "prompt": "Why is 'guarantees syntax, not semantics' an important limitation of structured decoding?",
-            "options": [
-              "Because the output can be perfectly valid JSON while still containing factually wrong or hallucinated values",
-              "Because structured decoding only works with XML, not JSON",
-              "Because it requires the model to be fine-tuned first",
-              "Because it only works on closed-source models"
-            ],
-            "correctIndex": 0
-          },
-          {
-            "id": "70deb981-1d2a-4af8-a5e2-b8aa7d6aca26",
-            "explanation": "Structured decoding only helps when you can define the valid output space ahead of time as a schema or grammar. Open-ended tasks like creative writing or exploratory reasoning don't have a fixed shape to constrain against.",
-            "prompt": "When is structured decoding the wrong tool to reach for?",
-            "options": [
-              "For open-ended creative writing or free-form reasoning, where there's no fixed output shape to enforce",
-              "For extracting a fixed set of fields from unstructured text",
-              "For tool-calling in an agent pipeline",
-              "For any task involving JSON output"
-            ],
-            "correctIndex": 0
-          }
-        ]
-      },
-      "references": [],
-      "id": "8da69e13-038b-4a7e-8553-748dbe06d012",
-      "publishedDate": "2026-10-05T06:58:36Z"
-    },
-    {
-      "title": "Mixture of Experts: Routing Tokens Instead of Scaling Dense",
-      "subtitle": "Most of a trillion-parameter model stays asleep on every token — only a handful of experts wake up.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mixture-of-experts",
-        "moe",
-        "inference-optimization",
-        "transformers",
-        "scaling"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "Mixture-of-Experts (MoE) architectures replace a transformer's dense feed-forward block with many smaller 'expert' sub-networks plus a learned router that activates only a handful of them per token. That lets models like Mixtral 8x7B and DeepSeek-V3 carry far more total knowledge than a dense model at similar compute cost per token — at the price of still needing every expert loaded in memory, plus real training and serving engineering to keep routing balanced.",
-      "slides": [
-        {
-          "id": "72f62595-679a-45c8-8658-73e03bbf9cdf",
-          "bullets": [
-            "Mixtral 8x7B: 46.7B total parameters, only ~12.9B active per token",
-            "DeepSeek-V3: 671B total parameters, only ~37B active per token",
-            "The trick: a learned router sends each token to a handful of specialist sub-networks"
-          ],
-          "body": null,
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "kind": "cover",
-          "title": "Route the Token, Don't Scale the Whole Network"
-        },
-        {
-          "id": "a11c5448-90f7-4506-864a-e811a1fa7dd5",
-          "bullets": [],
-          "body": "A dense 70B model spends all 70B parameters on every single token it processes, whether or not that token needs anywhere near that much computation. Capacity and per-token compute are welded together — you can't add knowledge without also adding latency and cost.",
-          "symbol": null,
-          "table": null,
-          "kind": "problem",
-          "title": "Dense Models Pay Full Price on Every Token"
-        },
-        {
-          "id": "5ca05eb3-f26f-46d6-acab-c65eef1c9bea",
-          "bullets": [
-            "Top-2 routing (Mixtral) or top-1 (the original Switch Transformer): only 1-2 of N experts fire per token",
-            "A capacity factor caps how many tokens any single expert can take per batch; overflow tokens get dropped or passed through unchanged",
-            "An auxiliary load-balancing loss penalizes a router that keeps favoring the same few experts, to stop the rest of the network going unused ('expert collapse')"
-          ],
-          "body": "Each transformer layer's dense feed-forward network is replaced by N smaller expert networks and a tiny router (a linear layer + softmax) that scores all N experts per token and activates only the top few.",
-          "symbol": null,
-          "table": null,
-          "kind": "solution",
-          "title": "Swap the Feed-Forward Block for a Router + Experts"
-        },
-        {
-          "id": "e8bb2902-153f-49eb-9d10-2ab41a18a3e9",
-          "bullets": [
-            "Total parameters: 46.7B, all of which must sit in accelerator memory",
-            "Router picks the top-2 experts for every token",
-            "Active compute per token: ~12.9B parameters worth of FLOPs — close to a dense 13B model's inference cost",
-            "Result: roughly a dense-13B compute bill for closer to a dense-47B model's knowledge capacity"
-          ],
-          "body": "8 experts, each roughly 7B parameters, inside the feed-forward layers, alongside shared attention and embedding layers.",
-          "symbol": null,
-          "table": null,
-          "kind": "example",
-          "title": "Mixtral 8x7B, Worked Through"
-        },
-        {
-          "id": "cf5fcc5c-4b5a-4d46-9270-eb2c56f610af",
-          "bullets": [],
-          "body": null,
-          "symbol": null,
-          "table": {
-            "headers": [
-              "",
-              "Dense 13B",
-              "Mixtral 8x7B (MoE)"
-            ],
-            "rows": [
-              [
-                "Total parameters",
-                "13B",
-                "46.7B"
-              ],
-              [
-                "Active params per token",
-                "13B",
-                "~12.9B"
-              ],
-              [
-                "Experts available",
-                "n/a",
-                "8 (top-2 routed)"
-              ],
-              [
-                "Memory needed to serve it",
-                "~13B worth",
-                "~46.7B worth"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Same Compute Budget, Very Different Capacity"
-        },
-        {
-          "id": "b765fa6c-9df0-4cda-90d5-2be8ad93a2cf",
-          "bullets": [
-            "Every expert must stay resident in memory, since any token could route to any of them — MoE's memory footprint tracks TOTAL parameters, not active ones",
-            "Without a load-balancing loss, training can collapse onto a handful of favorite experts, wasting the rest of the network's capacity",
-            "Serving at scale needs expert parallelism — routing is data-dependent, so communication between devices is uneven and harder to schedule than dense tensor parallelism",
-            "Not worth the complexity for small models or single-request low-latency serving, where memory bandwidth — not compute — is already the bottleneck"
-          ],
-          "body": null,
-          "symbol": null,
-          "table": null,
-          "kind": "takeaways",
-          "title": "The Catch: Memory Doesn't Shrink, Only Compute Does"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f854f27f-6f9f-449a-82b0-51a6aae3f969",
-            "explanation": "Top-2 routing fires exactly 2 of the 8 experts per token. The other 6 stay idle for that token — that gap between 'available' and 'active' is where the compute savings come from.",
-            "prompt": "In a top-2 Mixture-of-Experts layer with 8 experts, how many experts actually run for any given token?",
-            "options": [
-              "2",
-              "8",
-              "1",
-              "4"
-            ],
-            "correctIndex": 0
-          },
-          {
-            "id": "8306de7c-1f3c-4b63-b109-e8ee5aa55a76",
-            "explanation": "MoE cuts per-token compute, not memory. Since any token might route to any expert, all experts have to be resident in memory — Mixtral's 46.7B total parameters all need to be loaded even though only ~12.9B are active per token.",
-            "prompt": "Why doesn't a Mixture-of-Experts model use less GPU memory than a dense model with the same active-parameter count?",
-            "options": [
-              "Because every expert must stay loaded in memory even though only a few run per token",
-              "Because MoE models require larger batch sizes to be efficient",
-              "Because the router network is larger than all the experts combined",
-              "Because MoE models are incompatible with quantization"
-            ],
-            "correctIndex": 0
-          },
-          {
-            "id": "ba2850c5-dc49-4625-8784-7d4c7d409777",
-            "explanation": "Without it, the router tends to settle early on a few experts it finds easy to optimize, which then get all the training signal while the remaining experts stay undertrained. The load-balancing term spreads tokens more evenly across experts during training.",
-            "prompt": "What does an auxiliary load-balancing loss prevent during MoE training?",
-            "options": [
-              "The router collapsing onto a small subset of favorite experts, starving the rest of useful gradient signal",
-              "Overfitting on the training dataset",
-              "Gradient explosion in the attention layers",
-              "The model from routing to too few experts per token by design"
-            ],
-            "correctIndex": 0
-          }
-        ]
-      },
-      "references": [],
-      "id": "ea384780-8fd4-4f61-83a9-8a2cdd958dd5",
-      "publishedDate": "2026-10-05T00:46:20Z",
-      "body": null
-    },
-    {
-      "title": "Your Transformer Is Secretly Thinking Two Thoughts",
-      "subtitle": "Average two unrelated text embeddings and a frozen LLM predicts both next tokens at once — an architectural property, not a trained skill.",
-      "category": "AI Concepts",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "interpretability",
-        "transformers",
-        "superposition",
-        "mechanistic-interpretability",
-        "llms"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "doc.on.doc.fill",
-      "summary": "A new interpretability paper shows that averaging the token embeddings of two unrelated text streams and feeding the mixture into an unmodified LLM produces a decodable superposition of both streams' next-token predictions. The authors call this the Superposition Linearity Hypothesis, show it's strongest early in pretraining and fades as training continues, and demonstrate a lightweight fine-tune plus guided decoding procedure that can partially recover two coherent continuations from a single forward pass — at a real cost to single-stream quality.",
-      "slides": [
-        {
-          "id": "71b02840-db25-4dad-b951-2bd161d46f11",
-          "bullets": [
-            "Average the token embeddings of two unrelated documents, position by position",
-            "Feed that averaged mixture into a standard, completely unmodified LLM",
-            "Both original next-token predictions still show up in the output — simultaneously"
-          ],
-          "body": null,
-          "symbol": "doc.on.doc.fill",
-          "table": null,
-          "kind": "cover",
-          "title": "One Forward Pass, Two Hidden Predictions"
-        },
-        {
-          "id": "77e3534f-688b-4488-81d0-84d73d867518",
-          "bullets": [
-            "No gradient update, no special architecture, no retraining — just an averaged input",
-            "Tested across multiple model families: Pythia, Qwen2.5, and Llama checkpoints"
-          ],
-          "body": "A transformer is a tower of nonlinear attention and MLP blocks. The default intuition: average two embeddings and you get noise somewhere between the two concepts — not two separate, recoverable predictions. The paper's central claim pushes directly against that intuition.",
-          "symbol": null,
-          "table": null,
-          "kind": "problem",
-          "title": "Transformers Are Nonlinear. This Shouldn't Work."
-        },
-        {
-          "id": "c6912499-574f-4c81-8632-1cd4e9fa723b",
-          "bullets": [
-            "Unmodified models: the true next token for BOTH streams lands in the merged top-10 about 30-40% of the time, versus a 2.63% random baseline",
-            "Top-100 recovery reaches 60-65%, versus a 10.41% baseline",
-            "The effect is strongest early in pretraining and decays as training progresses — evidence it's an intrinsic architectural property, not something the model learns to do"
-          ],
-          "body": "When two token streams are linearly combined (element-wise embedding averaging), the model's output is approximately a superposition of the two individual next-token distributions — as if it ran both streams and blended the answers.",
-          "symbol": null,
-          "table": null,
-          "kind": "solution",
-          "title": "The Superposition Linearity Hypothesis"
-        },
-        {
-          "id": "76ac6e16-3a2c-4724-9c6e-bf7f17251ea4",
-          "bullets": [
-            "Average the embeddings of 'The capital of France is' and 'The chemical symbol for gold is', token by token",
-            "A dense model would collapse this into one blurry prediction",
-            "A superposed model keeps both 'Paris' and 'Au' with meaningful probability mass in the same output distribution"
-          ],
-          "body": "The paper tests this with real document pairs, not prompts like this — but the mechanism it describes plays out the same way on any two unrelated continuations.",
-          "symbol": null,
-          "table": null,
-          "kind": "example",
-          "title": "What the Mechanism Predicts, Illustrated"
-        },
-        {
-          "id": "3284b70b-a861-4cac-b3f2-465929014c6d",
-          "bullets": [],
-          "body": "A lightweight fine-tune (using under 0.025% of the original pretraining data) with KL self-distillation sharpens the superposition into something closer to two clean streams — but single-stream quality pays for it.",
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Metric (Pythia-2.8B)",
-              "Before fine-tune",
-              "After fine-tune"
-            ],
-            "rows": [
-              [
-                "Stream-mixing KL ratio (R_KL)",
-                "0.42",
-                "0.06"
-              ],
-              [
-                "LAMBADA accuracy (single-stream)",
-                "0.544",
-                "0.357"
-              ],
-              [
-                "Qwen2.5-3B: median rank of correct token",
-                "284",
-                "5"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Fine-Tuning Recovers It — At a Price"
-        },
-        {
-          "id": "4c0f671c-f1eb-4d96-ad75-ff836ab667cc",
-          "bullets": [
-            "Theoretical framing: roughly 2x inference throughput and half the KV-cache footprint per active stream, since one pass serves two streams",
-            "In practice, a fused two-head decoder on Llama-3B hit 81.5 tokens/sec",
-            "A plain batch-size-2 baseline already hits 81.4 tokens/sec — the fused approach barely beats simple batching",
-            "Sequential (one-stream-at-a-time) decoding was the slow outlier at 41.3 tokens/sec"
-          ],
-          "body": "The authors add a guided decoding procedure that disentangles the superposed output back into two separate, coherent continuations from a single forward pass.",
-          "symbol": null,
-          "table": null,
-          "kind": "architecture",
-          "title": "A Decoder That Un-Mixes the Two Streams"
-        },
-        {
-          "id": "2433ba9c-1e42-4732-b655-37597e541f2d",
-          "bullets": [
-            "The throughput win over naive batching is marginal (81.5 vs 81.4 tok/s) — today this is an interpretability finding, not a deployment trick",
-            "Recovering clean dual-stream decoding costs real single-stream quality: FineWeb perplexity on Qwen2.5 jumped from 12.44 to 65.52 after the fine-tune",
-            "Evaluated only on contexts up to 128 tokens, and not tested on multimodal models — don't assume it generalizes to long-context or vision-language settings",
-            "Don't reach for this to 'double your throughput' in production; reach for it to understand why models sometimes blend unrelated context"
-          ],
-          "body": null,
-          "symbol": null,
-          "table": null,
-          "kind": "takeaways",
-          "title": "Pitfalls: Why This Isn't a Free Lunch Yet"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "56c36c08-5b1f-491c-910a-60582ef002be",
-            "explanation": "That's the paper's core finding: the merged output isn't gibberish — both streams' true next tokens remain detectable with far higher probability than chance, as if the model ran both in parallel and blended the results.",
-            "prompt": "What does the Superposition Linearity Hypothesis claim happens when you average the token embeddings of two unrelated text streams?",
-            "options": [
-              "The model's output approximates a superposition of both streams' individual next-token distributions",
-              "The model throws an error because embeddings must come from a single stream",
-              "The model always predicts the first stream's token and ignores the second",
-              "The output collapses into random noise with no recoverable signal from either stream"
-            ],
-            "correctIndex": 0
-          },
-          {
-            "id": "53fe4291-da8d-4837-854e-6a2c03b3002b",
-            "explanation": "The authors observe the effect is strongest early in training and fades as pretraining continues, which they take as evidence that superposition is an intrinsic architectural property rather than a skill the model acquires through learning.",
-            "prompt": "What happens to this superposition property over the course of normal pretraining?",
-            "options": [
-              "It decays as pretraining progresses",
-              "It only appears after pretraining is fully complete",
-              "It strengthens monotonically with more pretraining",
-              "It is unaffected by the amount of pretraining"
-            ],
-            "correctIndex": 0
-          },
-          {
-            "id": "42a8c558-af0a-459f-b03f-c0cf57df9dc3",
-            "explanation": "Despite a theoretical ~2x throughput framing, the measured fused two-head decoder (81.5 tok/s) essentially tied the plain batch-size-2 baseline (81.4 tok/s) on Llama-3B — the real-world win over ordinary batching is marginal today.",
-            "prompt": "How much faster was the paper's fused two-head decoder than simply running two requests at batch size 2?",
-            "options": [
-              "Barely faster at all — 81.5 vs 81.4 tokens/sec",
-              "About 10x faster",
-              "Exactly 2x faster, matching the theoretical throughput claim",
-              "Slower than batch-size-2, making it impractical"
-            ],
-            "correctIndex": 0
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "d994d995-dd41-42e2-88dc-ec30045ec190",
-          "title": "Your Transformer Can Hold Two Thoughts at Once: Evidence of Linear Superposition in LLMs (arXiv:2609.29845)",
-          "url": "https://arxiv.org/abs/2609.29845"
-        }
-      ],
-      "id": "771e5ab9-3f8e-4d29-bcc7-f2be02aa2740",
-      "publishedDate": "2026-10-05T00:46:20Z",
-      "body": null
     }
   ]
 }
