@@ -1,6 +1,378 @@
 {
   "posts": [
     {
+      "id": "df75854f-55af-40aa-90d5-f63e909096f7",
+      "postKind": "concept",
+      "title": "Speculative Decoding: Guessing Tokens to Skip the Wait",
+      "subtitle": "A small draft model guesses ahead; the big model checks the guesses all at once.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "tags": [
+        "speculative-decoding",
+        "llm-inference",
+        "inference-optimization",
+        "draft-model",
+        "kv-cache",
+        "transformers"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Speculative decoding speeds up LLM text generation by having a small draft model propose several tokens ahead, then letting the large target model verify all of them in a single parallel pass — accepting the correct ones and resampling only where the guess was wrong, with no change to the output distribution.",
+      "publishedDate": "2026-10-12T00:46:23Z",
+      "slides": [
+        {
+          "id": "b0f2e3eb-eddb-4cd4-950b-1254e88a676e",
+          "kind": "cover",
+          "title": "Generating text one token at a time is wasteful",
+          "body": "A large language model normally generates text autoregressively: run the full model, get one token, append it, run the full model again. Speculative decoding breaks that one-token-per-pass bottleneck without changing a single output token.",
+          "bullets": [
+            "Lossless: the final output is statistically identical to plain decoding",
+            "Used in production serving stacks for low-latency chat and coding assistants"
+          ],
+          "symbol": "hare.fill"
+        },
+        {
+          "id": "d3692c92-1dd6-454f-9835-5b79c0beb4a2",
+          "kind": "problem",
+          "title": "Decoding is bottlenecked on memory, not math",
+          "body": "Generating one token means streaming the entire model's weights through the GPU just to produce a single output. The GPU's compute units sit mostly idle, waiting on memory bandwidth — the classic sign of a memory-bound, under-utilized workload.",
+          "bullets": [
+            "Each forward pass reads every weight in the model, for one token",
+            "Batch size of 1 means the GPU's matrix units are rarely saturated",
+            "More GPUs don't fix this — the bottleneck is bandwidth, not FLOPs"
+          ],
+          "symbol": "hourglass"
+        },
+        {
+          "id": "49525d20-614c-43c7-8a8c-43e2c0bd6652",
+          "kind": "solution",
+          "title": "Draft cheaply, verify in parallel",
+          "body": "Pair the big 'target' model with a much smaller, faster 'draft' model (or a lightweight head on the same model). The draft proposes several tokens in a row; the target model checks all of them in one forward pass instead of one-by-one.",
+          "bullets": [
+            "Draft model generates K tokens autoregressively — cheap, since it's small",
+            "Target model scores all K draft tokens plus the next one in a single batched pass",
+            "One expensive forward pass can now validate multiple tokens, not just produce one"
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "3aa0fcdb-3d0d-422f-9cc8-0f58b05e2bc3",
+          "kind": "architecture",
+          "title": "Accept, reject, resample — the rejection-sampling trick",
+          "body": "The target model doesn't just check if the draft's top guess matches — it compares full probability distributions, token by token, using a rejection-sampling rule that keeps the final output mathematically identical to sampling from the target model alone.",
+          "bullets": [
+            "Step 1: accept a draft token if the target model agrees it's plausible under its own distribution",
+            "Step 2: at the first disagreement, discard that draft token and resample it from a corrected distribution",
+            "Step 3: discard everything the draft proposed after that first rejection — it was conditioned on a token that never happened",
+            "This guarantees no quality loss: the math proves the output is drawn from the same distribution as standard decoding"
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "4b284b9d-bbb4-4901-a538-5d2ce464e1b8",
+          "kind": "example",
+          "title": "Worked example: 4 guesses, 2 survive",
+          "body": "Prompt: 'The capital of France is'. The draft model proposes 4 tokens ahead: ['Paris', ',', 'a', 'city']. The target model checks all 4 in one pass.",
+          "bullets": [
+            "'Paris' — target agrees, accepted",
+            "',' — target agrees, accepted",
+            "'a' — target disagrees (it preferred 'known'), so this token is rejected and resampled as 'known'",
+            "'city' — discarded, since it was generated assuming 'a' was correct",
+            "Net result: 3 verified tokens ('Paris', ',', 'known') produced from one target-model pass, instead of 3 separate passes"
+          ],
+          "symbol": "list.number"
+        },
+        {
+          "id": "82e33f8e-f4d1-41d0-adc5-5b6ec1f64815",
+          "kind": "comparison",
+          "title": "Where the speedup comes from — and where it doesn't",
+          "body": "The win scales with how often the draft model guesses right, and it only applies when the GPU has spare compute capacity to begin with.",
+          "table": {
+            "headers": [
+              "Setting",
+              "Plain decoding",
+              "Speculative decoding"
+            ],
+            "rows": [
+              [
+                "Forward passes per accepted token",
+                "1",
+                "<1 (amortized across accepted run)"
+              ],
+              [
+                "GPU compute utilization at batch size 1",
+                "Low (memory-bound)",
+                "Higher (spare compute absorbs verification)"
+              ],
+              [
+                "Best case text",
+                "n/a",
+                "Predictable text — code, boilerplate, common phrases"
+              ],
+              [
+                "Worst case text",
+                "n/a",
+                "Novel, creative, or high-entropy text — low acceptance rate"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis"
+        },
+        {
+          "id": "34e0337e-06e6-437c-b3b6-e7a198e0ead8",
+          "kind": "concept",
+          "title": "When NOT to reach for speculative decoding",
+          "body": "It's not a free lunch — the benefit depends heavily on the serving setting and the draft model's quality.",
+          "bullets": [
+            "At large batch sizes, the GPU is already compute-bound, so there's little idle capacity left to absorb verification — the speedup shrinks or disappears",
+            "A poorly matched draft model (different vocabulary, very different style) gets rejected constantly, wasting the extra compute spent drafting",
+            "Running a second model means extra GPU memory and engineering complexity — not worth it for throughput-oriented batch jobs",
+            "Highly creative or unpredictable generation (brainstorming, poetry) has lower acceptance rates than code or structured text"
+          ],
+          "symbol": "xmark.octagon.fill"
+        },
+        {
+          "id": "d4dfcf04-5a4c-47d1-9a85-dee8631aafb7",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Speculative decoding trades idle GPU compute for fewer sequential passes through the big model",
+            "A small draft model proposes tokens; the target model verifies them in parallel via rejection sampling",
+            "It's provably lossless — output quality matches plain decoding exactly",
+            "Biggest wins: low-batch, latency-sensitive serving on predictable text like code",
+            "Smallest wins: large-batch throughput serving, or creative/high-entropy generation"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "beccfd93-02bc-4b9b-b8c1-7f3e1e95cc6e",
+            "prompt": "What guarantees that speculative decoding doesn't degrade output quality compared to plain decoding?",
+            "options": [
+              "The draft model is fine-tuned to match the target exactly",
+              "A rejection-sampling rule that makes the final token distribution identical to sampling from the target model alone",
+              "Outputs are checked by a human reviewer before being accepted",
+              "The target model only runs once per sentence instead of per token"
+            ],
+            "correctIndex": 1,
+            "explanation": "The accept/reject/resample procedure is a rejection-sampling scheme specifically designed so the resulting output distribution is mathematically identical to standard autoregressive decoding from the target model — it's a speed trick, not an approximation."
+          },
+          {
+            "id": "4c4d8f7d-5204-4f27-9af3-ca509dae21d8",
+            "prompt": "In which serving scenario does speculative decoding help the LEAST?",
+            "options": [
+              "Single-user chat with a predictable, code-heavy prompt",
+              "Low-latency assistants generating boilerplate text",
+              "Large-batch throughput serving where the GPU is already compute-bound",
+              "A draft model that closely matches the target model's style"
+            ],
+            "correctIndex": 2,
+            "explanation": "Speculative decoding works by using spare GPU compute capacity (normally idle during memory-bound, low-batch decoding) to verify multiple tokens at once. At large batch sizes, that compute headroom is already used up, so there's little left to absorb the extra verification work."
+          },
+          {
+            "id": "37c88b23-fcca-4c86-afef-b3f3205ccf66",
+            "prompt": "In the worked example, the draft model proposed ['Paris', ',', 'a', 'city'] and the target model rejected 'a'. What happens to 'city'?",
+            "options": [
+              "It's kept, since only 'a' was rejected",
+              "It's discarded, because it was generated assuming the rejected token 'a' was correct",
+              "It's resampled independently of 'a'",
+              "It's appended after the resampled replacement for 'a'"
+            ],
+            "correctIndex": 1,
+            "explanation": "Once a draft token is rejected, every token the draft model proposed after it is thrown away too — they were all generated conditioned on a token that turned out not to match the target model's distribution, so they're no longer valid continuations."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
+      "id": "d856f13f-327c-47e4-ad27-c520c838e273",
+      "postKind": "release",
+      "title": "Claude Sonnet 5.5 Outscores Opus on Agentic Coding",
+      "subtitle": "A cheaper, faster model that beat its own flagship sibling on Terminal-Bench 4.0.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "tags": [
+        "claude",
+        "anthropic",
+        "sonnet-5-5",
+        "model-release",
+        "agentic-coding",
+        "llm-pricing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "bolt.fill",
+      "summary": "Anthropic's Claude Sonnet 5.5 (Sept 28, 2026) is positioned as the fast, cheap sibling of Opus 5.5 — but it actually beats Opus on Terminal-Bench 4.0 and nearly matches it on real-world knowledge work, all at unchanged per-token pricing. The catch: Opus still wins on the hardest, most open-ended tasks.",
+      "publishedDate": "2026-10-12T00:46:23Z",
+      "slides": [
+        {
+          "id": "da86d7bc-99d7-4b59-91b4-8531a3428d88",
+          "kind": "cover",
+          "title": "The 'budget' model that beat the flagship",
+          "body": "On September 28, 2026, Anthropic shipped Claude Sonnet 5.5 as the second model in the Claude 5.5 family — pitched as a faster, cheaper everyday companion to Claude Opus 5.5.",
+          "bullets": [
+            "Second release in the Claude 5.5 family, after Opus 5.5",
+            "API model ID: claude-sonnet-5-5",
+            "Live on the API, Claude apps, AWS, Google Cloud, and Azure at launch"
+          ],
+          "symbol": "sparkles"
+        },
+        {
+          "id": "0aa9ed85-7b8a-4f93-b7fb-367e850e4771",
+          "kind": "problem",
+          "title": "Teams were paying flagship prices for everyday agent work",
+          "body": "Opus-class models are built for the hardest, most open-ended problems — but most agentic coding and office work doesn't need that much horsepower, and running everything through the flagship burns tokens and budget.",
+          "bullets": [
+            "Agentic coding loops run thousands of tool calls — token cost compounds fast",
+            "Sonnet 5 was already the 'workhorse' tier, but scored only 10.3% on Terminal-Bench 4.0",
+            "Opus 5.5 input/output pricing: $4 / $20 per million tokens — 2x Sonnet's rate"
+          ]
+        },
+        {
+          "id": "6d999cc0-a364-4359-be3d-842d35002479",
+          "kind": "solution",
+          "title": "Same price per token, far fewer tokens per task",
+          "body": "Anthropic didn't cut Sonnet's per-token price — it made the model need fewer tokens to finish the same work, plus taught it to batch tool calls instead of issuing them one at a time.",
+          "bullets": [
+            "Pricing unchanged from Sonnet 5: $2 input / $10 output per million tokens",
+            "Output generation is 30%+ faster than Sonnet 5 — its fastest Sonnet yet",
+            "Typical tasks cost up to 30% less because they finish in fewer tokens, not a lower rate",
+            "New 'between_tools' thinking setting replaces the old thinking-off mode"
+          ],
+          "symbol": "gauge.with.dots.needle.67percent"
+        },
+        {
+          "id": "d606e924-d1fd-4824-9812-90497b218e7b",
+          "kind": "comparison",
+          "title": "Sonnet 5.5 beats Opus 5.5 on agentic coding benchmarks",
+          "body": "Anthropic's own published numbers show Sonnet 5.5 closing — and in one case reversing — the gap with Opus 5.5, while leaving Sonnet 5 far behind.",
+          "bullets": [
+            "Figures are Anthropic's own published benchmark results at launch"
+          ],
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Sonnet 5",
+              "Sonnet 5.5",
+              "Opus 5.5"
+            ],
+            "rows": [
+              [
+                "Terminal-Bench 4.0 (agentic coding)",
+                "10.3%",
+                "70.6%",
+                "66.4%"
+              ],
+              [
+                "GDPval-AA v2.1 (knowledge work, Elo)",
+                "1449",
+                "1844",
+                "1846"
+              ],
+              [
+                "OSWorld 2.1 (computer use)",
+                "57.0%",
+                "80.1%",
+                "81.8%"
+              ],
+              [
+                "Humanity's Last Exam, with tools",
+                "54.9%",
+                "64.5%",
+                "67.7%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "57d1f9da-8910-4951-b582-157fdb5db273",
+          "kind": "example",
+          "title": "Worked example: the same coding run, a tenth of the cost",
+          "body": "Anthropic highlights a concrete case: running Sonnet 5.5 at its default 'Medium' effort level on Terminal-Bench 4.0 beats Sonnet 5's best score — at Sonnet 5's old best effort — for under a tenth of the per-task cost.",
+          "bullets": [
+            "Effort level defaults: Medium in Claude Code and the Claude apps, High on the Claude Platform",
+            "Higher effort isn't always better: at 'Max' effort on FrontierCode 1.1, Sonnet 5.5 scored 46.2% — lower than at Xhigh effort",
+            "Anthropic attributes the Max-effort dip to extra subagent review runs causing timeouts and out-of-scope edits"
+          ],
+          "symbol": "terminal.fill"
+        },
+        {
+          "id": "c03f3300-6a43-4cb7-bb80-7fed9afca5ca",
+          "kind": "concept",
+          "title": "When Opus 5.5 is still the right call",
+          "body": "Sonnet 5.5 closes the gap on agentic benchmarks, but Anthropic is explicit that it's not a flagship replacement for the hardest work.",
+          "bullets": [
+            "FrontierCode 1.1 main set: Opus 5.5 still leads at 54.4% vs. Sonnet 5.5's 46.2%",
+            "Higher-risk cyber requests automatically fall back from Sonnet 5.5 to Sonnet 5 under its safety guardrails",
+            "New safety classifiers block reasoning extraction on Sonnet 5.5 — a defense against distillation attacks — the first time that's shipped on a Sonnet model",
+            "Open-ended research, novel domains, and the most ambiguous multi-day tasks remain Opus territory"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "40da2702-cb0e-4089-a598-602ccdc06bfb",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Sonnet 5.5 beats Opus 5.5 on Terminal-Bench 4.0 and nearly ties it on GDPval-AA Elo (1844 vs 1846)",
+            "The cost win comes from using fewer tokens per task, not a lower per-token price",
+            "Pick your effort level deliberately — Max isn't always the best score, as the FrontierCode result shows",
+            "Opus 5.5 still wins on the hardest, most open-ended work and on OSWorld/HLE"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "fac6cc0e-0934-4b07-9783-cbc9beed791e",
+            "prompt": "On which benchmark did Claude Sonnet 5.5 score HIGHER than Claude Opus 5.5 at launch?",
+            "options": [
+              "OSWorld 2.1 (computer use)",
+              "Terminal-Bench 4.0 (agentic coding)",
+              "Humanity's Last Exam, with tools",
+              "FrontierCode 1.1 main set"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sonnet 5.5 scored 70.6% on Terminal-Bench 4.0 versus Opus 5.5's 66.4% — a rare case of the cheaper, faster model beating its own flagship on a headline agentic-coding benchmark."
+          },
+          {
+            "id": "9154ba8f-2d24-4334-97ae-68f7c813fd2e",
+            "prompt": "Why does Sonnet 5.5 cost up to 30% less per task than Sonnet 5, even though per-token pricing is unchanged?",
+            "options": [
+              "Anthropic quietly lowered the per-token price",
+              "It typically completes the same task using fewer tokens",
+              "It only runs on cheaper hardware",
+              "It skips the verification step other models use"
+            ],
+            "correctIndex": 1,
+            "explanation": "Input/output pricing stayed at $2 / $10 per million tokens, identical to Sonnet 5. The savings come entirely from needing fewer tokens to finish typical tasks, including by batching tool calls."
+          },
+          {
+            "id": "0bd7771b-5f30-4465-b35d-85ceba81a009",
+            "prompt": "What did Anthropic observe when Sonnet 5.5 ran at 'Max' effort on FrontierCode 1.1, compared to 'Xhigh' effort?",
+            "options": [
+              "Max effort scored higher, as expected",
+              "Max effort scored lower, due to extra subagent review runs causing timeouts and out-of-scope edits",
+              "Effort level had no measurable impact",
+              "Max effort was disabled for this benchmark"
+            ],
+            "correctIndex": 1,
+            "explanation": "More effort isn't always better: Sonnet 5.5 scored 46.2% on FrontierCode's main set at Max effort, lower than at Xhigh, because the extra subagent review passes introduced timeouts and edits outside the task's scope."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "21e411e9-05bf-40db-8730-d1c834d46533",
+          "title": "Introducing Claude Sonnet 5.5",
+          "url": "https://www.anthropic.com/claude-sonnet-5-5"
+        }
+      ]
+    },
+    {
       "title": "Nine Loops Deep: Claude Beats a Physics Record",
       "subtitle": "A blog dare, a $100 Python script, and a scattering-amplitude calculation that went one loop past the 2023 record.",
       "category": "AI Innovations",
@@ -10732,374 +11104,6 @@
         }
       ],
       "id": "43a43179-03ff-406d-a05b-e7f9850399e3",
-      "publishedDate": "2026-10-05T19:02:02Z"
-    },
-    {
-      "title": "Fold2Reason: A Protein-Folding Model Learns to Reason About Everything Else",
-      "subtitle": "Post-training a 9B model on protein structure didn't just make it better at folding — it raised its score on ten unrelated reasoning benchmarks too.",
-      "category": "AI Concepts",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "protein-folding",
-        "transfer-learning",
-        "post-training",
-        "lora",
-        "reasoning",
-        "multimodal"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "atom",
-      "summary": "A new paper post-trains Qwen3.5-9B on a protein-structure dataset called FoldingCorpus using a frozen geometry decoder, and finds the resulting model doesn't just fold proteins better — its accuracy rises across ten unrelated spatial, graph, and scientific reasoning benchmarks too, suggesting structural supervision teaches genuinely transferable representations.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Does Learning Protein Folding Generalize to Broader Reasoning?",
-          "body": "GENTEL-lab's Fold2Reason post-trains a 9B language model on protein structure — and the gains show up far outside biology.",
-          "bullets": [
-            "Base model: Qwen3.5-9B + LoRA adapters",
-            "Trending on Hugging Face Daily Papers (Sept 30, 2026)",
-            "Tests whether a narrow structural skill transfers to general reasoning"
-          ],
-          "symbol": "atom",
-          "id": "9da6869c-b996-486b-af03-4787d7ea3a14"
-        },
-        {
-          "kind": "problem",
-          "title": "Specialist Science Models Usually Don't Transfer",
-          "body": "Fine-tuning a language model on raw protein coordinates is a well-worn trick — but it typically just makes the model better at coordinates.",
-          "bullets": [
-            "Bolting a regression head onto an LLM and training it on 3D structure tends to improve only that one narrow skill",
-            "Heavy fine-tuning on an out-of-domain signal risks catastrophic forgetting of general reasoning ability",
-            "Open question: is 'learning to fold a protein' just memorizing geometry, or does it force a model to build genuinely reusable spatial/relational representations?"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "fa4f635c-69dd-4127-afc5-f279b72a1af0"
-        },
-        {
-          "kind": "solution",
-          "title": "Two Signals, One Shared Representation",
-          "body": "Fold2Reason trains on FoldingCorpus — protein structures reframed as reasoning supervision — through two coupled signals that both run through the same hidden states.",
-          "bullets": [
-            "Signal 1: discrete structural answers produced via the model's own native language head — folding becomes a QA task in token space, not a separate output",
-            "Signal 2: continuous 3D geometry decoded from those same shared hidden states, but through a decoder that stays FROZEN during training",
-            "Freezing the geometry decoder is the key move: the model can't cheat by drifting the decoder to fit the data — it has to make its own shared representation genuinely structure-aware",
-            "Only LoRA adapters are trained on top of the frozen Qwen3.5-9B backbone, keeping the recipe lightweight"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "id": "04aa751c-6e62-4ae3-930e-6cd0174f74a3"
-        },
-        {
-          "kind": "example",
-          "title": "Why a Protein Residue Helps With a Spatial-Reasoning Question",
-          "body": "Picture a question from the SpatialViz benchmark: inferring how objects are arranged in 3D from a text description — nothing to do with biology on the surface.",
-          "bullets": [
-            "To predict where a protein residue sits relative to its neighbors, the model has to encode 'which parts are close together in 3D space' inside its hidden states",
-            "That same encoded notion of relative position is exactly what a spatial-reasoning or graph-relationship question needs — adjacency, distance, structure",
-            "Because the frozen decoder forces this to live in the SHARED representation (not a side channel the LLM can ignore), the general reasoning path inherits it for free",
-            "This is why the gains showed up on GraphQA and ChemBench too — anything that depends on relational/structural reasoning, not biology specifically"
-          ],
-          "symbol": "arrow.2.squarepath",
-          "id": "23acb1fa-ab65-4b78-a19f-0e8430ca63cc"
-        },
-        {
-          "kind": "comparison",
-          "title": "The Numbers",
-          "table": {
-            "headers": [
-              "Metric",
-              "Before Fold2Reason",
-              "After Fold2Reason"
-            ],
-            "rows": [
-              [
-                "FoldBench (structure prediction)",
-                "baseline",
-                "2.7–3.5x better"
-              ],
-              [
-                "Macro-avg across 10 general reasoning benchmarks",
-                "45.09%",
-                "48.33%"
-              ],
-              [
-                "Benchmarks that improved out of 10",
-                "—",
-                "all 10"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis",
-          "id": "411fb0af-030d-4eb1-b91b-abfa18673899",
-          "bullets": []
-        },
-        {
-          "kind": "problem",
-          "title": "Where This Doesn't Generalize",
-          "body": "The result is specific, not a free universal IQ boost — and it depends on scaffolding most teams don't have lying around.",
-          "bullets": [
-            "You need an existing pretrained geometry decoder to freeze — this recipe adapts a structure-prediction capability that has to already exist, it doesn't bootstrap one from nothing",
-            "Building FoldingCorpus-style reasoning supervision from raw protein structures is itself a nontrivial data-engineering problem",
-            "Only validated at 9B scale with LoRA adapters — unclear whether full fine-tuning or larger models see the same effect",
-            "The transfer is specifically to spatial, graph, and structural reasoning — don't expect this recipe to improve, say, creative writing or arithmetic"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "30bc91b7-3cbc-4d34-a4b3-65457439644d"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Narrow scientific supervision CAN transfer to general reasoning — but only when the training setup forces the signal into a shared representation",
-            "The trick: freeze the geometry decoder, train only the backbone (via LoRA) — this prevents the model from 'cheating' by isolating the structural skill",
-            "All 10 unrelated downstream benchmarks improved alongside the folding benchmark — not just one or two",
-            "The generalization is targeted (spatial/graph/structural reasoning), not a blanket capability boost — know what kind of transfer you're actually buying"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "a87f4ea5-fd3b-419d-b4f5-8a1e1b3928fc"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What's the key architectural choice that lets Fold2Reason's protein-folding training transfer to general reasoning?",
-            "options": [
-              "Using a much bigger base model",
-              "Freezing the geometry decoder so the structural signal is forced into the model's shared hidden representation",
-              "Removing the language head entirely and only predicting coordinates",
-              "Training on protein data exclusively with no reasoning benchmarks involved"
-            ],
-            "correctIndex": 1,
-            "explanation": "If the geometry decoder were trainable, it could drift to fit the data on its own, letting the shared representation stay generic. Freezing it forces the backbone itself to become structurally grounded — which is what lets that grounding show up on unrelated tasks.",
-            "id": "509bd78b-fa44-4913-995e-690676fee3a6"
-          },
-          {
-            "prompt": "What did the paper find happened to the 10 general reasoning benchmarks after Fold2Reason training?",
-            "options": [
-              "They got worse due to catastrophic forgetting",
-              "No measurable change",
-              "All 10 improved, alongside the protein-folding benchmark itself",
-              "Only 2 of the 10 improved"
-            ],
-            "correctIndex": 2,
-            "explanation": "Macro-average accuracy across all ten benchmarks rose from 45.09% to 48.33%, and the paper reports improvement on every one of the ten — the gain wasn't isolated to folding.",
-            "id": "e2678f50-ea53-48db-a3da-f7bcb81d5b8a"
-          },
-          {
-            "prompt": "Why shouldn't you expect this recipe to improve, say, a model's poetry-writing ability?",
-            "options": [
-              "Because the model is too small to write poetry",
-              "Because LoRA can't update enough parameters for creative tasks",
-              "Because the transfer is specifically tied to spatial/relational/structural reasoning, which poetry doesn't depend on",
-              "Because poetry isn't tokenized the same way"
-            ],
-            "correctIndex": 2,
-            "explanation": "The mechanism is that protein-structure supervision sharpens the model's encoding of relative position and relational structure. That specifically helps spatial, graph, and scientific reasoning — tasks that don't lean on that kind of structure shouldn't be expected to benefit the same way.",
-            "id": "2e9bc614-8ea3-4a2d-9a35-740a0ffff20a"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Does Learning Protein Folding Generalize to Broader Reasoning?",
-          "url": "https://arxiv.org/abs/2609.38879",
-          "id": "3ebbfed7-97f2-4a44-b341-1e5ecad85e24"
-        },
-        {
-          "title": "Fold2Reason (official code)",
-          "url": "https://github.com/GENTEL-lab/Fold2Reason",
-          "id": "43870893-cd0b-4261-a3dc-5c1a274f2adb"
-        }
-      ],
-      "id": "354a99aa-c115-4d0e-9d38-b6f59f44f02a",
-      "publishedDate": "2026-10-05T19:02:02Z"
-    },
-    {
-      "title": "LoRA: Fine-Tuning a Giant Model by Training a Tiny Detour",
-      "subtitle": "Freeze billions of weights. Train a rank-8 shortcut instead. Get most of the benefit at a fraction of the memory.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "lora",
-        "fine-tuning",
-        "peft",
-        "adapters",
-        "llms"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "puzzlepiece.fill",
-      "summary": "LoRA (Low-Rank Adaptation) freezes a pretrained model's weights and trains a small pair of low-rank matrices alongside them instead, cutting trainable parameters by orders of magnitude while matching most of full fine-tuning's quality — and because the correction can be merged back in, it costs nothing extra at inference time.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "LoRA: Training a Detour Instead of the Highway",
-          "body": "Low-Rank Adaptation freezes the pretrained model and learns a tiny correction on top of it.",
-          "bullets": [
-            "Freezes the original weights entirely",
-            "Trains two small matrices instead of billions of parameters",
-            "Adapter checkpoints: megabytes, not gigabytes"
-          ],
-          "symbol": "puzzlepiece.fill",
-          "id": "ce46578e-5ad8-4cad-8f12-40f1235f8b39"
-        },
-        {
-          "kind": "problem",
-          "title": "Full Fine-Tuning Is Expensive in a Way That Compounds",
-          "body": "Updating every weight in a modern LLM isn't just slow — it multiplies your storage and memory problem by however many task variants you need.",
-          "bullets": [
-            "Adam-style optimizers keep roughly two extra copies of every trainable parameter (momentum + variance) — full fine-tuning a 7B model needs serious GPU memory just for optimizer state, before you even count the model weights",
-            "Every fine-tuned variant is a full new checkpoint — 10 customer-specific fine-tunes of a 7B model means 10 multi-gigabyte checkpoints",
-            "You can't easily keep dozens of full fine-tuned copies loaded in memory at once to serve different customers from one GPU"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "ac509a27-7774-4563-bd44-c13f64ff149f"
-        },
-        {
-          "kind": "solution",
-          "title": "Freeze W, Learn a Low-Rank Correction",
-          "body": "LoRA leaves the pretrained weight matrix W untouched and adds a trainable detour next to it.",
-          "bullets": [
-            "Decompose the update as ΔW = B·A, where A is (r × d_in) and B is (d_out × r) — r is the 'rank', typically 4 to 64, far smaller than d_in or d_out (often thousands)",
-            "Forward pass becomes output = Wx + BAx — the frozen base prediction plus a small learned correction",
-            "Only A and B are trained; W never moves, so the original model's knowledge stays intact by construction",
-            "The original LoRA paper (fine-tuning GPT-3 175B) reported roughly 10,000x fewer trainable parameters and about 3x less GPU memory than full fine-tuning, with no extra inference latency"
-          ],
-          "symbol": "slider.horizontal.3",
-          "id": "244efef6-a931-4a1a-acae-1900afcb0f6b"
-        },
-        {
-          "kind": "example",
-          "title": "Fine-Tuning a 7B Model for Customer Support Tone",
-          "body": "Same task, two very different resource bills.",
-          "bullets": [
-            "Full fine-tune: ~14GB+ of weights to update, optimizer state ballooning well past that, one full checkpoint per customer if you need multiple tones",
-            "LoRA at rank 8 on the attention and MLP projection matrices: trainable parameters often under 1% of the full model, adapter checkpoint in the tens of megabytes",
-            "At serving time, you keep one frozen base model loaded and hot-swap small adapters per customer — dozens of 'fine-tunes' sharing one GPU's worth of base weights"
-          ],
-          "symbol": "shippingbox.fill",
-          "id": "238b853e-2905-436f-8b9a-75f500825ce0"
-        },
-        {
-          "kind": "comparison",
-          "title": "Full Fine-Tuning vs. LoRA vs. Prompting",
-          "table": {
-            "headers": [
-              "",
-              "Full fine-tune",
-              "LoRA",
-              "Prompting only"
-            ],
-            "rows": [
-              [
-                "Trainable params",
-                "100%",
-                "~0.1–1%",
-                "0%"
-              ],
-              [
-                "Checkpoint size",
-                "Full model size",
-                "MBs (adapter only)",
-                "None"
-              ],
-              [
-                "Forgetting risk",
-                "Higher",
-                "Lower (base frozen)",
-                "None"
-              ],
-              [
-                "Adds new knowledge?",
-                "Yes",
-                "Adapts existing knowledge",
-                "No"
-              ],
-              [
-                "Serve many variants on 1 GPU",
-                "Hard",
-                "Easy (swap adapters)",
-                "Easy"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis",
-          "id": "cee1a8ee-1dc0-4a8a-9cc5-a42995ecebfc",
-          "bullets": []
-        },
-        {
-          "kind": "problem",
-          "title": "Where LoRA Falls Short",
-          "body": "It's a precision tool, not a universal replacement for full fine-tuning.",
-          "bullets": [
-            "Rank choice matters: too low (r=1–2) and the adapter can't capture a complex new behavior; too high and you give up most of the memory savings while risking overfitting on a small dataset",
-            "LoRA adapts capabilities the base model already has — it doesn't reliably inject knowledge the base never saw at all (a language it was never trained on, facts past its training cutoff). Continued pretraining or RAG handle that better",
-            "Merging several independently-trained LoRA adapters for multi-task serving isn't guaranteed to be additive — if their updates touch overlapping weight subspaces, they can interfere with each other"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "51c582c6-25b4-48dc-9419-f61391a338d3"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "LoRA freezes the pretrained weights and trains a small low-rank correction (ΔW = B·A) alongside them",
-            "It cuts trainable parameters and optimizer memory by orders of magnitude versus full fine-tuning, with no added inference latency",
-            "It's the reason you can serve many task-specific or customer-specific 'fine-tunes' from one base model on one GPU",
-            "It adapts what the base model already knows — it's the wrong tool for teaching a model facts or skills it never saw at all"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "e0d67e85-6f49-4968-9cb4-2a03751d7176"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "During LoRA training, what happens to the original pretrained weight matrix W?",
-            "options": [
-              "It's updated normally, just at a lower learning rate",
-              "It's frozen entirely — only the small added matrices A and B are trained",
-              "It's deleted and replaced by A and B",
-              "It's quantized to 4-bit before training"
-            ],
-            "correctIndex": 1,
-            "explanation": "LoRA's whole efficiency gain comes from leaving W untouched and training only a low-rank pair A and B. The forward pass adds their product to W's output rather than modifying W itself.",
-            "id": "e24db698-f01f-4105-be45-eea5ce1ae5f9"
-          },
-          {
-            "prompt": "Why does LoRA typically add no extra latency at inference time compared to the original model?",
-            "options": [
-              "Because it uses a smaller model architecture",
-              "Because the low-rank correction B·A can be merged directly into W (or is cheap enough to add on the fly)",
-              "Because it skips the attention mechanism",
-              "Because it only runs on CPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "Since output = Wx + BAx, you can either compute BA once and fold it into W (identical cost to the original model) or keep it separate and add a small matrix multiply — either way there's no architectural change that slows down inference.",
-            "id": "420c6497-762d-4229-b8d2-f974640e71fa"
-          },
-          {
-            "prompt": "When is LoRA the wrong tool for the job?",
-            "options": [
-              "When you need to serve many lightweight task variants from one base model",
-              "When you want a small checkpoint size",
-              "When you need to teach the model facts or an entire language it never saw during pretraining",
-              "When you have limited GPU memory"
-            ],
-            "correctIndex": 2,
-            "explanation": "LoRA adapts capabilities already latent in the frozen base model. If the base model genuinely never encountered the knowledge or language at all, a low-rank correction on top of it is a poor substitute for continued pretraining or retrieval-augmented approaches.",
-            "id": "a1bc09c3-aae9-4ed5-b273-dcc49306c8ac"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)",
-          "url": "https://arxiv.org/abs/2106.09685",
-          "id": "75c0bd8b-7a92-4bcf-92c0-537e3bb7df01"
-        }
-      ],
-      "id": "bb9e997c-9fb6-48e9-9629-4bde99f99a46",
       "publishedDate": "2026-10-05T19:02:02Z"
     }
   ]
