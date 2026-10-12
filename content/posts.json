@@ -1,6 +1,582 @@
 {
   "posts": [
     {
+      "title": "H-JEPA: Planning Gets Easier When the World Model Has Levels",
+      "subtitle": "Stack three JEPA world models on top of each other and AntMaze success jumps from 18% to 73%.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "world-models",
+        "jepa",
+        "hierarchical-planning",
+        "self-supervised-learning",
+        "robotics",
+        "yann-lecun"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.3.layers.3d.down.right",
+      "summary": "H-JEPA stacks several JEPA-style world models, each predicting further into the future in its own coarser latent space, so planning can happen top-down: pick a rough subgoal, then refine it level by level. On the Visual AntMaze benchmark a three-level hierarchy raises planning success from 18% to 73% versus a flat world model, while using less planner compute, and the same recipe extends to real-robot video from DROID.",
+      "slides": [
+        {
+          "id": "e1fbe993-3166-4248-9c16-a48305fcfc88",
+          "kind": "cover",
+          "title": "One world model, one timescale — that's the bottleneck",
+          "body": "Latent world models like JEPA learn to predict what a scene will look like next, then let an agent plan by imagining action sequences inside that learned space. But a single flat model has to represent every timescale at once — the next frame and the next five minutes — in the same latent space.",
+          "bullets": [
+            "Paper: H-JEPA: End-to-End Learning of Hierarchical World Models for Visual Planning (Zhang, Terver, Rabbat, LeCun, Balestriero)",
+            "Builds on LeWM, the same group's flat latent world model baseline"
+          ],
+          "symbol": "square.3.layers.3d.down.right",
+          "table": null
+        },
+        {
+          "id": "98908b3d-f790-4596-95ed-256846a12cda",
+          "kind": "problem",
+          "title": "Long-horizon planning explodes in a flat latent space",
+          "body": "To plan 100 steps ahead, a flat world model has to simulate roughly 100 latent transitions, and errors compound at every step. It also can't tell the difference between fast, unpredictable pixel-level detail and the slow, task-relevant state that actually matters for the goal.",
+          "bullets": [
+            "Planning cost scales roughly with the number of raw timesteps simulated",
+            "Fine-grained detail (lighting, texture) gets mixed into the same latent as coarse task state (position, contact)",
+            "Compounding prediction error makes long rollouts unreliable"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "da16a579-f2df-40cd-8408-7efbac89823f",
+          "kind": "solution",
+          "title": "Stack JEPA models, one per timescale",
+          "body": "H-JEPA trains a hierarchy of action-conditioned JEPA predictors end-to-end. Each level predicts further ahead in time than the level below it, in its own, coarser latent space that drops fast, unpredictable detail and keeps only what's relevant at that timescale.",
+          "bullets": [
+            "Level N (top): coarsest latent, longest jump — predicts 'where should we roughly be'",
+            "Level 1 (bottom): finest latent, shortest jump — predicts next-step dynamics for low-level control",
+            "Trained end-to-end rather than level-by-level, so levels learn representations that compose"
+          ],
+          "symbol": "arrow.up.and.down.and.arrow.left.and.right",
+          "table": null
+        },
+        {
+          "id": "9dfc7882-4d46-4d00-9e62-c9eb73e6fb93",
+          "kind": "architecture",
+          "title": "Planning runs top-down",
+          "body": "At inference, planning starts at the top level: search over coarse latent trajectories to pick a long-horizon subgoal. That subgoal becomes the target for the level below, which plans a finer path toward it — and so on down to the bottom level, which outputs the next action.",
+          "bullets": [
+            "Each level only has to plan over a handful of its own coarse steps, not hundreds of raw steps",
+            "Subgoals from a higher level constrain and shrink the search space for the level below",
+            "Lower planner compute per query than searching the full horizon in one flat latent space"
+          ],
+          "symbol": "point.topleft.down.curvedto.point.bottomright.up",
+          "table": null
+        },
+        {
+          "id": "d34ab1e5-4139-47b9-a3dd-b4ca8e30f430",
+          "kind": "comparison",
+          "title": "Visual AntMaze: 18% to 73%",
+          "body": "The headline benchmark is Visual AntMaze, a long-horizon navigation task from pixels. Ablations attribute the gain to both the temporal decomposition (each level handling its own timescale) and the higher-level goal representations acting as useful subgoals.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Model",
+              "AntMaze success",
+              "Planner compute"
+            ],
+            "rows": [
+              [
+                "Flat LeWM (1 level)",
+                "~18%",
+                "Full horizon, every level"
+              ],
+              [
+                "H-JEPA (3 levels)",
+                "~73%",
+                "Lower — search shrinks per level"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "61de7837-888a-4407-b96f-31342248cc7a",
+          "kind": "example",
+          "title": "Worked example: crossing a multi-room maze",
+          "body": "Imagine AntMaze as three connected rooms with a goal in the far room. A flat model must simulate every intermediate step to evaluate a full path. H-JEPA's top level instead reasons directly in 'which room next' terms.",
+          "bullets": [
+            "Top level: picks 'go to room 2, then room 3' as a coarse subgoal sequence",
+            "Mid level: plans a rough path across room 2 toward its exit",
+            "Bottom level: outputs the actual joint torques to move the ant one step along that path",
+            "The same recipe transfers to real-robot video from the DROID dataset using inverse-dynamics supervision, improving offline planning fidelity at lower planner compute"
+          ],
+          "symbol": "map.fill",
+          "table": null
+        },
+        {
+          "id": "12f228da-900b-4214-97a8-9c6a38d3421f",
+          "kind": "concept",
+          "title": "Where the hierarchy doesn't help — or adds cost",
+          "body": "Hierarchy is not free: it adds design choices and failure modes that a flat world model doesn't have.",
+          "bullets": [
+            "More hyperparameters: number of levels and the timescale ratio between them must be tuned per task",
+            "On short-horizon tasks like FourRoom and Push-T, the paper reports the hierarchy performs similarly to the flat baseline — the AntMaze-style long-horizon gain doesn't universally apply",
+            "If a higher level picks an infeasible subgoal, errors cascade downward just like compounding error in a flat model, only now across levels instead of timesteps",
+            "End-to-end training of multiple stacked levels is more complex to get stable than training one flat model"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "5025babd-ee15-4296-bebf-7150ab83af4f",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "H-JEPA stacks action-conditioned JEPA world models, each predicting farther ahead in its own coarser latent space",
+            "Planning goes top-down: coarse subgoals from higher levels constrain the search at lower levels",
+            "On Visual AntMaze, 3 levels take success from ~18% to ~73% while lowering planner compute",
+            "The gain is largest on long-horizon tasks; on short-horizon tasks the hierarchy doesn't clearly beat a flat model",
+            "The same hierarchical recipe extends to real-robot video (DROID) via inverse-dynamics supervision"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6f9f806b-a079-4bff-91d0-7ca5570f0b50",
+            "prompt": "What does each level of H-JEPA's hierarchy predict differently from the level below it?",
+            "options": [
+              "The same thing, just with more parameters",
+              "Further ahead in time, in its own coarser latent space that drops fast, unpredictable detail",
+              "A different input modality, like audio instead of video",
+              "Nothing — all levels share one latent space"
+            ],
+            "correctIndex": 1,
+            "explanation": "Each level predicts a longer jump into the future than the level below it, and does so in a coarser latent space tuned to that timescale — dropping fine detail that's irrelevant at that level and keeping only what matters for planning at that horizon."
+          },
+          {
+            "id": "9d2f369c-3a90-45c2-876c-fa5207f36d3e",
+            "prompt": "Why does H-JEPA need less planner compute than a flat world model on long-horizon tasks?",
+            "options": [
+              "It uses a smaller neural network overall",
+              "It skips verification entirely",
+              "Higher levels pick coarse subgoals that shrink the search space each lower level has to explore",
+              "It only plans one step ahead at every level"
+            ],
+            "correctIndex": 2,
+            "explanation": "Instead of searching the full horizon in one flat latent space, each level only has to plan over its own handful of coarse steps, guided by the subgoal handed down from the level above — so the total search is much smaller than simulating every raw timestep."
+          },
+          {
+            "id": "ef49be0f-c64a-445e-971c-1ea1714f0ff7",
+            "prompt": "According to the paper, where does the 3-level hierarchy NOT clearly beat the flat baseline?",
+            "options": [
+              "On Visual AntMaze, a long-horizon navigation task",
+              "On short-horizon tasks like FourRoom Distractors and Push-T",
+              "On real-robot video from DROID",
+              "It beats the flat baseline everywhere by a wide margin"
+            ],
+            "correctIndex": 1,
+            "explanation": "The paper reports the hierarchy's advantage is largest on long-horizon tasks like AntMaze; on short-horizon tasks such as FourRoom and Push-T, hierarchical and flat planning perform similarly, since there's less long-range structure for the hierarchy to exploit."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "517bc719-c5a6-42d1-94c7-2b2b42c2d404",
+          "title": "H-JEPA: End-to-End Learning of Hierarchical World Models for Visual Planning (arXiv:2610.06805)",
+          "url": "https://arxiv.org/abs/2610.06805"
+        }
+      ],
+      "id": "9e8bb7d3-bd01-49f0-a025-785f6282618b",
+      "publishedDate": "2026-10-12T06:48:14Z"
+    },
+    {
+      "title": "Kandinsky 6.0: Open Video That Generates Its Own Lip-Synced Audio",
+      "subtitle": "A 29B diffusion model trains video and audio together, so the sound comes out already in sync.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "video-generation",
+        "diffusion-models",
+        "open-weights",
+        "audio-video-sync",
+        "kandinsky",
+        "text-to-video"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "film.fill",
+      "summary": "Kandinsky Lab open-sourced Kandinsky 6.0 Video, an MIT-licensed family of diffusion models (3B Lite and 29B Pro) that generate 5-second clips with synchronized 44 kHz audio from text or an image-plus-text prompt, plus a separate super-resolution model that upscales output to Full HD.",
+      "slides": [
+        {
+          "id": "b49d6c79-6048-4f4e-bf6a-3ae5a9b720d3",
+          "kind": "cover",
+          "title": "Most open video generators are silent",
+          "body": "Kandinsky 6.0 Video, released by Kandinsky Lab on October 6, 2026, generates video and audio from one joint diffusion process instead of bolting sound on afterward — so mouth movements and sound events land in sync by construction.",
+          "bullets": [
+            "Open weights, MIT license, available day-one in Diffusers, ComfyUI, vLLM-Omni, SGLang, and FastVideo",
+            "Two sizes: 3B Lite and 29B Pro, both text-to-audio-video and image-to-audio-video"
+          ],
+          "symbol": "film.fill",
+          "table": null
+        },
+        {
+          "id": "2ff8b2ec-1a91-40d0-825c-d99e152d6bb7",
+          "kind": "problem",
+          "title": "Bolted-on audio rarely lines up",
+          "body": "The common pipeline is: generate silent video, then generate or retrieve audio separately, then try to align the two. Mouth shapes drift out of sync with speech, and sound effects (a door slamming, a string being plucked) land a few frames off from the visual event.",
+          "bullets": [
+            "Two separate generation steps means two separate sources of timing error",
+            "Post-hoc alignment can't fix content the audio model never saw happen on screen"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "38046819-e2d8-4782-8ebc-45b841eccf47",
+          "kind": "solution",
+          "title": "One diffusion process, two streams, cross-attention between them",
+          "body": "The audio stream is trained first on its own, then both the video and audio streams are trained jointly on paired audio-video data with bidirectional cross-attention linking them, followed by supervised fine-tuning, reinforcement-learning post-training, and distillation.",
+          "bullets": [
+            "Because both streams denoise together and attend to each other, audio timing is learned jointly with motion, not fitted afterward",
+            "Every generation ships as a 5-second clip with 44 kHz audio out of the same model",
+            "A separate super-resolution model upscales the result to Full HD (1920x1080)"
+          ],
+          "symbol": "waveform",
+          "table": null
+        },
+        {
+          "id": "b345d128-0fb6-49d6-b89b-69eb6b3476cb",
+          "kind": "architecture",
+          "title": "From prompt to final clip",
+          "body": "A text (or image+text) prompt feeds the joint video-audio diffusion model, producing a base-resolution synchronized clip. For faster iteration, a 10-step distilled checkpoint trades some quality for much shorter generation time; the separate VSR model is a later, optional pass.",
+          "bullets": [
+            "Input: text prompt, or an image plus text for image-to-audio-video",
+            "Core: joint diffusion over video + audio latents with cross-attention",
+            "Optional: 10-step distilled checkpoint for speed, or the full (non-distilled) checkpoint for quality",
+            "Optional: Kandinsky 6.0 VSR pass to reach Full HD"
+          ],
+          "symbol": "flowchart.fill",
+          "table": null
+        },
+        {
+          "id": "dd74cf5c-8748-440b-ae34-78937cb10625",
+          "kind": "comparison",
+          "title": "What a 5-second clip actually costs you in time",
+          "body": "The official repo publishes generation-time benchmarks (excluding weight loading and video encoding) for the non-distilled checkpoints — there's a real hardware tax for the larger Pro model.",
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Model / output",
+              "H100",
+              "RTX PRO 6000",
+              "RTX 4090"
+            ],
+            "rows": [
+              [
+                "Pro, Full HD",
+                "~402s",
+                "~765s",
+                "~1,247s"
+              ],
+              [
+                "Lite, standard res",
+                "~239s",
+                "—",
+                "~437s"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "01b19141-f65f-4629-9730-1fb7ceeb70b5",
+          "kind": "example",
+          "title": "Worked example: animating a still photo",
+          "body": "Image-to-audio-video (TI2AV) takes a single photo of a street musician plus the prompt 'the musician strums the guitar and starts singing' and produces a 5-second clip where the strumming motion, string sound, and vocal audio all land on the same frames.",
+          "bullets": [
+            "Input: one static image + short text description of the action",
+            "Output: 5 seconds of motion with 44 kHz audio generated in the same pass",
+            "No separate audio model, no manual alignment step"
+          ],
+          "symbol": "photo.fill.on.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "11aa0da7-72d5-4fdb-8c2f-508874ffa618",
+          "kind": "concept",
+          "title": "Where this isn't the right tool",
+          "body": "The clip length, hardware cost, and lack of published quality benchmarks matter before reaching for this model.",
+          "bullets": [
+            "Fixed ~5-second clip length — not suited to longer continuous shots without stitching",
+            "The 29B Pro model at Full HD takes 6.5–20+ minutes per clip even on an H100 — not viable for real-time or interactive use",
+            "The official README ships speed benchmarks but no quality comparisons against competing video-audio models — treat 'competitive with leading models' claims as a vendor claim, not an independent benchmark",
+            "The 3B Lite model is the practical choice for fast iteration; reserve 29B Pro for final renders"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "8d252bbe-1424-4586-9835-427b23021574",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Kandinsky 6.0 Video generates video and 44 kHz audio together from one joint diffusion model, so sync comes for free",
+            "Two open, MIT-licensed sizes: 3B Lite (fast) and 29B Pro (higher quality, much slower)",
+            "A separate super-resolution model handles the Full HD upscale step",
+            "Generation time is substantial — minutes per 5-second clip, even on an H100 — so plan for offline rendering, not live use",
+            "No independent quality benchmarks are published yet; the official repo only documents speed"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "f2dd0c61-988a-47a6-8f7f-bde982698663",
+            "prompt": "Why is Kandinsky 6.0 Video's audio better synced than a typical 'video then audio' pipeline?",
+            "options": [
+              "It uses a higher sample rate than other models",
+              "A human manually aligns the tracks after generation",
+              "Video and audio are denoised jointly in one diffusion process with cross-attention between the two streams",
+              "It only generates silent video and no audio at all"
+            ],
+            "correctIndex": 2,
+            "explanation": "Because the video and audio streams attend to each other during the same joint diffusion process, timing is learned together rather than fitted after the fact — which is why mouth movements and sound events land in sync by construction."
+          },
+          {
+            "id": "22568750-0f21-4cb8-9c33-3262eaf55231",
+            "prompt": "Based on the published generation-time benchmarks, which setup is best suited to fast iteration?",
+            "options": [
+              "29B Pro at Full HD on an RTX 4090",
+              "3B Lite, since it generates a clip in well under a minute's worth of H100 time compared to Pro's Full HD pass",
+              "They all take the same amount of time regardless of model size",
+              "29B Pro, because larger models are always faster to sample"
+            ],
+            "correctIndex": 1,
+            "explanation": "The repo's own numbers show the 3B Lite model finishing a clip in roughly 239s on an H100, far faster than the 29B Pro model's ~402s (and much longer on weaker GPUs) — making Lite the practical pick when iterating quickly."
+          },
+          {
+            "id": "6db2afee-5344-426d-a3b3-f5b739805490",
+            "prompt": "What should you NOT assume from Kandinsky Lab's claim that Pro is 'competitive with leading audio-video models'?",
+            "options": [
+              "That it has been verified by an independent, third-party benchmark",
+              "That the model is open source",
+              "That it uses MIT licensing",
+              "That it supports both text-to-video and image-to-video"
+            ],
+            "correctIndex": 0,
+            "explanation": "The official repository publishes generation-speed benchmarks but no head-to-head quality benchmarks against competing models — so a 'competitive with leading models' claim should be treated as a vendor statement until independently verified."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "f4deabcc-2448-4f05-855e-8eade6a52ae1",
+          "title": "kandinskylab/kandinsky-6 — official GitHub repository",
+          "url": "https://github.com/kandinskylab/kandinsky-6"
+        }
+      ],
+      "id": "5f0d2ac6-daa3-493e-bfa7-ffd042ebbd13",
+      "publishedDate": "2026-10-12T06:48:14Z"
+    },
+    {
+      "title": "LoRA: Fine-Tuning a Giant Model by Training a Tiny Sliver of It",
+      "subtitle": "Freeze the original weights, learn two small matrices, and adapt a 70B model for the storage cost of a few MB.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "parameter-efficient",
+        "adapters",
+        "low-rank",
+        "qlora"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "square.stack.3d.down.right",
+      "summary": "LoRA (Low-Rank Adaptation) fine-tunes a large model by freezing its original weight matrices and training only a pair of small low-rank matrices whose product approximates the needed weight update. This cuts trainable parameters by 100-1000x, shrinks per-task storage to a few megabytes, and lets you swap fine-tuned 'adapters' in and out of one frozen base model at inference time.",
+      "slides": [
+        {
+          "id": "5ca05490-b27c-4fc4-94c8-c235f792fedb",
+          "kind": "cover",
+          "title": "You don't need to touch all 70 billion parameters to adapt a model",
+          "body": "Full fine-tuning updates every weight in a model and needs memory for gradients and optimizer state on top of the weights themselves — often 3-4x the model's size. LoRA gets most of the benefit by training a tiny add-on instead of the model itself.",
+          "bullets": [
+            "Introduced by Hu et al. (2021), now the default way to fine-tune LLMs and diffusion models cheaply",
+            "Original weights stay completely frozen during training"
+          ],
+          "symbol": "square.stack.3d.down.right",
+          "table": null
+        },
+        {
+          "id": "8862d193-4afe-47d1-aaa7-a7efa49955c3",
+          "kind": "problem",
+          "title": "Full fine-tuning is expensive to train AND to keep around",
+          "body": "Training needs memory for the weights, the gradients, and the optimizer state (e.g. Adam keeps two extra numbers per parameter) — for a 70B model that's well beyond a single high-end GPU. And once trained, every task needs its own full copy of the model to store and serve.",
+          "bullets": [
+            "Optimizer state alone can be 2x the parameter count for Adam-style optimizers",
+            "Ten fine-tuned variants of a 70B model means ten full 70B-parameter copies on disk",
+            "Switching between tasks at serving time means swapping entire multi-gigabyte models"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "6cef9729-d569-4c47-9789-4c06f51d0ea1",
+          "kind": "solution",
+          "title": "Decompose the update into two small matrices",
+          "body": "For a frozen weight matrix W (size d x k), LoRA represents the fine-tuning update as the product of two much smaller matrices: A (d x r) and B (r x k), where the rank r is tiny compared to d and k — typically 4 to 64. Only A and B are trained; W never changes.",
+          "bullets": [
+            "The forward pass becomes h = Wx + (alpha/r) * B(Ax), where alpha is a fixed scaling hyperparameter",
+            "A is usually initialized to zero or small random values, B to zero, so training starts as a no-op",
+            "Lower rank r means fewer trainable parameters, but less capacity to represent a complex update"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "a6764c27-8f53-4532-bdbd-64d07f0aaea8",
+          "kind": "architecture",
+          "title": "At inference: merge it in, or keep it swappable",
+          "body": "LoRA is typically applied to the attention and MLP projection matrices inside each transformer layer, not to embeddings. At serving time you have two options with very different tradeoffs.",
+          "bullets": [
+            "Merge: compute W' = W + (alpha/r)*BA once, bake it into the weights — zero extra inference latency, but loses the ability to swap adapters",
+            "Keep separate: store W frozen and B·A as a small adapter — lets you hot-swap different task adapters onto the same base model, at the cost of one extra matrix multiply per forward pass",
+            "A handful of megabytes per adapter vs. tens of gigabytes per full fine-tuned model"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "e3de43b7-2c0e-4f16-a77d-6dfd1998263a",
+          "kind": "comparison",
+          "title": "Full fine-tuning vs. LoRA, concretely",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Aspect",
+              "Full fine-tuning",
+              "LoRA"
+            ],
+            "rows": [
+              [
+                "Trainable params",
+                "100% of the model",
+                "Often well under 1%"
+              ],
+              [
+                "Optimizer memory",
+                "~2x params (Adam)",
+                "~2x the tiny A/B params only"
+              ],
+              [
+                "Storage per task",
+                "Full model (tens of GB)",
+                "Adapter only (a few MB)"
+              ],
+              [
+                "Swapping tasks at serving",
+                "Reload entire model",
+                "Swap a small adapter"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "3486319c-69cc-4047-bd32-321a73f2ab05",
+          "kind": "example",
+          "title": "Worked example: one 4096x4096 weight matrix",
+          "body": "A single attention projection matrix of size 4096 x 4096 has about 16.8 million parameters. Fine-tuning it fully means training all 16.8M of them.",
+          "bullets": [
+            "With LoRA at rank r=8: A is 4096x8 and B is 8x4096, together 2 x (4096x8) = 65,536 trainable parameters",
+            "That's roughly 0.4% of the original 16.8M — a ~256x reduction for this one matrix",
+            "Across a whole 70B model, this adds up to total trainable parameters typically in the tens of millions, not tens of billions"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "02cbb5ec-c18e-4b87-8594-3f58a3dff198",
+          "kind": "concept",
+          "title": "When rank, placement, and task complexity bite",
+          "body": "LoRA's efficiency comes with real tradeoffs that pick the rank and placement matter for.",
+          "bullets": [
+            "Too-low rank underfits tasks that need a large representational shift from the base model (e.g. teaching an entirely new skill, not just a style)",
+            "Too-high rank erodes the memory savings and starts approaching full fine-tuning's cost without a guaranteed accuracy win",
+            "Applying LoRA only to attention/MLP projections (the common default) can miss cases where the embedding or output layer needs to change",
+            "QLoRA extends the idea to a 4-bit quantized frozen base model, cutting base-model memory further, at some added quantization error",
+            "Stacking or merging multiple LoRA adapters on the same base model can cause them to interfere with each other's learned directions"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "c7e76c6c-126d-42ac-870f-c9cf3e2b09aa",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "LoRA freezes the original weights and trains only two small low-rank matrices, A and B, whose product approximates the fine-tuning update",
+            "Rank r controls the tradeoff: lower r means fewer parameters but less capacity to represent a complex update",
+            "Per-task storage drops from a full model copy to a few megabytes, enabling cheap, swappable task adapters",
+            "Merge the adapter into the weights for zero extra latency, or keep it separate to hot-swap tasks on one base model",
+            "QLoRA combines LoRA with a quantized frozen base to fine-tune even larger models on modest hardware"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "e5a90d32-4270-4a12-ad6a-f30d69bb4683",
+            "prompt": "During LoRA fine-tuning, what happens to the original weight matrix W?",
+            "options": [
+              "It's deleted and replaced entirely by B*A",
+              "It's quantized to 4-bit precision",
+              "It stays completely frozen; only the small matrices A and B are trained",
+              "It's fine-tuned along with A and B, just at a lower learning rate"
+            ],
+            "correctIndex": 2,
+            "explanation": "LoRA's whole point is to leave the large pretrained weight matrix W untouched and only train the much smaller A and B matrices, whose product approximates the needed update — that's what keeps trainable parameters and memory low."
+          },
+          {
+            "id": "8c643f18-3322-4561-bb1c-382145474aae",
+            "prompt": "A weight matrix has 16.8 million parameters. Using LoRA at rank r=8, roughly how many parameters are actually trained for that matrix?",
+            "options": [
+              "16.8 million, same as full fine-tuning",
+              "About 65,536 — roughly 0.4% of the original",
+              "Exactly 8, one per rank dimension",
+              "8.4 million, half of the original"
+            ],
+            "correctIndex": 1,
+            "explanation": "With A sized (d x r) and B sized (r x k), rank r=8 on a 4096x4096 matrix gives 2 x (4096 x 8) = 65,536 trainable parameters — about 0.4% of the 16.8M in the full matrix, which is the source of LoRA's efficiency."
+          },
+          {
+            "id": "6cd089f7-7a8b-4851-9e61-e835167ec8b0",
+            "prompt": "Why would you choose to keep a LoRA adapter separate from the base model instead of merging it in?",
+            "options": [
+              "Merging always produces worse accuracy",
+              "Keeping it separate removes the need for the base model entirely",
+              "It lets you hot-swap different task adapters onto the same frozen base model, at the cost of one extra matrix multiply per forward pass",
+              "Separate adapters train faster than merged ones"
+            ],
+            "correctIndex": 2,
+            "explanation": "Merging bakes the adapter into the weights for zero extra inference cost but locks in one task. Keeping B*A separate costs a small extra matrix multiply at inference but lets you swap in a different few-megabyte adapter for a different task without touching the base model."
+          }
+        ]
+      },
+      "references": [],
+      "id": "fef4d992-f88c-4da6-bd15-6aa30800a2e0",
+      "publishedDate": "2026-10-12T06:48:14Z"
+    },
+    {
       "id": "df75854f-55af-40aa-90d5-f63e909096f7",
       "postKind": "concept",
       "title": "Speculative Decoding: Guessing Tokens to Skip the Wait",
@@ -10542,569 +11118,6 @@
           "url": "https://arxiv.org/abs/2608.16157"
         }
       ]
-    },
-    {
-      "id": "121b674c-e905-4f49-88f1-55aff782fed3",
-      "title": "Reflection AI's Beam: A 501B Open Model to Rival China",
-      "subtitle": "A US lab's answer to DeepSeek and GLM, built on ex-DeepMind research.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "open-weight",
-        "mixture-of-experts",
-        "llm-release",
-        "reasoning"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "globe.americas.fill",
-      "summary": "Reflection AI, founded by ex-DeepMind researchers Misha Laskin and Ioannis Antonoglou, unveiled Beam on October 5, 2026: a 501B-parameter (23B active) sparse MoE model the company claims matches China's GLM-5.2 on reasoning at 3-4x less inference compute. The open Apache 2.0 weights ship later this month — this announcement is specs and benchmarks only.",
-      "publishedDate": "2026-10-06T00:48:43Z",
-      "slides": [
-        {
-          "id": "f8e04d6a-2a13-494f-87ee-21b4f48dbe5e",
-          "kind": "cover",
-          "title": "America's first real answer to China's open-weight models",
-          "body": null,
-          "bullets": [
-            "Reflection AI, founded by ex-DeepMind researchers, unveiled Beam on Oct 5, 2026",
-            "501 billion total parameters, only 23 billion active per token",
-            "Positioned directly against DeepSeek, Qwen, and GLM"
-          ],
-          "symbol": "globe.americas.fill",
-          "table": null
-        },
-        {
-          "id": "3e0e73cd-cdaf-461d-8764-41272b968200",
-          "kind": "problem",
-          "title": "Open-weight leaderboards have been a China story",
-          "body": "Through 2025-2026, the strongest open-weight models — DeepSeek-V4, Qwen, Z.ai's GLM-5.2 — came out of Chinese labs. US labs shipped powerful but mostly closed frontier models, leaving a gap for builders who want open weights they can self-host, fine-tune, or audit directly.",
-          "bullets": [
-            "DeepSeek, Qwen, and GLM-5.2 have led open-weight benchmarks",
-            "Western labs' open releases have lagged behind their own closed frontier models",
-            "Reflection AI was founded in March 2024 specifically to close this gap"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "8617604b-c1f2-44dc-a541-fc4d84e923f8",
-          "kind": "solution",
-          "title": "Beam: a 501B sparse MoE trained for reasoning and agents",
-          "body": "Beam is a text-only mixture-of-experts model with 501 billion total parameters but only 23 billion active per token. Reflection pretrained it on 23.8 trillion tokens in under four weeks on 6,144 Nvidia GB300 GPUs, then ran reinforcement learning that produced over 100 million rollouts across 10,500 GB300 GPUs over four more weeks.",
-          "bullets": [
-            "Founders: Misha Laskin (ex-DeepMind, Gemini reward modeling) and Ioannis Antonoglou (AlphaGo co-creator)",
-            "Sparse MoE: 501B total / 23B active — cheap to run despite the large total size",
-            "1M-token context window, text-only (no native multimodal input)"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "94b7686d-50d7-48d1-8eeb-25bc05f5dd19",
-          "kind": "comparison",
-          "title": "Where Beam claims to land",
-          "body": null,
-          "bullets": [
-            "Reflection's compute-efficiency claim is self-reported and not yet independently verified",
-            "No third-party benchmark confirmation exists as of this announcement"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Model",
-              "Total / Active Params",
-              "Positioning"
-            ],
-            "rows": [
-              [
-                "Beam (Reflection AI)",
-                "501B / 23B",
-                "Claims to match GLM-5.2 reasoning at ~3-4x less inference compute"
-              ],
-              [
-                "GLM-5.2 (Z.ai)",
-                "753B",
-                "Current open-weight reasoning benchmark Beam targets"
-              ],
-              [
-                "DeepSeek-V4.1-Flash",
-                "552B / 8-16B active",
-                "Prior-generation efficiency-focused release"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "cc64c3d7-4887-4a04-9922-352612849267",
-          "kind": "example",
-          "title": "What ships when, exactly",
-          "body": "This is a benchmark-and-architecture reveal, not a weights drop: Reflection published Beam's specs and scores on October 5, but says it will release the actual weights and a full technical report under Apache 2.0 later in October, with day-one distribution across hyperscalers, neoclouds, and open-source inference libraries.",
-          "bullets": [
-            "Early access/benchmarks now; open weights (Apache 2.0) planned later in October 2026",
-            "Day-one integration planned across major clouds and open-source inference libraries"
-          ],
-          "symbol": "calendar",
-          "table": null
-        },
-        {
-          "id": "674d9879-a6ef-4a85-a221-69477e7f42b4",
-          "kind": "concept",
-          "title": "Reasons for healthy skepticism",
-          "body": "Every number so far comes from Reflection itself — there's no independent replication yet, and 'matches GLM-5.2' is a claim about aggregate reasoning benchmarks, not a guarantee across every task. Text-only also means no native image or audio understanding, unlike some competing releases.",
-          "bullets": [
-            "Self-reported benchmarks only — treat the compute-efficiency claim as provisional until weights ship",
-            "Text-only model: no native multimodal support",
-            "Still unavailable for anyone who needs the actual weights today"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "748e28fa-5c34-4904-8fab-2163e0f15b54",
-          "kind": "takeaways",
-          "title": "The takeaway",
-          "body": null,
-          "bullets": [
-            "First serious Western open-weight challenger to DeepSeek/Qwen/GLM from a lab built by ex-DeepMind researchers",
-            "501B total / 23B active sparse MoE keeps inference cheap despite the large parameter count",
-            "Claims 3-4x less inference compute than rivals at similar reasoning quality — unverified so far",
-            "Real test comes when weights ship under Apache 2.0 later this month"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "16d4f366-8e4c-4d45-b4d1-3082faa339fe",
-            "prompt": "How many of Beam's 501 billion total parameters are active per token?",
-            "options": [
-              "501B (fully dense)",
-              "23B",
-              "100 million",
-              "6,144"
-            ],
-            "correctIndex": 1,
-            "explanation": "Beam is a sparse mixture-of-experts model — only 23B of its 501B total parameters activate for any given token, which is what keeps inference cheap."
-          },
-          {
-            "id": "c66c3587-bc66-42de-bfc6-ece8717006a7",
-            "prompt": "What hasn't happened yet as of Reflection AI's October 5 announcement?",
-            "options": [
-              "The benchmark scores were published",
-              "The model's architecture was described",
-              "The actual model weights were released",
-              "The founders were named"
-            ],
-            "correctIndex": 2,
-            "explanation": "Reflection revealed Beam's specs, training details, and benchmark claims on Oct 5, but said Apache 2.0 weights and a full technical report would follow later in October."
-          },
-          {
-            "id": "2fd35415-9494-4bae-b14b-56828b11e18a",
-            "prompt": "Why is Reflection AI's 'matches GLM-5.2' claim worth treating cautiously?",
-            "options": [
-              "GLM-5.2 is not a real model",
-              "The claim is self-reported with no independent verification yet",
-              "Reflection AI has no AI research background",
-              "Beam has not finished training"
-            ],
-            "correctIndex": 1,
-            "explanation": "Reflection's benchmark numbers are self-reported ahead of the weights release — there's no independent third-party replication yet."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "83ba2257-b30b-48bf-8fef-fd5fb92b6725",
-          "title": "Reflection AI — Introducing Beam",
-          "url": "https://reflection.ai/blog/introducing-beam"
-        },
-        {
-          "id": "aeabac84-d0c2-42f8-9336-b1a211eb2534",
-          "title": "Reflection debuts Beam, an open-weight AI model to rival Chinese models at lower compute cost",
-          "url": "https://techcrunch.com/2026/10/05/reflection-debuts-beam-a-open-weight-ai-model-to-rival-chinese-models-at-lower-compute-cost/"
-        }
-      ]
-    },
-    {
-      "id": "4a0f7bf8-d563-4d1e-ba69-4e29fab9e768",
-      "title": "Quantization: Shrinking a Model Without Retraining It",
-      "subtitle": "Mapping 16-bit weights to 4 or 8 bits buys 2-4x less memory for a little accuracy.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "quantization",
-        "inference",
-        "gptq",
-        "model-compression",
-        "llm-serving"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "scalemass.fill",
-      "summary": "Quantization maps a model's weights (and sometimes activations) from 16-bit floats down to 8-bit or 4-bit representations, cutting memory by 2-4x with a modest accuracy cost. Calibration-aware methods like GPTQ and AWQ beat naive rounding, and it's the exact technique that lets multi-hundred-billion-parameter models fit on a single GPU.",
-      "publishedDate": "2026-10-06T00:48:43Z",
-      "slides": [
-        {
-          "id": "7fa6a5fe-61f7-4eb2-9737-a1f9e12a1422",
-          "kind": "cover",
-          "title": "The same model, a quarter of the bytes",
-          "body": null,
-          "bullets": [
-            "A 70B model in FP16 needs roughly 140GB of memory just for weights",
-            "Quantized to 4-bit, that drops to roughly 35GB — small enough for one high-end GPU",
-            "No retraining required — it's a post-training transformation"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "id": "8182d4d4-1a4a-4da5-88b7-5bb185750b61",
-          "kind": "concept",
-          "title": "What quantization actually does",
-          "body": "Neural network weights are normally stored as 16-bit floats (FP16/BF16). Quantization maps each weight, or a small group of weights, to a lower-precision representation — 8-bit integers, 4-bit integers, or compact float formats like FP8 — using a scale factor to preserve the original range. The low-precision values are what's stored and often what the actual multiply happens in.",
-          "bullets": [
-            "FP32 -> FP16 halves memory with near-zero accuracy loss (already standard practice)",
-            "FP16 -> INT8 halves it again: ~4x smaller than FP32, ~1-2% typical accuracy drop",
-            "INT8 -> INT4/NF4 halves it again: ~8x smaller than FP32, a noticeable but often acceptable drop",
-            "A scale factor per group of weights keeps the low-precision mapping accurate"
-          ],
-          "symbol": "divide.circle.fill",
-          "table": null
-        },
-        {
-          "id": "afc75c92-4c2b-4fa8-b209-af8352baa2e4",
-          "kind": "architecture",
-          "title": "Not all quantization methods are equal",
-          "body": "GPTQ quantizes weights layer-by-layer to minimize reconstruction error using calibration data, applied once, offline. AWQ instead looks at which weight channels the model's own activations stress most, and protects exactly those higher-magnitude channels at higher precision — which tends to preserve more accuracy at the same bit-width. Modern GPUs (H100, Blackwell) also run FP8/FP4 natively in their tensor cores, making low precision a compute speedup, not just a storage saving.",
-          "bullets": [
-            "GPTQ: one-shot, layer-by-layer error minimization using calibration data",
-            "AWQ: protects activation-critical weight channels at higher precision",
-            "FP8 (E4M3/E5M2): low-precision floats run directly in H100/Blackwell tensor cores",
-            "QLoRA's NF4: a 4-bit format tuned to the actual distribution of pretrained weights"
-          ],
-          "symbol": "square.stack.3d.down.right.fill",
-          "table": null
-        },
-        {
-          "id": "6f0d6bc1-a38b-45a3-9ab9-da09a633bf8f",
-          "kind": "comparison",
-          "title": "Memory vs. accuracy, concretely",
-          "body": null,
-          "bullets": [
-            "Calibration-aware methods (AWQ, GPTQ) beat naive rounding by a wide margin at 4-bit",
-            "Degradation is highly task-dependent: math and code reasoning suffer more than casual chat"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Precision",
-              "Memory for 70B params",
-              "Typical quality hit"
-            ],
-            "rows": [
-              [
-                "FP16 / BF16",
-                "~140 GB",
-                "baseline"
-              ],
-              [
-                "FP8",
-                "~70 GB",
-                "~0.5-1% degradation"
-              ],
-              [
-                "INT8",
-                "~70 GB",
-                "~1-2% degradation"
-              ],
-              [
-                "INT4 (AWQ / GPTQ)",
-                "~35 GB",
-                "~2-5% degradation, task-dependent"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "87688cf8-1782-452f-8787-1e5566decf4f",
-          "kind": "example",
-          "title": "Why this matters in practice",
-          "body": "FreeToken, an edge-serving system covered elsewhere in this feed, leans on exactly this: it supports MXFP4, NVFP4, FP8, and BF16 so a 753-billion-parameter MoE model's experts fit into the RAM and VRAM of a single workstation instead of needing a multi-GPU datacenter rack. Quantization is the difference between 'needs 8 H100s' and 'runs on your desktop.'",
-          "bullets": [
-            "A 500B+ parameter MoE model only becomes servable on workstation hardware after 4-8x compression",
-            "Quantization format (MXFP4, NVFP4, FP8) is now a first-class design axis in serving systems, not an afterthought"
-          ],
-          "symbol": "desktopcomputer",
-          "table": null
-        },
-        {
-          "id": "f7c9f074-7ce4-4ea0-baa1-5a55c94f035f",
-          "kind": "concept",
-          "title": "When NOT to quantize aggressively",
-          "body": "Below 4 bits, accuracy loss compounds fast and becomes unpredictable across tasks — a model that's fine at casual chat can fall apart on multi-step math or code. Quantizing the KV cache (not just the weights) adds further risk on long-context tasks, and re-quantizing after every fine-tune adds pipeline overhead teams often underestimate.",
-          "bullets": [
-            "Sub-4-bit quantization risks unpredictable degradation on reasoning-heavy tasks",
-            "KV-cache quantization compounds errors over long contexts more than weight quantization alone",
-            "Needs fresh calibration data after any meaningful fine-tune — it isn't a one-time step"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "257fa104-9139-49d4-b712-758d18766841",
-          "kind": "takeaways",
-          "title": "The takeaway",
-          "body": null,
-          "bullets": [
-            "Quantization trades precision for memory/speed — FP16 to INT8 roughly halves memory for ~1-2% quality loss",
-            "Calibration-aware methods (GPTQ, AWQ) beat naive rounding, especially below 8 bits",
-            "Modern GPUs (H100, Blackwell) run FP8/FP4 natively — it's a speed win, not just a storage win",
-            "It's what turns a 'needs a GPU cluster' model into a 'runs on one card' model"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "296b962f-5cbe-497c-b8f5-8399d8ed6766",
-            "prompt": "Roughly how much memory does quantizing a model from FP16 to INT4 save?",
-            "options": [
-              "No real difference",
-              "About 2x less",
-              "About 4x less",
-              "About 8x less"
-            ],
-            "correctIndex": 2,
-            "explanation": "FP16 -> INT8 is about a 2x reduction, and INT8 -> INT4 is another 2x, so FP16 -> INT4 nets roughly 4x less memory (e.g., ~140GB down to ~35GB for a 70B model)."
-          },
-          {
-            "id": "37546fa0-737e-4ff0-8fe8-74965b2082a0",
-            "prompt": "What's the key difference between GPTQ and AWQ?",
-            "options": [
-              "GPTQ runs on CPU only, AWQ on GPU only",
-              "AWQ specifically protects weight channels that activations stress most; GPTQ minimizes reconstruction error layer-by-layer without special-casing channels",
-              "They are the same algorithm with different names",
-              "GPTQ only works on vision models"
-            ],
-            "correctIndex": 1,
-            "explanation": "AWQ's key insight is activation-awareness: it identifies and protects the small number of weight channels that large activations depend on, often preserving more accuracy than GPTQ's uniform per-layer error minimization at the same bit-width."
-          },
-          {
-            "id": "9b396133-cced-4d76-a995-c822e86042ce",
-            "prompt": "Why might quantizing the KV cache be riskier than quantizing weights alone?",
-            "options": [
-              "KV cache quantization is always more accurate",
-              "Errors in cached keys/values compound across a long context instead of being fixed once",
-              "The KV cache doesn't affect model outputs",
-              "Weights can't be quantized at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "Weight quantization error is static — baked in once. KV-cache quantization errors can accumulate turn over turn across a long context, degrading long-context tasks more unpredictably."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "c27b93f0-6ae9-479b-95da-23acb831a7fa",
-          "title": "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers",
-          "url": "https://arxiv.org/abs/2210.17323"
-        },
-        {
-          "id": "b1033fec-d45a-45f6-b5fe-886cc7f14925",
-          "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration",
-          "url": "https://arxiv.org/abs/2306.00978"
-        }
-      ]
-    },
-    {
-      "title": "Data Agent Kit Goes GA: One MCP Server for 15+ Google Data Services",
-      "subtitle": "Your coding agent can now read BigQuery schemas, Bigtable row keys, and Airflow DAGs without you copy-pasting a single CREATE TABLE statement.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "mcp",
-        "ai-agents",
-        "google-cloud",
-        "bigquery",
-        "coding-agents",
-        "data-engineering"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "Google Cloud's Data Agent Kit reached general availability on Sept 30, 2026: a free MCP server plus open-source agent skills that let Claude Code, Codex CLI, Cursor and other coding agents inspect schemas, run cost-aware queries, and manage resources across 15+ Google data products from inside your editor.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Data Agent Kit Is Now GA",
-          "body": "A free, open-source set of MCP tools + agent skills that plugs 15+ Google Cloud data services directly into whatever coding agent you already use.",
-          "bullets": [
-            "GA: September 30, 2026",
-            "Works in Claude Code, Codex CLI, Cursor, VS Code, Antigravity",
-            "BigQuery, Bigtable, Spanner, AlloyDB, Spark, Airflow, dbt, and more — one MCP server"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "id": "87690e9c-00fe-4067-a49d-15c066dec49a"
-        },
-        {
-          "kind": "problem",
-          "title": "Agents Know Your Repo. They Don't Know Your Schema.",
-          "body": "Coding agents are great at reading source files, but a database schema, a Bigtable row-key design, or an Airflow DAG's failure history lives outside the repo entirely.",
-          "bullets": [
-            "Developers hand-paste CREATE TABLE statements into prompts just so the agent knows column names",
-            "Without schema awareness, agents guess — and a wrong guess on a 10TB BigQuery table isn't a typo, it's a slow, expensive full-table scan",
-            "Every data product (BigQuery, Spanner, Spark, Airflow) has its own quirks an agent has no way to learn from a prompt alone"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "0f23e14d-9be9-4fff-abf4-b353079a689f"
-        },
-        {
-          "kind": "architecture",
-          "title": "One MCP Server, 15+ Services Behind It",
-          "body": "Data Agent Kit exposes a standard set of MCP tools — schema inspection, query execution, job-log reading, catalog browsing, resource management — that fan out across Google's entire data stack.",
-          "bullets": [
-            "Analytics: BigQuery, including the new BigQuery Graph for property-graph queries",
-            "Operational DBs: Bigtable, Spanner, AlloyDB, Cloud SQL",
-            "Lakehouse: Managed Service for Apache Spark, Lakehouse for Apache Iceberg — with federated reads into AWS Glue and Databricks Unity Catalog",
-            "Orchestration: dbt, Dataform, Managed Apache Airflow; governance via Dataplex Knowledge Catalog",
-            "Google-authored open-source 'skills' teach agents best practices — e.g. bigtable-basics flags hotspotting and full-table-scan risk before a query runs"
-          ],
-          "symbol": "server.rack",
-          "id": "fa68d7b8-7ba4-45fd-becd-6391e0f2f0ff"
-        },
-        {
-          "kind": "example",
-          "title": "What It Looks Like in Practice",
-          "body": "A developer types one plain-English prompt inside Claude Code; the agent does the schema discovery and cost checking itself.",
-          "bullets": [
-            "Prompt: \"What are this week's fastest-rising US search terms that weren't in last week's top 10? Use the BigQuery public Google Trends dataset.\"",
-            "Agent calls the MCP schema tool to inspect the public dataset's columns — no hallucinated field names",
-            "The bigquery-graph-query / cost-aware skill nudges the agent to run a dry-run first, checking bytes scanned before executing",
-            "Result comes back with the agent's permissions (your IAM role or an impersonated service account) — it can't read what you can't read"
-          ],
-          "symbol": "terminal.fill",
-          "id": "55567f98-b9d7-4570-875b-abe53442a6de"
-        },
-        {
-          "kind": "comparison",
-          "title": "Preview vs. GA: What Actually Shipped",
-          "table": {
-            "headers": [
-              "Capability",
-              "Preview",
-              "GA (Sept 30, 2026)"
-            ],
-            "rows": [
-              [
-                "BigQuery Graph (property-graph queries)",
-                "Not supported",
-                "New"
-              ],
-              [
-                "Bigtable (schema design, hotspot detection)",
-                "Not supported",
-                "New"
-              ],
-              [
-                "Managed Service for Apache Spark",
-                "Not supported",
-                "New"
-              ],
-              [
-                "Federated catalog (AWS Glue, Databricks Unity)",
-                "Not supported",
-                "New"
-              ],
-              [
-                "Setup",
-                "Manual per-service config",
-                "One-click: sign in, pick services, auto-enable APIs"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis",
-          "id": "e3a3f3d6-f3f7-45b7-a42c-d003d8e66369",
-          "bullets": []
-        },
-        {
-          "kind": "problem",
-          "title": "Where It Can Bite You",
-          "body": "Broad access across 15+ services is powerful — and that's exactly why it needs guardrails.",
-          "bullets": [
-            "The tools are free, but every query and job they trigger still bills against your normal GCP usage — a careless agent can rack up real cost",
-            "An MCP server with this much reach needs least-privilege IAM from day one; Google ships Model Armor and VPC Service Controls for this reason, but you still have to turn them on",
-            "It's Google Cloud-native tooling — the federated catalog reaches AWS Glue and Databricks, but services outside GCP's own data products aren't covered"
-          ],
-          "symbol": "lock.shield.fill",
-          "id": "14ef1cb8-1bb6-441a-bd1b-2b33bc1081fc"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "bullets": [
-            "Data Agent Kit turns 15+ Google data services into one standard MCP interface any coding agent can call",
-            "GA's headline additions are BigQuery Graph, Bigtable, and Managed Apache Spark, plus federated access to non-Google catalogs",
-            "It ships with open-source 'skills' that encode cost-aware and schema-aware best practices, not just raw API access",
-            "It's free to use, but IAM scoping and query cost still land on you — the agent only has as much blast radius as the identity it runs under"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "c3c4c7f0-1fa3-4d45-bfbe-7d27211050c9"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What protocol does Data Agent Kit use to connect coding agents to Google's data services?",
-            "options": [
-              "A custom REST API",
-              "Model Context Protocol (MCP)",
-              "GraphQL federation",
-              "gRPC streaming only"
-            ],
-            "correctIndex": 1,
-            "explanation": "Data Agent Kit is built as an MCP server plus a library of agent skills — the same open standard behind MCP tool-calling in Claude Code and other agents, which is why it works across so many different coding agents without custom integrations.",
-            "id": "ea504283-fd6b-4849-9d12-efdc059542ed"
-          },
-          {
-            "prompt": "Which three services became newly supported specifically at the GA launch (not available in preview)?",
-            "options": [
-              "BigQuery Graph, Bigtable, Managed Service for Apache Spark",
-              "Cloud SQL, Spanner, AlloyDB",
-              "dbt, Dataform, Airflow",
-              "Cloud Storage, Pub/Sub, Cloud Run"
-            ],
-            "correctIndex": 0,
-            "explanation": "Spanner, AlloyDB, Cloud SQL, dbt, Dataform, and Airflow were already supported in preview. BigQuery Graph, Bigtable, and Managed Service for Apache Spark are the services that moved from unsupported to supported with GA.",
-            "id": "71143b25-8392-435e-831c-3fd7b34324f5"
-          },
-          {
-            "prompt": "Why does a Data Agent Kit skill push the agent to run a 'dry run' before executing a BigQuery query?",
-            "options": [
-              "To validate SQL syntax only",
-              "To estimate bytes scanned so the agent avoids an expensive full-table scan before it actually runs",
-              "It's required by IAM policy",
-              "To cache the query result for later"
-            ],
-            "correctIndex": 1,
-            "explanation": "BigQuery bills by bytes scanned. A dry run reports the scan size without executing the query, so a cost-aware skill can catch an unpartitioned, full-table-scanning query before it costs real money — one of the concrete 'best practices' the open-source skills encode.",
-            "id": "821fc602-82b4-46dd-8d5f-3599036039fc"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Data Agent Kit is now GA: Bring Google Data Cloud to any coding agent",
-          "url": "https://cloud.google.com/blog/topics/developers-practitioners/data-agent-kit-is-now-ga-bring-google-data-cloud-to-any-coding-agent",
-          "id": "a2d314db-372c-4b61-ad19-d9a6936acee4"
-        }
-      ],
-      "id": "43a43179-03ff-406d-a05b-e7f9850399e3",
-      "publishedDate": "2026-10-05T19:02:02Z"
     }
   ]
 }
