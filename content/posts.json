@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "id": "56e737ef-e8f2-4ab8-a0e9-edf5dc2c105f",
+      "title": "Multi-Head Latent Attention: One Cache Slot Instead of One Per Head",
+      "subtitle": "How DeepSeek-V2 shrank the KV cache by compressing every head into a single shared vector.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "mla",
+        "inference",
+        "deepseek",
+        "transformers"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.stack.3d.down.right.fill",
+      "summary": "Multi-Head Latent Attention (MLA) compresses the keys and values of every attention head into one small shared latent vector, so only that vector needs to sit in the KV cache instead of a full set of per-head keys and values. Because plain rotary position embeddings don't survive that compression, MLA splits each key/query into a compressed 'content' part and a small separate 'decoupled RoPE' part that carries position information directly.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Cache one vector per token, not one per head",
+          "body": "Multi-Head Latent Attention (MLA), introduced in DeepSeek-V2, replaces the usual per-head keys and values with a single compressed latent vector that gets expanded back out only when attention is actually computed.",
+          "bullets": [
+            "Standard multi-head attention caches a full key and value for every head, every layer, every token",
+            "MLA caches one small shared latent vector instead — heads are reconstructed from it on the fly",
+            "Goal: shrink the KV cache enough to fit longer contexts and bigger batches in the same GPU memory"
+          ],
+          "symbol": "square.stack.3d.down.right.fill",
+          "table": null,
+          "id": "c6c5bd0e-1b4c-4c35-9132-cae0454acbf1"
+        },
+        {
+          "kind": "problem",
+          "title": "The KV cache, not FLOPs, is what runs out first",
+          "body": "During generation, a transformer caches every past token's keys and values so it doesn't recompute them each step. That cache grows linearly with sequence length and head count, and it lives in GPU memory the whole time.",
+          "bullets": [
+            "Cache size per token ≈ 2 × num_heads × head_dim × num_layers (the 2 is for K and V)",
+            "Longer context and bigger batches both multiply this directly — it's often the real ceiling on context length, not compute",
+            "Multi-Query Attention (MQA) and Grouped-Query Attention (GQA) shrink it by sharing K/V across heads, but that sharing can cost quality"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null,
+          "id": "9bb8220c-6525-4e79-9801-a0c48f51ee20"
+        },
+        {
+          "kind": "solution",
+          "title": "Compress all heads into one latent vector, expand on demand",
+          "body": "MLA low-rank-compresses a token's keys and values down into one shared latent vector c_t that's much smaller than the concatenation of all per-head K/V. At attention time, per-head keys and values are reconstructed from c_t with a learned up-projection — but only the small latent vector ever needs to be cached.",
+          "bullets": [
+            "Down-projection at write time: hidden state → small latent vector c_t (cached)",
+            "Up-projection at read time: c_t → full per-head K and V, computed on the fly during attention",
+            "Because the up-projection is a fixed matrix, this is mathematically close to full attention quality, unlike head-sharing in GQA/MQA"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null,
+          "id": "5ff98fa9-4bca-43af-bbef-3e46846868ff"
+        },
+        {
+          "kind": "architecture",
+          "title": "The catch: RoPE doesn't survive compression",
+          "body": "Rotary position embeddings rotate each key by an angle that depends on its position before the dot product with the query. That rotation doesn't commute with MLA's up-projection matrix, so you can't rotate the compressed latent and expect the right per-head keys to pop out — position information gets scrambled.",
+          "bullets": [
+            "Fix: split each query/key into two parts — a 'content' part reconstructed from the compressed latent (no position info), and a small 'decoupled RoPE' part computed directly per head, outside the compression",
+            "Only the decoupled RoPE part actually needs rotary embeddings applied to it",
+            "The cache now holds the shared latent vector plus one small decoupled rope key — still far smaller than full per-head K/V"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "21abd6fc-daaf-44ad-98ab-446d250bf3e7"
+        },
+        {
+          "kind": "comparison",
+          "title": "Where MLA lands relative to the alternatives",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "id": "56ec1132-33cf-4d47-88e2-74d15836a477",
+          "table": {
+            "headers": [
+              "Method",
+              "What's cached per token",
+              "Quality vs. full MHA"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "Full K and V for every head",
+                "Baseline"
+              ],
+              [
+                "MQA",
+                "One shared K/V for all heads",
+                "Noticeably lower"
+              ],
+              [
+                "GQA",
+                "One shared K/V per small group of heads",
+                "Close, tunable by group count"
+              ],
+              [
+                "MLA",
+                "One shared compressed latent + small decoupled RoPE key",
+                "Matches or beats MHA in DeepSeek-V2's reported results, cache cut by over 90%"
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "example",
+          "title": "Worked example: what the compression actually saves",
+          "body": "Take an illustrative model with 64 attention heads of 128 dimensions each. Plain MHA has to cache both K and V for every head: 2 × 64 × 128 = 16,384 numbers per token, per layer.",
+          "bullets": [
+            "MLA instead caches one shared latent vector (say, 512 dimensions) plus one small decoupled RoPE key (say, 64 dimensions) — about 576 numbers per token",
+            "That's roughly a 96% reduction in this illustrative example, consistent with the more-than-90% cache reduction DeepSeek-V2's authors reported for their actual configuration",
+            "A smaller cache means more sequences' caches fit in the same GPU memory at once, which raises the batch size a server can run — directly increasing generation throughput"
+          ],
+          "symbol": "number",
+          "table": null,
+          "id": "8d7adb60-8fb8-4f16-a38d-84c79890bd99"
+        },
+        {
+          "kind": "problem",
+          "title": "Where MLA costs you",
+          "body": "The memory savings aren't free — MLA trades cache size for extra computation and design complexity.",
+          "bullets": [
+            "Reconstructing per-head K/V from the latent adds an up-projection matmul at every attention step that MHA/GQA don't need",
+            "The benefit is concentrated in the memory-bound decode phase; compute-bound prefill sees much less speedup",
+            "It's not a drop-in swap for an existing MHA checkpoint — the decoupled RoPE split means a model needs to be trained (or carefully converted) around this architecture from the start",
+            "More moving parts than GQA (down-projection, up-projection, decoupled RoPE path) means more surface area for implementation bugs"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null,
+          "id": "2fc28422-2fbe-4aee-bd31-52ee178fd6a6"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Compress the cache, not the heads",
+          "body": "MLA's insight is that you don't have to sacrifice per-head expressiveness to shrink the KV cache — you can compress what's stored and reconstruct full fidelity at read time, as long as you handle position embeddings separately.",
+          "bullets": [
+            "Cache one shared low-rank latent vector per token instead of full per-head K/V",
+            "RoPE needs a separate 'decoupled' key path since rotation doesn't commute with the compression",
+            "Best fit: serving at long context or large batch size, where the KV cache — not FLOPs — is the bottleneck"
+          ],
+          "symbol": "flag.checkered",
+          "table": null,
+          "id": "22f85deb-a8cd-4faa-ba81-6a04ee6f63b9"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does Multi-Head Latent Attention store in the KV cache instead of full per-head keys and values?",
+            "options": [
+              "A single shared low-rank latent vector (plus a small decoupled positional key)",
+              "A separate reward model's hidden state",
+              "The full attention weight matrix for every head",
+              "A rotated copy of the query for every head"
+            ],
+            "correctIndex": 0,
+            "explanation": "MLA down-projects each token's keys and values into one small shared latent vector, which is what actually gets cached. Full per-head keys and values are reconstructed from it only when attention is computed.",
+            "id": "6bc753d5-1fa6-484e-8c4d-e78cc15bad8b"
+          },
+          {
+            "prompt": "Why can't MLA just apply standard RoPE to the compressed latent vector before caching it?",
+            "options": [
+              "RoPE's rotation doesn't commute with the latent's up-projection matrix, so position information would get scrambled when heads are reconstructed",
+              "RoPE only works with Grouped-Query Attention, not latent compression",
+              "The latent vector is too small to hold any numerical values after rotation",
+              "Caching rotated vectors uses more memory than caching unrotated ones"
+            ],
+            "correctIndex": 0,
+            "explanation": "Because the up-projection from latent to per-head keys is a fixed linear map, rotating the latent first doesn't produce the same result as rotating each head's key after expansion. MLA works around this with a separate small 'decoupled RoPE' key path.",
+            "id": "1fda9479-3f71-493f-bfda-175a1a5a570f"
+          },
+          {
+            "prompt": "MLA's memory savings show up most during which phase of serving an LLM?",
+            "options": [
+              "Decoding/generation, which is memory-bandwidth bound on the KV cache",
+              "Prefill, which is compute bound on the input prompt",
+              "Tokenization, before any matrix multiplication happens",
+              "Loading model weights from disk at startup"
+            ],
+            "correctIndex": 0,
+            "explanation": "Generation runs one token at a time and is typically bottlenecked by how much KV cache can fit in GPU memory and be read per step, so shrinking the cache directly helps batch size and throughput there. Prefill processes the whole prompt at once and is more compute-bound, so it benefits less.",
+            "id": "4c399743-b4db-4e66-9ee4-9b3f412ba567"
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-10-13T18:48:14Z"
+    },
+    {
       "id": "9eae0013-bd65-4bc1-8e5a-482d9475014d",
       "title": "FlashAttention: Exact Attention Without the Memory Wall",
       "subtitle": "It doesn't approximate attention — it just stops writing a giant matrix to slow GPU memory.",
@@ -10924,188 +11116,6 @@
         }
       ],
       "publishedDate": "2026-10-07T06:49:41Z"
-    },
-    {
-      "title": "Claude Opus 5.5: Matching Fable 5.1 at 40% Less Cost",
-      "subtitle": "A faster, cheaper Opus closes the gap with Anthropic's top model",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "claude",
-        "anthropic",
-        "llm-release",
-        "agentic-coding",
-        "pricing"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "bolt.fill",
-      "summary": "On September 22, 2026, Anthropic released Claude Opus 5.5, saying it performs at the level of Claude Fable 5.1 on most work while costing 40% less to run than Opus 5. Output pricing dropped from $25 to $20 per million tokens, and it posted double-digit gains on agentic coding benchmarks like Terminal-Bench and CursorBench.",
-      "slides": [
-        {
-          "id": "1098c6d3-4cc0-4b0c-ade2-fc418d323ae6",
-          "kind": "cover",
-          "title": "Opus 5.5 Lands: Same Tier, Much Lower Bill",
-          "body": "On September 22, 2026, Anthropic shipped Claude Opus 5.5, pitching it as a model that performs at the level of Claude Fable 5.1 on most work while costing 40% less to run than Opus 5.",
-          "bullets": [],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "ecf4a993-de0a-4293-a124-59f50942f96a",
-          "kind": "problem",
-          "title": "Opus Was Anthropic's Best — and Priciest — Workhorse",
-          "body": "Opus 5 was positioned for agentic coding and long-horizon tasks, but every tool call and retry adds up fast at frontier pricing.",
-          "bullets": [
-            "Opus 5 billed $5 per million input tokens and $25 per million output tokens — the top of Anthropic's lineup",
-            "Agentic workloads (coding agents, computer use) burn far more tokens per task than a single chat turn",
-            "Teams had to pick: Opus-tier quality at a high bill, or a cheaper model with a real capability gap"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "349309e0-edee-48aa-99ee-e23f1380e6eb",
-          "kind": "solution",
-          "title": "What Changed: Faster, Safer, and Sharply Cheaper",
-          "body": "Opus 5.5 is not a new architecture tier — it's a refresh that moves the cost/quality tradeoff substantially in the customer's favor.",
-          "bullets": [
-            "Generates output more than 30% faster than Opus 5",
-            "Anthropic reports stronger resistance to prompt injection than prior Opus models",
-            "Pricing per 1M tokens: input $4 (was $5), output $20 (was $25), cache reads $0.20 (was $0.50, a 60% cut), cache writes $5",
-            "Fast mode available at $8 input / $40 output per 1M tokens for latency-sensitive use"
-          ],
-          "symbol": "tag.fill",
-          "table": null
-        },
-        {
-          "id": "1905a4af-0858-47dc-b5e6-edb74f118e86",
-          "kind": "comparison",
-          "title": "Opus 5.5 vs Opus 5, Anthropic's Own Benchmarks",
-          "body": "The largest jumps are on agentic and coding evals — exactly the workloads Opus is built for.",
-          "bullets": [
-            "These are Anthropic's first-party numbers, not yet independently reproduced on a public leaderboard"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Opus 5",
-              "Opus 5.5"
-            ],
-            "rows": [
-              [
-                "Terminal-Bench 4.0",
-                "52.3%",
-                "66.4%"
-              ],
-              [
-                "CursorBench 4.0",
-                "46.6%",
-                "57.8%"
-              ],
-              [
-                "FrontierCode v1.1",
-                "48.0%",
-                "54.4%"
-              ],
-              [
-                "GDPval-AA v2.1 (Elo)",
-                "1708",
-                "1846"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "703f70f3-bd25-4350-a456-b157e5f1bb7c",
-          "kind": "example",
-          "title": "Worked Example: What the Price Cut Means at Scale",
-          "body": "A coding-agent team spending $50,000/month on Opus 5 output tokens would see that line drop to roughly $40,000/month on Opus 5.5 pricing alone — before counting fewer retries from the 14-point Terminal-Bench gain.",
-          "bullets": [
-            "20% lower output price compounds with higher first-try success — fewer re-runs means the real savings exceed the sticker-price cut",
-            "Cache-heavy agent loops (re-reading the same repo/context repeatedly) benefit most from the 60% cut on cache reads"
-          ],
-          "symbol": "dollarsign.circle.fill",
-          "table": null
-        },
-        {
-          "id": "27c89849-9aa4-4f1a-9ebe-688042cf2b5f",
-          "kind": "concept",
-          "title": "What the Numbers Don't Tell You",
-          "body": "Treat \"performs at the level of Fable 5.1\" as a qualitative, first-party claim, not a blanket equivalence.",
-          "bullets": [
-            "\"Performs at the level of Fable 5.1 on most work\" is Anthropic's framing — Fable 5.1 likely still leads on the hardest frontier tasks",
-            "Context window and training cutoff weren't disclosed in the announcement",
-            "Benchmark gains cluster on agentic/coding evals; general knowledge-work gains may be smaller than the headline numbers suggest"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "2a71da74-036f-48c0-8403-51dfda3cd6c1",
-          "kind": "takeaways",
-          "title": "What to Take Away",
-          "body": null,
-          "bullets": [
-            "Opus 5.5 narrows the gap to Fable 5.1 while cutting Opus 5's price 20–60% across input, output, and cache tiers",
-            "Biggest benchmark jumps are on agentic coding (Terminal-Bench, CursorBench) — the workloads Opus targets",
-            "Available now on the Claude Platform, AWS, Google Cloud, and Microsoft Azure",
-            "If you're already running Opus 5, Opus 5.5 is close to a straight upgrade on both quality and cost"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "144a1bee-901e-44f4-8d88-b8f0802786b0",
-            "prompt": "What did Claude Opus 5.5's output-token price change to, per million tokens?",
-            "options": [
-              "$20, down from $25",
-              "$4, down from $5",
-              "$0.20, down from $0.50",
-              "$40, down from $50"
-            ],
-            "correctIndex": 0,
-            "explanation": "Opus 5.5 cut output pricing from $25 to $20 per million tokens — a 20% reduction. The input price dropped from $5 to $4, and cached reads fell 60%, from $0.50 to $0.20."
-          },
-          {
-            "id": "cc02c80e-4f3c-49bf-95aa-38f3bd3040d9",
-            "prompt": "Which benchmark showed the largest absolute gain from Opus 5 to Opus 5.5 in Anthropic's own numbers?",
-            "options": [
-              "Terminal-Bench 4.0 (52.3% → 66.4%)",
-              "FrontierCode v1.1 (48.0% → 54.4%)",
-              "CursorBench 4.0 (46.6% → 57.8%)",
-              "They were all identical"
-            ],
-            "correctIndex": 0,
-            "explanation": "Terminal-Bench 4.0 jumped 14.1 percentage points (52.3% to 66.4%), the largest absolute gain among the four benchmarks Anthropic published."
-          },
-          {
-            "id": "f5ebf069-d5cf-4ec8-bad0-1ccef54a6f21",
-            "prompt": "How does Anthropic describe Opus 5.5's capability relative to Claude Fable 5.1?",
-            "options": [
-              "It performs at the level of Fable 5.1 on most work, at a lower cost",
-              "It surpasses Fable 5.1 on every benchmark",
-              "It is a distilled, smaller version of Fable 5.1",
-              "It only matches the older Opus 5, not Fable 5.1"
-            ],
-            "correctIndex": 0,
-            "explanation": "Anthropic's framing is that Opus 5.5 matches Fable 5.1 on most work while running cheaper — a qualitative claim about typical workloads, not a benchmark sweep."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "5b15dbeb-eb4a-4531-bdc4-6dc5984374fe",
-          "title": "Anthropic — Introducing Claude Opus 5.5",
-          "url": "https://www.anthropic.com/news/claude-opus-5-5"
-        }
-      ],
-      "id": "4e6948d8-3a22-4a60-acba-d97e25aacfde",
-      "publishedDate": "2026-10-07T00:46:03Z"
     }
   ]
 }
