@@ -1,6 +1,582 @@
 {
   "posts": [
     {
+      "id": "9eae0013-bd65-4bc1-8e5a-482d9475014d",
+      "title": "FlashAttention: Exact Attention Without the Memory Wall",
+      "subtitle": "It doesn't approximate attention — it just stops writing a giant matrix to slow GPU memory.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "flashattention",
+        "transformers",
+        "gpu",
+        "attention",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "bolt.fill",
+      "summary": "FlashAttention doesn't approximate attention — it computes the exact same result, just without ever writing the full N×N score matrix to slow GPU memory. By tiling the computation and tracking softmax statistics on the fly, it turns a memory-bound bottleneck into a compute-bound one, cutting memory from O(N²) to O(N) and making long-context transformers practical.",
+      "slides": [
+        {
+          "id": "d3f44752-3b33-4a51-bb9d-5aa5f5ea78ca",
+          "kind": "cover",
+          "title": "The Attention Bottleneck Was Never the Math",
+          "body": "Standard attention does O(N²) FLOPs, so everyone assumed it was compute-bound. FlashAttention's real insight: on a modern GPU, it's actually bound by how much data moves in and out of slow memory.",
+          "bullets": [
+            "GPUs have tiny, fast on-chip SRAM (tens of MB) and large, slow off-chip HBM (tens of GB) — moving data between them, not doing arithmetic, is usually the real cost",
+            "A 2048-token sequence needs a 2048×2048 attention matrix per head — written to and read from HBM multiple times in a naive implementation"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "1a1e5b20-fe81-4bc6-9a75-d5166e5ea390",
+          "kind": "problem",
+          "title": "Why Naive Attention Chokes on Long Context",
+          "body": "The textbook implementation computes scores, writes them to HBM, reads them back for softmax, writes the result, reads it again for the weighted sum.",
+          "bullets": [
+            "Memory to store the full N×N score matrix grows quadratically — 32K tokens means over a billion entries per head before you've done anything with them",
+            "Each of those entries gets written and re-read from slow HBM multiple times, so wall-clock time scales with memory traffic, not raw FLOPs",
+            "This is why long-context training and inference used to need either truncated sequences or multiple GPUs just to hold the intermediate matrix"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "03323bf3-df5d-41e0-bb0e-eb115a04f1c3",
+          "kind": "solution",
+          "title": "Tile It, and Never Materialize the Full Matrix",
+          "body": "FlashAttention splits queries, keys, and values into small blocks that fit in fast SRAM, and fuses the whole attention computation into one GPU kernel.",
+          "bullets": [
+            "Each block of Q is matched against blocks of K/V entirely inside SRAM — scores for that block are computed, used, and discarded without ever touching HBM",
+            "Softmax normally needs the full row of scores first; FlashAttention uses the 'online softmax' trick — a running max and running sum updated block by block, giving the exact same result incrementally",
+            "In the backward pass, instead of storing the N×N matrix from the forward pass, it recomputes the needed blocks on the fly — trading a bit of extra compute for a lot less memory traffic"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "ef72b032-68e1-48d7-b19b-04bef29ee321",
+          "kind": "architecture",
+          "title": "One Fused Kernel Beats Many Small Ones",
+          "body": "The speedup comes from kernel fusion as much as tiling — collapsing matmul, mask, softmax, and the second matmul into a single pass.",
+          "bullets": [
+            "Standard attention implementations launch several separate GPU kernels (matmul, softmax, dropout, matmul), each paying a fresh HBM round-trip",
+            "FlashAttention fuses all of it into one kernel invocation per tile, so intermediate results never leave SRAM between steps",
+            "FlashAttention-2 refined the tiling and parallelization further, reaching roughly 50-73% of a GPU's theoretical peak FLOPs/s on an A100 — about 2x faster than the original FlashAttention"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "bf783538-a40d-41b7-bc89-ddbf423dc1a3",
+          "kind": "comparison",
+          "title": "Quadratic Memory vs. Linear Memory",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Standard attention",
+              "FlashAttention"
+            ],
+            "rows": [
+              [
+                "Memory for scores",
+                "O(N²) — must store full matrix",
+                "O(N) — never materializes full matrix"
+              ],
+              [
+                "Result",
+                "Exact",
+                "Exact (not an approximation)"
+              ],
+              [
+                "Reported training speedup (original paper, GPT-2)",
+                "baseline",
+                "~3x faster end-to-end training"
+              ],
+              [
+                "Max practical context on same hardware",
+                "Limited by quadratic memory",
+                "~4x longer context reported in the original paper"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "f830986b-55e7-444d-91eb-be7155ee15c7",
+          "kind": "example",
+          "title": "Same GPU, 4x the Context Window",
+          "body": "Picture training a GPT-2-scale model on a single GPU that previously maxed out around 1K tokens of context because the attention matrix wouldn't fit.",
+          "bullets": [
+            "With standard attention: pushing to 4K context either runs out of memory or forces gradient checkpointing that slows training substantially",
+            "With FlashAttention: the same GPU handles roughly 4x the sequence length, because the bottleneck (HBM traffic for the N×N matrix) is gone, not just reduced",
+            "This is exactly why FlashAttention became a default building block — vLLM, PyTorch's scaled_dot_product_attention, and most serious LLM training stacks ship it as a fused kernel option"
+          ],
+          "symbol": "arrow.up.left.and.arrow.down.right",
+          "table": null
+        },
+        {
+          "id": "c414bd91-d6db-4497-94cc-64964f5d747d",
+          "kind": "problem",
+          "title": "Where It Doesn't Help — or Isn't Enough",
+          "body": "FlashAttention is a free lunch for exact attention, but it doesn't dodge every cost of long context.",
+          "bullets": [
+            "On very short sequences, attention was never the bottleneck, so the kernel-fusion win shrinks — most of the gain shows up as context length grows",
+            "It's exact attention, not approximate — if you need sub-quadratic compute (not just memory), you still need a different approach like sparse or linear attention",
+            "It requires custom GPU-level kernels tied to specific architectures, so support lags on new hardware until someone ports it",
+            "The KV cache during autoregressive generation is a separate memory problem — FlashAttention speeds up the attention computation itself, but doesn't solve serving-time cache growth (that's what PagedAttention targets)"
+          ],
+          "symbol": "minus.circle.fill",
+          "table": null
+        },
+        {
+          "id": "118dee27-23ca-4b15-a7fe-83928c5dc789",
+          "kind": "takeaways",
+          "title": "The Real Lesson: Count Memory Moves, Not Just FLOPs",
+          "body": null,
+          "bullets": [
+            "FlashAttention changed nothing about what attention computes — only how data moves while computing it, proving IO-awareness can matter more than FLOP-counting",
+            "Tiling + online softmax + recomputation is the recipe: keep the working set in fast memory, derive running statistics instead of storing full intermediates, and recompute cheap things instead of storing them",
+            "It's now a baseline assumption, not a cutting-edge trick — modern transformer stacks treat a fused, IO-aware attention kernel as the default, not an optimization you opt into",
+            "The same pattern — reduce memory traffic, fuse kernels, recompute vs. store — recurs across GPU-bound ML work well beyond attention"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "47d15622-d632-4b8d-90e6-b3d547b5f5e9",
+            "prompt": "What was FlashAttention's key realization about why standard attention was slow on GPUs?",
+            "options": [
+              "The O(N²) FLOP count was the real bottleneck",
+              "The bottleneck was memory traffic between slow HBM and fast on-chip SRAM, not raw compute",
+              "GPUs couldn't do softmax efficiently",
+              "Attention needed more parameters to be fast"
+            ],
+            "correctIndex": 1,
+            "explanation": "Attention is memory-bound on GPUs: repeatedly writing and reading the full N×N score matrix to slow HBM costs more time than the matrix multiplications themselves."
+          },
+          {
+            "id": "436d1ee7-4c2c-46ad-a5ac-944f28dca45e",
+            "prompt": "How does FlashAttention avoid ever storing the full N×N attention matrix while still computing exact softmax?",
+            "options": [
+              "It approximates softmax with a cheaper function",
+              "It tiles the computation and maintains a running max/sum (online softmax) updated block by block",
+              "It skips the softmax step entirely",
+              "It stores the matrix in CPU RAM instead of GPU memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "Online softmax lets the algorithm combine partial results block by block into the exact same softmax output, so the full matrix never needs to exist in memory at once."
+          },
+          {
+            "id": "2870e186-4059-40a6-9fc9-47574d84f29d",
+            "prompt": "Is FlashAttention an approximation of standard attention?",
+            "options": [
+              "Yes, it trades a small amount of accuracy for speed",
+              "No — it computes mathematically exact attention, just with a more memory-efficient algorithm",
+              "It's only exact during training, not inference",
+              "It approximates attention for sequences longer than 8K tokens"
+            ],
+            "correctIndex": 1,
+            "explanation": "FlashAttention is IO-aware, not approximate — the output is the same as standard attention; the gains come purely from how the computation is scheduled and where intermediates live."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-10-13T12:51:02Z"
+    },
+    {
+      "id": "ff63c891-446b-4b2f-a390-51983694d886",
+      "title": "Anthropic Publishes 3 Metrics for How Fast AI Builds AI",
+      "subtitle": "Claude now 'leads' 26% of Anthropic's own AI R&D, up from under 1% in February — and the lab is putting a number on oversight and safety compute too.",
+      "category": "AI News",
+      "difficulty": "Advanced",
+      "postKind": "release",
+      "tags": [
+        "ai-safety",
+        "automation",
+        "transparency",
+        "compute",
+        "anthropic"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "speedometer",
+      "summary": "Anthropic published a framework of three measurements — how much AI R&D is done by AI, how well AI agents are overseen, and how compute is split toward safety — along with its own numbers from August 2026. The headline: Claude now completes most of a 26% slice of Anthropic's AI research end-to-end under human supervision, up from under 1% eight months earlier.",
+      "slides": [
+        {
+          "id": "d1e88bef-a9bf-45ff-9488-adf5ef6f6ffe",
+          "kind": "cover",
+          "title": "Claude Now 'Leads' 26% of Anthropic's Own AI Research",
+          "body": "Published Sep 17, 2026, this is less a product launch and more a transparency release: a framework of three measurements any frontier lab could report, plus Anthropic's own numbers.",
+          "bullets": [
+            "Claude went from under 1% (February 2026) to leading 26% of measured AI R&D tasks (August 2026), rated on Epoch AI's 0-5 Automation Level scale",
+            "None of that work runs with zero human oversight — the fully-autonomous tier (AL5) sits at 0%"
+          ],
+          "symbol": "speedometer",
+          "table": null
+        },
+        {
+          "id": "8c660caa-ceb3-475b-b101-860d6db0b707",
+          "kind": "problem",
+          "title": "If AI Builds AI Faster, Who Can See It Happening?",
+          "body": "Anthropic argues that as AI increasingly helps build its own successors, the public has far less visibility into that acceleration than the labs building it do.",
+          "bullets": [
+            "These metrics track how models get built, meant to complement capability evaluations in Anthropic's Responsible Scaling Policy risk reports, which track what models can do, not how they're made",
+            "Anthropic frames this as a way to narrow the gap between what a lab knows internally and what the public can verify",
+            "The explicit hope: any frontier developer could publish the same three measures using a shared methodology"
+          ],
+          "symbol": "eye.fill",
+          "table": null
+        },
+        {
+          "id": "b0712ebc-7fdc-464b-8419-33b25a8d3ce5",
+          "kind": "solution",
+          "title": "Three Numbers: Automation, Oversight, Compute",
+          "body": "Each metric targets a different worry about AI accelerating its own development unsupervised.",
+          "bullets": [
+            "AI-led AI R&D — how much research work AI does versus humans, on a 6-level automation scale (AL0 none, AL3 'collaborates', AL4 'leads' end-to-end under supervision, AL5 fully autonomous)",
+            "Oversight of AI agents — how completely agent actions are monitored and how fast problems get caught",
+            "Compute allocation — what share of a lab's compute goes to safety work specifically"
+          ],
+          "symbol": "list.bullet.rectangle.fill",
+          "table": null
+        },
+        {
+          "id": "d95ac088-cfca-4a45-813c-876992c53052",
+          "kind": "architecture",
+          "title": "How You Actually Measure 'AI Doing AI Research'",
+          "body": "The automation number isn't a vibe check — it comes from an audited task inventory Anthropic calls the R&D Automation Index.",
+          "bullets": [
+            "Sampled 20% of staff across model R&D teams each week of July 2026, mining Slack and docs into ~15,000 tasks, organized into a frozen taxonomy of 542 nodes",
+            "Claude research agents gather evidence per task category; an independent Claude judge assigns the automation level; categories are weighted by person-time",
+            "Validation: the judge model agreed exactly with human raters 59% of the time, versus only 35% agreement between two humans rating the same task — and was within one level 97% of the time"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "ab6bab39-a962-4a71-b2c5-1afbaf62f0fb",
+          "kind": "comparison",
+          "title": "Oversight and Compute, By the Numbers",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Metric (Aug 2026)",
+              "Reported value"
+            ],
+            "rows": [
+              [
+                "Agent actions covered by a pre-execution online monitor",
+                "100%"
+              ],
+              [
+                "Decisions blocked by the online monitor (of 1B+ decisions)",
+                "~0.002% (about 1 in 47,000)"
+              ],
+              [
+                "Transcripts flagged per week by offline monitors",
+                "~100,000 (1-2 per 1,000)"
+              ],
+              [
+                "Flags escalated to human review per week",
+                "~50"
+              ],
+              [
+                "Share of AI-R&D compute spent on safety work",
+                "~6%"
+              ],
+              [
+                "Share of AI-driven-R&D compute spent on safety work",
+                "~12%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "31b13317-5f22-4975-8dff-48cd392da00d",
+          "kind": "example",
+          "title": "Two Kinds of Watching: Fast and Slow",
+          "body": "The roughly 30,000 research/engineering agents running at any time on Anthropic's main internal platform are checked by two different systems with two different jobs.",
+          "bullets": [
+            "Online monitors run before an action executes, usually within seconds — built to catch fast, irreversible harms like an agent trying to copy model weights",
+            "Offline monitors review activity after the fact, hunting for slow problems like subtle misalignment; flagged transcripts get folded back into mitigations",
+            "Each agent keeps one persistent identity across model upgrades, and agents talk to each other over a shared, logged messaging system cross-referenced against transcripts"
+          ],
+          "symbol": "shield.lefthalf.filled",
+          "table": null
+        },
+        {
+          "id": "f3f882c2-ab86-438b-a67a-40a8284b09c9",
+          "kind": "problem",
+          "title": "Read the Caveats Before You Read the Headline",
+          "body": "Anthropic is explicit that these are self-reported, early-stage numbers, not an audited standard yet.",
+          "bullets": [
+            "All figures are self-reported; third-party verification (with METR already red-teaming the offline monitor) is a stated plan, not yet standard practice",
+            "The automation rating depends on which model is doing the judging, and borderline AL3-vs-AL4 calls are genuinely contested",
+            "The compute snapshot covers one week only (July 13-20, 2026) — not enough to show a trend, and it measures compute spent, not research effort, so efficiency gains could shrink the 'safety share' without cutting actual safety work"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9207ff43-b023-45d5-9c15-9392a1a6856b",
+          "kind": "takeaways",
+          "title": "Why This Matters Beyond Anthropic",
+          "body": null,
+          "bullets": [
+            "The 26% figure is the real headline: AI doing AI research end-to-end (with supervision) grew more than 25x in six months — a concrete number for a trend usually discussed only in the abstract",
+            "Pairing automation with oversight and safety-compute numbers is the point: fast AI-R&D automation reads very differently if 100% of actions are monitored versus if none are",
+            "Anthropic proposes this as a template other labs could adopt, enabling real cross-lab comparison — but only if everyone measures it the same way",
+            "The numbers would likely look different under coordinated 'pacing' of the frontier, which the post explicitly ties to Dario Amodei's public calls for exactly that"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "79bfef11-2c16-435d-b643-0d41c0841eba",
+            "prompt": "What does it mean that Claude's AI R&D work moved from under 1% to 26% at Automation Level 4 (AL4) between February and August 2026?",
+            "options": [
+              "Claude now operates fully autonomously on 26% of tasks",
+              "Claude now completes most of 26% of measured tasks end-to-end, but still under human supervision",
+              "26% of Anthropic's staff were replaced by AI",
+              "Claude failed 26% of its assigned tasks"
+            ],
+            "correctIndex": 1,
+            "explanation": "AL4 ('leads') means AI completes most of a task end-to-end from a high-level prompt with a human still supervising — not the fully autonomous AL5 tier, which remains at 0%."
+          },
+          {
+            "id": "69f5707b-6f05-447a-94cc-7e4ff9590589",
+            "prompt": "How did the independent Claude judge's automation-level ratings compare to human raters?",
+            "options": [
+              "The judge never agreed with humans",
+              "The judge matched humans exactly 59% of the time, versus only 35% agreement between two humans",
+              "Humans were not involved in validating the ratings at all",
+              "The judge was always within one level, with 100% exact agreement"
+            ],
+            "correctIndex": 1,
+            "explanation": "59% exact agreement with humans (vs. 35% human-human agreement) and 97% agreement within one level suggests the automated rating isn't noisier than human raters disagreeing with each other."
+          },
+          {
+            "id": "19faca86-bafb-4368-aedf-6bb250baaa14",
+            "prompt": "What's the biggest caveat Anthropic itself attaches to the safety-compute numbers (6% and 12%)?",
+            "options": [
+              "They were independently audited by a third party",
+              "They cover a full year of data",
+              "They're based on one week of compute data and measure spend, not effort — so efficiency gains could lower the share without reducing actual safety work",
+              "They include every lab in the industry, not just Anthropic"
+            ],
+            "correctIndex": 2,
+            "explanation": "The snapshot covers only July 13-20, 2026, and compute share is an imperfect proxy for actual safety effort — a cheaper, more efficient safety pipeline would show up as a falling 'share' even if nothing about safety work changed."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "adff0c26-5e47-480c-96d7-3e690124cb78",
+          "title": "Measurements for understanding the pace of AI development inside frontier labs",
+          "url": "https://www.anthropic.com/institute/measuring-pace-of-ai-development"
+        }
+      ],
+      "publishedDate": "2026-10-13T12:51:02Z"
+    },
+    {
+      "id": "ba9bc5f1-b46e-4a3c-a435-eccc1198f907",
+      "title": "Project Swap: Agents Trade Fine, They Just Don't Know You",
+      "subtitle": "Anthropic had 201 employees let Claude negotiate book swaps for them — bargaining worked, understanding people didn't.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "paper",
+      "tags": [
+        "agents",
+        "multi-agent",
+        "negotiation",
+        "preference-learning",
+        "anthropic"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "books.vertical.fill",
+      "summary": "Anthropic ran a real experiment where Claude agents negotiated book swaps for 201 employees across six offices, rerunning the market 205 times. Agents bargained honestly and efficiently, but the market only captured 55% of the value a perfect assignment could reach — and about 85% of that gap traced to agents misjudging what people actually wanted, not to weak negotiating.",
+      "slides": [
+        {
+          "id": "5e03c1a4-7281-4b75-9c01-6a0e88d8b327",
+          "kind": "cover",
+          "title": "201 People Let Claude Trade Their Books For Them",
+          "body": "Project Swap, published Sep 24, 2026, is Anthropic's follow-up to Project Deal — a tighter test of whether AI agents can understand what someone wants well enough to trade on their behalf.",
+          "bullets": [
+            "201 Anthropic employees across 6 offices each brought one book to trade away",
+            "Claude interviewed each person about their taste, then represented them on a shared 'trading floor'",
+            "The whole setup was rerun 205 times, varying the model and instructions"
+          ],
+          "symbol": "books.vertical.fill",
+          "table": null
+        },
+        {
+          "id": "a9ad8f29-940e-4d83-a167-f3ec7706a72a",
+          "kind": "problem",
+          "title": "Negotiation Skill Isn't the Interesting Question Anymore",
+          "body": "Most agent-market worries are about agents gaming each other. This experiment isolates a quieter failure mode: does the agent even know what its own person wants?",
+          "bullets": [
+            "Each participant also secretly ranked 10 of their own pool's books — agents never saw these rankings",
+            "Claude's guessed rankings matched the real ones on 61% of book pairs (50% is a coin flip)",
+            "Simple baselines came close: book popularity alone hit ~53%, basic collaborative filtering ~55%"
+          ],
+          "symbol": "questionmark.circle.fill",
+          "table": null
+        },
+        {
+          "id": "cc5c9026-1902-47d6-b29b-23244d08d731",
+          "kind": "solution",
+          "title": "A Trading Floor With Rules, Rotations, and Receipts",
+          "body": "Agents didn't trade blind — they worked a structured, fully logged market built to support complex multi-party deals, not just two-person swaps.",
+          "bullets": [
+            "One message per turn per agent: propose, accept, or reject — including multi-party rotation trades (A gives to B, B to C, C to A)",
+            "A swap only executes once every party involved accepts it; the full negotiation history was visible to all agents",
+            "Half the agents were told to be 'ruthless' (optimize only for their own person); half 'prosocial' (also want everyone to end up happy)",
+            "Reran across Haiku 4.5, Sonnet 4.5, Opus 4.8, and Fable 5, plus mixed-model floors"
+          ],
+          "symbol": "shuffle",
+          "table": null
+        },
+        {
+          "id": "caed490c-559e-41db-8afd-875f4af4e4aa",
+          "kind": "comparison",
+          "title": "Where the Lost Value Actually Went",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Score (on true preferences)",
+              "What it tells you"
+            ],
+            "rows": [
+              [
+                "Best possible assignment",
+                "0.89",
+                "Ceiling if everyone's real taste were known perfectly"
+              ],
+              [
+                "Claude-run decentralized market",
+                "0.55",
+                "What agents actually delivered — about a 5th-choice book on average"
+              ],
+              [
+                "Gap from misjudging preferences",
+                "~85% of the shortfall",
+                "Agents didn't know what people wanted"
+              ],
+              [
+                "Gap from the market mechanism itself",
+                "~15% of the shortfall",
+                "Bargaining friction, bad trades, stuck positions"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "6408ce84-b057-4af9-9c6a-128393d662a5",
+          "kind": "example",
+          "title": "Opus Out-Haggled Everyone — On Its Own Guesses",
+          "body": "Model choice mattered a lot on Claude's own rankings, and almost not at all on what people actually wanted.",
+          "bullets": [
+            "On Claude's internal rankings, efficiency was 0.75 (Haiku), 0.80 (Sonnet), 0.88 (Opus), 0.86 (Fable) against a 0.95 ceiling",
+            "Measured against participants' real rankings instead, those gaps shrank to about 0.01 — a stronger negotiator was still negotiating from a flawed guess of what you want",
+            "Deception was rare but real: 78-96% of agents disclosed their top pick upfront, and about 1 in 100 who did lied about it"
+          ],
+          "symbol": "person.2.fill",
+          "table": null
+        },
+        {
+          "id": "467e9967-0a7d-4e46-b2dc-e3c5c243febc",
+          "kind": "problem",
+          "title": "Where This Result Does and Doesn't Travel",
+          "body": "Being 'ruthless' barely helped, and the setup still leaves real open questions before this generalizes.",
+          "bullets": [
+            "Ruthless agents scored only ~0.02 higher than prosocial ones — prosocial agents gave up their own top pick about twice as often, including cases where they yielded after another agent's appeal",
+            "Every agent was a well-behaved production Claude model — no adversarial or deceptive agents were tested",
+            "Participants were Anthropic employees with no incentive to rank books carefully, not a representative population",
+            "Only one market design (one-message-per-turn, public history) was tested — results could shift under a different mechanism"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "1488dbb9-7d12-49f0-966f-b6b435816372",
+          "kind": "takeaways",
+          "title": "The Bottleneck Is Representation, Not Bargaining",
+          "body": null,
+          "bullets": [
+            "61% vs. 50% random: today's 'know your preferences' step is only modestly better than a coin flip, and that's what capped the whole market at 0.55 instead of 0.89",
+            "Participants were still fairly satisfied (7.2/10) and would hand agents ~30% of their book budget — vs. ~40% for a well-read human friend",
+            "Anthropic's proposed fixes target understanding, not negotiation: representation checks people can audit, observability into what an agent did, persistent agent identities, rate limits, and clear failure/refund policies",
+            "The lesson generalizes past books: any agent acting 'on your behalf' is only as good as its model of what you actually want"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "0c651d56-e7b1-4a6e-b3d2-31aedf9830ab",
+            "prompt": "What was the single biggest driver of the gap between the ideal book assignment (0.89) and what the market actually delivered (0.55)?",
+            "options": [
+              "Agents lying to each other during negotiation",
+              "Agents misjudging what participants actually wanted (~85% of the gap)",
+              "The one-message-per-turn trading rule",
+              "Participants refusing to trade"
+            ],
+            "correctIndex": 1,
+            "explanation": "Only about 15% of the shortfall came from the trading mechanism itself; roughly 85% traced back to Claude's rankings not matching people's real preferences closely enough."
+          },
+          {
+            "id": "ab344eb9-e3aa-47c7-9f8a-3c785d65fb1f",
+            "prompt": "When measured against participants' own true rankings instead of Claude's guessed rankings, what happened to the performance gap between models like Haiku and Opus?",
+            "options": [
+              "It grew even larger",
+              "It shrank to about 0.01 — a near-wash",
+              "Haiku suddenly outperformed Opus",
+              "The models performed identically from the start"
+            ],
+            "correctIndex": 1,
+            "explanation": "Opus looked much stronger when judged against Claude's own (imperfect) rankings, but that edge nearly vanished against real preferences — a better negotiator still can't fix a wrong guess about what you want."
+          },
+          {
+            "id": "d50d7f4d-5dee-4932-b092-67b63c7a3b41",
+            "prompt": "What was the measured effect of instructing agents to be 'ruthless' instead of 'prosocial'?",
+            "options": [
+              "Ruthless agents scored dramatically higher, about 0.30 better",
+              "Ruthless agents scored only about 0.02 higher, a small effect",
+              "Prosocial agents refused to trade at all",
+              "There was no way to measure a difference"
+            ],
+            "correctIndex": 1,
+            "explanation": "The instruction barely moved outcomes (~0.02). The much bigger lever was how well an agent understood its person's actual preferences in the first place."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "25cd6b07-8692-46df-a24a-814c2819cbd9",
+          "title": "Project Swap: What happens when agents trade for us?",
+          "url": "https://www.anthropic.com/news/project-swap"
+        }
+      ],
+      "publishedDate": "2026-10-13T12:51:02Z"
+    },
+    {
       "id": "d0a1471a-c4d4-4427-acb3-d0e67c0e1e38",
       "title": "AI Worms: How Close Are Small Models to Self-Replicating?",
       "subtitle": "Anthropic's Frontier Red Team found \"signs of life\" for AI worms on $55 smart TV boxes.",
@@ -10530,546 +11106,6 @@
       ],
       "id": "4e6948d8-3a22-4a60-acba-d97e25aacfde",
       "publishedDate": "2026-10-07T00:46:03Z"
-    },
-    {
-      "title": "Orchestrator-Workers: How Multi-Agent Systems Split Work",
-      "subtitle": "One lead agent plans and remembers; disposable subagents search in parallel",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "multi-agent",
-        "orchestration",
-        "agentic-workflows",
-        "parallelism",
-        "llm-agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "person.3.fill",
-      "summary": "The orchestrator-worker pattern splits a task between a lead agent that plans and remembers, and disposable subagents that each explore one slice of the problem in a fresh context window, in parallel. Anthropic's own research system using this pattern beat a single agent by over 90% on broad research tasks — at roughly 15x the token cost, and only for tasks that actually parallelize.",
-      "slides": [
-        {
-          "id": "2a814b72-64d7-4954-97e0-c7e626a72acd",
-          "kind": "cover",
-          "title": "One Planner, Many Searchers",
-          "body": "Anthropic built its own multi-agent research product around a simple split: a lead \"orchestrator\" agent plans and delegates, while disposable \"worker\" subagents each explore one piece of the problem in parallel, then report back.",
-          "bullets": [],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "e21cab55-de13-4dab-9177-dc4e37b5a24b",
-          "kind": "problem",
-          "title": "A Single Agent's Context Window Becomes the Bottleneck",
-          "body": "Broad, fan-out tasks don't fit comfortably inside one conversation.",
-          "bullets": [
-            "One agent doing broad research has to hold every search result and dead end in a single context window, which fills up and crowds out reasoning",
-            "Long sequential tool-call chains (search, read, search again) are slow because each step waits on the last one to finish",
-            "Fan-out queries — \"compare the board members of every Fortune 500 AI company\" — don't parallelize inside a single conversation thread"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9f4ed037-3cda-4c58-9dfb-3d6879ef5e1d",
-          "kind": "architecture",
-          "title": "Lead Agent Plans, Subagents Execute in Parallel",
-          "body": "The orchestrator decomposes the task; subagents each get a narrow slice and a clean context window.",
-          "bullets": [
-            "The orchestrator reads the task, decides a strategy, and writes the plan to memory before spawning any subagents — so the plan survives even if its own context later fills up",
-            "Each subagent gets a narrow, self-contained instruction (one sub-question, a suggested tool, an expected output format) plus its own fresh context window",
-            "Subagents run concurrently and each return a condensed result — not their full transcript — back to the orchestrator for synthesis"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "a6ccb401-abbc-4809-9ebb-f748a2fbaf96",
-          "kind": "example",
-          "title": "Worked Example: Anthropic's Own Research System",
-          "body": "In Anthropic's internal evaluation, a lead Claude Opus agent orchestrating several Claude Sonnet subagents beat a single Opus agent by more than 90% on broad, parallelizable research tasks.",
-          "bullets": [
-            "Token usage alone explained about 80% of the variance in how well a configuration scored — more parallel searching covered more of the problem before synthesis",
-            "The gain showed up specifically on breadth-first tasks (comparing many independent items), not on tightly sequential ones"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "42da398c-a28e-4dc2-b30d-4d1f50b55a1e",
-          "kind": "comparison",
-          "title": "Single Agent vs Orchestrator + Workers",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Trait",
-              "Single Agent",
-              "Orchestrator + Workers"
-            ],
-            "rows": [
-              [
-                "Token cost per task",
-                "1x baseline",
-                "~15x baseline"
-              ],
-              [
-                "Best fit",
-                "Sequential, tightly-coupled work (e.g. coding)",
-                "Breadth-first, parallelizable research"
-              ],
-              [
-                "Context limit",
-                "One window must hold everything",
-                "Each subagent gets a fresh window"
-              ],
-              [
-                "Main failure mode",
-                "Context overflow / lost focus",
-                "Duplicate work / coordination overhead"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "eb3a9eb7-a0ad-4f45-8cdf-6863e7610cbc",
-          "kind": "concept",
-          "title": "When NOT to Reach for Multiple Agents",
-          "body": "The pattern has real costs — it isn't a free upgrade over a single agent.",
-          "bullets": [
-            "Anthropic's own guidance: it's a poor fit for tasks needing tight, step-by-step coordination — like most coding, where each step's output feeds directly into the next",
-            "Roughly 15x the token cost of a single chat means the economics only work when the outcome's value clearly exceeds that multiplier",
-            "New failure modes appear: subagents can duplicate work or contradict each other, and the synthesis step can itself become a bottleneck"
-          ],
-          "symbol": "hand.raised.fill",
-          "table": null
-        },
-        {
-          "id": "9718b8a5-80eb-4f7a-a82b-6c842c9a950b",
-          "kind": "takeaways",
-          "title": "What to Take Away",
-          "body": null,
-          "bullets": [
-            "Split the task: an orchestrator that plans and remembers, workers that each explore one slice in a fresh context window",
-            "Workers return condensed findings, not raw transcripts — that's what keeps the orchestrator's own context from overflowing",
-            "Budget roughly an order of magnitude more tokens than a single chat, and reserve the pattern for tasks where parallel breadth actually pays off",
-            "Best fit: broad research, comparison-shopping, multi-source due diligence. Worst fit: tightly sequential work like most software engineering"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "19f52200-87ca-48c6-a4ac-9516dca21786",
-            "prompt": "In the orchestrator-worker pattern, what does the orchestrator do before spawning any subagents?",
-            "options": [
-              "Writes its plan to memory",
-              "Deletes its own context window",
-              "Waits for all subagents to finish first",
-              "Runs the first search itself and ignores subagents"
-            ],
-            "correctIndex": 0,
-            "explanation": "The lead agent records its strategy to memory first, so the overall plan survives even if the orchestrator's own context window later fills up with subagent results."
-          },
-          {
-            "id": "b6fb0de8-e2b9-4e8f-a56e-ba49d2e419cf",
-            "prompt": "In Anthropic's internal evaluation, what explained about 80% of the variance in how well a multi-agent configuration performed?",
-            "options": [
-              "Token usage",
-              "The exact prompt wording",
-              "Which cloud provider served the model",
-              "The number of distinct tools available"
-            ],
-            "correctIndex": 0,
-            "explanation": "Token usage — mostly driven by how much parallel searching subagents did — accounted for roughly 80% of the performance variance Anthropic observed."
-          },
-          {
-            "id": "c6de6542-2f00-4dfc-855f-bf3c1bee2677",
-            "prompt": "Why is the orchestrator-worker pattern a poor fit for most coding tasks?",
-            "options": [
-              "Coding tasks are usually tightly sequential, where each step depends on the last one's exact output",
-              "Code can't be represented as text",
-              "Subagents are incapable of writing code",
-              "Coding tasks never require more than one tool call"
-            ],
-            "correctIndex": 0,
-            "explanation": "Multi-agent parallelism pays off when subtasks are independent and can run side by side; most coding is the opposite — a tightly coupled chain where each step needs the previous step's exact output."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "95a87355-4f88-4ff0-bf6f-11fb1f40f0d0",
-          "title": "Anthropic Engineering — How We Built Our Multi-Agent Research System",
-          "url": "https://www.anthropic.com/engineering/multi-agent-research-system"
-        }
-      ],
-      "id": "7e33cb0e-fc3a-4d83-beb3-26f686224bcd",
-      "publishedDate": "2026-10-07T00:46:02Z"
-    },
-    {
-      "id": "7e083c08-3fde-4190-9f94-036f4701dfa7",
-      "title": "Mistral Large 4 \"Le Chonk\": A Trillion Parameters, Open Weights by Halloween",
-      "subtitle": "Europe's biggest model bets on MoE sparsity instead of dense scale",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "mistral",
-        "open-weight",
-        "mixture-of-experts",
-        "multimodal",
-        "llm-release"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "globe.europe.africa.fill",
-      "summary": "On October 6, 2026, Mistral AI put its first trillion-parameter model, Mistral Large 4 (\"Le Chonk\"), into public preview: a 1.05T-parameter, 49B-active mixture-of-experts model with a natively multimodal 1.6B-parameter vision encoder. Open weights are promised by end of October — until then, Mistral's benchmark claims are unverified by the community.",
-      "publishedDate": "2026-10-06T18:43:08Z",
-      "slides": [
-        {
-          "id": "e3fe423e-6c03-4846-9de5-ba78c3eef9e4",
-          "kind": "cover",
-          "title": "Mistral's Biggest Model Yet Goes Public",
-          "body": "On October 6, 2026, Mistral AI put Mistral Large 4 — internally nicknamed \"Le Chonk\" — into public preview on its API: its first trillion-parameter model, and the centerpiece of a bet that Europe can field an open-weight frontier model.",
-          "bullets": [],
-          "symbol": "globe.europe.africa.fill",
-          "table": null
-        },
-        {
-          "id": "48563b68-b273-4358-b85f-f540297096d1",
-          "kind": "problem",
-          "title": "Open-Weight Models Keep Trailing the Frontier",
-          "body": "Open-weight models from the US and Europe have lagged both closed frontier labs and China's strongest open releases on aggregate capability — Mistral needed a model that competes on raw intelligence, not just price.",
-          "bullets": [
-            "Regulated industries (finance, defense, manufacturing) want a model they can self-host, not just call over an API",
-            "Mistral's prior Large-series models topped out far short of trillion-parameter scale",
-            "The strongest open-weight models so far have skewed either small-and-efficient or dense-and-slow"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "42618c1b-71a8-436d-98ef-6c8c77287e69",
-          "kind": "architecture",
-          "title": "1.05T Total Parameters, Only 49B Active Per Token",
-          "body": "Le Chonk uses a granular mixture-of-experts design: a huge total parameter budget for capacity, but a small active-parameter path per token that keeps inference cost closer to a much smaller dense model.",
-          "bullets": [
-            "1.05 trillion total parameters / 49 billion active parameters per forward pass",
-            "A 1.6-billion-parameter vision encoder makes it natively multimodal, not an adapter bolted on afterward",
-            "Trained on a large fleet of Nvidia Grace Blackwell (GB200-class) GPUs"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "b6b9be7d-84ab-426e-9a7e-fdb073b4d891",
-          "kind": "comparison",
-          "title": "Mistral's Claim: Best Open Weights Out of the US or Europe",
-          "body": "Mistral says Le Chonk leads aggregated benchmarks among open-weight models built in the US or Europe, specifically calling out cyber defense, manufacturing, and finance workloads, plus visual grounding against closed frontier models.",
-          "bullets": [
-            "These are Mistral's own announced claims — not yet independently reproduced on a public leaderboard"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Spec",
-              "Le Chonk (Preview)"
-            ],
-            "rows": [
-              [
-                "Total / active params",
-                "1.05T / 49B"
-              ],
-              [
-                "Vision encoder",
-                "1.6B params, native (not adapter-based)"
-              ],
-              [
-                "Context window",
-                "Up to 1M tokens on Mistral's API; some third-party providers list 512K"
-              ],
-              [
-                "Open weights",
-                "Planned end of October 2026"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "87070415-5748-413d-9ef6-a306b330e92a",
-          "kind": "example",
-          "title": "Why 49B-Active Can Beat a 70B Dense Model in Practice",
-          "body": "Picture a support-automation vendor serving thousands of concurrent chats. With a dense 70B model, every token touches all 70B weights. With Le Chonk's MoE routing, each token activates only ~49B of the 1.05T total — so per-token compute and latency look close to a mid-sized dense model, while the model's total knowledge and skill capacity is far larger.",
-          "bullets": [
-            "MoE lets Mistral pack over 20x the total parameters of a 49B dense model without paying 20x the inference compute",
-            "Catch: you still need enough GPU memory to hold all 1.05T weights, even though any single token only computes through ~49B of them"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "91f23aaf-da71-4b68-b4f1-9140773fcbbc",
-          "kind": "concept",
-          "title": "The Catch: Preview Now, Weights (and Verification) Later",
-          "body": "Everything above is Mistral's own announcement. The open-weight release — and independent benchmark verification — doesn't land until end of October 2026. Serving the full 1.05T model also demands serious multi-GPU infrastructure even for inference.",
-          "bullets": [
-            "The API preview is closed-weight for now; self-hosting isn't possible until the promised end-of-month weight drop",
-            "Third-party trackers already disagree on specs like context-window length — a reminder to treat day-one numbers as preliminary",
-            "A 1.05T-parameter MoE still needs a multi-GPU cluster to serve, even with a lighter active-parameter compute path"
-          ],
-          "symbol": "hourglass",
-          "table": null
-        },
-        {
-          "id": "8a558a48-49cd-4ed1-a037-654e5c437467",
-          "kind": "takeaways",
-          "title": "What to Watch Next",
-          "body": null,
-          "bullets": [
-            "End of October 2026: the open-weight release is the real test — can the community reproduce Mistral's benchmark claims?",
-            "If Le Chonk holds up, it's the first trillion-parameter open-weight model from a Western lab seriously contending with China's biggest open releases",
-            "A natively multimodal vision encoder (not an adapter) is worth watching for document-heavy and agentic use cases",
-            "Active-parameter count (49B), not total size, is the number that most directly predicts your inference bill"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "1dcd32e6-8a66-4bb9-b2ee-6e9cb107d1a0",
-            "prompt": "What is Mistral Large 4's active parameter count per token, despite having 1.05 trillion total parameters?",
-            "options": [
-              "49 billion",
-              "1.05 trillion",
-              "1.6 billion",
-              "262 billion"
-            ],
-            "correctIndex": 0,
-            "explanation": "Le Chonk is a mixture-of-experts model — only about 49B of its 1.05T total parameters are active for any given token, which is what keeps inference cost down despite the model's huge total capacity."
-          },
-          {
-            "id": "ad798ff0-a9a8-426b-b32d-560040567d21",
-            "prompt": "What does Mistral still need to ship before Le Chonk can be self-hosted?",
-            "options": [
-              "A quantized version",
-              "The open-weight release, planned for end of October 2026",
-              "A smaller distilled model",
-              "Nothing — weights shipped day one"
-            ],
-            "correctIndex": 1,
-            "explanation": "The October 6 announcement was a public-preview API launch; Mistral said open weights won't be available until end of October 2026."
-          },
-          {
-            "id": "82c343e5-4967-43db-80f2-11a33387299e",
-            "prompt": "Why can a 49B-active MoE model still require much more GPU memory than a 49B dense model?",
-            "options": [
-              "It doesn't — memory needs are identical",
-              "All 1.05T parameters must be held in memory even though only ~49B compute per token",
-              "MoE models always run on CPU",
-              "Vision encoders double as the active parameters"
-            ],
-            "correctIndex": 1,
-            "explanation": "MoE saves compute, not memory: every expert's weights must be loaded so the router can pick among them, so serving infrastructure needs enough memory for the full 1.05T-parameter model even though each token only touches a ~49B-parameter slice."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "27a31db7-ede1-493b-b3b5-ab9afa75f85b",
-          "title": "Mistral AI — Introducing Mistral Large 4",
-          "url": "https://mistral.ai/news/mistral-large-4/"
-        }
-      ]
-    },
-    {
-      "id": "592d9374-b3a2-4d86-8470-0d9882cf82fd",
-      "title": "The Missing Primitive: Why LLMs Solve Hard Math but Miss Easy Steps",
-      "subtitle": "A new benchmark shows final-answer accuracy hides which skill actually failed",
-      "category": "AI Concepts",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "mathematical-reasoning",
-        "llm-evaluation",
-        "self-distillation",
-        "benchmark",
-        "reasoning"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "x.squareroot",
-      "summary": "A new paper (arXiv:2610.02191) introduces 'Mathematical Primitive' as a formal unit of reasoning skill and Prim, a benchmark scoring models on Discovery, Generation, Digestion, and Execution separately. The headline finding: Discovery — recognizing which primitive applies — is the dominant bottleneck, and a self-distillation method called Absorb that targets it beats plain SFT and OPSD across Qwen3.5 model scales.",
-      "publishedDate": "2026-10-06T18:43:08Z",
-      "slides": [
-        {
-          "id": "40772f79-6d07-451f-8b87-bc26c0af97e2",
-          "kind": "cover",
-          "title": "Solution Accuracy Is Hiding the Real Story",
-          "body": "A new paper argues that measuring whether an LLM gets the final math answer right masks huge, uneven gaps in the underlying skills it used to get there.",
-          "bullets": [],
-          "symbol": "x.squareroot",
-          "table": null
-        },
-        {
-          "id": "882f8035-6153-4686-a227-ba34d119e73c",
-          "kind": "problem",
-          "title": "High Scores, Hidden Gaps",
-          "body": "Benchmarks like competition-math suites report a single pass/fail per problem. The authors show that number can't tell you whether a model has genuine structural mathematical primitives — the atomic building blocks of a derivation — or just got lucky.",
-          "bullets": [
-            "The paper formalizes 'Mathematical Primitive' as a unit of reasoning skill, distinct from final-answer correctness",
-            "Ten authors are credited, including researchers affiliated with UNC Chapel Hill and University of Colorado Boulder",
-            "Motivating question: do frontier LLMs have genuine structural understanding of the math they solve, or pattern-matched answers?"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "6535590a-d9ee-45ca-bb00-81bf00894995",
-          "kind": "solution",
-          "title": "Prim: A Benchmark Along Four Reasoning Dimensions",
-          "body": "The authors built Prim, which scores a model separately on Discovery (finding which primitive applies), Generation (producing it), Digestion (using it correctly in context), and Execution (carrying out the resulting computation).",
-          "bullets": [
-            "Four dimensions separate 'didn't know which tool to use' from 'knew the tool but executed it wrong'",
-            "Key finding: Discovery is the dominant bottleneck, not raw execution",
-            "When a model is handed the right primitive directly, it unlocks substantial latent execution capacity it wasn't using on its own"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "e56b498d-f3e8-4065-a958-629f29abf9a9",
-          "kind": "solution",
-          "title": "Absorb: Teaching the Model to Find Primitives Itself",
-          "body": "To fix the discovery bottleneck without leaking answers at test time, the authors propose Absorb: a primitive-privileged self-distillation method where the model is its own teacher once conditioned on the correct primitive, and that guidance is transferred along the student's own reasoning trajectory.",
-          "bullets": [
-            "The 'teacher' is the same model, just given the primitive as a hint — not a separate larger model",
-            "A bounded override blends teacher guidance into the student's own trajectory during training",
-            "At inference time, the student never sees a primitive — it must have internalized when one applies"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "76a792f5-5574-44d5-9e3b-6f37329d5c29",
-          "kind": "comparison",
-          "title": "Absorb Beats Plain SFT and OPSD Across Model Sizes",
-          "body": "Tested on Qwen3.5 at 4B, 9B, and 27B parameters across Prim plus three external math benchmarks (HLE Math, HMMT25, Omni-MATH), Absorb consistently outperformed both standard supervised fine-tuning and OPSD.",
-          "bullets": [
-            "Reported average improvement: roughly +2.4 to +4.5 points over baselines, consistent across the 4B–27B range"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Method",
-              "Result vs. Absorb"
-            ],
-            "rows": [
-              [
-                "Plain SFT",
-                "Below Absorb at every tested scale"
-              ],
-              [
-                "OPSD",
-                "Below Absorb at every tested scale"
-              ],
-              [
-                "Absorb (this paper)",
-                "Best average across Prim, HLE Math, HMMT25, Omni-MATH"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "cfce595e-f3b8-46d2-9ee5-7c9d4e6209f5",
-          "kind": "example",
-          "title": "A Model That 'Knows' Calculus But Doesn't Reach for It",
-          "body": "Picture a 9B model facing a related-rates word problem. Execution-wise, it can competently differentiate once told to use implicit differentiation — but left on its own, it may reach for a brute-force algebraic approach that spirals into errors. Prim's Discovery score catches exactly this failure, which a single pass/fail grade would just record as 'wrong answer' with no diagnosis of why.",
-          "bullets": [
-            "This is why 'solution accuracy masks distinct capability profiles' — two models can score identically while failing for completely different reasons",
-            "Discovery-limited failures turned out to be the most repairable failure type the authors identified"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null
-        },
-        {
-          "id": "9eb051d4-212f-4d05-9908-b4c41d4e868b",
-          "kind": "concept",
-          "title": "What This Doesn't Fix",
-          "body": "Absorb improves average scores by a few points, not a step change — and it's a training-time fix, so it doesn't help diagnose or patch a model you can only reach through an API. Discovery being the bottleneck also implies that simply scaling execution-focused RL post-training may hit diminishing returns on math reasoning.",
-          "bullets": [
-            "Gains are consistent but modest (roughly 2.4–4.5 points average), not a leap to near-perfect math reasoning",
-            "Requires fine-tuning access to the model — doesn't help you audit a closed, API-only model's reasoning gaps",
-            "Four-dimension diagnosis adds real evaluation overhead versus a simple accuracy check"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "040ef840-736b-4469-be29-889f81947fa5",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Final-answer accuracy is a lossy signal — two models at the same score can fail for opposite reasons",
-            "Discovery (recognizing which primitive applies) is the dominant bottleneck in LLM math reasoning, more than execution",
-            "Absorb's self-distillation (model as its own privileged teacher) beat plain SFT and OPSD across 4B–27B Qwen3.5 scales",
-            "Code, the Prim benchmark, and the Absorb training pipeline are open-sourced on GitHub (taco-group/Math-Primitive)"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "32501f48-b00f-4dbd-bf54-4d78bdad49fa",
-            "prompt": "According to the paper, what is the dominant bottleneck in LLM mathematical reasoning?",
-            "options": [
-              "Execution — carrying out arithmetic correctly",
-              "Discovery — recognizing which mathematical primitive applies",
-              "Memory — remembering formulas",
-              "Context length"
-            ],
-            "correctIndex": 1,
-            "explanation": "The authors found Discovery is the dominant bottleneck: models often have far more latent execution capacity than they use, but fail to recognize which primitive a problem calls for."
-          },
-          {
-            "id": "8e3a6ad1-1200-4396-87cc-68f59d97855d",
-            "prompt": "How does Absorb's self-distillation differ from training with a separate, larger teacher model?",
-            "options": [
-              "It uses a larger external model as teacher",
-              "The model is its own teacher once conditioned on the correct primitive",
-              "It requires no training at all",
-              "It only works with vision models"
-            ],
-            "correctIndex": 1,
-            "explanation": "Absorb is 'primitive-privileged self-distillation' — the same model becomes its own teacher once given the right primitive, and that guidance is transferred into the student's own trajectory rather than borrowed from a bigger model."
-          },
-          {
-            "id": "df244abc-0cb2-41ba-9415-a955ef6f819e",
-            "prompt": "Why can't a single final-answer accuracy score reliably diagnose why two models get the same result?",
-            "options": [
-              "Accuracy scores are always wrong",
-              "Two models can reach the same score through entirely different capability profiles across discovery, generation, digestion, and execution",
-              "Final-answer accuracy only applies to geometry",
-              "Both models memorized the test set"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper's four-dimension framework shows solution accuracy masks distinct underlying capability profiles — the same score can come from very different failure or success patterns."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "487a1288-0a44-406c-8dee-7587b670a8ba",
-          "title": "The Missing Primitive: Diagnosing and Repairing Mathematical Reasoning in Large Language Models (arXiv:2610.02191)",
-          "url": "https://arxiv.org/abs/2610.02191"
-        }
-      ]
     }
   ]
 }
