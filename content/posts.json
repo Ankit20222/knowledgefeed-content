@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "title": "Contextual Retrieval: Fixing RAG's Missing-Context Problem",
+      "subtitle": "The trick that cut retrieval failures by 67% without touching the embedding model.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "retrieval",
+        "embeddings",
+        "chunking",
+        "contextual-retrieval"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.and.text.magnifyingglass",
+      "summary": "Splitting documents into chunks for RAG strips away the context that made each chunk meaningful, so embedding and keyword search both miss relevant passages. Contextual Retrieval fixes this by prepending a short, LLM-written context to every chunk before indexing — cutting retrieval failure rates by up to 67% when combined with reranking.",
+      "slides": [
+        {
+          "id": "78977f13-2807-47d5-bc38-665af82b2fb9",
+          "kind": "cover",
+          "title": "Why Does RAG Keep Missing the Right Chunk?",
+          "body": "A chunk that reads \"The company's revenue grew by 3% over the previous quarter\" never says which company or which quarter — so a query asking exactly that can't find it.",
+          "bullets": [
+            "Splitting documents into small chunks is what makes RAG retrieval fast — and it's also what breaks it",
+            "Anthropic's Contextual Retrieval technique fixes this at the chunk level, not the embedding model level"
+          ],
+          "symbol": "rectangle.and.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "ab7b566d-799a-4cbf-b37d-a90b9ca3fd92",
+          "kind": "problem",
+          "title": "Chunking Throws Away the Context That Makes a Chunk Findable",
+          "body": "Standard RAG splits a document into independent chunks and embeds each one alone, with no memory of the document it came from.",
+          "bullets": [
+            "A query for \"ACME Corp revenue growth in Q2 2023\" can fail against a chunk that never mentions ACME, Q2, or 2023 by name",
+            "This hurts both retrieval paths at once: dense embedding similarity and sparse keyword/BM25 search",
+            "Across Anthropic's own evaluation sets (codebases, fiction, ArXiv papers), the baseline failure rate — relevant chunks missing from the top 20 results — averaged 5.7%"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "7c628dbc-8eab-4952-abf7-491d11aea082",
+          "kind": "solution",
+          "title": "The Fix: Give Every Chunk Its Context Back Before Indexing",
+          "body": "An LLM reads the whole document plus one chunk, and writes a short (50-100 token) blurb situating that chunk — then that blurb is prepended to the chunk before it's indexed.",
+          "bullets": [
+            "Contextual Embeddings: the context + chunk text is what actually gets embedded, so semantic search now 'sees' the company name, date, and section it belongs to",
+            "Contextual BM25: the same contextualized text also builds the keyword index, so exact-match search benefits too",
+            "Anthropic's reference implementation used Claude 3 Haiku to generate the per-chunk context at low cost",
+            "Both signals (embeddings + BM25) still feed a combined retrieval step — this augments existing RAG, it doesn't replace it"
+          ],
+          "symbol": "text.insert",
+          "table": null
+        },
+        {
+          "id": "7cde1ec1-37a8-4b9c-b704-19956d8c38bb",
+          "kind": "architecture",
+          "title": "Making the Cost Tractable: Prompt Caching",
+          "body": "Generating context for every chunk naively means re-sending the entire source document to the LLM once per chunk — expensive at scale.",
+          "bullets": [
+            "Fix: load the full document into the prompt cache once, then reuse that cached context for every chunk's context-generation call",
+            "Anthropic's estimate: about $1.02 per million document tokens processed, for an 8k-token document split into ~800-token chunks",
+            "Caching cut latency by more than 2x and cost by up to 90% versus re-sending the document per chunk",
+            "This is a one-time preprocessing cost per document, but it recurs every time the corpus is updated"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "50de0dc9-3fae-41f7-85fe-0549b2203253",
+          "kind": "example",
+          "title": "Worked Example: The Financial-Filing Chunk",
+          "body": "A 10-K filing gets split into chunks. One chunk, standing alone, says only: \"The company's revenue grew by 3% over the previous quarter.\"",
+          "bullets": [
+            "Without context: a query for \"ACME Corp Q2 2023 revenue growth\" scores this chunk low on both embedding similarity and keyword overlap — it gets buried outside the top 20",
+            "With Contextual Retrieval: the prepended context reads something like \"This chunk is from ACME Corp's Q2 2023 SEC filing; the previous quarter was Q1 2023 with revenue of $314M\"",
+            "Now the chunk embeds near the query and matches on 'ACME Corp', 'Q2 2023', and 'revenue' in BM25 — it surfaces in the top results instead of being missed entirely"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "ea4ff32c-768f-4e95-b474-286dc311d672",
+          "kind": "comparison",
+          "title": "How Much Each Layer Actually Helps",
+          "body": "Measured as failure rate: the share of relevant chunks NOT retrieved in the top 20, averaged across domains using Gemini embeddings.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Configuration",
+              "Failure rate",
+              "Reduction vs. baseline"
+            ],
+            "rows": [
+              [
+                "Baseline (plain embeddings)",
+                "5.7%",
+                "—"
+              ],
+              [
+                "+ Contextual Embeddings",
+                "3.7%",
+                "35%"
+              ],
+              [
+                "+ Contextual BM25",
+                "2.9%",
+                "49%"
+              ],
+              [
+                "+ Reranking (top 150 → top 20)",
+                "1.9%",
+                "67%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "6c06a271-b4f1-4c60-9e88-a8a6f01973ec",
+          "kind": "takeaways",
+          "title": "When It's Worth It — and When It Isn't",
+          "body": "Contextual Retrieval is a preprocessing technique, not a free lunch — weigh its cost against what you actually need.",
+          "bullets": [
+            "Skip RAG entirely if your corpus is under ~200K tokens: just put the whole thing in the prompt with caching — simpler and often cheaper",
+            "Reranking adds real runtime latency and per-query cost; it buys the biggest single jump (49% → 67%) but tune how many candidates you rerank",
+            "The context-generation cost scales with corpus size and recurs on every update — budget for ongoing preprocessing, not just a one-time job",
+            "Generic document summaries prepended to chunks gave little benefit in Anthropic's tests — the gain comes from chunk-specific context, not boilerplate"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "23cf326e-53da-4741-be3c-b341d9a06215",
+            "prompt": "What specific problem does Contextual Retrieval solve in standard RAG pipelines?",
+            "options": [
+              "Embedding models are too slow for production use",
+              "Chunks lose the surrounding context that would make them matchable to a query",
+              "Vector databases run out of memory with large corpora",
+              "LLMs can't generate answers from retrieved text"
+            ],
+            "correctIndex": 1,
+            "explanation": "Splitting a document into independent chunks strips out references like company names or dates that lived elsewhere in the document, so a chunk can fail to match a query that's actually about it — on both embedding and keyword search."
+          },
+          {
+            "id": "3d681f33-f98a-422d-913b-05952ab32b30",
+            "prompt": "In Anthropic's benchmark, which combination produced the largest reduction in retrieval failure rate?",
+            "options": [
+              "Contextual Embeddings alone",
+              "Contextual BM25 alone",
+              "Contextual Embeddings + Contextual BM25 + reranking",
+              "Switching to a larger embedding model"
+            ],
+            "correctIndex": 2,
+            "explanation": "Stacking all three — contextual embeddings, contextual BM25, and a final reranking pass — took the failure rate from a 5.7% baseline down to 1.9%, a 67% reduction, the biggest gain coming from adding the reranker on top of the contextual signals."
+          },
+          {
+            "id": "d0e1cd18-1b71-4b8e-9df7-c131cbd11d43",
+            "prompt": "What makes generating per-chunk context affordable at scale, according to Anthropic's implementation?",
+            "options": [
+              "Using a smaller, less accurate embedding model",
+              "Skipping context generation for most chunks",
+              "Prompt caching the full source document once, then reusing it across each chunk's context-generation call",
+              "Generating context only after retrieval, not before indexing"
+            ],
+            "correctIndex": 2,
+            "explanation": "Without caching, generating context for every chunk means resending the whole document per chunk. Caching the document once and reusing it cut both latency (>2x) and cost (up to 90%) for the preprocessing step."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Introducing Contextual Retrieval",
+          "url": "https://www.anthropic.com/news/contextual-retrieval"
+        }
+      ],
+      "id": "8b9ce912-91b7-4c50-b33b-00b8d780695d",
+      "publishedDate": "2026-10-17T18:47:35Z"
+    },
+    {
       "id": "dcb4f723-7d1d-48ed-a6f6-62564109e606",
       "title": "HNSW: How Vector Databases Search Billions of Rows Fast",
       "subtitle": "The graph trick behind Pinecone, Qdrant, and pgvector that makes RAG retrieval feel instant.",
@@ -10951,177 +11135,6 @@
             ],
             "correctIndex": 1,
             "explanation": "GQA is a spectrum: group size 1 is plain MHA (no sharing), and group size equal to the total head count is MQA (every head shares one KV head). GQA configurations sit strictly between those two extremes."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "4e782901-1707-4a7b-8a5c-84a86b42c3a6",
-      "title": "Reranking: Retrieval Gets You Close, This Gets You Right",
-      "subtitle": "Why production RAG adds a slower, smarter second pass after vector search",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "reranking",
-        "retrieval",
-        "embeddings",
-        "cross-encoder"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.up.arrow.down",
-      "summary": "Vector search is fast because it embeds queries and documents independently, but that same independence means it misses relevance signals that only show up when a model reads the query and document together. Cross-encoder reranking fixes the ordering of a small candidate set at the cost of extra latency.",
-      "publishedDate": "2026-10-10T12:47:03Z",
-      "slides": [
-        {
-          "id": "d086e022-390a-4380-a2e5-3e83c8b6b102",
-          "kind": "cover",
-          "title": "Fast Retrieval, Then a Slower Second Opinion",
-          "body": "Almost every production RAG pipeline that matters runs two passes: a cheap vector search over the whole corpus, then an expensive reranker over just the top candidates.",
-          "bullets": [
-            "Pass 1 (bi-encoder + ANN index): scans millions of chunks in milliseconds",
-            "Pass 2 (cross-encoder reranker): re-scores dozens of candidates, fixing order mistakes pass 1 made"
-          ],
-          "symbol": "arrow.up.arrow.down",
-          "table": null
-        },
-        {
-          "id": "c801667a-3e64-41db-a6d6-31018a3f7cf4",
-          "kind": "problem",
-          "title": "Bi-Encoders Never Actually Look at Query and Document Together",
-          "body": "A bi-encoder embeds the query and each document independently, then compares vectors with cosine or dot-product similarity. That independence is exactly what makes precomputing and indexing millions of document embeddings possible.",
-          "bullets": [
-            "Because the model never sees the query and document side by side, it can miss negation, exact entity matches, and specific numbers",
-            "In practice, the top-20 results from pure vector search often bury 2-3 truly relevant chunks below less relevant ones that just happen to sit nearby in embedding space"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "ab6be35c-2620-4e26-b8d8-78a44add1ef5",
-          "kind": "solution",
-          "title": "Cross-Encoders Score the Pair Directly",
-          "body": "A cross-encoder concatenates the query and a candidate document into one input sequence and runs it through a single transformer, letting attention flow freely between query tokens and document tokens.",
-          "bullets": [
-            "Output is one relevance score per (query, document) pair, not a pair of independent vectors",
-            "This catches signals a bi-encoder's separate embeddings can't: exact phrase overlap, negation ('not FDA approved' vs 'FDA approved'), numeric precision",
-            "The cost: a fresh forward pass is needed for every pair, every query — nothing about it can be precomputed and stored like embeddings can"
-          ],
-          "symbol": "cpu",
-          "table": null
-        },
-        {
-          "id": "999a25dc-da75-4df6-a248-8e3051b7bbdb",
-          "kind": "architecture",
-          "title": "Inside a Cross-Encoder",
-          "body": "Typical rerankers (MS MARCO MiniLM-style, BGE-reranker, Cohere Rerank) are smaller transformers — tens to a few hundred million parameters — fine-tuned specifically to output a relevance score from a [query, SEP, document] input, usually via a classification head on the pooled output.",
-          "bullets": [
-            "Small size keeps the per-pair latency low enough to score dozens of candidates in one request",
-            "Newer listwise/LLM-based rerankers score or rank a whole candidate list at once instead of pair-by-pair, trading more latency for better calibration across the list"
-          ],
-          "symbol": "square.stack.3d.up",
-          "table": null
-        },
-        {
-          "id": "3e70bbe9-894a-49f7-b4f6-f5ae2db8f9d4",
-          "kind": "example",
-          "title": "Worked Example: A Support-Ticket RAG Pipeline",
-          "body": "A help-desk assistant embeds a user's question and retrieves the top 50 candidate chunks from a vector index in a few milliseconds.",
-          "bullets": [
-            "The cross-encoder reranker then scores all 50 query-chunk pairs, a step that takes on the order of a few hundred milliseconds",
-            "The single most relevant chunk — which raw vector similarity had ranked #18 because it used different wording — moves to #1",
-            "Only the reranked top 5 are passed into the LLM's context, directly reducing the chance it answers from a near-miss chunk instead of the right one"
-          ],
-          "symbol": "list.number",
-          "table": null
-        },
-        {
-          "id": "5259cc77-8eec-4380-be65-4649112b2f0a",
-          "kind": "comparison",
-          "title": "Two Very Different Jobs",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Stage",
-              "Model type",
-              "Latency",
-              "Scale it covers",
-              "Job"
-            ],
-            "rows": [
-              [
-                "Retrieval",
-                "Bi-encoder + ANN index (HNSW/IVF)",
-                "~ms, even over millions of docs",
-                "Whole corpus",
-                "Cheaply find a plausible candidate set"
-              ],
-              [
-                "Reranking",
-                "Cross-encoder (MiniLM, BGE-reranker, Cohere Rerank)",
-                "~tens to hundreds of ms",
-                "Only the top 20-200 candidates",
-                "Precisely order that shortlist before it reaches the LLM"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1ff0f0a3-cc78-44c5-9833-7749fa70a6fd",
-          "kind": "takeaways",
-          "title": "When Reranking Earns Its Latency Cost — And When It Doesn't",
-          "body": "Reranking is a precision tool, not a free upgrade: it adds a model call and real latency, so it pays off most when retrieval is the thing failing.",
-          "bullets": [
-            "Skip it when the candidate pool is already tiny and clean (searching <20 documents total), or when the latency budget is sub-100ms",
-            "Add it when the corpus is large, phrasing varies a lot between queries and documents, or you've observed the right chunk showing up just outside the top results",
-            "A general-purpose reranker trained on web/MS MARCO data may underperform on narrow domains (legal, medical) without domain fine-tuning",
-            "Reranking fixes ordering within a candidate set — it can't recover a relevant document that retrieval missed entirely"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "92476adc-6688-41c0-b194-d0e07920613e",
-            "prompt": "Why can't a cross-encoder be used to search millions of documents directly, the way a vector index does?",
-            "options": [
-              "Cross-encoders can only output embeddings, not scores",
-              "It must process every query-document pair jointly at query time, so cost scales with corpus size instead of being precomputed",
-              "Cross-encoders cannot run on GPUs",
-              "Cross-encoders only work with single-word queries"
-            ],
-            "correctIndex": 1,
-            "explanation": "Bi-encoder embeddings can be computed once per document and indexed for fast lookup later. A cross-encoder needs the specific query present at scoring time, so there's nothing to precompute — running it over an entire corpus per query would be far too slow."
-          },
-          {
-            "id": "e039c37f-f983-4601-9077-a0e85f86b711",
-            "prompt": "What can a cross-encoder 'see' that a bi-encoder's separate embeddings cannot?",
-            "options": [
-              "The document's publication date",
-              "Direct attention between query tokens and document tokens in the same forward pass",
-              "The total length of the corpus",
-              "The embedding model's training data"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because the query and document are fed in together, self-attention lets every query token attend to every document token directly — catching things like negation or exact phrase matches that two independently-computed vectors can lose."
-          },
-          {
-            "id": "fc74af12-460e-4368-a799-135f4efb050c",
-            "prompt": "In a typical two-stage pipeline, what's a realistic shape for the two passes?",
-            "options": [
-              "Retrieve top 2 candidates, then rerank all of them",
-              "Retrieve top 50-100 candidates via vector search, then rerank down to the top 5-10",
-              "Rerank the whole corpus, then retrieve from the reranked list",
-              "Run retrieval and reranking in parallel on the full corpus"
-            ],
-            "correctIndex": 1,
-            "explanation": "Retrieval's job is to cheaply narrow millions of documents down to a manageable shortlist; reranking's job is to carefully re-order that shortlist. Reversing the order, or reranking the full corpus, defeats the point of having a fast first stage."
           }
         ]
       },
