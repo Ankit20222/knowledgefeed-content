@@ -1,6 +1,514 @@
 {
   "posts": [
     {
+      "id": "dcb4f723-7d1d-48ed-a6f6-62564109e606",
+      "title": "HNSW: How Vector Databases Search Billions of Rows Fast",
+      "subtitle": "The graph trick behind Pinecone, Qdrant, and pgvector that makes RAG retrieval feel instant.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "hnsw",
+        "vector search",
+        "rag",
+        "ann",
+        "embeddings"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "circle.hexagongrid.fill",
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph-based algorithm nearly every vector database uses to find approximate nearest neighbors in milliseconds, instead of scanning every stored embedding. It trades a small, tunable amount of recall for massive speed, which is exactly the trade RAG retrieval needs.",
+      "publishedDate": "2026-10-17T12:49:58Z",
+      "slides": [
+        {
+          "id": "aa512dfe-4262-4be2-a038-e63380472b37",
+          "kind": "cover",
+          "title": "Why Can a Vector DB Search a Billion Embeddings in 2ms?",
+          "body": "Comparing a query vector against every row in your corpus is linear in the number of rows — fine for a thousand documents, catastrophic for a billion.",
+          "bullets": [
+            "HNSW is the graph algorithm behind most RAG retrieval today: Pinecone, Weaviate, Qdrant, pgvector, and FAISS all ship it",
+            "It's 'approximate' nearest neighbor search — it gives up guaranteed-exact results for huge speed"
+          ],
+          "symbol": "circle.hexagongrid.fill",
+          "table": null
+        },
+        {
+          "id": "f9e5a9c5-f9ff-4751-9ab8-cecc4cc366ff",
+          "kind": "problem",
+          "title": "Brute-Force Search Doesn't Scale",
+          "body": "Exact nearest-neighbor search means computing a distance to every single vector, every single query — an O(n) cost per query that grows with your corpus forever.",
+          "bullets": [
+            "At RAG scale (millions of chunks), that linear scan becomes the actual latency bottleneck, not the LLM call",
+            "Most real RAG queries don't need the mathematically guaranteed top-1 match — 'close enough, fast' beats 'perfect, slow'"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d3d70c89-d121-4d9b-b6cb-0861daccff82",
+          "kind": "solution",
+          "title": "The Mechanism: A Highway System, Not a Flat List",
+          "body": "HNSW builds a multi-layer graph: sparse layers on top with long-range 'highway' links, a dense layer at the bottom holding every single vector.",
+          "bullets": [
+            "Each vector connects to roughly M nearest neighbors (commonly M=16-64) — more M means better recall, more memory, slower builds",
+            "Search starts at an entry point in the top layer and greedily walks toward the query, hopping to the nearest neighbor at each step",
+            "On reaching a local minimum, it drops down a layer and keeps walking — repeating until it reaches layer 0",
+            "`ef_search` controls how many candidate neighbors are kept at each step — raise it to trade speed for recall"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "bf8f4428-6baa-4f29-b2e0-696bdad29914",
+          "kind": "example",
+          "title": "Worked Example: One Query's Journey",
+          "body": "A query embedding enters at the graph's single entry point, usually at the top (sparsest) layer.",
+          "bullets": [
+            "Layer 2 (sparse): 2-3 long hops jump it near the right neighborhood of the whole graph",
+            "Layer 1: a few more hops refine the position further",
+            "Layer 0 (dense, every vector): explores `ef_search` candidates (e.g. ~100) among its neighbors, returns the top-k",
+            "Total cost: roughly logarithmic in corpus size, vs. a full linear scan of every stored vector"
+          ],
+          "symbol": "arrow.triangle.turn.up.right.diamond.fill",
+          "table": null
+        },
+        {
+          "id": "d7fe5871-8230-4968-b384-db5aa981b881",
+          "kind": "comparison",
+          "title": "HNSW vs. the Other Common Indexes",
+          "body": "",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Index",
+              "Query speed",
+              "Recall",
+              "Memory",
+              "Good fit"
+            ],
+            "rows": [
+              [
+                "Flat / brute-force",
+                "Slow (scales with n)",
+                "Exact (100%)",
+                "Low",
+                "Small corpora (<10k vectors)"
+              ],
+              [
+                "HNSW",
+                "Fast, ~log(n)",
+                "High, tunable via ef/M",
+                "High (graph + vectors in RAM)",
+                "Most RAG at scale"
+              ],
+              [
+                "IVF (clustering)",
+                "Fast",
+                "Medium, tunable via nprobe",
+                "Lower, disk-friendly",
+                "Huge corpora, tighter memory budgets"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "e2d15770-91ae-46ac-a911-8f5c2f2b2d27",
+          "kind": "takeaways",
+          "title": "When NOT to Reach for HNSW",
+          "body": "HNSW is the default for a reason, but it has real costs worth knowing before you pick it.",
+          "bullets": [
+            "Memory-hungry: the graph's edges plus every vector typically need to fit in RAM — expensive at billions of rows",
+            "Deletes are awkward: most implementations don't support efficient in-place deletion; heavily-mutating data often needs soft-deletes plus periodic rebuilds",
+            "Build cost grows with M and corpus size — bulk-loading a huge, frequently-changing dataset can be slower than expected",
+            "For small, static corpora where exact results matter, brute-force is simpler and just as fast in practice"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "8ef4eda2-7449-446f-b0c4-326332338c53",
+            "prompt": "What is the main trade-off HNSW makes to get fast search?",
+            "options": [
+              "It stores vectors at lower precision to save memory",
+              "It guarantees exact results but uses more compute",
+              "It gives up a guarantee of finding the exact nearest neighbor in exchange for speed",
+              "It only works for text embeddings, not images"
+            ],
+            "correctIndex": 2,
+            "explanation": "HNSW is an approximate nearest-neighbor algorithm — it returns neighbors that are very likely close to the true nearest ones, tunable via parameters like ef, but without a hard correctness guarantee like brute-force search."
+          },
+          {
+            "id": "81ec94e1-88ca-4916-9775-89ad7f2443f4",
+            "prompt": "Why does HNSW use multiple graph layers instead of one flat graph?",
+            "options": [
+              "To store a separate copy of the data for backup",
+              "Sparse top layers with long-range links let search jump far quickly, while the dense bottom layer refines the answer locally",
+              "Each layer represents a different embedding model",
+              "Layers are only used during index building, not during search"
+            ],
+            "correctIndex": 1,
+            "explanation": "The layered structure mimics a highway system: long 'highway' edges in sparse upper layers get you near the right neighborhood fast, then the dense bottom layer (with every vector) finds the precise local answer."
+          },
+          {
+            "id": "ae14285b-7cf9-4ce9-8daa-597da865c837",
+            "prompt": "When would HNSW be a poor choice for a vector search workload?",
+            "options": [
+              "When the corpus has millions of static documents",
+              "When you need the fastest possible approximate search",
+              "When the dataset is small, static, and must return exact nearest neighbors",
+              "When you're building a RAG pipeline"
+            ],
+            "correctIndex": 2,
+            "explanation": "For small or static datasets where exact correctness matters, brute-force search is simpler, exact, and often fast enough — HNSW's approximate results and memory overhead aren't worth it there."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
+      "id": "2773a0d9-2bbf-44c4-b55b-407f1bc4deb9",
+      "title": "An AI Solved a 25-Year NSA Mystery in Under 30 Minutes",
+      "subtitle": "Claude traced the unexplained 'random' seeds behind NIST's ECDSA curves back to a 1990s C library bug.",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "cryptography",
+        "ecdsa",
+        "security",
+        "anthropic",
+        "ai research"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "key.fill",
+      "summary": "Anthropic's Frontier Red Team used an internal research model to figure out, in under 30 minutes, where the mysterious NSA-supplied seeds behind NIST's ECDSA elliptic curves actually came from: a 1990s C library pseudo-random number generator seeded with a timestamp. The finding doesn't break ECDSA, but it closes a 25-year-old backdoor-suspicion mystery that a public bounty had failed to solve.",
+      "publishedDate": "2026-10-17T12:49:58Z",
+      "slides": [
+        {
+          "id": "4c2a12d7-0b9a-470c-a36a-e565d4cfa987",
+          "kind": "cover",
+          "title": "A 25-Year Crypto Mystery, Solved by an AI in Half an Hour",
+          "body": "Since 2000, every standard NIST elliptic curve used in ECDSA (including P-256, which secures a huge share of the internet's TLS traffic) has shipped with an unexplained 'random' seed, supplied by the NSA with no documentation.",
+          "bullets": [
+            "Anthropic's research model worked out the seed-generation method with no hints, in under 30 minutes",
+            "A standing $36,864 bounty for solving this had gone unclaimed for years",
+            "Source: Anthropic Frontier Red Team, 'Claude reveals ECDSA curve origins' (Oct 16, 2026)"
+          ],
+          "symbol": "key.fill",
+          "table": null
+        },
+        {
+          "id": "e224794d-a191-4b41-9205-8cbfc86c7b72",
+          "kind": "problem",
+          "title": "Why Unexplained Seeds Fuel Backdoor Suspicion",
+          "body": "If a standards body can quietly choose curve parameters that look random but are secretly weak, it can undermine the cryptography everyone trusts — and nobody could prove the NIST seeds weren't exactly that.",
+          "bullets": [
+            "The one prior explanation (a 2015 account citing a hashed joke passphrase) turns out to be wrong",
+            "With no verifiable origin story, every ECDSA deployment inherited a sliver of unprovable doubt",
+            "Proving the seeds came from a mundane, reproducible process is the only way to retire that doubt"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "bae908bc-30bc-4d6e-a29a-4f2ab6ffdfd8",
+          "kind": "solution",
+          "title": "The Method: Guess the PRNG, Then Attack Its Math",
+          "body": "Claude didn't brute-force the seeds directly — it reverse-engineered the generator that produced them, using the seeds' own statistical fingerprints.",
+          "bullets": [
+            "Hypothesis: the seeds came from `lrand48`, a weak, well-known 1990s C library PRNG — not a cryptographic hash",
+            "A sliding bit-scanner tested 34 generator/output-slice combinations for the tell-tale signature",
+            "Giveaway: some seeds had zero top bits across every word — a 1-in-5,810 coincidence, but exactly what truncated lrand48 output looks like",
+            "For the full-precision prime curves, recovering the internal PRNG state from truncated output was solved as a lattice problem with LLL basis reduction"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "53b69240-d6a4-48ae-9504-8af84092845f",
+          "kind": "example",
+          "title": "Worked Example: Cracking P-256's Seed",
+          "body": "P-256 is the curve behind a huge share of the web's TLS connections — its seed had been unexplained since 2000.",
+          "bullets": [
+            "Claude found the recovered 48-bit generator state needed exactly 1,842 `srand48` iterations to reach the published seed",
+            "That state regenerates all 160 bits of P-256's published seed (C49D3608 86E70493 6A6678E1 139D26B7 819F7E90) — Anthropic notes this 'does not happen by chance'",
+            "Stepping the state back pinpointed the generating timestamp: August 16, 1997, 01:52:34",
+            "Bonus: Claude also explained the base points of 6 curves (including P-192) via a separate PRNG, the first explanation ever given for any NIST base point"
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "4d1ef0ef-2224-4b23-98cc-51995d4e2887",
+          "kind": "comparison",
+          "title": "Two Curve Families, Two Different Attacks",
+          "body": "",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Curve family",
+              "Source generator",
+              "Recovery technique"
+            ],
+            "rows": [
+              [
+                "Prime curves (P-192/224/256/384/521)",
+                "`lrand48`, seeded by Unix timestamp",
+                "LLL lattice reduction on truncated output"
+              ],
+              [
+                "Binary curves (B-163 etc.)",
+                "`lrand48`, 17 hidden bits per word",
+                "Brute force all 2^17 hidden-bit values"
+              ],
+              [
+                "6 base points (incl. P-192)",
+                "FreeLIP generator (from Lenstra's package)",
+                "Direct replay from known small seeds (20000, 20420, ...)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "ee5c1e0b-f2d8-4bd5-bf56-3ff2936296ac",
+          "kind": "takeaways",
+          "title": "What This Does — and Doesn't — Prove",
+          "body": "Anthropic is explicit that this is a forensic finding, not a cryptographic result.",
+          "bullets": [
+            "Not a break: the paper states plainly this is 'not a cryptographic break, new attack, or weakness in the ECDSA curves'",
+            "Still unexplained: the fifth binary seed (B-163) and the base points for P-224, P-256, P-384, and P-521 remain a mystery",
+            "Open question: some viable curve candidates were skipped during generation and nobody knows the selection criteria used in 1997",
+            "The bigger story: a mundane, reproducible PRNG process makes a deliberate backdoor far less plausible — but doesn't rule it out with certainty"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "078a37cf-7404-471c-8b55-3169e37d1ee2",
+            "prompt": "What did Claude determine actually generated the mysterious NIST ECDSA curve seeds?",
+            "options": [
+              "A cryptographic hash of a secret passphrase, as claimed in 2015",
+              "A weak 1990s C library PRNG (`lrand48`) seeded with a Unix timestamp",
+              "A quantum random number generator",
+              "Manual selection by NSA cryptographers with no algorithm"
+            ],
+            "correctIndex": 1,
+            "explanation": "Claude found statistical fingerprints (like runs of zero top bits) matching `lrand48`, a well-known weak PRNG — and recovered its internal state well enough to regenerate the full published seeds."
+          },
+          {
+            "id": "a639d9b3-7914-4a3b-b11b-be4ce3162305",
+            "prompt": "Why were full-precision prime-curve seeds (like P-256's) harder to recover than the binary-curve seeds?",
+            "options": [
+              "They used a completely different, stronger generator",
+              "Their truncated output required solving a lattice-reduction problem (LLL) rather than a brute-forceable 2^17 search",
+              "They had no seed at all",
+              "They were generated after the year 2000"
+            ],
+            "correctIndex": 1,
+            "explanation": "Binary curves exposed only 17 hidden bits per word — small enough to brute force. Prime curves truncated more of the state, so recovering it required treating the problem as lattice reduction (LLL) instead."
+          },
+          {
+            "id": "0405579b-58c7-4824-b999-d99a81e8fe1a",
+            "prompt": "What does this finding NOT establish?",
+            "options": [
+              "That ECDSA's P-256 curve has been cryptographically broken",
+              "That the published seed matches a reproducible generation process",
+              "That a mundane process, not a hidden hash, produced the seeds",
+              "The exact timestamp used to generate P-256's seed"
+            ],
+            "correctIndex": 0,
+            "explanation": "Anthropic is explicit this is not a cryptographic break or new weakness in the curves — it explains WHERE the seeds came from, which reduces (but doesn't eliminate) backdoor suspicion."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "cfb109f2-50ad-4e0f-8e20-35d3fc352b4a",
+          "title": "Claude reveals ECDSA curve origins",
+          "url": "https://www.anthropic.com/research/ecdsa-curve-origins"
+        }
+      ]
+    },
+    {
+      "id": "ad211b33-c6ea-451b-8396-917754fb5d63",
+      "title": "Claude Redesigns Quantum Circuits, Cuts Gate Counts 150,000x",
+      "subtitle": "An AI research model beat eight years of human work on one of chemistry's hardest quantum simulations.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "quantum computing",
+        "ai for science",
+        "anthropic",
+        "circuit design",
+        "research"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "atom",
+      "summary": "Anthropic had an internal Claude research model autonomously redesign quantum circuits for eight computational primitives, beating every previously published design on qubit and gate count. On one task it cut the estimated gate count for simulating the FeMoco molecule by roughly 150,000x, and on another it ran 53 hours unsupervised to invent a reversible algorithm that used 17x fewer gates than the prior best design.",
+      "publishedDate": "2026-10-17T12:49:58Z",
+      "slides": [
+        {
+          "id": "7180b6a2-dd40-48a9-8088-a97980450f2c",
+          "kind": "cover",
+          "title": "An AI Just Shrank Quantum Algorithms by Orders of Magnitude",
+          "body": "Anthropic gave a Claude research model plain-language specs for eight quantum circuit design problems spanning chemistry, cryptography, and number theory — then let it iterate alone.",
+          "bullets": [
+            "Beat the best published human designs on qubits AND gates across all eight tasks",
+            "One result replaced ~8 years of collective human optimization work with a single 53-hour run",
+            "Paper: arXiv:2610.22367 (Anthropic STEM Fellows Program, with Harvard physicists)"
+          ],
+          "symbol": "atom",
+          "table": null
+        },
+        {
+          "id": "9b240a5f-8455-4e1f-b0bd-c6717ca22d0e",
+          "kind": "problem",
+          "title": "Quantum Algorithms Are Useless Until They're Cheap Enough",
+          "body": "A quantum algorithm that's theoretically correct but needs millions of gates and qubits is worthless on near-term hardware — circuit size, not cleverness, is the bottleneck.",
+          "bullets": [
+            "2017 estimate for simulating FeMoco's ground-state energy: ~50 trillion Toffoli gates — far beyond any plausible machine",
+            "Most of the hard-won reductions since then came from better circuit design, not better hardware",
+            "Designing circuits by hand is slow: experts spend years finding each incremental trick"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "a57229f6-d9cd-4835-9c97-6027a5fa0da7",
+          "kind": "solution",
+          "title": "A Closed Loop: Claude Writes, an Evaluator Scores, Claude Revises",
+          "body": "No human sat in the loop between iterations — Claude proposed a circuit as Python code, an automated evaluator checked correctness and scored it on qubits x gates, and Claude revised based on that score alone.",
+          "bullets": [
+            "Works because circuits are checkable code: each input has one definite correct output",
+            "Claude was told to pursue several qualitatively different approaches in parallel to counter its own bias toward 'safe', well-known designs",
+            "For elliptic-curve point addition, Claude ran 53 hours on a one-paragraph brief, derived new algebraic identities, and formally verified the claim in Lean"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "7a470dd1-a41f-4bb8-ba95-62ed832185ac",
+          "kind": "example",
+          "title": "Worked Example: Cracking the DQI Decoder",
+          "body": "The team targeted Reed-Solomon decoding inside Decoded Quantum Interferometry (DQI), the most expensive step in solving optimal polynomial intersection problems.",
+          "bullets": [
+            "Claude swapped the extended Euclidean algorithm for Berlekamp-Massey decoding — a fixed step sequence that maps cleanly onto quantum circuits",
+            "Worst case needed 665 qubits to hold temporary values; Claude simulated 403 million sample decodings and found that saving just ONE value (19 qubits) works almost every time",
+            "Failure rate with that shortcut: about 1 in 10,000 — inside the task's accepted error budget",
+            "Net result: gate count for that step dropped 12x versus Google's previous construction"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "a42eb4eb-6cb7-490a-b6a2-ef5166d6e5ef",
+          "kind": "comparison",
+          "title": "Claude's Designs vs. the Prior Best, Task by Task",
+          "body": "Across all eight computational primitives, Claude's circuits beat the previously published state of the art on both axes at once — not just a qubit/gate trade.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Task",
+              "Prior best",
+              "Claude's result"
+            ],
+            "rows": [
+              [
+                "FeMoco ground-state energy",
+                "~50 trillion Toffoli gates (2017)",
+                "~340 million gates (~150,000x fewer)"
+              ],
+              [
+                "Elliptic-curve point addition",
+                "Smallest known qubit design",
+                "12% more qubits, but 17x fewer gates"
+              ],
+              [
+                "DQI Reed-Solomon decoding",
+                "Google's prior construction",
+                "12x fewer gates, ~1-in-10,000 failure rate"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "00e8a2b8-463b-4e3b-b2a1-e81ed58567e6",
+          "kind": "takeaways",
+          "title": "Where This Does and Doesn't Generalize",
+          "body": "The approach works best on a specific, large class of problems — not quantum circuit design in general.",
+          "bullets": [
+            "Pitfall: the method needs cheap correctness-checking (one input, one definite output) — not every algorithm qualifies",
+            "Claude's own bias toward 'safe', well-verified designs had to be countered by forcing parallel exploration of different approaches",
+            "Qubit/gate trade-offs mean the 'best' circuit still depends on the target hardware's real constraints",
+            "Circuit design is only one layer of a fault-tolerant quantum computer — co-optimizing the full stack is still just a proposal, not a demonstrated result"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "002ae414-f102-48cd-89d1-9f08c23b4670",
+            "prompt": "Why could Claude optimize these quantum circuits with no human in the loop?",
+            "options": [
+              "The circuits were small enough to brute-force exhaustively",
+              "Each task's correctness could be checked automatically against one definite expected output",
+              "Claude had direct access to a working quantum computer",
+              "The evaluator used human preference ratings instead of a score"
+            ],
+            "correctIndex": 1,
+            "explanation": "The closed loop only works because each circuit's output could be checked cheaply and unambiguously by an automated evaluator — that's what let Claude iterate without a human reviewing every step."
+          },
+          {
+            "id": "dd405b8f-b10a-4a02-8598-3cf4aca34284",
+            "prompt": "In the DQI Reed-Solomon decoder result, how did Claude cut qubit use from a 665-qubit worst case down to 19 extra qubits?",
+            "options": [
+              "By deleting the error-correction step entirely",
+              "By simulating 403 million sample decodings and showing one saved value covers nearly all cases, accepting a ~1-in-10,000 failure rate",
+              "By increasing the number of physical qubits available",
+              "By switching to the extended Euclidean algorithm"
+            ],
+            "correctIndex": 1,
+            "explanation": "Claude replaced the extended Euclidean algorithm WITH Berlekamp-Massey decoding, then used massive simulation (403M samples) to prove that saving just one intermediate value was enough almost all the time — trading a tiny, bounded failure rate for a huge qubit savings."
+          },
+          {
+            "id": "f8342fac-7da6-4b78-adb2-d51ccbf1171d",
+            "prompt": "What is the main limitation of this closed-loop circuit optimization approach?",
+            "options": [
+              "It only works on classical, non-quantum algorithms",
+              "It requires the full fault-tolerant hardware stack to already exist",
+              "It depends on being able to cheaply verify correctness, which doesn't hold for every algorithm",
+              "It cannot improve on any previously published design"
+            ],
+            "correctIndex": 2,
+            "explanation": "The paper is explicit that this method works best for problems whose correctness is efficiently checkable — a large but not universal class of algorithms. Circuit design is also just one layer of the full quantum computing stack."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "b94a6476-2664-4085-a8a9-687cb939395e",
+          "title": "Designing more efficient quantum circuits with Claude",
+          "url": "https://www.anthropic.com/research/designing-efficient-quantum-circuits"
+        },
+        {
+          "id": "4ac6a7d0-a1b7-45d5-875d-4c0a8672939f",
+          "title": "arXiv:2610.22367 — Quantum circuit design via closed-loop AI optimization",
+          "url": "https://arxiv.org/abs/2610.22367"
+        }
+      ]
+    },
+    {
       "title": "Byte Pair Encoding: How LLMs Chop Text Into Tokens",
       "subtitle": "Why your model can't count the r's in strawberry — and what that costs you.",
       "category": "LLMs",
@@ -10618,559 +11126,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "title": "Claude Frontier Academy: $100M for 10,000 AI Engineers",
-      "subtitle": "Anthropic's biggest bet yet: enterprise AI is bottlenecked by people, not models.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "anthropic",
-        "claude",
-        "enterprise-ai",
-        "ai-talent",
-        "agentic-deployment"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "graduationcap.fill",
-      "summary": "On October 2, 2026, Anthropic launched Claude Frontier Academy, committing $100 million to train 10,000 Frontier Deployed Engineers by the end of 2027. Modeled on medical residencies, the program runs nominated engineers from firms like Accenture, McKinsey, and Commonwealth Bank of Australia through a graded in-person stage and a 12-week real deployment residency.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "A credential you earn by actually deploying Claude",
-          "body": "Anthropic isn't just selling model access anymore — it's training the people who turn that access into working deployments.",
-          "bullets": [
-            "$100 million committed to train 10,000 Frontier Deployed Engineers (FDEs) by end of 2027",
-            "Program modeled explicitly on medical residencies: learn, practice, then be assessed before working solo"
-          ],
-          "symbol": "graduationcap.fill",
-          "id": "445fbe92-b821-4032-911d-1a5ae2da5d4d"
-        },
-        {
-          "kind": "problem",
-          "title": "The bottleneck isn't the model anymore",
-          "body": "Anthropic's Partner Network already has scale on paper — the gap is turning that into real, deployed use cases.",
-          "bullets": [
-            "46,000+ firms have earned 175,000+ Claude certifications through the existing Partner Network",
-            "Nearly 4,000 people have completed Basecamp, Anthropic's existing onboarding program",
-            "Certifications prove knowledge; they don't prove someone can run security review, handle handover, and ship a Claude deployment inside a real enterprise"
-          ],
-          "symbol": "person.crop.circle.badge.questionmark",
-          "id": "1df29604-c83f-439a-82b5-063d9f6f6ca6"
-        },
-        {
-          "kind": "solution",
-          "title": "Two stages, each gated by a real assessment",
-          "body": "The Frontier Deployed Engineer Residency has a clear bar at each step — nobody advances just by attending.",
-          "bullets": [
-            "Stage 1 (multi-day, in-person): work a simulated enterprise deployment end-to-end — use-case selection, security review, handover — then pass a graded practical on a new scenario to earn the 'Claude Resident Engineer' badge",
-            "Stage 2 (12 weeks): lead a real Claude use case at your own organization, supported by Anthropic engineers and your cohort; passing the final assessment earns the 'Claude Frontier Deployed Engineer' badge",
-            "First Stage 2 graduates are expected in early 2027"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "c2f8669c-23c3-42b8-a144-dd121938afc8"
-        },
-        {
-          "kind": "architecture",
-          "title": "Who's actually in the room",
-          "body": "Participation is by nomination, not open enrollment — enterprises and the firms that serve them put engineers forward.",
-          "bullets": [
-            "First cohorts include Accenture, Bain, Capgemini, Commonwealth Bank of Australia, Deloitte, McKinsey, Morgan Stanley, and Novo Nordisk",
-            "Cohorts are currently running in San Francisco, New York, and London",
-            "Eligibility: an Anthropic account team or Partner Account Manager nominates candidates — prior AI-agent experience is not required, but each engineer arrives with a named Claude project to work on"
-          ],
-          "symbol": "building.columns.fill",
-          "id": "9af70f32-e15a-45d7-9ddb-bb10dea3d34c"
-        },
-        {
-          "kind": "comparison",
-          "title": "Certification vs. residency: two different products",
-          "body": null,
-          "bullets": [
-            "The Partner Network proves you know Claude; the Academy proves you can deploy it"
-          ],
-          "table": {
-            "headers": [
-              "",
-              "Partner Network Certification",
-              "Frontier Academy Residency"
-            ],
-            "rows": [
-              [
-                "Format",
-                "Self-paced course content",
-                "In-person stage + 12-week hands-on residency"
-              ],
-              [
-                "Scale so far",
-                "175,000+ certifications across 46,000+ firms",
-                "10,000 engineers targeted by end of 2027"
-              ],
-              [
-                "What you get",
-                "A knowledge credential",
-                "A real, deployed Claude use case at your own org"
-              ]
-            ]
-          },
-          "symbol": "square.split.2x1.fill",
-          "id": "edb7720e-614f-45a3-84d3-0a69bebc77c2"
-        },
-        {
-          "kind": "example",
-          "title": "What a nominated engineer's year looks like",
-          "body": "Take a hypothetical engineer nominated by a bank's Anthropic account team.",
-          "bullets": [
-            "Week 1: flies to the New York cohort, runs a simulated deployment from use-case pitch through a mock security review, passes the graded practical, earns the Resident Engineer badge",
-            "Weeks 2-13: back at the bank, leads an actual Claude deployment — e.g. an internal document-review agent — with an Anthropic engineer checking in and a cohort of peers to compare notes with",
-            "Commonwealth Bank of Australia's CTO framed the bet plainly: 'We are building tomorrow's bank today.'"
-          ],
-          "symbol": "person.fill.checkmark",
-          "id": "f497c8f7-72b8-4059-83f1-d42ca06027b0"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Why this is a bigger signal than it looks",
-          "body": null,
-          "bullets": [
-            "This is a talent-supply play, not a model release — Anthropic is explicitly betting that adoption, not capability, is the constraint on enterprise AI",
-            "The residency format (gated stages, real assessments, real deployments) is a deliberate contrast to self-paced certification",
-            "Anthropic calls the 10,000-engineer target 'the first step of many' — expect the nomination pool to widen past the initial eight founding partners"
-          ],
-          "symbol": "flag.checkered",
-          "id": "7becab16-c734-4af6-9f4b-3cdb08ffe59b"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is Anthropic's numeric commitment behind Claude Frontier Academy?",
-            "options": [
-              "$1 billion to open 100 new offices",
-              "$100 million to train 10,000 Frontier Deployed Engineers by end of 2027",
-              "Free certifications for 1 million developers",
-              "$100 million to build a new foundation model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic committed $100 million specifically to train 10,000 Frontier Deployed Engineers (FDEs) by the end of 2027 — a talent program, not a model investment.",
-            "id": "cccf0529-3741-463e-a962-e9ee64630942"
-          },
-          {
-            "prompt": "What does passing Stage 1 of the Frontier Deployed Engineer Residency actually require?",
-            "options": [
-              "Attending a webinar and completing a quiz",
-              "Working a simulated enterprise deployment end-to-end, then passing a graded practical on a new scenario",
-              "Submitting a resume for review",
-              "Paying a certification fee"
-            ],
-            "correctIndex": 1,
-            "explanation": "Stage 1 is a multi-day, in-person program where participants run a simulated deployment (use-case selection through security review and handover) and must pass a graded practical on a novel scenario to earn the badge — attendance alone isn't enough.",
-            "id": "0d654042-9f07-436f-be72-5ae4d783e651"
-          },
-          {
-            "prompt": "What problem is Claude Frontier Academy actually designed to solve?",
-            "options": [
-              "A shortage of GPU capacity",
-              "A shortage of people who can turn Claude access into a working enterprise deployment",
-              "A lack of enterprises interested in AI",
-              "Claude's own technical limitations"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic frames the Academy around a people bottleneck: the Partner Network already has 175,000+ certifications across 46,000+ firms, but certification alone doesn't produce someone who can run a real deployment — hence a residency model with graded, hands-on stages.",
-            "id": "0b18ac91-62fd-47b0-9df1-1ff5a28a4c8b"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing Claude Frontier Academy",
-          "url": "https://www.anthropic.com/news/claude-frontier-academy",
-          "id": "dc5d16d2-2d5d-4d4e-b88f-b042619efaca"
-        }
-      ],
-      "id": "6a2c3e77-8f39-4182-a6ce-36e5dcb9adf3",
-      "publishedDate": "2026-10-10T06:46:22Z"
-    },
-    {
-      "title": "Context Engineering: Curating What the Model Sees",
-      "subtitle": "Prompting was never the whole game — the full token budget is.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "context-engineering",
-        "ai-agents",
-        "llms",
-        "agentic-workflows",
-        "context-window"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "rectangle.stack.fill",
-      "summary": "Context engineering is the discipline of curating the full set of tokens an LLM sees at inference time — not just the initial prompt. As agents run longer and accumulate tool outputs, techniques like compaction, structured note-taking, and sub-agent architectures become the real lever on performance, because bigger context windows don't fix 'context rot.'",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "The layer after prompt engineering",
-          "body": "Anthropic defines context simply: the set of tokens included when sampling from a model. Context engineering is curating the best possible set of those tokens, every single turn an agent runs.",
-          "bullets": [
-            "Prompt engineering writes the instructions; context engineering curates everything the model sees — instructions, tool outputs, memory, retrieved docs",
-            "The guiding principle: find the smallest possible set of high-signal tokens that makes the desired outcome most likely"
-          ],
-          "symbol": "rectangle.stack.fill",
-          "id": "0fc2aaa6-ec48-4bcf-a051-17e21acaee46"
-        },
-        {
-          "kind": "problem",
-          "title": "Context rot: more tokens, less recall",
-          "body": "A bigger context window doesn't mean the model uses all of it equally well.",
-          "bullets": [
-            "As token count grows, a model's accuracy at recalling specific information from its context declines — shown across needle-in-a-haystack benchmarks on every model tested, though the rate varies",
-            "Attention is architecturally a budget: transformers let every token attend to every other token, creating n² pairwise relationships for n tokens — so each new token has diminishing marginal returns",
-            "Models also see far less long-sequence training data than short-sequence data, so they're inherently less practiced at using distant context"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "fb96075f-e4f2-4663-ae02-b75a512d915d"
-        },
-        {
-          "kind": "solution",
-          "title": "Right-altitude prompts, lean tools",
-          "body": "The fix starts before the agent even runs: how the system prompt and tools are built.",
-          "bullets": [
-            "'Right altitude': avoid brittle hardcoded if-else logic on one end and vague guidance that assumes shared context on the other",
-            "Structure prompts into clear sections with XML tags or Markdown headers (e.g. <background_information>, <instructions>) rather than one wall of text",
-            "Test a minimal prompt on the strongest available model first, then add instructions only in response to observed failure modes — not speculatively",
-            "Tools should be self-contained with minimal overlap: if a human engineer can't tell which tool to call, the agent can't either"
-          ],
-          "symbol": "slider.horizontal.3",
-          "id": "32a08e82-97da-4d33-929e-4588afdf295e"
-        },
-        {
-          "kind": "architecture",
-          "title": "Compaction: summarize, then keep going",
-          "body": "For long, conversational agent runs, compaction is the primary tool for staying under budget.",
-          "bullets": [
-            "When nearing the context limit, summarize the conversation and start a fresh context window seeded with that summary",
-            "Claude Code's version keeps architectural decisions, unresolved bugs, and implementation details — and discards redundant tool outputs, while keeping the 5 most recently touched files",
-            "Tune for recall first (never lose something relevant), then precision (trim what's left)",
-            "The lightest form is 'tool result clearing' — stripping raw tool outputs buried deep in history while leaving the rest of the transcript intact"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "id": "f88cc1ab-8117-4545-92a3-79eee79cd507"
-        },
-        {
-          "kind": "architecture",
-          "title": "Structured notes and sub-agents",
-          "body": "Two more patterns for runs that outlast a single context window entirely.",
-          "bullets": [
-            "Agents write persistent notes outside the context window and reload them later — Claude Code's to-do list, or a custom agent's NOTES.md file",
-            "In one documented case, Claude tracked 1,234 steps of Pokémon training progress across a multi-hour session, resuming correctly after multiple context resets",
-            "Sub-agent pattern: a lead agent holds the high-level plan while specialized sub-agents explore in their own clean context windows, each burning tens of thousands of tokens but returning only a distilled 1,000-2,000-token summary"
-          ],
-          "symbol": "person.2.fill",
-          "id": "848b3ca1-94c8-4d56-a65e-576b43a2cc13"
-        },
-        {
-          "kind": "comparison",
-          "title": "Matching the technique to the task",
-          "body": null,
-          "bullets": [
-            "None of these are free — each adds engineering complexity, so pick based on the shape of the task"
-          ],
-          "table": {
-            "headers": [
-              "Technique",
-              "Best fit"
-            ],
-            "rows": [
-              [
-                "Compaction",
-                "Long, extensive back-and-forth conversations"
-              ],
-              [
-                "Structured note-taking",
-                "Iterative work with clear milestones"
-              ],
-              [
-                "Multi-agent / sub-agents",
-                "Complex research where parallel exploration pays off"
-              ],
-              [
-                "Just-in-time retrieval",
-                "Large, dynamic data where pre-loading everything wastes budget"
-              ]
-            ]
-          },
-          "symbol": "square.split.2x1.fill",
-          "id": "45790910-5109-44f9-80ef-8e1ab00c743c"
-        },
-        {
-          "kind": "example",
-          "title": "Just-in-time beats pre-loading the whole repo",
-          "body": "Claude Code doesn't embed an entire codebase before answering a question about it.",
-          "bullets": [
-            "Traditional RAG embeds and retrieves relevant chunks before inference even starts",
-            "Just-in-time retrieval keeps lightweight pointers — file paths, queries, links — and loads actual data at runtime using tools like glob, grep, head, and tail",
-            "Even metadata is a signal: a file named test_utils.py living under tests/ implies a different purpose than one under src/core_logic/",
-            "Hybrid works too: Claude Code preloads CLAUDE.md files up front, then retrieves everything else just-in-time — useful when some context is reliably relevant and the rest isn't"
-          ],
-          "symbol": "magnifyingglass",
-          "id": "ed1df8a3-6b82-499d-ab99-1c5d3ef4512d"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The core idea in four facts",
-          "body": null,
-          "bullets": [
-            "Context is every token the model sees, not just the prompt — and bigger context windows don't cancel out context rot",
-            "The target is always the smallest set of high-signal tokens, not the largest context you can fit",
-            "Compaction, structured note-taking, and sub-agents solve different problems — picking the wrong one adds complexity without fixing recall",
-            "Default advice still holds: do the simplest thing that works, and add machinery only once a real failure mode shows up"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "76a9e5f7-9da3-4877-8db7-37c4d414e93f"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is \"context rot\"?",
-            "options": [
-              "A bug that corrupts an LLM's weights over time",
-              "The tendency for a model's recall accuracy to decline as the number of tokens in its context grows, even within its supported window",
-              "A term for outdated training data",
-              "A memory leak in agent frameworks"
-            ],
-            "correctIndex": 1,
-            "explanation": "Context rot describes recall accuracy degrading as token count rises — observed across models on needle-in-a-haystack benchmarks, even though the context technically fits within the model's window.",
-            "id": "14eac399-a923-4ea1-a573-a52224c5645e"
-          },
-          {
-            "prompt": "In Claude Code's compaction approach, what happens when the context limit approaches?",
-            "options": [
-              "The oldest half of the conversation is deleted at random",
-              "The conversation is summarized, keeping architectural decisions, unresolved bugs, and implementation details plus the 5 most recently touched files, while discarding redundant tool outputs",
-              "The agent stops and asks the user to start a new session",
-              "All tool outputs are kept but the system prompt is dropped"
-            ],
-            "correctIndex": 1,
-            "explanation": "Compaction summarizes the conversation before restarting, deliberately preserving architectural decisions, open bugs, and implementation details plus the 5 most recent files — not a random or total truncation.",
-            "id": "2f59c476-4741-45a9-b189-b57f76a3188c"
-          },
-          {
-            "prompt": "According to the guidance, when is a multi-agent (sub-agent) architecture the right call?",
-            "options": [
-              "For every agent task, by default, since more agents is always better",
-              "For complex research tasks where parallel exploration across clean context windows pays off",
-              "Only when a single agent has exceeded its token budget by a factor of 10",
-              "Never — sub-agents are purely experimental"
-            ],
-            "correctIndex": 1,
-            "explanation": "Sub-agents trade setup complexity for parallel exploration in clean contexts, each returning a distilled summary — a good fit for complex research, not a default for simple iterative tasks where note-taking or compaction suffice.",
-            "id": "6a9892ce-94d3-469a-983e-d2bccf0c48ba"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Effective context engineering for AI agents",
-          "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
-          "id": "f865d2ce-1341-47d8-a93f-112b8c856ebc"
-        }
-      ],
-      "id": "9b9ce19c-eb25-44fb-bd10-16b22a32ab46",
-      "publishedDate": "2026-10-10T06:46:21Z"
-    },
-    {
-      "title": "Anthropic's OSS Scanner: Claude Finds Bugs in Open Source for Free",
-      "subtitle": "A free, opt-in service scans enrolled open-source projects with frontier Claude models and ships a proof of concept with every finding.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "anthropic",
-        "cybersecurity",
-        "open-source",
-        "vulnerability-scanning",
-        "claude"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "ladybug.fill",
-      "summary": "Anthropic launched the Cyber Mission on October 8, 2026 — a two-track effort pairing a Critical Infrastructure Defense Program for operational-technology defenders with OSS Scanner, a free service that uses frontier Claude models to scan enrolled open-source projects and return a proof of concept, explanation, and suggested fix for each vulnerability found. Anthropic is targeting a true-positive rate above 90% and warns reports ship without human review.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Anthropic turns Claude loose on open-source vulnerabilities, for free",
-          "body": "The Anthropic Cyber Mission, announced October 8, 2026, is a long-term effort to arm defenders with Claude-powered tools — starting with critical infrastructure and open-source software.",
-          "bullets": [
-            "Two founding tracks: Critical Infrastructure Defense Program (CIDP) and OSS Scanner",
-            "OSS Scanner is opt-in and free for enrolled open-source projects"
-          ],
-          "symbol": "ladybug.fill",
-          "id": "e5d6c14c-32be-46a5-bd82-2a1b16339e75"
-        },
-        {
-          "kind": "problem",
-          "title": "Finding a bug and fixing it are months apart",
-          "body": "Anthropic's own pilot, Project Glasswing, scanned hundreds of widely used open-source projects with human triage of the findings — and the gap between discovery and patch was the real bottleneck.",
-          "bullets": [
-            "Months typically pass between a vulnerability being found and actually fixed, per Anthropic's Glasswing data",
-            "Operational-technology (OT) fixes — power grids, water systems, transportation — can take even longer, in rare cases decades",
-            "Most open-source maintainers have no dedicated security budget to run this triage themselves"
-          ],
-          "symbol": "clock.badge.exclamationmark.fill",
-          "id": "6e0204fb-8e6c-4270-bdce-daaa47c9854a"
-        },
-        {
-          "kind": "solution",
-          "title": "OSS Scanner: periodic scans, a PoC, and a suggested fix",
-          "body": "Enrolled open-source projects get periodic scans from Anthropic's most capable models. Each report bundles a proof of concept, a plain explanation of the bug, and a suggested fix where one is available.",
-          "bullets": [
-            "Opt-in and free — funded in part by the Defender Advantage Fund (0xDAF), launched in August to keep it that way",
-            "Reports are sent straight to maintainers without human review first",
-            "Anthropic is targeting a true-positive rate above 90%, with plans to keep improving it"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "id": "d137e671-c0dc-4762-a4cb-93b173752074"
-        },
-        {
-          "kind": "architecture",
-          "title": "The other track: trusted access for critical-infrastructure defenders",
-          "body": "CIDP gives vetted security providers frontier Claude access, on-site Anthropic engineers, and Anthropic's own threat research — aimed at operational technology and government systems.",
-          "bullets": [
-            "Eleven founding partners: Accenture, Booz Allen, CrowdStrike, Deloitte, Dragos, Hitachi, Insane Cyber, Nozomi Networks, Palo Alto Networks, PwC, and Rockwell Automation",
-            "Several partners are already using Claude to fix real vulnerabilities, per Anthropic",
-            "Since a June program for state/local/tribal/territorial governments, Claude has been offered to more than half of US states and some large public infrastructure operators"
-          ],
-          "symbol": "bolt.shield.fill",
-          "id": "a315825d-46fa-4754-884f-4d717a574757"
-        },
-        {
-          "kind": "example",
-          "title": "What a maintainer actually receives",
-          "body": "Imagine a mid-size open-source HTTP library enrolled in OSS Scanner.",
-          "bullets": [
-            "Weekly automated scan flags a path-traversal bug in a file-upload handler introduced three commits ago",
-            "The report includes a working proof-of-concept request that triggers the bug, a plain-English explanation of why the path check is insufficient, and a suggested patch",
-            "The maintainer merges the fix the same day — instead of the months-long discovery-to-patch gap Glasswing measured industry-wide"
-          ],
-          "symbol": "terminal.fill",
-          "id": "69a1b893-7d9c-446a-9c69-2f1183f370ab"
-        },
-        {
-          "kind": "comparison",
-          "title": "CIDP vs. OSS Scanner: two tracks, two audiences",
-          "body": null,
-          "bullets": [
-            "Same underlying models and threat research, aimed at very different defenders"
-          ],
-          "table": {
-            "headers": [
-              "",
-              "CIDP",
-              "OSS Scanner"
-            ],
-            "rows": [
-              [
-                "Who it's for",
-                "Vetted security providers protecting OT/government systems",
-                "Any enrolled open-source project"
-              ],
-              [
-                "Access model",
-                "Frontier Claude + on-site Anthropic engineers",
-                "Automated periodic scans, no human review"
-              ],
-              [
-                "Cost",
-                "Partnership-based",
-                "Free, opt-in"
-              ],
-              [
-                "Founding scale",
-                "11 named partners",
-                "Hundreds of projects scanned under Project Glasswing"
-              ]
-            ]
-          },
-          "symbol": "square.split.2x1.fill",
-          "id": "d36659e7-5e22-45da-a3bb-7a0bbf74fcfb"
-        },
-        {
-          "kind": "concept",
-          "title": "Why Anthropic is flagging its own limits",
-          "body": "The announcement is unusually candid about where this can go wrong.",
-          "bullets": [
-            "Reports go out without human review, so some will have errors — Anthropic specifically calls out wrong severity ratings as a known failure mode",
-            "Anthropic's own forecast: AI likely favors defenders more in about two years, but the near term may not clearly favor either side",
-            "A free, automated scanner that misjudges severity could still waste maintainer time chasing a false 'critical' — the tradeoff for catching real bugs faster"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "3965a54b-f19d-4cbb-992c-db7b467f8484"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The core idea in four facts",
-          "body": null,
-          "bullets": [
-            "Anthropic's Cyber Mission (Oct 8, 2026) pairs CIDP for critical infrastructure with a free OSS Scanner for open-source projects",
-            "OSS Scanner reports include a proof of concept, explanation, and suggested fix — unreviewed by humans before they reach maintainers",
-            "Anthropic targets a >90% true-positive rate and plans to automate triage and patching next",
-            "The real bottleneck it targets isn't finding bugs — Glasswing showed the fix can take months, or decades for OT systems"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "64c96dbb-3e23-47cd-b8b5-a6de40becec5"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does every OSS Scanner report include alongside a flagged vulnerability?",
-            "options": [
-              "Only a severity score with no further detail",
-              "A proof of concept, a plain-English explanation, and a suggested fix where available",
-              "A bug bounty payout",
-              "A mandatory code freeze notice"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic designed OSS Scanner reports to bundle a working proof of concept, an explanation of the bug, and a suggested fix when one exists — aimed at cutting the time from discovery to patch.",
-            "id": "1fd9ecb1-b7dc-49e4-acd2-27837e037b33"
-          },
-          {
-            "prompt": "What was the main bottleneck Anthropic's Project Glasswing pilot actually measured?",
-            "options": [
-              "A lack of vulnerabilities to find",
-              "The gap between finding a vulnerability and actually getting it fixed, which stretched to months — or decades for OT systems",
-              "Open-source maintainers refusing to use AI tools",
-              "The cost of running large language models"
-            ],
-            "correctIndex": 1,
-            "explanation": "Glasswing scanned hundreds of open-source projects and found that discovery wasn't the hard part — the fix lag was, sometimes running to decades for operational-technology systems.",
-            "id": "e38fdc4a-251c-4531-9b80-a9d067ae13cc"
-          },
-          {
-            "prompt": "Why does Anthropic explicitly warn that OSS Scanner reports can contain errors like wrong severity ratings?",
-            "options": [
-              "Because the scanner is a beta product not actually in use",
-              "Because reports are sent to maintainers without human review before delivery",
-              "Because open-source code is inherently unscannable",
-              "Because severity ratings are randomly assigned"
-            ],
-            "correctIndex": 1,
-            "explanation": "OSS Scanner sends its automated reports straight to maintainers without a human review step, so Anthropic flags that some reports — including severity ratings — may be wrong even while targeting a >90% true-positive rate.",
-            "id": "6aae32d8-dbec-480f-aa95-2d62c41514c6"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Anthropic — Introducing the Anthropic Cyber Mission",
-          "url": "https://www.anthropic.com/news/anthropic-cyber-mission",
-          "id": "ece5fcee-b960-42b9-bda7-9bbe88e37e81"
-        }
-      ],
-      "id": "07b340fc-c0e4-4858-bc78-03d7f5e62853",
-      "publishedDate": "2026-10-10T00:47:26Z"
     }
   ]
 }
