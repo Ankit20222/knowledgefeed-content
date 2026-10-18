@@ -1,6 +1,367 @@
 {
   "posts": [
     {
+      "id": "b22d60a9-13d7-4715-9d94-c8ca940ed0af",
+      "title": "Hybrid Search: Fusing Keyword and Vector Retrieval",
+      "subtitle": "Why production RAG systems run BM25 and embeddings side by side instead of picking one.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "hybrid search",
+        "bm25",
+        "vector search",
+        "reranking"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.merge",
+      "summary": "Hybrid search runs a sparse keyword method like BM25 alongside dense vector embeddings, then fuses the two ranked lists into one — because each catches failures the other misses. Vector search finds paraphrases and lets 'cheap car' match 'affordable vehicle'; BM25 finds the exact SKU or error code that an embedding happily looks past.",
+      "publishedDate": "2026-10-18T06:48:34Z",
+      "slides": [
+        {
+          "id": "5c9cc343-e580-45b4-9a79-876f13aa6bf8",
+          "kind": "cover",
+          "title": "Why RAG Needs Two Search Engines, Not One",
+          "body": "Semantic (vector) search and classic keyword search each have blind spots that the other doesn't.",
+          "bullets": [
+            "Vector search embeds queries and documents into the same space and ranks by cosine/dot-product similarity",
+            "BM25 is a decades-old sparse keyword scoring function that ranks by term frequency, weighted by how rare that term is",
+            "Hybrid search runs both and merges the results — it isn't an either/or choice"
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "96355a98-f2e5-4722-924b-de1ec26285eb",
+          "kind": "problem",
+          "title": "Where Each Method Fails Alone",
+          "body": "The two failure modes are almost opposite, which is exactly why combining them works.",
+          "bullets": [
+            "Pure vector search: a query for an exact error code or part number can retrieve semantically 'similar' but wrong documents, because embeddings blur exact tokens",
+            "Pure BM25: a query for 'inexpensive transportation' won't match a document that only says 'cheap car', because there's no shared literal token",
+            "Acronyms, product SKUs, names, and numbers are classic vector-search blind spots; paraphrase and intent are classic BM25 blind spots"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "b01c7c95-9433-407e-bb0d-2bc1896ae3e6",
+          "kind": "solution",
+          "title": "The Mechanism: Two Ranked Lists, One Fused Score",
+          "body": "Hybrid search doesn't average raw scores — BM25 and cosine similarity live on incomparable scales. It fuses rankings instead.",
+          "bullets": [
+            "Each retriever (BM25, vector) independently returns its own top-k ranked list for the same query",
+            "Reciprocal Rank Fusion (RRF) scores each document by summing 1/(rank + k) across every list it appears in — a document ranked highly by both methods wins",
+            "A tunable weight can bias the fusion toward one retriever when a domain favors it — e.g. more keyword weight for legal/code search, more vector weight for conversational FAQ"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "d7f1ad8a-8f6d-44ce-a427-e4d45ae331cf",
+          "kind": "architecture",
+          "title": "Where It Sits in a RAG Pipeline",
+          "body": "Hybrid retrieval is typically the first of two retrieval stages, not the last.",
+          "bullets": [
+            "Stage 1 (hybrid retrieval): BM25 + vector search each pull dozens of candidates cheaply from the full corpus",
+            "Stage 2 (reranking): a smaller cross-encoder model re-scores just those candidates against the query for precision, since cross-encoders are too slow to run over an entire corpus",
+            "The LLM only ever sees the final top-k (often 3-10) chunks that survive both stages"
+          ],
+          "symbol": "square.stack.3d.down.forward.fill",
+          "table": null
+        },
+        {
+          "id": "6c6fb046-452a-418a-81d3-b045aea59445",
+          "kind": "example",
+          "title": "Worked Example: An Internal Support Bot",
+          "body": "A query like \"why does invoice INV-88213 show as void\" needs both halves.",
+          "bullets": [
+            "Vector search alone: ranks documents about 'why invoices get cancelled' highly, but the literal invoice ID 'INV-88213' may not surface the one ticket that mentions it, since embeddings don't preserve exact IDs well",
+            "BM25 alone: finds every document containing the literal string 'INV-88213' instantly, but ranks a generic FAQ about voided invoices (which never uses that exact phrase) far too low",
+            "Hybrid + RRF: the ticket mentioning the exact ID ranks near the top from BM25, the conceptually relevant FAQ ranks near the top from vector search — fusion surfaces both"
+          ],
+          "symbol": "ticket.fill",
+          "table": null
+        },
+        {
+          "id": "892cdedc-dd14-4c7e-8b33-81632b1ded2b",
+          "kind": "comparison",
+          "title": "BM25 vs. Vector vs. Hybrid",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Approach",
+              "Finds exact terms/IDs",
+              "Finds paraphrases/intent",
+              "Extra infra"
+            ],
+            "rows": [
+              [
+                "BM25 (sparse)",
+                "Yes",
+                "No",
+                "Inverted index only — no embedding model needed"
+              ],
+              [
+                "Vector (dense)",
+                "Weak",
+                "Yes",
+                "Embedding model + vector index (e.g. HNSW)"
+              ],
+              [
+                "Hybrid + RRF",
+                "Yes",
+                "Yes",
+                "Both of the above, plus a fusion step"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "bf8b1f7b-ab94-473e-b6f8-e1c6c76f2d78",
+          "kind": "takeaways",
+          "title": "When Hybrid Isn't Worth the Extra Piece",
+          "body": "Hybrid search adds a second retrieval system and a fusion step to maintain — that cost has to earn its keep.",
+          "bullets": [
+            "Skip it for small, tightly-scoped corpora (a few hundred FAQ entries) where either method alone already finds everything",
+            "Skip it if queries are purely conversational with no IDs, codes, or exact terms ever involved — vector search alone may be enough",
+            "Don't skip the reranking stage and expect fusion alone to fix ordering — RRF improves recall of candidates, a cross-encoder improves final precision",
+            "Tune the fusion weight per domain: code/log search usually wants more BM25 weight, open-ended Q&A usually wants more vector weight"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "9105b609-fb76-42d1-9e7b-f0452d6b9565",
+            "prompt": "Why doesn't hybrid search just average the raw BM25 score and the cosine similarity score?",
+            "options": [
+              "Averaging would be too slow to compute",
+              "The two scores live on incomparable scales, so hybrid search fuses the rankings (e.g. via Reciprocal Rank Fusion) instead of the raw scores",
+              "BM25 doesn't produce a numeric score",
+              "Cosine similarity can't be computed for text"
+            ],
+            "correctIndex": 1,
+            "explanation": "BM25 and cosine similarity aren't on the same scale or distribution, so naively averaging them is meaningless — rank-based fusion methods like RRF sidestep that by combining positions in each ranked list instead."
+          },
+          {
+            "id": "2ea8b667-8dc3-4313-a37a-a56d7222ee3f",
+            "prompt": "What's a classic failure mode of pure vector (embedding) search?",
+            "options": [
+              "It's always slower than BM25",
+              "It struggles with exact tokens like IDs, SKUs, or error codes because embeddings blur literal strings into semantic space",
+              "It can't handle long documents",
+              "It requires no index at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Embeddings are great at capturing meaning and paraphrase, but they compress exact tokens into a continuous space, which makes exact-match lookups like part numbers or error codes unreliable."
+          },
+          {
+            "id": "f1e8e408-cf64-483c-912d-594bcdfbb776",
+            "prompt": "In a typical two-stage RAG retrieval pipeline, what does the reranking stage add that hybrid retrieval alone doesn't?",
+            "options": [
+              "It replaces the need for any retrieval at all",
+              "It fetches documents from a second corpus",
+              "It re-scores a small candidate set with a more precise (but slower) cross-encoder model, improving final ordering before the LLM sees the chunks",
+              "It deletes irrelevant documents from the database"
+            ],
+            "correctIndex": 2,
+            "explanation": "Cross-encoders are far more accurate at judging query-document relevance than BM25 or cosine similarity, but too slow to run over an entire corpus — so they only rerank the candidates hybrid retrieval already narrowed down."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
+      "id": "a92c1821-e92e-448e-bb4f-8bea1586e808",
+      "title": "Context Engineering: Curating What the Model Sees",
+      "subtitle": "Prompt engineering wrote one instruction well; context engineering decides what fills the whole window, every turn.",
+      "category": "AI Agents",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "context engineering",
+        "agents",
+        "context window",
+        "memory",
+        "tool use"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.stack.badge.plus",
+      "summary": "Context engineering is the discipline of deciding what fills an LLM's limited context window at every step — not just how one prompt is worded. As agents run longer and call more tools, treating context as a scarce, curatable resource (via retrieval, compaction, and sub-agents) becomes the difference between an agent that stays sharp and one that drowns in its own history.",
+      "publishedDate": "2026-10-18T06:48:34Z",
+      "slides": [
+        {
+          "id": "b2d14eb5-f30d-44f8-95bf-99487e404b93",
+          "kind": "cover",
+          "title": "Prompt Engineering Solved One Call. This Solves the Whole Run.",
+          "body": "A single well-worded prompt doesn't help once an agent is 40 tool calls deep. Context engineering is the ongoing job of deciding exactly what fills the window at each step.",
+          "bullets": [
+            "Prompt engineering: craft the wording of one instruction",
+            "Context engineering: curate everything else — tools, retrieved data, message history, prior results — across an entire session",
+            "Anthropic frames it as the direct successor discipline as agents got longer-running"
+          ],
+          "symbol": "rectangle.stack.badge.plus",
+          "table": null
+        },
+        {
+          "id": "87dac5e8-0fc9-4f30-9c4c-670995291b67",
+          "kind": "problem",
+          "title": "Context Rot: More Tokens, Worse Recall",
+          "body": "Every token a model reads has to be related to every other token — attention is pairwise, so cost grows roughly with the square of context length (n²).",
+          "bullets": [
+            "Recall accuracy measurably drops as token count grows — across all model families, just to different degrees — a pattern Anthropic calls 'context rot'",
+            "Context is a finite, diminishing-returns resource, not a free bucket to dump everything into",
+            "The guiding principle: find the smallest set of high-signal tokens that makes the right outcome likely"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "94476640-ee6d-4650-9047-88c84a86e26d",
+          "kind": "solution",
+          "title": "Three Techniques for Long-Running Agents",
+          "body": "Once a task runs long enough to threaten the window, three complementary techniques keep context lean.",
+          "bullets": [
+            "Compaction — summarize a near-full window and restart with the summary; Claude Code keeps the compressed summary plus its 5 most recently accessed files",
+            "Structured note-taking — the agent writes progress to an external file (a NOTES.md or to-do list) and reads it back later instead of re-deriving state",
+            "Sub-agents — a specialized agent explores in its own clean context (burning tens of thousands of tokens if needed) and hands back only a condensed 1,000-2,000 token summary"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "cb4d6ab7-5139-4065-a95b-319175ff1cce",
+          "kind": "architecture",
+          "title": "Retrieval: Load It Now, or Load It Just-in-Time?",
+          "body": "Where data enters the context window is itself a design decision.",
+          "bullets": [
+            "Pre-retrieval: embed and fetch relevant chunks before inference — fast, but front-loads tokens the model might not need",
+            "Just-in-time: keep lightweight references (file paths, query strings) and let the agent pull data with a tool only when it's actually needed",
+            "Claude Code runs a hybrid: it drops CLAUDE.md into context upfront, then uses glob/grep plus head/tail to explore large files on demand instead of loading them whole"
+          ],
+          "symbol": "arrow.down.doc.fill",
+          "table": null
+        },
+        {
+          "id": "827705c7-66c5-451f-a59e-2ff07378bb82",
+          "kind": "example",
+          "title": "1,234 Steps of Pokémon Without Losing the Plot",
+          "body": "Anthropic's long-horizon agent demo tracked a multi-hour Pokémon playthrough using structured notes instead of cramming the whole history into context.",
+          "bullets": [
+            "The agent logged concrete progress externally — e.g. 'Pikachu: level 8 of a target of 10' — and re-read that note on later turns",
+            "Over 1,234 steps, nothing about the running state had to survive inside the live context window itself",
+            "Same pattern as a to-do list: the context window holds the current step, the file holds everything that came before"
+          ],
+          "symbol": "list.bullet.clipboard.fill",
+          "table": null
+        },
+        {
+          "id": "6d04c71b-aa56-4120-b09b-7f7e9b420d78",
+          "kind": "comparison",
+          "title": "Prompt Engineering vs. Context Engineering",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Concern",
+              "Prompt Engineering",
+              "Context Engineering"
+            ],
+            "rows": [
+              [
+                "Scope",
+                "Wording of one instruction",
+                "Everything that fills the window: tools, history, retrieved data"
+              ],
+              [
+                "Time horizon",
+                "A single call",
+                "An entire multi-turn, multi-tool-call session"
+              ],
+              [
+                "Core technique",
+                "Phrasing, few-shot examples",
+                "Retrieval, compaction, note-taking, sub-agents"
+              ],
+              [
+                "Failure mode",
+                "Ambiguous instruction",
+                "Context rot — diluted attention, slower and less accurate outputs"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "86ddd944-23f1-442c-9186-1227e540d543",
+          "kind": "takeaways",
+          "title": "When Curation Beats Accumulation",
+          "body": "Anthropic's own advice: 'do the simplest thing that works' — escalate only when you can show the window is actually straining.",
+          "bullets": [
+            "Don't reach for compaction or sub-agents on short tasks — that's overhead a simple prompt doesn't need",
+            "Compaction fits long back-and-forth conversation; note-taking fits iterative work with clear milestones; sub-agents fit parallel research",
+            "Tune compaction for recall first, precision second — losing a needed detail is worse than keeping one extra",
+            "A bloated, overlapping toolset burns context and causes bad tool choices just as much as a messy prompt does"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "bcf0beb5-5720-4f56-b36f-0bd31eb88302",
+            "prompt": "What does Anthropic mean by \"context rot\"?",
+            "options": [
+              "Context windows shrinking over model updates",
+              "Recall accuracy degrading as the number of tokens in context grows",
+              "Tool definitions becoming outdated",
+              "Training data becoming stale"
+            ],
+            "correctIndex": 1,
+            "explanation": "Context rot describes a measurable drop in recall accuracy as token count grows — true across model families to varying degrees, which is why dumping everything into context isn't actually 'safer'."
+          },
+          {
+            "id": "d46fa7e6-c19f-4628-80d1-ae90bdc7f913",
+            "prompt": "Why do sub-agents help with context engineering?",
+            "options": [
+              "They give the model more parameters to work with",
+              "They let specialized agents explore in a clean context and return only a condensed summary (often 1,000-2,000 tokens) to the lead agent",
+              "They skip the need for a system prompt entirely",
+              "They run the model at a lower temperature"
+            ],
+            "correctIndex": 1,
+            "explanation": "A sub-agent can burn tens of thousands of tokens exploring a problem in its own window, but the lead agent only ever sees the condensed result — keeping the main context lean."
+          },
+          {
+            "id": "924b5fd1-711a-46b3-97be-d668fbb164e5",
+            "prompt": "What's the difference between pre-retrieval and just-in-time retrieval?",
+            "options": [
+              "Pre-retrieval only works with images",
+              "Pre-retrieval loads relevant context before inference; just-in-time keeps lightweight references and loads data with a tool only when needed",
+              "Just-in-time retrieval is always slower",
+              "Pre-retrieval requires no embeddings"
+            ],
+            "correctIndex": 1,
+            "explanation": "Pre-retrieval front-loads tokens for speed; just-in-time (e.g. Claude Code's use of glob/grep/head/tail) trades a little latency for only ever loading what's actually needed."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "6282a7ba-35ed-4b9f-860c-7c3d5673f072",
+          "title": "Effective context engineering for AI agents",
+          "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+        }
+      ]
+    },
+    {
       "title": "OSS Scanner: Anthropic Turns Claude Loose on Open-Source Bugs",
       "subtitle": "A free, opt-in vulnerability hunter that already turned 72 of 74 reports into real wolfSSL fixes.",
       "category": "AI News",
@@ -10747,407 +11108,6 @@
         }
       ],
       "publishedDate": "2026-10-11T00:46:33Z"
-    },
-    {
-      "id": "3a572b07-0b31-40bf-93d0-4dc07a85739e",
-      "title": "Anthropic's New Program to Defend Power Grids With Claude",
-      "subtitle": "The Critical Infrastructure Defense Program doesn't go direct to operators — it goes through the firms they already trust.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "anthropic",
-        "cybersecurity",
-        "critical-infrastructure",
-        "claude",
-        "ai-safety"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "bolt.fill",
-      "summary": "Anthropic launched the Critical Infrastructure Defense Program (CIDP), delivering frontier Claude models, on-site engineers, and threat research to power grids, water systems, and transportation networks — not directly, but through 11 founding partners like CrowdStrike, Dragos, and Palo Alto Networks. It's one half of the new 'Anthropic Cyber Mission,' alongside a free scanning service for open-source software.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Power Grids Don't Get Patched Like Web Apps",
-          "body": "On October 8, 2026, Anthropic announced the Critical Infrastructure Defense Program (CIDP) — its first effort aimed specifically at operational technology (OT): the systems behind power grids, water treatment, and transportation.",
-          "bullets": [
-            "Part of the broader 'Anthropic Cyber Mission' announcement",
-            "New program, not a rebrand of Anthropic's existing OSS Scanner"
-          ],
-          "symbol": "bolt.fill",
-          "table": null,
-          "id": "0b6dec28-7965-49f6-ba72-a3a0d8fed68f"
-        },
-        {
-          "kind": "problem",
-          "title": "Why OT Security Is a Different Problem",
-          "body": "Operational technology that runs physical infrastructure wasn't built with today's threat model in mind, and it can't be patched the way ordinary software can.",
-          "bullets": [
-            "Many OT systems predate modern security practices and run on specialized, hard-to-replace protocols",
-            "Downtime for patching can mean a blackout or a water outage, not just a restarted server",
-            "Anthropic's own read: AI is currently making it easier to find vulnerabilities than to verify, prioritize, and actually fix them"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "ee019b51-8232-4db3-9a76-736802588c52"
-        },
-        {
-          "kind": "architecture",
-          "title": "Delivered Through Partners, Not Direct to Operators",
-          "body": "CIDP doesn't sell access to operators directly — Anthropic routes it through 11 founding partners who already have the trust relationships and on-the-ground access.",
-          "bullets": [
-            "Founding partners: Accenture, Booz Allen, CrowdStrike, Deloitte, Dragos, Hitachi, Insane Cyber, Nozomi Networks, Palo Alto Networks, PwC, and Rockwell Automation",
-            "These are consulting firms, security vendors, and industrial equipment makers operators already rely on",
-            "Starts with a small cohort of partners to learn what actually works before wider rollout"
-          ],
-          "symbol": "person.3.fill",
-          "table": null,
-          "id": "b8fed0c8-be04-4534-add3-aa274d911f66"
-        },
-        {
-          "kind": "solution",
-          "title": "What Partners Actually Get",
-          "body": "Three things bundled together, not just API access to a model.",
-          "bullets": [
-            "Frontier Claude models for vulnerability discovery and remediation work",
-            "On-site engineers from Anthropic embedded with the partner",
-            "Threat research feeding back into both",
-            "Status at launch: partners are already using Claude to fix vulnerabilities in the field, per Anthropic"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null,
-          "id": "c2227c34-a94d-41bf-95ce-97a2aca6113a"
-        },
-        {
-          "kind": "example",
-          "title": "How This Differs From the OSS Scanner, Launched the Same Day",
-          "body": "Anthropic shipped two things at once under the Cyber Mission umbrella — it's easy to conflate them.",
-          "bullets": [
-            "OSS Scanner: free, opt-in, automated scans of open-source code, reports generated with no human review",
-            "CIDP: paid-tier-adjacent, partner-delivered, covers physical OT systems rather than public code repositories",
-            "Same underlying bet — Claude for defense — aimed at two very different attack surfaces"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "d4cbca83-4b40-4e6f-96c9-c11c1f4e8c77"
-        },
-        {
-          "kind": "comparison",
-          "title": "CIDP vs. OSS Scanner vs. Cyber Verification Program",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "",
-              "CIDP",
-              "OSS Scanner",
-              "Cyber Verification Program"
-            ],
-            "rows": [
-              [
-                "Target",
-                "Power grids, water, transport (OT)",
-                "Open-source code repositories",
-                "Security teams generally"
-              ],
-              [
-                "Delivery",
-                "Through 11 named partners",
-                "Opt-in, direct to maintainers",
-                "Direct access expansion"
-              ],
-              [
-                "Cost",
-                "Not disclosed",
-                "Free",
-                "Expanded access, not priced here"
-              ],
-              [
-                "New in this announcement",
-                "Yes — brand new program",
-                "Yes — new free service",
-                "No — expands an existing program"
-              ]
-            ]
-          },
-          "id": "17aea0f1-476b-47c0-b09a-b670a59f1b49"
-        },
-        {
-          "kind": "concept",
-          "title": "Read the Caveats Before You Read the Press Release",
-          "body": "Anthropic's own post is notably hedged on specifics.",
-          "bullets": [
-            "No dollar figure is given for CIDP itself, only that a separate Defender Advantage Fund backs pilot programs",
-            "Anthropic frames AI favoring defense over offense as roughly a two-year forecast — a projection, not a guarantee",
-            "OSS Scanner reports (the program's other half) are explicitly unreviewed by humans before reaching maintainers",
-            "\"Partners already using Claude to fix vulnerabilities\" is Anthropic's characterization — no independent case count is published"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null,
-          "id": "c71c3b7e-da10-461c-8fef-736505311b3c"
-        },
-        {
-          "kind": "takeaways",
-          "title": "A Bet That Trust Relationships Beat Direct Sales in OT Security",
-          "body": null,
-          "bullets": [
-            "CIDP routes Claude into critical infrastructure through 11 partners operators already trust, rather than selling direct",
-            "It bundles models + embedded engineers + threat research — not just API access",
-            "It's one of two programs launched together under the 'Cyber Mission'; don't confuse it with the free OSS Scanner",
-            "Most of the hard numbers (cost, partner case counts, true-positive rates for CIDP specifically) aren't public yet — treat early claims as directional"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "bbcfcb63-9e92-4756-b329-9c95ad138bcc"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "How does CIDP reach power grid and water system operators?",
-            "options": [
-              "Direct API access sold to any operator",
-              "Through 11 founding partners — security vendors, consultancies, and equipment makers operators already trust",
-              "A public free-for-all scanning service, like the OSS Scanner",
-              "Only through the US federal government"
-            ],
-            "correctIndex": 1,
-            "explanation": "CIDP is delivered through named partners such as CrowdStrike, Dragos, and Rockwell Automation rather than sold directly to infrastructure operators — leaning on trust relationships that already exist.",
-            "id": "244d0ffd-6522-4c98-b3e6-ab35e3f75206"
-          },
-          {
-            "prompt": "What's the key difference between CIDP and the OSS Scanner, launched the same day?",
-            "options": [
-              "They are the same program with two names",
-              "CIDP targets physical OT systems through partners; OSS Scanner is a free, opt-in automated scan of open-source code",
-              "OSS Scanner is more expensive than CIDP",
-              "CIDP only covers software, not hardware-adjacent systems"
-            ],
-            "correctIndex": 1,
-            "explanation": "Both fall under the 'Anthropic Cyber Mission,' but they target different surfaces and use different delivery models — OSS Scanner is free and automated; CIDP is partner-delivered and includes embedded engineers.",
-            "id": "425369d0-3339-472e-88d1-ea2715b1e120"
-          },
-          {
-            "prompt": "What should a careful reader note about Anthropic's claims in this announcement?",
-            "options": [
-              "Every number is independently audited",
-              "No dollar figure is given for CIDP itself, and the 'AI favors defense' timeline is Anthropic's own forecast, not an established fact",
-              "CIDP has already been proven more effective than every competing program",
-              "All 11 partners have published independent case studies"
-            ],
-            "correctIndex": 1,
-            "explanation": "The announcement is light on hard, independently verifiable numbers for CIDP specifically — a reminder to treat a launch post's framing as the vendor's own characterization until external data appears.",
-            "id": "6a5b7987-7a7a-4d37-941b-ce940f54c7b3"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Anthropic — Introducing the Anthropic Cyber Mission",
-          "url": "https://www.anthropic.com/news/anthropic-cyber-mission",
-          "id": "0d5837c7-9e1f-46f9-8df1-22f8e3ae8541"
-        }
-      ],
-      "publishedDate": "2026-10-10T18:46:33Z"
-    },
-    {
-      "id": "e6597554-48cd-4981-aac8-617e0ef915fe",
-      "title": "Test-Time Compute: Why Reasoning Models Think Longer",
-      "subtitle": "Scaling parameters hit diminishing returns. Scaling how long a model thinks before answering turned out to be a second dial.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "llm",
-        "reasoning",
-        "inference",
-        "test-time-compute",
-        "chain-of-thought"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "brain.head.profile",
-      "summary": "Test-time compute means spending extra inference-time work — longer chains of thought, multiple sampled attempts, self-checking — to get a better answer from the same trained model, instead of training a bigger one. It trades latency and cost for accuracy on hard reasoning tasks, and it plateaus: past a point, more thinking stops helping and can even hurt.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Two Ways to Make a Model Smarter: Train Bigger, or Think Longer",
-          "body": "For years, 'scale' meant more parameters and more training data. Reasoning models added a second axis: spend more compute per answer, at inference time, using the exact same weights.",
-          "bullets": [
-            "Train-time scaling: bigger model, more data, higher training cost, fixed inference cost",
-            "Test-time scaling: same model, variable inference cost, spent per-question"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null,
-          "id": "4db48982-a30b-42e4-baa2-0e6ce01d101d"
-        },
-        {
-          "kind": "problem",
-          "title": "Bigger Models Hit Diminishing Returns — And a Hard Cost Wall",
-          "body": "Each jump in model scale costs enormously more to train, and the gains on hard reasoning tasks (multi-step math, complex code) started flattening relative to that cost.",
-          "bullets": [
-            "A model that's great at next-token prediction isn't automatically great at 20-step reasoning — fluency and correctness are different axes",
-            "Training a bigger model to fix this means months of compute, committed before you know if it'll work",
-            "Meanwhile most questions a model answers don't need that extra capacity at all"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "c976a970-e765-423b-92f5-fed192451f8c"
-        },
-        {
-          "kind": "concept",
-          "title": "The Core Idea: Spend Compute Per-Question, Not Per-Model",
-          "body": "Instead of baking more capability into the weights, let the model use more compute on the specific question in front of it, right now.",
-          "bullets": [
-            "Longer chains of thought: the model writes out intermediate reasoning steps before committing to an answer",
-            "Sampling multiple attempts: generate several independent reasoning paths, then pick the most common answer (self-consistency / majority voting)",
-            "Search-based methods: explore a tree of partial solutions and prune the weak branches (best-of-N, tree-of-thought style search)",
-            "A verifier or reward model can score candidate answers and select among them instead of just taking the first one"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null,
-          "id": "e1c5e1ba-d8a1-4bba-9097-8de03bfe0774"
-        },
-        {
-          "kind": "architecture",
-          "title": "What's Actually Happening Under the Hood",
-          "body": "In practice, a 'reasoning model' is the same transformer, run with a different decoding strategy and a budget.",
-          "bullets": [
-            "A reasoning budget (max tokens, or max parallel samples) is set per request — easy mode gets a short budget, hard mode gets a long one",
-            "Reasoning tokens are often generated in a separate pass or hidden scratchpad before the final answer is produced",
-            "A stopping rule decides when to cut off reasoning — fixed token budget, confidence threshold, or diminishing marginal improvement across samples",
-            "None of this touches the model's weights — it's entirely a decoding-time choice, swappable per request"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null,
-          "id": "bbfbac1c-06f5-4c5d-88c9-e48ce1eeb774"
-        },
-        {
-          "kind": "example",
-          "title": "A Multi-Step Word Problem, Two Ways",
-          "body": "Ask a model: \"A train leaves at 2pm going 60mph, a second leaves 40 minutes later going 75mph on the same track — when does the second catch the first?\"",
-          "bullets": [
-            "Low test-time compute: model pattern-matches to a similar-looking problem template and can lock in an early arithmetic slip",
-            "High test-time compute: model lays out each leg of the computation as a separate step, checks units, and — critically — can sample the problem several times and keep the answer most paths agree on",
-            "The underlying weights are identical in both cases; only the amount of 'thinking' before answering differs"
-          ],
-          "symbol": "function",
-          "table": null,
-          "id": "ce8fbf41-2949-4a32-98ca-9cb51dee720f"
-        },
-        {
-          "kind": "comparison",
-          "title": "Train-Time Scaling vs. Test-Time Scaling",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "",
-              "Train-time scaling",
-              "Test-time scaling"
-            ],
-            "rows": [
-              [
-                "What grows",
-                "Parameters, training data",
-                "Inference tokens / samples per question"
-              ],
-              [
-                "Cost paid",
-                "Once, up front, at training",
-                "Every single query, proportional to difficulty"
-              ],
-              [
-                "Latency impact",
-                "None at inference",
-                "Directly increases response time"
-              ],
-              [
-                "Where it helps most",
-                "Broad capability across all tasks",
-                "Narrow, hard reasoning tasks specifically"
-              ],
-              [
-                "Ceiling",
-                "New model needed to raise it further",
-                "Plateaus — more samples/steps stop helping past a point"
-              ]
-            ]
-          },
-          "id": "7f203437-6822-4024-8cc0-3ecd44048107"
-        },
-        {
-          "kind": "concept",
-          "title": "Where It Breaks Down",
-          "body": "More thinking isn't free, and it isn't always better.",
-          "bullets": [
-            "Cost and latency scale with how long the model thinks — fine for a hard proof, bad for a chat app's autocomplete",
-            "Overthinking is real: past a point, extra reasoning steps can introduce new errors instead of catching old ones",
-            "It amplifies reasoning depth, not raw knowledge — a model that doesn't know a fact won't discover it by thinking longer",
-            "Self-consistency across samples only helps if the model's errors are somewhat independent between samples; a systematic blind spot survives majority voting unchanged"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "98f9ed98-c632-4304-b4d0-319dd489cbf2"
-        },
-        {
-          "kind": "takeaways",
-          "title": "A Second Knob, Not a Replacement for the First",
-          "body": null,
-          "bullets": [
-            "Test-time compute lets the same trained model trade latency/cost for accuracy, decided per request",
-            "Mechanisms: longer chains of thought, multiple sampled paths + majority vote, tree/best-of-N search, verifier-guided selection",
-            "It shines on hard, multi-step reasoning tasks and is wasted on easy, fact-lookup ones — route by difficulty, not blanket-apply it",
-            "It has a ceiling: past some budget, more thinking yields flat or even negative returns, so unlimited reasoning budget isn't the answer either"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "66dcf84a-21f5-444e-ac9a-75c317532929"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What does \"test-time compute\" actually scale, compared to training a bigger model?",
-            "options": [
-              "The number of parameters in the model",
-              "The amount of inference-time work (reasoning tokens or sampled attempts) spent on a single question",
-              "The size of the training dataset",
-              "The number of GPUs used during training"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time compute leaves the trained weights untouched and instead spends more inference-time work — longer reasoning chains, more sampled attempts — on the specific question being asked right now.",
-            "id": "6e99556b-d525-4257-bb57-eef4514bfc0b"
-          },
-          {
-            "prompt": "Why does self-consistency (sampling multiple reasoning paths and taking the majority answer) have a limit?",
-            "options": [
-              "It only works with temperature set to zero",
-              "If the model has a systematic blind spot, most samples will share the same error, so majority voting won't catch it",
-              "It requires retraining the model after each sample",
-              "It can only be used on classification tasks"
-            ],
-            "correctIndex": 1,
-            "explanation": "Majority voting across samples helps when errors are roughly independent across attempts. A systematic gap in the model's knowledge or reasoning tends to show up the same way in most samples, so voting doesn't fix it.",
-            "id": "390b6399-124e-4386-8ffe-fcc12cafd2b1"
-          },
-          {
-            "prompt": "Which task is the worst fit for spending heavy test-time compute?",
-            "options": [
-              "A 20-step competition math proof",
-              "A simple factual lookup or short autocomplete where low latency matters",
-              "A hard multi-step coding problem",
-              "A problem where the model's first few attempts disagree with each other"
-            ],
-            "correctIndex": 1,
-            "explanation": "Test-time compute trades latency and cost for accuracy on hard reasoning. For simple, low-stakes queries where speed matters, that extra spend buys little benefit and actively hurts the user experience.",
-            "id": "3d26f164-caaa-4423-9e88-a5df840f7aa5"
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-10-10T12:46:33Z"
     }
   ]
 }
