@@ -1,6 +1,191 @@
 {
   "posts": [
     {
+      "id": "926be12b-e2e5-42c3-a483-26c38f6544d7",
+      "title": "Mixture of Experts: Scale Up Without Slowing Down",
+      "subtitle": "Give each token only a few experts to think with, not the whole model.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mixture-of-experts",
+        "sparse-models",
+        "routing",
+        "llm-architecture",
+        "scaling"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.3x3.fill",
+      "summary": "Mixture of Experts replaces a dense feed-forward block with many smaller expert blocks plus a learned router that activates only a handful per token. This decouples total model capacity from per-token compute cost, letting models scale to huge parameter counts cheaply — at the price of harder training and heavier memory/communication demands at serving time.",
+      "slides": [
+        {
+          "id": "401b8d2c-b484-4647-80ea-3a02a5e5cbf5",
+          "kind": "cover",
+          "title": "The Trick Behind Trillion-Parameter Models",
+          "body": "Mixture of Experts (MoE) lets a model have enormous total capacity while only 'thinking' with a small slice of it on any given token.",
+          "bullets": [],
+          "symbol": "square.grid.3x3.fill"
+        },
+        {
+          "id": "97cedb6a-f9e6-4e73-b58b-09773a4f20c8",
+          "kind": "problem",
+          "title": "Dense Models Pay for Every Parameter, Every Token",
+          "body": "A dense transformer's feed-forward layers activate 100% of their weights for every single token, no matter how simple that token is.",
+          "bullets": [
+            "Dense feed-forward blocks run the full matrix multiply for every token — there's no 'this token doesn't need all this math' shortcut.",
+            "Compute per token scales directly with total parameters: roughly double the params, roughly double the FLOPs per token.",
+            "Labs wanted trillion-parameter capacity without a trillion-parameter inference bill."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "f18cab92-4f88-456c-8534-f169aac575d3",
+          "kind": "solution",
+          "title": "Route Each Token to a Few Specialist Experts",
+          "body": "MoE swaps the single dense FFN for many smaller 'expert' FFNs plus a tiny gating network that picks which experts handle each token.",
+          "bullets": [
+            "A router — a small learned layer — scores every expert for a token and selects only the top-k highest scoring ones (commonly k=1 or k=2).",
+            "Only the selected experts run their FFN on that token; every unselected expert contributes zero compute for it.",
+            "Total parameters across all experts can be huge, while the active compute per token stays small."
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "36adfb20-5386-4106-b6e1-6a154ae09f39",
+          "kind": "architecture",
+          "title": "The Hard Part Is Keeping Experts Balanced",
+          "body": "The routing math is simple; the engineering problem is making sure every expert actually gets trained and used.",
+          "bullets": [
+            "Switch Transformer (Google, 2021) used top-1 routing — just 1 of N experts per token — to scale past a trillion parameters while keeping per-token compute comparable to a far smaller dense model.",
+            "Each expert has a capacity (max tokens it can accept per batch); tokens that overflow get dropped or sent to a fallback — a real quality tradeoff, not a free lunch.",
+            "An auxiliary load-balancing loss penalizes the router whenever it funnels too many tokens to the same few experts, preventing 'expert collapse.'"
+          ],
+          "symbol": "scalemass.fill"
+        },
+        {
+          "id": "8c1fbab6-525d-49bd-a739-67175604fd35",
+          "kind": "comparison",
+          "title": "Same Compute, Very Different Capacity",
+          "body": "Mixtral 8x7B makes the tradeoff concrete: most of its parameters sit idle on any given token.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Model",
+              "Total Params",
+              "Active Params / Token",
+              "Routing"
+            ],
+            "rows": [
+              [
+                "Dense 70B model",
+                "70B",
+                "70B (100%)",
+                "all weights used every token"
+              ],
+              [
+                "Mixtral 8x7B",
+                "~47B",
+                "~13B (~28%)",
+                "top-2 of 8 experts per token"
+              ]
+            ]
+          },
+          "symbol": "tablecells"
+        },
+        {
+          "id": "2c2fe824-d9f2-4dbe-b61f-1b7c74a344ed",
+          "kind": "example",
+          "title": "Watch a Router Specialize — Without Being Told To",
+          "body": "Picture an MoE model processing: \"The patient's white blood cell count was elevated.\"",
+          "bullets": [
+            "The router may learn to send tokens like 'patient' and 'blood' toward experts that, through gradient descent alone, drifted toward medical vocabulary.",
+            "Feed the same model \"The hedge fund's short position was elevated\" and 'hedge' and 'position' can land on entirely different experts — no human labeled any of this.",
+            "Caveat: real routing is usually messier than clean topic specialization — it often splits more by syntax or token frequency — but the mechanism is identical either way."
+          ],
+          "symbol": "text.magnifyingglass"
+        },
+        {
+          "id": "c7cf68af-ddad-40b4-89ff-cc53bf523622",
+          "kind": "problem",
+          "title": "The Bill Comes Due in Memory and Infrastructure",
+          "body": "MoE trades compute for complexity — and that complexity shows up in serving memory and training infrastructure, not model quality.",
+          "bullets": [
+            "Memory doesn't shrink: every expert must stay resident across your GPUs even though a token only touches a couple — Mixtral still has to hold all 8 experts, not just the 2 it uses.",
+            "Distributed training needs all-to-all GPU communication to ship each token to the right expert's device — a genuine network bottleneck at scale (expert parallelism).",
+            "Fine-tuning is twitchy: a learning-rate or data shift can trigger router collapse, where most tokens pile onto 1-2 experts and the rest go stale.",
+            "Skip MoE for small models or single-GPU serving — there's no spare memory budget or distributed infrastructure to amortize the routing overhead against."
+          ],
+          "symbol": "exclamationmark.bubble.fill"
+        },
+        {
+          "id": "88944a50-59bd-4637-9758-b826905cbfc2",
+          "kind": "takeaways",
+          "title": "Capacity and Compute, Decoupled",
+          "body": null,
+          "bullets": [
+            "MoE decouples total parameters from per-token compute: huge capacity, small active compute per token.",
+            "A router picks the top-k experts per token; everything hinges on an auxiliary loss keeping that routing balanced.",
+            "The price isn't accuracy — it's engineering: all experts must fit in distributed memory, and tokens must be shuttled to the right device.",
+            "Reach for MoE when raw capacity matters more than serving simplicity; skip it when you can't amortize the memory and communication overhead."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "90f4169c-8384-4d82-9ece-3de8af9ee6e2",
+            "prompt": "In an MoE layer with top-2 routing out of 8 experts, how many experts actually process a given token?",
+            "options": [
+              "All 8",
+              "Only 2",
+              "Only 1",
+              "A random number each time"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-k routing with k=2 means the gate scores all 8 experts and sends the token only to the 2 highest-scoring ones — the other 6 do zero work for that token. That's exactly where MoE's compute savings come from."
+          },
+          {
+            "id": "5c14ccf5-44b5-4deb-8b64-7f47d55a377f",
+            "prompt": "Why do MoE models need an auxiliary 'load-balancing' loss during training?",
+            "options": [
+              "To make the model's output more creative",
+              "To stop the router from sending most tokens to just one or two favorite experts, leaving the rest undertrained",
+              "To reduce the total number of parameters",
+              "To speed up tokenization"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without a balancing signal, gradient descent tends to funnel tokens to whichever experts got a head start — a feedback loop called router/expert collapse. The auxiliary loss penalizes imbalance so every expert gets trained and used."
+          },
+          {
+            "id": "bab2b33f-f532-457b-89f6-486c5f0daee9",
+            "prompt": "A Mixtral-style MoE model has far more total parameters than a same-active-compute dense model. What's the main operational cost of that extra capacity?",
+            "options": [
+              "Slower token generation because every expert runs on every token",
+              "Higher memory requirements, since all experts must stay resident even though only a few are used per token",
+              "It can no longer be fine-tuned",
+              "It always produces lower-quality output"
+            ],
+            "correctIndex": 1,
+            "explanation": "MoE saves compute, not memory — every expert's weights must sit in GPU memory (or be reachable across a cluster) even though a given token only activates a couple of them. That's why MoE serving is memory- and communication-heavy, not compute-heavy."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "3f4be4c8-4dbf-4f91-8940-f14bfa2d35de",
+          "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity",
+          "url": "https://arxiv.org/abs/2101.03961"
+        },
+        {
+          "id": "707cc8dd-1485-4147-9d0c-9a0431fad2ed",
+          "title": "Mixtral of Experts",
+          "url": "https://arxiv.org/abs/2401.04088"
+        }
+      ],
+      "publishedDate": "2026-10-19T00:47:48Z"
+    },
+    {
       "id": "049e9945-8ade-4cdb-b039-869578dc0976",
       "title": "The Missing Map of the Sky: Claude Fills GALEX's Gaps",
       "subtitle": "A swarm of agents stitched a decade-old UV survey gap into one self-correcting map",
@@ -10901,184 +11086,6 @@
       ],
       "id": "4a7da401-a7ea-4ae1-a354-2b11b1bb7b5c",
       "publishedDate": "2026-10-11T18:41:13Z"
-    },
-    {
-      "title": "Agent Memory: Giving LLMs State Across Sessions",
-      "subtitle": "A context window forgets the moment it fills up. Memory is the layer that makes an agent remember you tomorrow.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "agents",
-        "memory",
-        "context-window",
-        "vector-search",
-        "agentic-workflows"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "figure.walk.motion",
-      "summary": "An agent's context window is working memory: fast, but finite and wiped between sessions. Real long-running agents need a separate memory layer — summarized history, a vector store, or structured facts — to carry state forward without re-reading everything every time. Each strategy trades precision, cost, and staleness risk differently.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Context Windows Forget. Memory Doesn't.",
-          "body": "A chatbot that forgets everything when the tab closes is fine. An agent managing a multi-day project, a codebase, or a relationship with a user is not — it needs state that survives past one context window.",
-          "bullets": [
-            "Working memory = the current context window; it's fast and precise, but gone when the session ends or overflows",
-            "Long-term memory = a separate, persisted store the agent can write to and read back from across sessions"
-          ],
-          "symbol": "figure.walk.motion",
-          "table": null,
-          "id": "4ba72f5e-2bec-491b-b7b5-9ea50cba07c2"
-        },
-        {
-          "kind": "problem",
-          "title": "Why Context Alone Breaks Down",
-          "body": "Stuffing the entire history back into the prompt every turn looks simple, but it stops working well before you'd expect.",
-          "bullets": [
-            "Even million-token context windows cost real money per call, and performance on recall tends to degrade for information buried in the middle ('lost in the middle')",
-            "A multi-day coding agent or personal assistant accumulates far more history than any context window can hold",
-            "Re-sending full history means cost and latency grow with every turn, even when 95% of that history is irrelevant to the current question"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "200154e1-4b10-4890-8307-ffb3ba55db35"
-        },
-        {
-          "kind": "architecture",
-          "title": "Three Common Memory Layers",
-          "body": "Most agent memory systems combine a few of these, from cheapest to most structured.",
-          "bullets": [
-            "Episodic summary: an LLM periodically rewrites the raw transcript into a shorter running summary",
-            "Vector memory: past snippets are embedded and stored; a new query retrieves the top-k most relevant ones, not just the most recent",
-            "Structured key-value memory: explicit facts the agent writes deliberately ('test command: npm run test', 'user prefers metric units'), retrieved by lookup rather than similarity"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "id": "6d474589-edde-458e-8414-ddd9539f831c"
-        },
-        {
-          "kind": "example",
-          "title": "A Coding Agent Across a Five-Day Refactor",
-          "body": "On day one, the agent learns the project's test command and notices one test is flaky. On day five, a fresh session starts with an empty context window.",
-          "bullets": [
-            "Instead of re-reading the whole repo, it queries its memory store for 'how do I run tests here' and 'known flaky tests'",
-            "It retrieves two structured facts written on day one, injects them into the prompt, and skips re-discovering them the slow way",
-            "This keeps the day-five prompt small and avoids repeating a mistake (re-reporting the flaky test as a new bug) it already resolved once"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null,
-          "id": "84a75191-b06e-41b6-8ff3-fa81e0450e0c"
-        },
-        {
-          "kind": "comparison",
-          "title": "Picking a Strategy",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Strategy",
-              "Best for",
-              "Main weakness"
-            ],
-            "rows": [
-              [
-                "Full history re-feed",
-                "Very short sessions",
-                "Cost and latency grow every turn; breaks past a few dozen exchanges"
-              ],
-              [
-                "Running summary",
-                "Medium-length sessions, simple assistants",
-                "Summarization can silently drop a detail the agent later needs"
-              ],
-              [
-                "Vector memory",
-                "Long histories, many loosely related facts",
-                "Similarity isn't relevance — can retrieve plausible-sounding but stale or wrong snippets"
-              ],
-              [
-                "Structured key-value facts",
-                "Precise, auditable state (configs, preferences)",
-                "Someone (agent or human) has to explicitly decide what's worth writing down"
-              ]
-            ]
-          },
-          "id": "959644d8-ca0c-4842-af31-3611aac749ca"
-        },
-        {
-          "kind": "problem",
-          "title": "When Memory Hurts",
-          "body": "Adding a memory layer isn't free, and it introduces failure modes a stateless agent doesn't have.",
-          "bullets": [
-            "Stale facts don't expire themselves — a memory written before a config change can quietly mislead the agent long after it's wrong",
-            "Vector recall suffers from 'semantic drift': a snippet can be textually similar to the query without being the relevant one for right now",
-            "Memory that grows without bound raises retrieval latency and cost over time, and can leak old context (including sensitive details) into unrelated future tasks",
-            "For a single-session, short task, a memory layer is pure overhead — plain context is simpler, cheaper, and has nothing to go stale"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "655ed408-b124-4fde-857f-5718498ced30"
-        },
-        {
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "Match the memory layer to the actual session length — don't build vector-store infrastructure for a task that fits in one context window",
-            "Running summaries are the cheap default and handle most multi-turn cases just fine",
-            "Reach for vector or structured memory once summaries start losing facts the agent actually needs back",
-            "Timestamp and tag every memory with provenance, so the agent (or a human) can tell when a 'fact' might be out of date"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null,
-          "id": "a26b4264-e08b-4fdf-b2df-0745eb4d080e"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is an agent's 'working memory' in this framework?",
-            "options": [
-              "A permanent vector database",
-              "The current context window — fast and precise, but wiped when the session ends or overflows",
-              "A log file stored on disk forever",
-              "The model's training data"
-            ],
-            "correctIndex": 1,
-            "explanation": "Working memory is just the live context window. It's the fastest, most precise memory an agent has, but it disappears the moment the session ends or the window fills up — which is exactly why a separate persisted layer is needed for anything longer-lived.",
-            "id": "dd48f560-aa94-4618-93dc-c5276cc3dbc1"
-          },
-          {
-            "prompt": "Why can vector-store memory retrieval actively mislead an agent?",
-            "options": [
-              "Vector databases are always slower than plain text search",
-              "Embeddings can't be computed for short text",
-              "Textual/semantic similarity doesn't guarantee relevance or currency — a similar-sounding but stale or off-topic memory can get retrieved",
-              "Vector stores can only hold numbers, not facts"
-            ],
-            "correctIndex": 2,
-            "explanation": "This is the 'semantic drift' failure mode: a retrieved memory can be a close match in embedding space while being outdated or beside the point for the current query, since similarity search has no built-in notion of freshness or correctness.",
-            "id": "d61217d9-a5fa-4d75-a7ba-ae311cfdce0e"
-          },
-          {
-            "prompt": "For a short, single-session task, what's usually the right memory strategy?",
-            "options": [
-              "Always build a vector store first, regardless of task length",
-              "No persistent memory layer at all — plain context is simpler, cheaper, and can't go stale",
-              "Structured key-value memory only",
-              "A running summary updated every single turn"
-            ],
-            "correctIndex": 1,
-            "explanation": "Memory infrastructure adds cost, latency, and staleness risk. For a task that fits comfortably in one context window, that overhead buys nothing — the context window already is the memory you need.",
-            "id": "35f6115f-a1b0-44ed-a422-07971a0728db"
-          }
-        ]
-      },
-      "references": [],
-      "id": "8c4e0cb1-ffde-461c-929b-58929eef7137",
-      "publishedDate": "2026-10-11T18:36:13Z"
     }
   ]
 }
