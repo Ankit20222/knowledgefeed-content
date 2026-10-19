@@ -1,6 +1,197 @@
 {
   "posts": [
     {
+      "title": "Continuous Batching: No Idle GPUs Between Requests",
+      "subtitle": "Stop waiting for the slowest request in the batch to finish.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "continuous-batching",
+        "llm-serving",
+        "throughput",
+        "inference",
+        "scheduling"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.stack.fill",
+      "summary": "Static, request-level batching ties a whole batch's lifetime to its slowest member, wasting GPU cycles padding sequences that already finished. Continuous batching schedules at the granularity of a single decoding step instead: finished sequences are evicted immediately and new requests fill their slot on the very next forward pass, keeping GPU utilization high regardless of how unevenly requests finish.",
+      "slides": [
+        {
+          "id": "f6450bb5-88a3-4bc7-847c-c2eeee14ece7",
+          "kind": "cover",
+          "title": "Why Your GPU Sits Idle Between Requests",
+          "body": "Continuous batching rewrites the LLM serving loop around one idea: don't wait for the slowest request in a batch before starting the next one.",
+          "bullets": [
+            "Static batching: one slow request blocks the whole batch from being refreshed",
+            "Continuous batching: swap requests in and out at every decoding step",
+            "Reported gain: up to 36.9x higher throughput at equal latency (Orca, OSDI 2022)"
+          ],
+          "symbol": "rectangle.stack.fill"
+        },
+        {
+          "id": "2bc1628d-2583-469b-b7e0-7ac5e73d02ad",
+          "kind": "problem",
+          "title": "Static Batching Makes Fast Requests Wait for Slow Ones",
+          "body": "The obvious way to batch LLM requests — group N of them, run until every sequence finishes, then start the next batch — wastes most of the GPU's time in practice.",
+          "bullets": [
+            "Requests in a batch rarely finish together: a 20-token reply and a 500-token reply get grouped, but the batch can't return until the 500-token one is done.",
+            "Once a short sequence finishes, its slot just pads with throwaway computation — real GPU cycles spent producing nothing usable.",
+            "New requests sit in the queue the entire time, even with spare capacity, because the scheduler only admits work at batch boundaries."
+          ],
+          "symbol": "hourglass"
+        },
+        {
+          "id": "4d0a5926-4b05-42b7-9616-8677864fa13a",
+          "kind": "solution",
+          "title": "Schedule at the Granularity of One Decoding Step",
+          "body": "Continuous batching — Orca's 'iteration-level scheduling' — treats every single forward pass, not every whole request, as the unit the scheduler controls.",
+          "bullets": [
+            "After each decoding step, any sequence that just emitted an end token is evicted from the batch immediately — no waiting for stragglers.",
+            "The freed slot goes straight to a new request pulled from the queue, which joins the very next forward pass.",
+            "Batch membership can be completely different step to step — it's never 'closed' the way a static batch is."
+          ],
+          "symbol": "arrow.triangle.2.circlepath"
+        },
+        {
+          "id": "db6a641a-86bf-44b1-a20b-e216aabbb04c",
+          "kind": "architecture",
+          "title": "Selective Batching Makes Mixed-Length Batches Work",
+          "body": "Batching requests with different lengths and different amounts already generated isn't trivial — Orca solves it with 'selective batching.'",
+          "bullets": [
+            "Rather than batching a whole Transformer layer naively, selective batching batches only the operations that tolerate different-length inputs (like the linear layers) and handles attention per request.",
+            "This is why continuous batching is almost always paired with a paged, non-contiguous KV cache: sequences enter and leave at arbitrary steps, so the cache can't assume one fixed block per batch.",
+            "The scheduler also enforces a memory budget per step — it won't admit a new request if there isn't enough free KV-cache space to hold it."
+          ],
+          "symbol": "memorychip.fill"
+        },
+        {
+          "id": "fc2cb66a-c280-4abb-b2c1-68f7bbdf4e78",
+          "kind": "comparison",
+          "title": "Static vs. Continuous Batching",
+          "body": "The difference comes down to when the scheduler is allowed to change who's in the batch.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "Dimension",
+              "Static batching",
+              "Continuous batching"
+            ],
+            "rows": [
+              [
+                "New request admitted",
+                "Only at the next batch boundary",
+                "On the very next decoding step"
+              ],
+              [
+                "Finished sequence",
+                "Padded until the whole batch finishes",
+                "Evicted immediately, slot reused"
+              ],
+              [
+                "GPU utilization over time",
+                "Drops as short sequences finish early",
+                "Stays high — slots are always refilled"
+              ],
+              [
+                "Reported throughput (Orca vs. FasterTransformer, GPT-3 175B)",
+                "Baseline",
+                "Up to 36.9x at equal latency"
+              ]
+            ]
+          },
+          "symbol": "tablecells"
+        },
+        {
+          "id": "a5ebd967-4e0d-438f-a62a-ca66dccb92fa",
+          "kind": "example",
+          "title": "Four Requests, One Changing Batch",
+          "body": "A batch slot of size 4 serves requests A (10-token reply), B (200 tokens), C (15 tokens), and D (80 tokens), all arriving close together.",
+          "bullets": [
+            "Step 10: A finishes and is evicted immediately; its slot goes to new request E from the queue — B, C, D keep generating uninterrupted.",
+            "Step 15: C finishes next; its slot goes to F. The batch is now B, D, E, F — a completely different lineup than at step 1.",
+            "Under static batching, none of this happens until B (the longest) finishes at step 200 — E and F would have sat in the queue the entire time."
+          ],
+          "symbol": "person.3.fill"
+        },
+        {
+          "id": "c68c5b9c-5e92-4228-9ff4-6cd2987e288c",
+          "kind": "problem",
+          "title": "The Catch: Fairness and Scheduling Overhead",
+          "body": "Continuous batching maximizes throughput, but it introduces tradeoffs a scheduler has to actively manage.",
+          "bullets": [
+            "A newly admitted request can be starved if the scheduler always prioritizes draining long-running sequences over admitting new ones — real schedulers cap how many new requests join per step to bound this.",
+            "Per-step scheduling overhead is real: deciding what to admit or evict every single iteration costs CPU time a simpler static-batch loop never pays.",
+            "It needs a KV-cache allocator built for dynamic add/remove (paged, not one contiguous block) — bolting continuous batching onto a naive fixed-size cache mostly doesn't work.",
+            "Skip it for: offline batch jobs where every request is known upfront and latency doesn't matter — static batching with a well-chosen batch size is simpler and just as efficient there."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "f1f14ba9-019f-483b-b5b6-53b64ea49534",
+          "kind": "takeaways",
+          "title": "Keep the Batch Always Full",
+          "body": null,
+          "bullets": [
+            "Static batching wastes GPU cycles padding finished sequences until the slowest request in the batch is done.",
+            "Continuous batching evicts and admits requests every decoding step, keeping GPU utilization high regardless of how unevenly requests finish.",
+            "It depends on a paged KV cache that can grow and shrink per sequence without big reshuffles.",
+            "It's the default scheduling strategy in modern LLM serving stacks (vLLM, TensorRT-LLM, Orca) for online, latency-sensitive serving."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "a2a778ff-9aff-4897-9b73-b181d33038ea",
+            "prompt": "What's the core limitation of static (request-level) batching?",
+            "options": [
+              "It cannot run on GPUs with less than 80GB of memory",
+              "The whole batch can't be refreshed with new requests until every sequence in it finishes, wasting GPU cycles on padding",
+              "It requires every request to use the exact same prompt",
+              "It only works with models under 7B parameters"
+            ],
+            "correctIndex": 1,
+            "explanation": "Static batching ties the batch's lifetime to its slowest member: short sequences finish and then pad uselessly while new requests wait at the door, even when there's free GPU capacity to serve them."
+          },
+          {
+            "id": "4fcb33f4-8752-4e80-b8a3-eae4b760fdf6",
+            "prompt": "What does continuous batching change about WHEN the scheduler can admit or evict a request?",
+            "options": [
+              "It admits and evicts requests at every decoding step, not just at batch boundaries",
+              "It only admits new requests once per minute regardless of GPU load",
+              "It evicts a request only after it has generated at least 1000 tokens",
+              "It batches requests across different GPUs but never within one GPU"
+            ],
+            "correctIndex": 0,
+            "explanation": "Orca's 'iteration-level scheduling' treats a single forward pass as the scheduling unit — finished sequences leave and new ones join on the very next step, keeping the batch continuously full."
+          },
+          {
+            "id": "488b6b49-52d9-42c8-984e-a131a6cffc72",
+            "prompt": "Why is continuous batching almost always paired with a paged (non-contiguous) KV cache?",
+            "options": [
+              "Paged caches are a GPU vendor requirement",
+              "Sequences enter and leave the batch at arbitrary steps, so the cache can't assume one fixed, contiguous block shared by the whole batch",
+              "It reduces the model's total parameter count",
+              "It removes the need for a KV cache entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Since batch membership changes every step, the memory manager has to allocate and free KV-cache space per sequence on the fly — exactly the problem a paged, block-based KV cache is built to solve."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "9e9bc61c-048b-4976-9ab3-70d56981482c",
+          "title": "Orca: A Distributed Serving System for Transformer-Based Generative Models",
+          "url": "https://www.usenix.org/conference/osdi22/presentation/yu"
+        }
+      ],
+      "id": "2623dd3a-8123-4cba-a0ac-6cc244de79de",
+      "publishedDate": "2026-10-19T18:48:10Z"
+    },
+    {
       "title": "RetroChimera: Two Models That Disagree on Purpose",
       "subtitle": "A transformer and a graph network vote on how to build a molecule — their disagreement is the signal.",
       "category": "AI Innovations",
@@ -10845,200 +11036,6 @@
         }
       ],
       "id": "5f0d2ac6-daa3-493e-bfa7-ffd042ebbd13",
-      "publishedDate": "2026-10-12T06:48:14Z"
-    },
-    {
-      "title": "LoRA: Fine-Tuning a Giant Model by Training a Tiny Sliver of It",
-      "subtitle": "Freeze the original weights, learn two small matrices, and adapt a 70B model for the storage cost of a few MB.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "lora",
-        "fine-tuning",
-        "parameter-efficient",
-        "adapters",
-        "low-rank",
-        "qlora"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "square.stack.3d.down.right",
-      "summary": "LoRA (Low-Rank Adaptation) fine-tunes a large model by freezing its original weight matrices and training only a pair of small low-rank matrices whose product approximates the needed weight update. This cuts trainable parameters by 100-1000x, shrinks per-task storage to a few megabytes, and lets you swap fine-tuned 'adapters' in and out of one frozen base model at inference time.",
-      "slides": [
-        {
-          "id": "5ca05490-b27c-4fc4-94c8-c235f792fedb",
-          "kind": "cover",
-          "title": "You don't need to touch all 70 billion parameters to adapt a model",
-          "body": "Full fine-tuning updates every weight in a model and needs memory for gradients and optimizer state on top of the weights themselves — often 3-4x the model's size. LoRA gets most of the benefit by training a tiny add-on instead of the model itself.",
-          "bullets": [
-            "Introduced by Hu et al. (2021), now the default way to fine-tune LLMs and diffusion models cheaply",
-            "Original weights stay completely frozen during training"
-          ],
-          "symbol": "square.stack.3d.down.right",
-          "table": null
-        },
-        {
-          "id": "8862d193-4afe-47d1-aaa7-a7efa49955c3",
-          "kind": "problem",
-          "title": "Full fine-tuning is expensive to train AND to keep around",
-          "body": "Training needs memory for the weights, the gradients, and the optimizer state (e.g. Adam keeps two extra numbers per parameter) — for a 70B model that's well beyond a single high-end GPU. And once trained, every task needs its own full copy of the model to store and serve.",
-          "bullets": [
-            "Optimizer state alone can be 2x the parameter count for Adam-style optimizers",
-            "Ten fine-tuned variants of a 70B model means ten full 70B-parameter copies on disk",
-            "Switching between tasks at serving time means swapping entire multi-gigabyte models"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "6cef9729-d569-4c47-9789-4c06f51d0ea1",
-          "kind": "solution",
-          "title": "Decompose the update into two small matrices",
-          "body": "For a frozen weight matrix W (size d x k), LoRA represents the fine-tuning update as the product of two much smaller matrices: A (d x r) and B (r x k), where the rank r is tiny compared to d and k — typically 4 to 64. Only A and B are trained; W never changes.",
-          "bullets": [
-            "The forward pass becomes h = Wx + (alpha/r) * B(Ax), where alpha is a fixed scaling hyperparameter",
-            "A is usually initialized to zero or small random values, B to zero, so training starts as a no-op",
-            "Lower rank r means fewer trainable parameters, but less capacity to represent a complex update"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "a6764c27-8f53-4532-bdbd-64d07f0aaea8",
-          "kind": "architecture",
-          "title": "At inference: merge it in, or keep it swappable",
-          "body": "LoRA is typically applied to the attention and MLP projection matrices inside each transformer layer, not to embeddings. At serving time you have two options with very different tradeoffs.",
-          "bullets": [
-            "Merge: compute W' = W + (alpha/r)*BA once, bake it into the weights — zero extra inference latency, but loses the ability to swap adapters",
-            "Keep separate: store W frozen and B·A as a small adapter — lets you hot-swap different task adapters onto the same base model, at the cost of one extra matrix multiply per forward pass",
-            "A handful of megabytes per adapter vs. tens of gigabytes per full fine-tuned model"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "e3de43b7-2c0e-4f16-a77d-6dfd1998263a",
-          "kind": "comparison",
-          "title": "Full fine-tuning vs. LoRA, concretely",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Aspect",
-              "Full fine-tuning",
-              "LoRA"
-            ],
-            "rows": [
-              [
-                "Trainable params",
-                "100% of the model",
-                "Often well under 1%"
-              ],
-              [
-                "Optimizer memory",
-                "~2x params (Adam)",
-                "~2x the tiny A/B params only"
-              ],
-              [
-                "Storage per task",
-                "Full model (tens of GB)",
-                "Adapter only (a few MB)"
-              ],
-              [
-                "Swapping tasks at serving",
-                "Reload entire model",
-                "Swap a small adapter"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "3486319c-69cc-4047-bd32-321a73f2ab05",
-          "kind": "example",
-          "title": "Worked example: one 4096x4096 weight matrix",
-          "body": "A single attention projection matrix of size 4096 x 4096 has about 16.8 million parameters. Fine-tuning it fully means training all 16.8M of them.",
-          "bullets": [
-            "With LoRA at rank r=8: A is 4096x8 and B is 8x4096, together 2 x (4096x8) = 65,536 trainable parameters",
-            "That's roughly 0.4% of the original 16.8M — a ~256x reduction for this one matrix",
-            "Across a whole 70B model, this adds up to total trainable parameters typically in the tens of millions, not tens of billions"
-          ],
-          "symbol": "number",
-          "table": null
-        },
-        {
-          "id": "02cbb5ec-c18e-4b87-8594-3f58a3dff198",
-          "kind": "concept",
-          "title": "When rank, placement, and task complexity bite",
-          "body": "LoRA's efficiency comes with real tradeoffs that pick the rank and placement matter for.",
-          "bullets": [
-            "Too-low rank underfits tasks that need a large representational shift from the base model (e.g. teaching an entirely new skill, not just a style)",
-            "Too-high rank erodes the memory savings and starts approaching full fine-tuning's cost without a guaranteed accuracy win",
-            "Applying LoRA only to attention/MLP projections (the common default) can miss cases where the embedding or output layer needs to change",
-            "QLoRA extends the idea to a 4-bit quantized frozen base model, cutting base-model memory further, at some added quantization error",
-            "Stacking or merging multiple LoRA adapters on the same base model can cause them to interfere with each other's learned directions"
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "c7e76c6c-126d-42ac-870f-c9cf3e2b09aa",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "LoRA freezes the original weights and trains only two small low-rank matrices, A and B, whose product approximates the fine-tuning update",
-            "Rank r controls the tradeoff: lower r means fewer parameters but less capacity to represent a complex update",
-            "Per-task storage drops from a full model copy to a few megabytes, enabling cheap, swappable task adapters",
-            "Merge the adapter into the weights for zero extra latency, or keep it separate to hot-swap tasks on one base model",
-            "QLoRA combines LoRA with a quantized frozen base to fine-tune even larger models on modest hardware"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e5a90d32-4270-4a12-ad6a-f30d69bb4683",
-            "prompt": "During LoRA fine-tuning, what happens to the original weight matrix W?",
-            "options": [
-              "It's deleted and replaced entirely by B*A",
-              "It's quantized to 4-bit precision",
-              "It stays completely frozen; only the small matrices A and B are trained",
-              "It's fine-tuned along with A and B, just at a lower learning rate"
-            ],
-            "correctIndex": 2,
-            "explanation": "LoRA's whole point is to leave the large pretrained weight matrix W untouched and only train the much smaller A and B matrices, whose product approximates the needed update — that's what keeps trainable parameters and memory low."
-          },
-          {
-            "id": "8c643f18-3322-4561-bb1c-382145474aae",
-            "prompt": "A weight matrix has 16.8 million parameters. Using LoRA at rank r=8, roughly how many parameters are actually trained for that matrix?",
-            "options": [
-              "16.8 million, same as full fine-tuning",
-              "About 65,536 — roughly 0.4% of the original",
-              "Exactly 8, one per rank dimension",
-              "8.4 million, half of the original"
-            ],
-            "correctIndex": 1,
-            "explanation": "With A sized (d x r) and B sized (r x k), rank r=8 on a 4096x4096 matrix gives 2 x (4096 x 8) = 65,536 trainable parameters — about 0.4% of the 16.8M in the full matrix, which is the source of LoRA's efficiency."
-          },
-          {
-            "id": "6cd089f7-7a8b-4851-9e61-e835167ec8b0",
-            "prompt": "Why would you choose to keep a LoRA adapter separate from the base model instead of merging it in?",
-            "options": [
-              "Merging always produces worse accuracy",
-              "Keeping it separate removes the need for the base model entirely",
-              "It lets you hot-swap different task adapters onto the same frozen base model, at the cost of one extra matrix multiply per forward pass",
-              "Separate adapters train faster than merged ones"
-            ],
-            "correctIndex": 2,
-            "explanation": "Merging bakes the adapter into the weights for zero extra inference cost but locks in one task. Keeping B*A separate costs a small extra matrix multiply at inference but lets you swap in a different few-megabyte adapter for a different task without touching the base model."
-          }
-        ]
-      },
-      "references": [],
-      "id": "fef4d992-f88c-4da6-bd15-6aa30800a2e0",
       "publishedDate": "2026-10-12T06:48:14Z"
     }
   ]
