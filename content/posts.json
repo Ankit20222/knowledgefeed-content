@@ -1,6 +1,213 @@
 {
   "posts": [
     {
+      "title": "MCP Primitives: Tools, Resources, and Prompts Aren't the Same",
+      "subtitle": "The Model Context Protocol gives servers three distinct ways to reach an AI app — collapsing them into 'just add a tool' wastes tokens and breaks clients.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "tools",
+        "resources",
+        "prompts",
+        "agents",
+        "protocol"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "MCP doesn't define one generic way for servers to expose capabilities — it defines three, each controlled by a different party: Tools the model calls, Resources the application attaches, and Prompts the user explicitly invokes. Treating them as interchangeable burns model turns on things that should've been free context and blows up the function-calling schema the model has to read every turn.",
+      "slides": [
+        {
+          "id": "f491ba2e-4c70-469a-9b03-945919a0ae82",
+          "kind": "cover",
+          "title": "A Server That Exposes Everything as a 'Tool' Is Doing It Wrong",
+          "body": null,
+          "bullets": [
+            "MCP defines three server-side primitives — Tools, Resources, Prompts — plus Sampling and Elicitation, which flow server-to-client instead",
+            "Each primitive has a different controller: the model, the host application, or the human user — mixing them up has a real cost in tokens and turns"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "e61f0135-3754-46f9-9659-9af3125ca2ed",
+          "kind": "problem",
+          "title": "\"Just Add It as a Tool\" Ignores Who's Supposed to Decide",
+          "body": "Most MCP servers get built by reaching for tools/call for everything, because it's the primitive everyone understands from function calling.",
+          "bullets": [
+            "A read-only lookup (list open PRs, fetch a README) exposed as a Tool forces the model to spend a turn and tokens deciding to call it, even when the answer was known before the conversation started",
+            "Dumping static reference data into a Tool's response also means it competes with every other tool's JSON schema for space in the model's context on every single turn",
+            "The fix isn't a coding convention — MCP already separates these by who initiates them, and the spec expects servers to pick the right one"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "e2c91ed3-2aec-47a7-abdb-19e52687096c",
+          "kind": "concept",
+          "title": "Three Primitives, Three Different Controllers",
+          "body": null,
+          "bullets": [
+            "Tools — model-controlled: callable functions with a JSON schema, discovered via tools/list and invoked via tools/call. The LLM decides when and with what arguments, same shape as ordinary function calling — e.g. create_pull_request(repo, head, base, title)",
+            "Resources — application-controlled: addressable data behind a URI, discovered via resources/list and fetched via resources/read. The host app, not the model, decides what to attach to context — e.g. repo://acme/widgets/README.md, opened automatically when a user opens that repo",
+            "Prompts — user-controlled: reusable message templates with arguments, discovered via prompts/list and expanded via prompts/get. A human explicitly triggers them, like a slash command — e.g. /review-pr 482"
+          ],
+          "symbol": "rectangle.3.group.fill",
+          "table": null
+        },
+        {
+          "id": "3aa4a7f2-b889-4336-83c1-72e37962e560",
+          "kind": "architecture",
+          "title": "JSON-RPC Underneath, With Capability Negotiation First",
+          "body": "Every MCP message is JSON-RPC 2.0 over stdio or streamable HTTP — the primitives are just a convention for which methods a server implements.",
+          "bullets": [
+            "On connect, client and server exchange an initialize handshake declaring capabilities — which of tools/resources/prompts/sampling they support, and whether resources support subscribe for change notifications",
+            "A client that skips this and calls tools/call on a server with no tools capability gets a protocol error, not an empty list",
+            "Later spec revisions added Elicitation (server asks the user, mid-task, for missing information) and kept Sampling (server asks the client's own model for a completion) as the two primitives that run server-to-client instead of client-to-server"
+          ],
+          "symbol": "network",
+          "table": null
+        },
+        {
+          "id": "3aeef17d-65cb-490e-bf24-8a6abcb27357",
+          "kind": "example",
+          "title": "One GitHub MCP Server, Three Primitives in Use",
+          "body": "A coding agent connects to a GitHub MCP server while a developer is fixing a bug in acme/widgets.",
+          "bullets": [
+            "Resource: the IDE auto-attaches repo://acme/widgets/README.md and the open file's diff as context the moment the workspace opens — no model decision, no tokens spent deciding, just background context",
+            "Prompt: the developer types /review-pr 482 — the server expands that into a fully-formed message bundling the diff, existing review comments, and a checklist, independent of anything the model would've chosen to fetch",
+            "Tool: mid-task, the agent decides on its own that it needs to open a new PR, so it calls create_pull_request(repo, head, base, title) with arguments it fills in from the conversation"
+          ],
+          "symbol": "terminal.fill",
+          "table": null
+        },
+        {
+          "id": "687abfd6-94a3-44be-9595-00273b09cfef",
+          "kind": "comparison",
+          "title": "Tools vs. Resources vs. Prompts vs. Sampling",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "Tools",
+              "Resources",
+              "Prompts",
+              "Sampling"
+            ],
+            "rows": [
+              [
+                "Who decides to use it",
+                "The model",
+                "The host app",
+                "The human user",
+                "The server"
+              ],
+              [
+                "Direction",
+                "Client calls server",
+                "Client calls server",
+                "Client calls server",
+                "Server calls client"
+              ],
+              [
+                "Discovery method",
+                "tools/list",
+                "resources/list",
+                "prompts/list",
+                "n/a (capability flag)"
+              ],
+              [
+                "Typical use",
+                "Take an action with side effects",
+                "Attach read-only context/data",
+                "Trigger a canned workflow",
+                "Ask the client's LLM for a completion"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "84f03b77-2cf2-49be-8d9f-b3358159c802",
+          "kind": "concept",
+          "title": "Where This Goes Wrong in Practice",
+          "body": null,
+          "bullets": [
+            "Modeling a read-only lookup as a Tool instead of a Resource costs a model turn and tokens for something the host could've attached upfront for free",
+            "Skipping mimeType and annotations on Resources breaks clients that filter or render by content type — they see an opaque blob instead of markdown or JSON",
+            "One tool per CRUD field (get_title, get_status, get_assignee...) multiplies the function-calling schema the model re-reads every single turn — context cost scales with how many tools exist, not how many get used",
+            "The spec says a client SHOULD always let a human approve a Sampling request before it's sent — skipping that turns a data server into an unsupervised sub-agent making its own LLM calls"
+          ],
+          "symbol": "exclamationmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "fe2adc17-28a2-44d2-8a22-fefda648ecd9",
+          "kind": "takeaways",
+          "title": "Pick the Primitive by Who Should Decide, Not by What's Easiest",
+          "body": null,
+          "bullets": [
+            "Tools are for actions the model should decide to take mid-task; Resources are for context the application already knows to attach; Prompts are for workflows a human explicitly triggers",
+            "Capability negotiation at connect time means a client should never assume a server supports a primitive it hasn't advertised",
+            "Fewer, coarser Tools beat many fine-grained ones — every tool's schema costs context on every turn, whether or not the model ever calls it"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "114dc305-d29e-4f8e-b78d-fa11d2798dc2",
+            "prompt": "In MCP, who decides when a Tool actually gets called?",
+            "options": [
+              "The model, mid-conversation, the same way it decides to make any function call",
+              "The host application, before the conversation starts",
+              "The human user, by typing a slash command",
+              "The MCP server itself, on a fixed schedule"
+            ],
+            "correctIndex": 0,
+            "explanation": "Tools are the model-controlled primitive: the LLM decides when to invoke tools/call and with what arguments, just like ordinary function calling. That's what distinguishes them from Resources (app-controlled) and Prompts (user-controlled)."
+          },
+          {
+            "id": "89eec587-938e-4917-8623-1c2eaa31c598",
+            "prompt": "What's the practical downside of exposing a read-only data lookup as a Tool instead of a Resource?",
+            "options": [
+              "It forces the model to spend a turn and tokens deciding to call it, when the host application could have attached that data to context directly",
+              "Tools can only return plain text, never structured data",
+              "Resources are deprecated in the current MCP spec",
+              "Tools cannot be discovered by the client at all"
+            ],
+            "correctIndex": 0,
+            "explanation": "Resources are meant for context the application already knows to attach — no model decision required. Routing the same data through a Tool means the model has to notice it needs the data, decide to call the tool, and wait for the round trip, all of which costs tokens and latency for nothing."
+          },
+          {
+            "id": "252c1adf-87f6-4b0f-a1d1-6227a705c9a1",
+            "prompt": "What has to happen before a client can safely call any of a server's tools, resources, or prompts?",
+            "options": [
+              "A capability negotiation during the initialize handshake, so the client knows which primitives the server actually supports",
+              "The user must manually approve every primitive the server exposes",
+              "The server must first call the client's sampling endpoint",
+              "Nothing — all MCP servers are required to support every primitive"
+            ],
+            "correctIndex": 0,
+            "explanation": "MCP connections start with an initialize exchange where client and server declare their capabilities. A client that calls, say, tools/call against a server that never advertised a tools capability gets a protocol error rather than a graceful empty response."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "09d847df-1bfb-46f5-bf7b-643bf64b785a",
+          "title": "Model Context Protocol — Architecture Overview",
+          "url": "https://modelcontextprotocol.io/docs/learn/architecture"
+        }
+      ],
+      "id": "a1369eae-47af-4dc5-b322-07aabe6e89b1",
+      "publishedDate": "2026-10-20T12:51:04Z"
+    },
+    {
       "title": "Chunking: How RAG Splits Documents Before It Indexes Them",
       "subtitle": "Every RAG system lives or dies on a decision made before a single embedding is computed: where to cut the document.",
       "category": "RAG",
@@ -10859,181 +11066,6 @@
       "references": [],
       "id": "5ceff81e-ef50-4728-b023-558decaad6c3",
       "publishedDate": "2026-10-13T00:47:20Z"
-    },
-    {
-      "title": "StudentSim: Teaching AI Tutors by Simulating the Student",
-      "subtitle": "Microsoft builds a personalized AI double of each learner so tutor models can rehearse before ever meeting a human.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "education",
-        "reinforcement-learning",
-        "simulation",
-        "llm-evaluation",
-        "microsoft-research"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "graduationcap.fill",
-      "summary": "StudentSim trains personalized simulators of individual students so AI tutors can be tested and RL-trained without costly real-learner studies. On a chess benchmark, tutors trained against StudentSim rewards beat GPT-5.4-reward and no-RL baselines by double digits on human-expert ratings.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "What If You Could Rehearse Teaching Before Meeting the Student?",
-          "body": "Microsoft Research built StudentSim: an AI system that models exactly how one real learner answers — and how that answer changes after a tutor steps in.",
-          "bullets": [],
-          "symbol": "graduationcap.fill",
-          "id": "18a9756e-cc97-4d2b-8fc8-41deac2c2d0d"
-        },
-        {
-          "kind": "problem",
-          "title": "Real-Student Testing Is Too Slow to Keep Up With Model Iteration",
-          "body": null,
-          "bullets": [
-            "Tutor quality isn't about the guidance itself — it's about what the student does after reading it.",
-            "Running that loop with real learners for every model update is slow, expensive, and hard to repeat.",
-            "Without fast feedback, teams can't tell if a new tutor prompt actually helps anyone learn."
-          ],
-          "symbol": "hourglass",
-          "id": "dc1b2bd6-9be2-4d34-9627-56ddf71f695c"
-        },
-        {
-          "kind": "solution",
-          "title": "Two-Stage Training Builds a Simulator of One Specific Learner",
-          "body": "StudentSim first trains on records pooled across many students in a domain to learn common error patterns, then specializes on a single student's own sparse records.",
-          "bullets": [
-            "Stage 1: learn generic mistake patterns from pooled, de-identified public datasets.",
-            "Stage 2: fine-tune on one learner's own history, even when that history is thin.",
-            "Only publicly released, de-identified research datasets are used — no PII."
-          ],
-          "symbol": "person.2.badge.gearshape",
-          "id": "9c76d1c4-1994-4d03-9825-687a7773446d"
-        },
-        {
-          "kind": "concept",
-          "title": "StudentSimEval Scores Two Different Things, Not Just Accuracy",
-          "body": "The benchmark spans chess, second-language English writing, and math, and borrows from Vygotsky's zone of proximal development.",
-          "bullets": [
-            "Behavioral fidelity: does the simulator match this student's real answers on held-out problems?",
-            "Guidance responsiveness: does the simulator's answer actually change after reading tutor guidance?",
-            "A good tutoring simulator needs both — matching the student alone isn't enough if it never learns."
-          ],
-          "symbol": "list.bullet.rectangle",
-          "id": "be5421bd-e155-4fc0-ab46-6d313107f67a"
-        },
-        {
-          "kind": "comparison",
-          "title": "StudentSim Beats General LLMs at Matching a Specific Learner",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Simulator",
-              "Behavioral Fidelity",
-              "Guidance Responsiveness"
-            ],
-            "rows": [
-              [
-                "StudentSim",
-                "0.5150",
-                "0.9067"
-              ],
-              [
-                "GPT-5.4 (prompted)",
-                "0.2316",
-                "0.7186"
-              ],
-              [
-                "Maia2 (human-move predictor)",
-                "0.4535",
-                "0.2721"
-              ]
-            ]
-          },
-          "id": "4d8e423d-d133-4535-a74a-58c935e7db8d"
-        },
-        {
-          "kind": "example",
-          "title": "A Frozen Simulator Becomes the Reward Signal for Tutor RL",
-          "body": "In a chess study, a personalized StudentSim is frozen and used purely to grade tutors: it reads the tutor's guidance, revises the student's move, and Stockfish scores the improvement.",
-          "bullets": [
-            "Tutor trained with StudentSim-based RL reward: 90.5% accuracy per blind human chess-expert review.",
-            "No-RL baseline tutor: 75.7% accuracy on the same blind review.",
-            "Tutor trained with a GPT-5.4-based reward instead: only 71.6% — worse than no RL at all.",
-            "Experts also rated the StudentSim-trained tutor highest on guidance quality and personalization."
-          ],
-          "symbol": "flag.checkered",
-          "id": "abed0794-a6d0-4c7c-91ca-747ba14d4e49"
-        },
-        {
-          "kind": "takeaways",
-          "title": "A Research Tool, Not a Classroom Replacement — Know the Limits",
-          "body": "Microsoft is explicit: StudentSim is not a product, is not deployed in classrooms, and does not replace teachers.",
-          "bullets": [
-            "Pitfall: matching past answers doesn't guarantee the simulator predicts real learning outcomes.",
-            "Human studies are still required for safety, usability, and classroom fit before any real deployment.",
-            "Only validated on three domains so far (chess, L2 writing, math) — generalization elsewhere is untested.",
-            "Takeaway: simulate learners to iterate fast on tutor design, then validate the winner with real students."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "77b35ba4-42cf-4cc9-92d0-3b07bec3ef84"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "Why does StudentSim need a two-stage training process instead of just prompting a general model like GPT-5.4?",
-            "options": [
-              "It's cheaper to run at inference time",
-              "Pooled training learns general error patterns, then per-student fine-tuning matches one learner's specific (and often sparse) history",
-              "GPT-5.4 cannot process chess positions",
-              "Two-stage training removes the need for any evaluation benchmark"
-            ],
-            "correctIndex": 1,
-            "explanation": "The results show why this matters: GPT-5.4 responds to guidance reasonably (0.7186) but matches a specific student's actual behavior poorly (0.2316) — it hasn't specialized to that one learner's patterns the way the two-stage approach does.",
-            "id": "8f43b9db-7418-46f6-afb1-81d56dab7d80"
-          },
-          {
-            "prompt": "In the chess tutor RL experiment, what provided the reward signal for training the tutor?",
-            "options": [
-              "Direct human ratings during training",
-              "A fixed rule-based scoring table",
-              "Stockfish's evaluation of how much the student's revised move improved after reading tutor guidance",
-              "The tutor's own confidence score"
-            ],
-            "correctIndex": 2,
-            "explanation": "A frozen personalized StudentSim reads the tutor's guidance and revises the student's move; Stockfish then scores the quality improvement, and that improvement becomes the RL reward — letting the tutor be trained without a human in the loop for every step.",
-            "id": "3ab358b7-50d0-4a89-8f73-24b7b59ae957"
-          },
-          {
-            "prompt": "What limitation does Microsoft Research explicitly flag about StudentSim?",
-            "options": [
-              "It only works for English-language students",
-              "It requires expensive proprietary data",
-              "It is a research tool, not deployed in classrooms, and still requires real human studies before any real-world use",
-              "It cannot be evaluated on held-out data"
-            ],
-            "correctIndex": 2,
-            "explanation": "The authors are careful to frame this as a proof of concept: good fidelity to past answers doesn't guarantee the simulator captures real learning outcomes, safety, or usability — those still need actual student studies.",
-            "id": "fa18170a-de27-458c-814c-2451e13d6abf"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Simulating student learning for better AI tutoring — Microsoft Research Blog",
-          "url": "https://www.microsoft.com/en-us/research/blog/simulating-student-learning-for-better-ai-tutoring/",
-          "id": "ba11526d-6066-4bb2-b999-7fe86ea8a790"
-        },
-        {
-          "title": "StudentSim: Training LLM-Based Student Simulators — Microsoft Research Publication",
-          "url": "https://www.microsoft.com/en-us/research/publication/studentsim-training-llm-based-student-simulators/",
-          "id": "7daf2d28-27cb-4078-8fb7-9132ccab3725"
-        }
-      ],
-      "id": "2a3a2531-4239-4680-8d64-8b11af3c8e71",
-      "publishedDate": "2026-10-12T18:45:34Z"
     }
   ]
 }
