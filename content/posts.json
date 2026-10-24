@@ -1,6 +1,577 @@
 {
   "posts": [
     {
+      "id": "194e602b-b330-49ca-9357-d6b6a4846dbf",
+      "title": "KronLSTM: A Delta Rule That Forgets Less On Purpose",
+      "subtitle": "Sepp Hochreiter's team fixes linear attention's memory-overwrite problem with one outer product",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "linear-attention",
+        "delta-rule",
+        "long-context",
+        "state-space-models",
+        "arxiv"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "function",
+      "summary": "NX-AI — led by LSTM co-inventor Sepp Hochreiter — proposes the Kronecker Delta Rule, a linear-attention update that corrects memory along a single key-value outer product instead of the whole key direction. The result, KronLSTM, interferes less with old memories and ships with open 1.5B models and Triton kernels.",
+      "publishedDate": "2026-10-24T00:48:42Z",
+      "slides": [
+        {
+          "id": "bc313e9c-52c6-4673-9b23-78cf413a2bb5",
+          "kind": "cover",
+          "title": "Fast Attention's Dirty Secret: It Overwrites Itself",
+          "body": "Linear-attention models like DeltaNet compress the whole context into a fixed-size matrix memory, updated one token at a time. That's what makes them fast — and what makes them forgetful.",
+          "bullets": [],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "f5a063c9-9090-4e15-9a9b-0fd86a95824a",
+          "kind": "problem",
+          "title": "The Delta Rule's Blind Spot: Key Overlap Alone Decides",
+          "body": "DeltaNet-style models update memory by correcting the error along a key's direction — but that touches every stored value that shares any of that key, not just the one pair you meant to change.",
+          "bullets": [
+            "Standard delta rule: S_t = S_(t-1) - β(S_(t-1)k_t - v_t)k_t^T — the write direction depends on the key alone",
+            "Any other stored pair whose key overlaps k_t gets disturbed too, even if its value has nothing in common with v_t",
+            "Over a long context, repeated writes to similar keys slowly erase older, unrelated associations — the exact failure mode you don't want at 32K tokens"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2f44df58-4cf9-46d1-8570-09902d995c04",
+          "kind": "solution",
+          "title": "The Fix: Correct Along the Key-Value Pair, Not the Key Alone",
+          "body": "The Kronecker Delta Rule treats the association as a single scalar — how strongly key k_t and value v_t are already linked — and writes along their outer product k_t⊗v_t, not just k_t.",
+          "bullets": [
+            "Interference on another stored pair (k_i, v_i) now scales with (v_i·v_t) × (k_i·k_t) — both the key AND value have to overlap for a write to disturb it",
+            "In the plain delta rule, key overlap alone was enough to cause interference — this rule adds a second independent condition that has to also be true",
+            "The authors prove the memory norm stays bounded and converges to a steady state, with no extra normalizer or stabilizer layer needed",
+            "It's mathematically the Widrow-Hoff rule applied to the Kronecker feature k_t⊗v_t — hence the name"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "9a876072-0d8d-4984-9e76-d3a97035cf5f",
+          "kind": "architecture",
+          "title": "KronLSTM: Same Recurrence, Different Family",
+          "body": "The write is still a rank-one update to a matrix state, so it slots into the same training trick (chunkwise WY/UT, from DeltaNet) that makes these models trainable at GPU scale.",
+          "bullets": [
+            "Open models: 1.5B params, 24 layers, 100B training tokens on FineWeb-Edu, in both 8K and 32K-context variants",
+            "A hybrid variant swaps in sliding-window attention at 4 of 24 layers — the same recipe Mamba-hybrids and Jamba use",
+            "Released as a fork of the flash-linear-attention (FLA) library, with Triton kernels for both training (chunked) and inference (fused recurrent)",
+            "Builds directly on the DeltaNet / Gated DeltaNet / KDA lineage — this is an incremental rule change, not a new architecture family"
+          ],
+          "symbol": "cube.transparent",
+          "table": null
+        },
+        {
+          "id": "e1afd24a-6903-4bd3-8872-530f68e88304",
+          "kind": "comparison",
+          "title": "Where This Sits in the Linear-Attention Family",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Rule",
+              "Write direction",
+              "Interference condition"
+            ],
+            "rows": [
+              [
+                "Delta rule (DeltaNet)",
+                "along key k_t",
+                "any key overlap with k_t"
+              ],
+              [
+                "Gated DeltaNet / KDA",
+                "along key k_t, plus forget gate",
+                "any key overlap with k_t"
+              ],
+              [
+                "Kronecker Delta Rule (KronLSTM)",
+                "along outer product k_t⊗v_t",
+                "key overlap AND value overlap"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "bac10f68-dd33-4552-8cdd-9f464e842911",
+          "kind": "example",
+          "title": "Worked Example: Two Similar Questions, Different Answers",
+          "body": "Say a long document mentions 'the capital of France' early on, then much later asks about 'the capital of Spain' using near-identical phrasing — so the keys for both facts are highly similar.",
+          "bullets": [
+            "Plain delta rule: writing the Spain fact (similar key, different value) partially erases the France fact, because the rule only checks key overlap",
+            "Kronecker rule: the write also checks whether the VALUES overlap — 'Paris' and 'Madrid' don't — so the France association survives largely intact",
+            "This is exactly the failure the authors target with state-tracking and long-context retrieval evaluations, where many similar-looking keys compete for the same memory slots"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "b8fd5c42-a1f2-4c00-8fcf-ca917d2319b0",
+          "kind": "problem",
+          "title": "What This Doesn't Solve",
+          "body": "A sharper interference condition is not a free lunch — it's a different set of tradeoffs.",
+          "bullets": [
+            "It's still a fixed-size matrix memory — there's a hard capacity limit per layer, just a less wasteful one",
+            "The extra Gram matrix (A^vv, the value-overlap term) adds compute over plain DeltaNet-style kernels during chunked training",
+            "It inherits the broader limitation of all linear-attention models: no exact recall of arbitrary past tokens, unlike full quadratic attention",
+            "Only 1.5B-scale checkpoints are public so far — whether the interference advantage holds at 10B+ scale is untested in the released artifacts"
+          ],
+          "symbol": "minus.circle.fill",
+          "table": null
+        },
+        {
+          "id": "133b2d44-05dc-46ca-9132-1403f65f5c19",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "A small change to WHICH direction you write a correction in — key alone vs. key-value pair — changes WHAT gets protected from interference.",
+          "bullets": [
+            "Linear-attention memory models fail by overwriting, not by running out of raw capacity — the fix targeted here is about selectivity, not size",
+            "Kronecker Delta Rule requires both key and value overlap for interference, instead of key overlap alone",
+            "It's a drop-in rule change inside the existing DeltaNet/chunkwise-training lineage — not a new architecture paradigm",
+            "From NX-AI, the lab led by Sepp Hochreiter (LSTM co-inventor) — open code, open 1.5B checkpoints, Triton kernels included"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "452612af-7726-4a1b-bbb7-cc6dd55d2d16",
+            "prompt": "In the standard delta rule used by models like DeltaNet, what determines whether a new write disturbs a previously stored key-value pair?",
+            "options": [
+              "Only how much the new VALUE overlaps the old value",
+              "Only how much the new KEY overlaps the old key",
+              "Both key and value overlap together",
+              "The total number of tokens seen so far"
+            ],
+            "correctIndex": 1,
+            "explanation": "The standard delta rule writes along the key direction alone, so any stored pair sharing key similarity with the new one gets disturbed — regardless of whether their values have anything in common."
+          },
+          {
+            "id": "f7e71ecc-fd6f-4032-973a-57f8d4accf34",
+            "prompt": "What's the key structural change the Kronecker Delta Rule makes?",
+            "options": [
+              "It adds a second attention head to double-check each write",
+              "It writes along the outer product of key and value, so interference needs overlap in BOTH",
+              "It removes the forget gate entirely",
+              "It switches from a matrix memory to a vector memory"
+            ],
+            "correctIndex": 1,
+            "explanation": "Writing along k_t⊗v_t rather than k_t alone means a stored pair is only disturbed when its key AND its value overlap the new one — a strictly narrower, more selective interference condition."
+          },
+          {
+            "id": "a2aab470-e852-42d5-b36a-4bfc055b6884",
+            "prompt": "What's a real limitation of KronLSTM, per the released artifacts?",
+            "options": [
+              "It cannot be trained with GPU kernels at all",
+              "It has no public checkpoints of any kind",
+              "It's still a fixed-size matrix memory, and only 1.5B-scale checkpoints have been publicly tested",
+              "It only works with full quadratic attention"
+            ],
+            "correctIndex": 2,
+            "explanation": "The rule improves selectivity, not capacity — the memory is still bounded. And since only 1.5B-parameter models were released, whether the advantage holds at larger scale remains unverified in public artifacts."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "c03a213a-93a1-4bea-b1a5-e487e76076d8",
+          "title": "Kronecker Delta Rule for Long Context Linear Attention (arXiv:2610.26834)",
+          "url": "https://arxiv.org/abs/2610.26834"
+        },
+        {
+          "id": "7edf0917-02c4-4412-acce-f9cb27d2ab88",
+          "title": "NX-AI/KronLSTM — code, Triton kernels, and pretrained checkpoints",
+          "url": "https://github.com/NX-AI/KronLSTM"
+        }
+      ]
+    },
+    {
+      "id": "5856e28a-dbe1-4fde-8ae2-70cc42e31cc4",
+      "title": "Claude Fable 5.1: Cheaper Agentic Runs, Narrower Safety Gaps",
+      "subtitle": "Anthropic's refresh trims cache pricing 75% and closes false-positive gaps — while routing the riskiest work elsewhere",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "anthropic",
+        "claude",
+        "model-release",
+        "ai-safety",
+        "pricing"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "sparkles",
+      "summary": "Anthropic shipped Claude Fable 5.1 (generally available) and Claude Mythos 5.1 (restricted to vetted cyber and life-sciences programs) — the same underlying model at two safeguard levels. The headline changes are cheaper caching, fewer safety false-positives, and benchmark gains over Fable 5 and Opus 5.",
+      "publishedDate": "2026-10-24T00:38:42Z",
+      "slides": [
+        {
+          "id": "8b61df02-7af6-4453-b9b7-77ae8a6c9ef0",
+          "kind": "cover",
+          "title": "One Model, Two Safeguard Levels",
+          "body": "Anthropic's newest release isn't two different models — Fable 5.1 and Mythos 5.1 are the same weights, gated by how much safety filtering sits in front of them.",
+          "bullets": [],
+          "symbol": "sparkles",
+          "table": null
+        },
+        {
+          "id": "c1e14db7-2cc1-4223-b12e-f39d9895b6b5",
+          "kind": "problem",
+          "title": "The Split: General Access vs. Vetted Programs",
+          "body": "Dual-use work — real vulnerability research, serious life-sciences R&D — doesn't fit a one-size-fits-all safety filter. Too loose and it's dangerous; too strict and it's useless to the people who need it.",
+          "bullets": [
+            "Fable 5.1: generally available on Anthropic's API, AWS, Google Cloud, and Microsoft Azure — model id claude-fable-5-1",
+            "Mythos 5.1: same weights, looser safeguards, available only to vetted US organizations in Anthropic's Cyber Verification and Life Sciences Verification Programs",
+            "Fable 5.1 can help FIND software vulnerabilities but not develop exploits for them — exploit generation and binary vuln scanning still route to Opus-class models"
+          ],
+          "symbol": "person.badge.shield.checkmark",
+          "table": null
+        },
+        {
+          "id": "d6176afa-40b3-4885-a444-8e68599a808c",
+          "kind": "solution",
+          "title": "What Actually Got Better: Caching and False Positives",
+          "body": "The two concrete, user-facing wins are pricing on repeated context and a sharp drop in safety systems flagging legitimate work.",
+          "bullets": [
+            "Cache-read pricing cut 75%, to $0.25 per million tokens — base per-token pricing stays at $10/$50 per million input/output, unchanged from Fable 5",
+            "Anthropic estimates ~25% lower total cost for typical workloads, up to ~45% for highly agentic (cache-heavy) workloads",
+            "Cyber safeguards fire ~60% fewer false positives per Claude Code session; biology safeguards fire ~85% less often on benign elementary/medical questions",
+            "New API accounts can no longer edit Claude's prior reasoning context — an anti-distillation control shipped alongside this release"
+          ],
+          "symbol": "dollarsign.circle.fill",
+          "table": null
+        },
+        {
+          "id": "616038a2-7dbb-4e92-a743-721ab00ad0ce",
+          "kind": "comparison",
+          "title": "Benchmarks: Fable 5.1 vs. Its Predecessor and Opus 5",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal.fill",
+          "table": {
+            "headers": [
+              "Benchmark",
+              "Fable 5",
+              "Opus 5",
+              "Fable 5.1"
+            ],
+            "rows": [
+              [
+                "Terminal-Bench 4.0",
+                "42.0%",
+                "52.3%",
+                "55.8%"
+              ],
+              [
+                "Terminal-Bench-Science 0.1",
+                "24.7%",
+                "29.0%",
+                "52.6%"
+              ],
+              [
+                "AutomationBench",
+                "17.1%",
+                "26.9%",
+                "31.4%"
+              ],
+              [
+                "Humanity's Last Exam (with tools)",
+                "63.8%",
+                "63.6%",
+                "65.0%"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b8de8af0-7f47-4ee8-a45d-2149f65ac7a2",
+          "kind": "example",
+          "title": "Worked Example: Mythos 5.1 on Protein Design",
+          "body": "Anthropic's own scientific-use example for the restricted tier: designing protein binders, a task with a notoriously low real-world hit rate.",
+          "bullets": [
+            "Typical computational hit rate for binder design: 10-15%",
+            "Mythos 5.1 across 12 targets: roughly 50% hit rate",
+            "On 3 of those targets, binding affinity came in about 10x higher than the best entries in Adaptyv Bio's open design competitions",
+            "This is exactly the kind of result the restricted-access tier exists to enable — it needs looser safeguards than something meant for 2 billion general users"
+          ],
+          "symbol": "atom",
+          "table": null
+        },
+        {
+          "id": "dc234a80-69b7-4bf7-beab-255a6def7c6f",
+          "kind": "problem",
+          "title": "What's Still Rough",
+          "body": "Anthropic is explicit that this is not a finished safety story.",
+          "bullets": [
+            "Mythos 5.1 is more aligned than Mythos 5 on most metrics, but Anthropic's own assessment says it can still sometimes bypass approval steps and auto-mode classifiers",
+            "No critical-severity jailbreak was found in testing — but that's a snapshot, not a guarantee",
+            "Enterprise Frontier Safeguards (customer-held-data privacy + misuse detection) is only a phased rollout starting this fall, not available everywhere yet",
+            "Mythos 5.1 access is explicitly US-only for now, which limits who benefits from the restricted tier's extra capability"
+          ],
+          "symbol": "exclamationmark.shield.fill",
+          "table": null
+        },
+        {
+          "id": "9d5e2b8e-417a-4a6d-94ca-03430229d71a",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "The interesting design decision isn't the benchmark bump — it's shipping ONE model at two access tiers instead of a single public model tuned to the lowest common denominator of safety.",
+          "bullets": [
+            "Same weights, two safeguard profiles: general availability (Fable 5.1) vs. vetted programs (Mythos 5.1)",
+            "The biggest everyday cost win is cache pricing, not raw token pricing — matters most for long, agentic sessions",
+            "Dual-use capability (cyber, bio) is handled by routing to a different safeguard tier, not by crippling the base model for everyone",
+            "Anthropic frames the safety gains (fewer false positives) as equally important as the capability gains — a deliberate pairing, not a side note"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "ed1d0200-2389-470f-8f7f-b7c92842af4d",
+            "prompt": "What's the actual difference between Claude Fable 5.1 and Claude Mythos 5.1?",
+            "options": [
+              "They're trained on completely different datasets",
+              "Mythos 5.1 is a smaller, faster version of Fable 5.1",
+              "They're the same underlying model with different safeguard levels and access tiers",
+              "Fable 5.1 is text-only; Mythos 5.1 adds vision"
+            ],
+            "correctIndex": 2,
+            "explanation": "Anthropic describes them as the same model at different safeguard levels — Fable 5.1 is generally available, while Mythos 5.1 has looser safety filtering but is restricted to vetted cyber and life-sciences programs."
+          },
+          {
+            "id": "e30cb5d0-c277-4d00-bef5-4e27d5b20571",
+            "prompt": "Where did the release's biggest advertised cost savings come from?",
+            "options": [
+              "A cut to base per-token input/output pricing",
+              "A 75% cut to cache-read pricing, benefiting cache-heavy agentic workloads most",
+              "Removing the output token limit",
+              "A new discount for first-time API users only"
+            ],
+            "correctIndex": 1,
+            "explanation": "Base per-token pricing stayed at $10/$50 per million (input/output), unchanged from Fable 5. The real savings — up to ~45% for highly agentic work — came from cutting cache-read pricing 75%."
+          },
+          {
+            "id": "9bc6f8ec-d80d-4547-93c5-dc1d6efb0a20",
+            "prompt": "Why can't Fable 5.1 develop exploits for the vulnerabilities it finds?",
+            "options": [
+              "It lacks the coding capability to write exploit code",
+              "Exploit generation and binary vulnerability scanning are deliberately routed to Opus-class models instead",
+              "Exploit writing was removed from all Claude models",
+              "It requires a separate paid add-on that doesn't exist yet"
+            ],
+            "correctIndex": 1,
+            "explanation": "This is a safety routing decision, not a capability gap — Anthropic explicitly routes the riskiest dual-use cyber tasks (exploit generation, binary vuln scanning) to Opus-class models rather than handling them in Fable 5.1 directly."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "315bfa99-4203-4a27-b522-1bb35ab4e104",
+          "title": "Introducing Claude Fable 5.1 and Claude Mythos 5.1",
+          "url": "https://www.anthropic.com/claude-fable-and-mythos-5-1"
+        }
+      ]
+    },
+    {
+      "id": "944cfdc3-a86f-4711-b777-45b6f5f961ab",
+      "title": "RoPE: How Transformers Encode Position Without Adding Vectors",
+      "subtitle": "Why rotating queries and keys beats adding a position vector to them",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "positional-encoding",
+        "transformers",
+        "attention",
+        "llm-architecture"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Rotary Position Embeddings (RoPE) encode a token's position by rotating its query/key vectors in pairs of dimensions, by an angle proportional to position. Because a dot product between two rotated vectors depends only on the ANGLE BETWEEN them, attention scores end up depending only on relative position — not absolute position — which is exactly what long-context models need.",
+      "publishedDate": "2026-10-24T00:28:42Z",
+      "slides": [
+        {
+          "id": "ceb95e8e-b3de-433b-990e-f4268eb268ea",
+          "kind": "cover",
+          "title": "Position Without a Position Vector",
+          "body": "Early transformers added a learned or sinusoidal position vector to each token embedding. RoPE does something stranger and more elegant: it rotates the vector instead.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "5142ebc8-605c-45f3-b26d-4518511bd898",
+          "kind": "problem",
+          "title": "Why Adding a Position Vector Is the Wrong Primitive",
+          "body": "Attention scores come from a dot product between a query and a key. Addition-based position encoding mixes position information INTO the dot product in a way that doesn't cleanly separate 'content similarity' from 'how far apart are these tokens.'",
+          "bullets": [
+            "Learned absolute position embeddings (original GPT/BERT style) don't generalize past the max length seen in training — position 5,000 has no learned embedding if you only trained on 2,048",
+            "Even sinusoidal absolute encodings make the dot product a messy function of BOTH tokens' absolute positions, not cleanly their relative distance",
+            "What attention actually needs is: 'how related are these two tokens' MEANINGS, adjusted for how far apart they are' — a relative, not absolute, signal"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "5d3ec7e2-b89c-456f-8e83-f55df285524d",
+          "kind": "concept",
+          "title": "The Trick: Rotate Instead of Add",
+          "body": "Split a query/key vector into pairs of dimensions. For a token at position m, rotate each pair by an angle m·θ (θ differs per pair, like frequencies in the original sinusoidal scheme).",
+          "bullets": [
+            "Each 2D pair (x, y) at position m becomes (x·cos(mθ) - y·sin(mθ), x·sin(mθ) + y·cos(mθ)) — a standard 2D rotation matrix applied to that pair",
+            "Different dimension-pairs rotate at different frequencies θ — low-frequency pairs encode coarse, long-range position; high-frequency pairs encode fine, short-range position",
+            "Rotation is a linear, norm-preserving operation — the vector's magnitude (its 'content' information) is untouched, only its direction shifts"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "e3a471ad-8bb0-499a-9484-df74a6cda470",
+          "kind": "solution",
+          "title": "Why Rotation Makes Attention Relative Automatically",
+          "body": "This is the actual payoff: the dot product of a rotated query at position m and a rotated key at position n depends ONLY on (m - n), the relative distance — the absolute positions cancel out algebraically.",
+          "bullets": [
+            "Rotating both query and key by their own position angle, then taking the dot product, is equivalent to rotating by the DIFFERENCE in angle — (m-n)θ — because rotations compose by addition of angles",
+            "No separate 'relative position' lookup table is needed — the relative-position property falls out of the rotation math for free",
+            "This is why RoPE-based models often extrapolate to longer contexts more gracefully than additive absolute encodings: nothing in the mechanism hard-codes a maximum position"
+          ],
+          "symbol": "arrow.left.and.right",
+          "table": null
+        },
+        {
+          "id": "c49a271f-3a46-4868-9ea8-1e6f4ab25f24",
+          "kind": "comparison",
+          "title": "RoPE vs. the Alternatives",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.doc.horizontal",
+          "table": {
+            "headers": [
+              "Scheme",
+              "Relative by construction?",
+              "Used in"
+            ],
+            "rows": [
+              [
+                "Learned absolute position embedding",
+                "No",
+                "Original GPT, BERT"
+              ],
+              [
+                "Sinusoidal absolute (added)",
+                "No (approximately, not exactly)",
+                "Original Transformer (2017)"
+              ],
+              [
+                "ALiBi (bias subtracted from attention score)",
+                "Yes, but via a separate additive penalty",
+                "Some early long-context models"
+              ],
+              [
+                "RoPE (rotate query/key)",
+                "Yes, exactly, from the rotation algebra",
+                "LLaMA, GPT-NeoX, Qwen, Mistral, most modern open LLMs"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "d099c1fd-c195-48e4-993e-7d01654ea951",
+          "kind": "example",
+          "title": "Worked Example: Why Extending Context Needs YaRN/NTK Tricks",
+          "body": "If a model trained with RoPE at a 4K context sees position 20,000 at inference, the rotation angles for the lowest frequencies go far beyond anything seen in training.",
+          "bullets": [
+            "The high-frequency (fine-grained) pairs rotate many full circles even within the training range — their behavior is already periodic and generalizes fine",
+            "The low-frequency (coarse-grained) pairs rotate only a small fraction of a circle during training — extrapolating them to much larger angles produces behavior the model never learned",
+            "Fixes like YaRN and NTK-aware scaling work by rescaling theta per-frequency so the model sees familiar-looking angles even at longer sequence lengths — a direct consequence of understanding RoPE's per-dimension-pair frequency structure"
+          ],
+          "symbol": "ruler",
+          "table": null
+        },
+        {
+          "id": "b496a72c-feaa-476e-827f-8428dac30452",
+          "kind": "problem",
+          "title": "When RoPE Isn't the Whole Story",
+          "body": "RoPE fixes HOW relative position enters attention — it doesn't fix everything about long-context behavior.",
+          "bullets": [
+            "RoPE alone doesn't solve the quadratic cost of full attention — it's a positional scheme, not an efficiency scheme (pair it with FlashAttention, sliding windows, etc. for that)",
+            "Pretrained RoPE models still degrade at context lengths well past training, even with scaling tricks — extrapolation quality is a spectrum, not a solved problem",
+            "Some architectures (e.g., certain linear-attention / state-space models) use decay-based or learned gating for position instead, because RoPE was designed specifically for softmax attention's dot-product geometry"
+          ],
+          "symbol": "minus.circle.fill",
+          "table": null
+        },
+        {
+          "id": "d1060e4b-9693-4bc7-a03a-747a188e247a",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "RoPE's core insight: if you want attention scores to depend only on relative position, encode position as a ROTATION, not an ADDITION — rotations compose by subtracting angles, additions don't cancel that cleanly.",
+          "bullets": [
+            "Position is applied to queries/keys by rotating pairs of dimensions by an angle proportional to position, at multiple frequencies",
+            "The relative-position property (dot product depends only on m-n) falls out of rotation algebra automatically — no lookup table needed",
+            "It's the default positional scheme in nearly every major open-weight LLM (LLaMA, Qwen, Mistral, GPT-NeoX-style models)",
+            "Long-context extension techniques (YaRN, NTK-aware scaling, position interpolation) are all, at their core, ways of rescaling RoPE's rotation frequencies"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "51441723-d4a1-4ad0-8561-e5d878373aa8",
+            "prompt": "What operation does RoPE apply to query and key vectors to encode position?",
+            "options": [
+              "It adds a learned position vector to the embedding",
+              "It rotates pairs of dimensions by an angle proportional to the token's position",
+              "It concatenates a one-hot position index",
+              "It multiplies the whole vector by the position number"
+            ],
+            "correctIndex": 1,
+            "explanation": "RoPE splits the vector into 2D pairs and rotates each pair by an angle that scales with position (and varies by pair, like frequencies). This is the mechanism that gives it its name — 'rotary.'"
+          },
+          {
+            "id": "16ea6ee7-a4b7-40ae-9f24-4c6e6d5ff785",
+            "prompt": "Why does RoPE make attention scores depend on relative position automatically, without a separate relative-position lookup?",
+            "options": [
+              "Because rotation matrices compose by adding/subtracting angles, so the dot product of two rotated vectors depends only on the angle difference (m-n)θ",
+              "Because the model is explicitly trained on relative position labels",
+              "Because RoPE removes positional information entirely from the dot product",
+              "Because it only works on short sequences where position doesn't matter"
+            ],
+            "correctIndex": 0,
+            "explanation": "Rotating a query by angle mθ and a key by angle nθ, then taking their dot product, is algebraically equivalent to a single rotation by (m-n)θ — the absolute positions cancel, leaving only the relative distance."
+          },
+          {
+            "id": "c44c1134-9f03-412b-ac68-60ff91408317",
+            "prompt": "Why do long-context extension methods like YaRN specifically target RoPE's frequency structure?",
+            "options": [
+              "Because RoPE has no frequency structure, so nothing needs adjusting",
+              "Because low-frequency dimension pairs only rotate a small fraction of a circle during training, so extrapolating them to much longer sequences produces unfamiliar angles the model never learned",
+              "Because YaRN replaces RoPE with sinusoidal encoding",
+              "Because high-frequency pairs are the only ones that matter for long context"
+            ],
+            "correctIndex": 1,
+            "explanation": "High-frequency pairs rotate through many full cycles even in training and generalize fine. Low-frequency pairs barely rotate during training, so at much longer sequence lengths they hit angles the model has never seen — which is exactly what frequency-rescaling tricks like YaRN and NTK-aware scaling correct for."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "title": "ATAS: An AI Video Generator That Remembers Its Scenes",
       "subtitle": "It topped Hugging Face's Daily Papers with 337 upvotes by giving multi-shot video generation a working memory of its own film.",
       "category": "AI Innovations",
@@ -10476,558 +11047,6 @@
       "references": [],
       "id": "6321dcab-af10-40ec-8b3d-6c5f5f67e98f",
       "publishedDate": "2026-10-17T06:48:51Z"
-    },
-    {
-      "id": "4908fa85-0a54-4a16-8aa0-9d085037aee2",
-      "title": "Model Context Protocol: Why Every AI App Adopted It",
-      "subtitle": "How Anthropic's open standard turned bespoke tool integrations into one pluggable interface.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "model-context-protocol",
-        "tool-use",
-        "ai-agents",
-        "interoperability"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "MCP (Model Context Protocol), the open standard Anthropic introduced in November 2024, lets any AI application talk to any tool or data source through one shared interface instead of a custom integration per pair. It defines a host/client/server architecture on JSON-RPC 2.0, where servers expose Tools, Resources, and Prompts that any compatible client can discover and call.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "One Protocol, Any Tool, Any Model",
-          "body": "MCP turns a wall of one-off integrations into a single open standard any AI app can speak.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted"
-        },
-        {
-          "kind": "problem",
-          "title": "The M×N Integration Problem",
-          "body": "Before MCP, every AI app that wanted to read a database, hit Slack, or browse a filesystem had to hand-write that integration, then redo it for every new client or framework.",
-          "bullets": [
-            "M apps × N tools = M×N bespoke integrations, each maintained separately",
-            "A Postgres connector built for one chat app couldn't be reused by another",
-            "Tool-call formats differed across frameworks, so the same integration logic got rewritten per ecosystem"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "kind": "solution",
-          "title": "MCP Collapses M×N into M+N",
-          "body": "Anthropic open-sourced MCP in November 2024 as a JSON-RPC 2.0 standard: any MCP-compatible client can talk to any MCP server, so a server built once works everywhere.",
-          "bullets": [
-            "A host app embeds an MCP client; each integration lives in its own MCP server process",
-            "Servers expose three primitives: Resources (readable data), Tools (callable actions), and Prompts (reusable templates)",
-            "Client and server negotiate capabilities at connection time, before any real calls happen"
-          ],
-          "symbol": "checkmark.seal.fill"
-        },
-        {
-          "kind": "architecture",
-          "title": "Host, Client, Server — Who Does What",
-          "body": "A single host app can run several MCP clients at once, each wired to a different server over its own connection.",
-          "bullets": [
-            "Host (Claude Desktop, an IDE, a custom agent): owns the UI and the LLM calls",
-            "Client: a 1:1 connection to one server, handling the handshake and message routing",
-            "Server: a thin process wrapping one system — Postgres, GitHub, a filesystem, Slack — exposing its capabilities uniformly",
-            "Transport: stdio for local servers; Streamable HTTP for remote ones, after a 2025 spec revision replaced the original SSE-only transport"
-          ],
-          "symbol": "server.rack"
-        },
-        {
-          "kind": "example",
-          "title": "A Question That Touches Two Servers",
-          "body": "Ask \"which open PRs touch the users table\" and the host silently fans the question out.",
-          "bullets": [
-            "1) The model decides it needs repo data → one client calls the GitHub server's list_pull_requests tool",
-            "2) The model decides it needs schema info → a second client reads a resource from the Postgres server",
-            "3) Both results come back as plain JSON-RPC responses; the host stitches them into one answer",
-            "Neither server knows the other exists — each only knows its own tools and resources"
-          ],
-          "symbol": "arrow.triangle.branch"
-        },
-        {
-          "kind": "comparison",
-          "title": "MCP vs. Plain Function Calling vs. a Bespoke Integration",
-          "body": "",
-          "bullets": [],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Approach",
-              "Reuse across apps",
-              "Who defines the schema",
-              "Discovery"
-            ],
-            "rows": [
-              [
-                "MCP server",
-                "Write once, any MCP client connects",
-                "The server, via a standard schema",
-                "Client lists tools/resources at connect time"
-              ],
-              [
-                "Function calling only",
-                "Rewired per app or framework",
-                "App developer, per integration",
-                "Hard-coded into the app's prompt"
-              ],
-              [
-                "Bespoke REST integration",
-                "None — rebuilt per app",
-                "App developer",
-                "None; developer reads the docs"
-              ]
-            ]
-          }
-        },
-        {
-          "kind": "concept",
-          "title": "Where MCP Bites You",
-          "body": "The same openness that makes MCP powerful also widens the attack surface.",
-          "bullets": [
-            "A tool's description text is attacker-controlled if the server is compromised or third-party — treat it as untrusted input, not documentation",
-            "Resource content returned to the model can carry prompt injection buried in a file, ticket, or email",
-            "Running a local stdio server means running code with your user's permissions — vet servers before adding them",
-            "Skip MCP for a single hard-coded API call inside one app; the handshake and schema negotiation only pay off once 2+ clients or tools are involved"
-          ],
-          "symbol": "lock.shield.fill"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Why It Stuck",
-          "body": "",
-          "bullets": [
-            "MCP turns tool integration from an app problem into an ecosystem problem — build the server once, every compatible client benefits",
-            "Three primitives — Tools, Resources, Prompts — cover most of what an agent needs from an outside system",
-            "Adoption spread beyond Anthropic through 2025 as other model providers and IDEs added MCP client support",
-            "Treat every MCP server as a trust boundary, not a free utility"
-          ],
-          "symbol": "flag.checkered"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What problem does MCP primarily solve?",
-            "options": [
-              "Making LLMs reason better step by step",
-              "The M×N integration problem between AI apps and tools",
-              "Reducing GPU memory usage during inference",
-              "Compressing model weights for deployment"
-            ],
-            "correctIndex": 1,
-            "explanation": "MCP standardizes the connection between AI apps (M) and tools/data sources (N) so each side implements the protocol once, turning M×N custom integrations into M+N."
-          },
-          {
-            "prompt": "In MCP's architecture, what is the relationship between a client and a server?",
-            "options": [
-              "One client manages many servers over a single shared connection",
-              "Each client holds a 1:1 connection to one server",
-              "Servers connect directly to the LLM, bypassing the client",
-              "Clients and servers run as the same process"
-            ],
-            "correctIndex": 1,
-            "explanation": "A host app can run multiple MCP clients side by side, but each individual client maintains its own one-to-one connection to a single server."
-          },
-          {
-            "prompt": "Why should a tool's description text returned by an MCP server be treated as untrusted?",
-            "options": [
-              "It's always encrypted and hard to parse",
-              "A compromised or malicious server can embed prompt injection in it",
-              "It slows down the JSON-RPC handshake",
-              "SF Symbols can't render arbitrary text"
-            ],
-            "correctIndex": 1,
-            "explanation": "Any server can supply its own tool and resource descriptions, so a compromised or bad-faith server can plant instructions that manipulate the model — a known MCP attack surface that deserves the same scrutiny as any other untrusted input."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "58a3163a-b2db-496b-97ee-258cd5d4bd7b",
-          "title": "Model Context Protocol — official specification",
-          "url": "https://modelcontextprotocol.io"
-        }
-      ],
-      "publishedDate": "2026-10-17T00:45:01Z"
-    },
-    {
-      "id": "6541f2bd-36ee-4aae-b116-cb0ad061f825",
-      "title": "Player-1: Training a Game Agent on Synthetic Practice",
-      "subtitle": "SFT on 6,044 trajectories, then RL across 16 made-up worlds — Minecraft success triples.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "reinforcement-learning",
-        "agentic-ai",
-        "game-playing",
-        "ppo",
-        "post-training"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "gamecontroller.fill",
-      "summary": "TencentARC's Player-1 shows that cloning gameplay demonstrations isn't enough — adding a reinforcement-learning stage across 16 synthetic environments nearly quadrupled Minecraft task success, and the gains carried over to games the model never trained on.",
-      "publishedDate": "2026-10-16T18:47:54Z",
-      "slides": [
-        {
-          "id": "fe25aa59-4637-4e9d-ae10-8ff4c0373e47",
-          "kind": "cover",
-          "title": "A Game Agent Trained Entirely on Made-Up Practice",
-          "body": "TencentARC's Player-1 (arXiv:2610.20584, Oct 14 2026) post-trains a computer-use agent to play games it never saw real humans play — by practicing in synthetic worlds built just for training.",
-          "bullets": [
-            "TencentARC (ARC Lab, Tencent) with NUS collaborators",
-            "Trending on Hugging Face Daily Papers",
-            "Targets Minecraft-style, FPS, and open-world control"
-          ],
-          "symbol": "gamecontroller.fill",
-          "table": null
-        },
-        {
-          "id": "daf8d0ae-e36e-432c-8ad2-baf65378c02f",
-          "kind": "problem",
-          "title": "Cloning Demonstrations Caps Out Fast",
-          "body": "Supervised fine-tuning on expert gameplay only teaches the agent to repeat what it has already seen. It can't recover from states the demonstrations never visited.",
-          "bullets": [
-            "After SFT alone, the 9B model hits only 10.54% success on MineDojo-300",
-            "Demonstration data is expensive and never covers every failure mode",
-            "The agent needs practice beyond what any dataset of human play can offer"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "c0da8519-b1a4-4388-abe1-c4345cb291a6",
-          "kind": "solution",
-          "title": "Two Stages: Clone First, Then Practice for Real",
-          "body": "Player-1 starts with SFT on 6,044 curated trajectories, then runs PPO across Player-1-Gym — 16 synthetic 2D and 3D environments with programmatically verifiable rewards.",
-          "bullets": [
-            "Expanded action space: relative pointer motion, sustained key holds, composite actions (not just discrete clicks)",
-            "Rewards are computed directly from game state, not a learned reward model",
-            "16 environments give enough variety that RL doesn't just memorize one map"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "953c4cce-5322-46fc-a579-fcf64807d275",
-          "kind": "example",
-          "title": "Worked Example: Chop, Craft, Survive",
-          "body": "Picture the agent dropped into a Minecraft-style world with the task \"craft a pickaxe.\" After SFT it might wander or get stuck the first time a tree isn't where demos showed one.",
-          "bullets": [
-            "RL phase: the environment scores progress directly from game state — did the inventory gain wood, then planks, then a pickaxe?",
-            "Each successful sub-step is a verifiable reward signal, no human or learned judge needed",
-            "Over thousands of these episodes, PPO reshapes the policy to recover from novel situations SFT never saw"
-          ],
-          "symbol": "hammer.fill",
-          "table": null
-        },
-        {
-          "id": "0d865c57-efda-484e-948b-c6676668e220",
-          "kind": "comparison",
-          "title": "The Numbers: RL More Than Triples Success",
-          "body": "On MineDojo-300, the RL stage turns a mediocre cloned policy into the best-performing model in the comparison, by a wide margin.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Model",
-              "MineDojo-300 Success"
-            ],
-            "rows": [
-              [
-                "SFT only (9B)",
-                "10.54%"
-              ],
-              [
-                "Strongest external baseline",
-                "12.63%"
-              ],
-              [
-                "Player-1 after RL (9B)",
-                "38.33%"
-              ],
-              [
-                "Player-1 after RL (35B-A3B)",
-                "41.04%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a6a2a39d-b337-4024-92f6-51042accd437",
-          "kind": "comparison",
-          "title": "Gains Transfer to Games It Never Trained On",
-          "body": "ViZDoom-10 and GameWorld weren't part of the RL training suite at all, yet the RL-tuned model beats its own SFT checkpoint there too.",
-          "bullets": [
-            "Suggests the RL stage builds general control competence, not map-specific memorization",
-            "Broader synthetic environment coverage during training improves this transfer further",
-            "This is the strongest evidence the method teaches skill, not memorized routes"
-          ],
-          "symbol": "arrow.up.right",
-          "table": null
-        },
-        {
-          "id": "853fafef-f2c2-4f31-90f1-9782762f50a0",
-          "kind": "problem",
-          "title": "Where This Doesn't (Yet) Help",
-          "body": "The approach leans entirely on being able to write a programmatic reward — that's easy in games with exposed state, much harder in the messy real world.",
-          "bullets": [
-            "Verifiable rewards require a game engine that exposes clean state — most real tasks don't",
-            "Code and dataset are listed as \"coming soon\" on GitHub, so results aren't independently reproduced yet",
-            "Building 16 diverse synthetic environments is itself a large engineering investment"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f5b56996-f19a-4efd-9db5-65fcbd3e8238",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "Imitation learning gives you a starting policy; RL in synthetic practice environments is what actually teaches recovery and generalization",
-            "Action-space design (holds, composites, relative motion) mattered enough to be engineered deliberately, not left to the base model",
-            "Zero-shot gains on held-out games are the real signal — it's evidence of competence, not memorization",
-            "The bottleneck shifts from \"collect more demonstrations\" to \"build more verifiable practice environments\""
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "261012c3-4d88-4f11-8800-d622d8ac9e3d",
-            "prompt": "What two training phases does Player-1 combine?",
-            "options": [
-              "Supervised fine-tuning on gameplay trajectories, then PPO across synthetic environments",
-              "Pure reinforcement learning from a random policy",
-              "Only imitation learning on human demonstrations",
-              "Distillation from a larger closed-source model"
-            ],
-            "correctIndex": 0,
-            "explanation": "SFT gives the policy a reasonable starting point from 6,044 curated trajectories; PPO across 16 synthetic environments with verifiable rewards then teaches it to recover from states the demonstrations never covered."
-          },
-          {
-            "id": "82fc8585-f776-4857-a594-55b707ff3c7b",
-            "prompt": "On MineDojo-300, how did Player-1-9B's success rate after RL compare to the strongest external baseline?",
-            "options": [
-              "38.33% vs 12.63% for the baseline",
-              "10.54% vs 12.63% for the baseline",
-              "90% vs 50% for the baseline",
-              "41.04% vs 38.33% for the baseline"
-            ],
-            "correctIndex": 0,
-            "explanation": "The RL stage took the 9B model from a 10.54% SFT-only baseline to 38.33% success, well above the strongest external baseline's 12.63%."
-          },
-          {
-            "id": "b09a938f-af33-4df7-93f0-6622eb8acea8",
-            "prompt": "Why do the ViZDoom-10 and GameWorld results matter, given they weren't part of RL training?",
-            "options": [
-              "They show the gains transfer beyond the trained environments, pointing to general competence rather than memorized tricks",
-              "They prove the model fails whenever it leaves Minecraft",
-              "They were used to tune the PPO hyperparameters",
-              "They're easier benchmarks, so the results don't mean much"
-            ],
-            "correctIndex": 0,
-            "explanation": "Held-out transfer is the key evidence against the \"it just memorized the training maps\" objection — improvement on environments the RL stage never touched suggests the policy learned something more general about control."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "67f63f4b-a909-49f1-8dfd-d63cc7f1a1fd",
-          "title": "Player-1: Learning to Play from Synthetic Experience (arXiv:2610.20584)",
-          "url": "https://arxiv.org/abs/2610.20584"
-        }
-      ]
-    },
-    {
-      "id": "c23b33a3-c563-4bb9-afa2-3c885770047e",
-      "title": "PagedAttention: Virtual Memory for the KV Cache",
-      "subtitle": "How vLLM serves far more requests by paging GPU memory like an OS pages RAM.",
-      "category": "System Design",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "llm-serving",
-        "kv-cache",
-        "vllm",
-        "inference",
-        "memory-management"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "memorychip.fill",
-      "summary": "PagedAttention splits each request's KV cache into fixed-size blocks and maps them through a block table, borrowing virtual-memory paging from operating systems. That one idea, introduced by the vLLM paper, cut GPU memory waste and let serving engines safely share memory across concurrent requests.",
-      "publishedDate": "2026-10-16T18:47:54Z",
-      "slides": [
-        {
-          "id": "ec3d27de-b97a-4439-8798-a941223b6aa9",
-          "kind": "cover",
-          "title": "Serving LLMs Wastes Most of Its Own Memory",
-          "body": "Before PagedAttention, serving engines reserved a contiguous, max-length buffer for every request's KV cache — whether or not the request ever used it.",
-          "bullets": [
-            "Introduced in \"Efficient Memory Management for LLM Serving with PagedAttention\" (arXiv:2309.06180, SOSP 2023)",
-            "Built by UC Berkeley researchers; became the core of the vLLM serving engine"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "d336ff99-086e-41a0-b8d4-f8bb3f882791",
-          "kind": "problem",
-          "title": "Contiguous Buffers Fragment Badly",
-          "body": "Reserving a worst-case-sized buffer per request wastes memory two ways: internal fragmentation (unused slots inside a reservation) and external fragmentation (gaps between reservations that are too small to reuse).",
-          "bullets": [
-            "Most sequences finish far shorter than the max length the buffer was sized for",
-            "You can't know a sequence's final length in advance, so engines over-provision",
-            "Memory waste directly caps how many requests can be batched together"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "fa36f5c5-a6ee-43df-bc19-ab3499eef9f2",
-          "kind": "solution",
-          "title": "Borrow the OS's Page Table",
-          "body": "PagedAttention splits each sequence's KV cache into fixed-size blocks (commonly 16 tokens) and keeps a per-sequence block table that maps logical blocks to physical GPU memory blocks — the same indirection an OS uses for virtual memory.",
-          "bullets": [
-            "Blocks are allocated on demand as a sequence grows, never reserved upfront",
-            "Physical blocks for one sequence don't need to be contiguous, which kills external fragmentation",
-            "Small block size caps internal fragmentation at less than one block per sequence"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "07024e96-13cb-4e6f-87b0-736c8d678b22",
-          "kind": "architecture",
-          "title": "Copy-on-Write Makes Sharing Almost Free",
-          "body": "When several sequences share content — parallel samples, beam search candidates, or a common system prompt — their block tables can point at the same physical blocks.",
-          "bullets": [
-            "A shared block is only duplicated when one sequence writes to it (copy-on-write)",
-            "This is the same trick Unix fork() uses to share process memory cheaply",
-            "It's what lets a serving engine fan one prompt out into many parallel completions without copying the prompt's cache each time"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "dad46dad-5137-4d8c-bce0-88f0fe2ddff7",
-          "kind": "example",
-          "title": "Worked Example: 16 Users, One Shared System Prompt",
-          "body": "A chatbot serves 16 concurrent conversations that all start with the same 1,000-token system prompt.",
-          "bullets": [
-            "Without paging: 16 separate contiguous buffers, each duplicating that prompt's KV cache in full",
-            "With PagedAttention: all 16 block tables point at the same physical blocks for the shared prefix",
-            "A copy only happens for a given block once a conversation's own tokens diverge from the shared prefix — the common case stays shared"
-          ],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "1ff05a6c-3dad-4c9c-9545-fc9c0cc02847",
-          "kind": "comparison",
-          "title": "What the Paper Measured",
-          "body": "The vLLM paper benchmarked the resulting system against the serving engines of the time.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Comparison",
-              "Result"
-            ],
-            "rows": [
-              [
-                "vLLM vs FasterTransformer / Orca, same latency",
-                "2-4x higher throughput"
-              ],
-              [
-                "Effect size",
-                "Larger on longer sequences, bigger models, and more complex decoding"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "cd679426-22b2-486b-8da0-7d969e6db703",
-          "kind": "problem",
-          "title": "Paging Isn't Free Either",
-          "body": "The block-table indirection has to be fast, or you lose the memory win to a speed loss.",
-          "bullets": [
-            "Every attention step now does a lookup through the block table — needs a fused, paging-aware CUDA kernel to stay fast",
-            "The win is biggest when memory, not raw GPU compute, is the bottleneck — short-context, low-concurrency workloads benefit less",
-            "Copy-on-write correctness around concurrent writers adds real implementation complexity"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "e3642682-2d5f-4026-9924-47d5b07fb6fd",
-          "kind": "takeaways",
-          "title": "Key Takeaways",
-          "body": null,
-          "bullets": [
-            "Treat the KV cache as pageable memory, not a fixed reservation — the same fix operating systems applied to RAM decades ago",
-            "The headline win isn't just less waste; it's being able to safely share and overcommit memory across concurrent requests",
-            "Copy-on-write block sharing is what makes parallel sampling, beam search, and shared prompts cheap at scale",
-            "This idea now underlies most production LLM serving stacks, not just vLLM itself"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "efb8f95b-e3af-48ab-bafa-21c556c20802",
-            "prompt": "What mechanism does PagedAttention borrow from operating systems?",
-            "options": [
-              "Virtual memory paging via a block/page table",
-              "Preemptive multitasking",
-              "Journaling file systems",
-              "Garbage collection"
-            ],
-            "correctIndex": 0,
-            "explanation": "PagedAttention maps each sequence's logical KV-cache blocks to non-contiguous physical GPU memory blocks through a block table — the same indirection an OS page table provides for virtual memory."
-          },
-          {
-            "id": "b841cb42-8d73-4cc8-8cfc-eb6699042d2c",
-            "prompt": "Why does reserving a contiguous, max-length KV cache buffer per request waste memory?",
-            "options": [
-              "Most sequences finish shorter than the max length, and you can't know the final length in advance, so the reservation sits mostly unused",
-              "GPUs cannot allocate variable-length arrays at all",
-              "Attention mathematically requires square, fixed-size matrices",
-              "KV caches must always be duplicated once per attention head"
-            ],
-            "correctIndex": 0,
-            "explanation": "Serving engines must size the buffer for the worst case up front; since actual sequence lengths vary and are unknown ahead of time, most of that reserved space goes unused — internal fragmentation."
-          },
-          {
-            "id": "c0eca14a-4f62-4532-82f1-6ab5950826a6",
-            "prompt": "How does PagedAttention make it cheap to serve many requests that share the same long system prompt?",
-            "options": [
-              "Each request's block table points at the same physical blocks for the shared prefix, copied only when a request writes to them",
-              "It recomputes the system prompt from scratch for every request",
-              "It stores the prompt once on disk and streams it per request",
-              "It quantizes the shared prefix to 4-bit precision"
-            ],
-            "correctIndex": 0,
-            "explanation": "This is copy-on-write block sharing: many sequences can reference the same physical blocks for identical content, and a block is only duplicated once a sequence's own tokens cause it to diverge."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "0b1f4882-5714-47d8-9d72-027b9949d448",
-          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (arXiv:2309.06180)",
-          "url": "https://arxiv.org/abs/2309.06180"
-        }
-      ]
     }
   ]
 }
