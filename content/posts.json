@@ -1,6 +1,576 @@
 {
   "posts": [
     {
+      "id": "e15d83e4-e004-4b47-933d-8c8689d42e47",
+      "title": "Quantization: Shrinking LLMs Without Losing Their Minds",
+      "subtitle": "How INT8, INT4, and friends squeeze big models onto small chips — and what it costs you.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "inference optimization",
+        "gptq",
+        "awq",
+        "model compression",
+        "llms"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Quantization maps a model's weights from high-precision floats to compact low-bit numbers, cutting memory and often boosting speed. Done carefully (GPTQ, AWQ, and friends), a 4x size reduction can cost only a sliver of accuracy — done carelessly, it quietly breaks reasoning.",
+      "publishedDate": "2026-10-24T18:49:03Z",
+      "slides": [
+        {
+          "id": "bff0433f-9fa9-4e9f-8550-22a4ac1ed44c",
+          "kind": "cover",
+          "title": "The First Lever Every Team Pulls to Shrink a Model",
+          "body": "Before anyone reaches for a smaller architecture or a distilled model, they usually reach for quantization: storing and computing with fewer bits per number.",
+          "bullets": [
+            "Can cut model memory by 2-4x with modest accuracy loss",
+            "The default first step for running big models on smaller GPUs",
+            "Underpins most \"run a 70B model on a single GPU\" setups"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "a709e95a-c2c9-46c5-8c74-bcf9123285bd",
+          "kind": "problem",
+          "title": "Every Parameter Costs Bytes You Don't Have",
+          "body": "A model's weights are usually stored as 16-bit floats (FP16/BF16) — 2 bytes each. A 70-billion-parameter model needs roughly 140GB just to hold its weights, before you've generated a single token or allocated any KV cache.",
+          "bullets": [
+            "70B params × 2 bytes (FP16) ≈ 140GB of weight memory alone",
+            "That's more than a single 80GB datacenter GPU, let alone a consumer card",
+            "Memory bandwidth, not just capacity, also limits how fast tokens come out"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "41aa094f-39ed-4f73-9960-eda31c92d41e",
+          "kind": "concept",
+          "title": "What Quantization Actually Does",
+          "body": "Quantization maps a continuous range of float weights onto a small set of discrete low-bit values, using a scale (and often a zero-point) per group of weights: weight ≈ scale × int_value. Fewer bits per weight means less memory and, on hardware with fast low-bit math, faster compute.",
+          "bullets": [
+            "INT8: 1 byte/weight — roughly half the memory of FP16, usually near-lossless",
+            "INT4 / NVFP4: ~0.5 byte/weight — roughly a 4x reduction from FP16, with real but manageable accuracy risk",
+            "Weights are the usual target; activations and the KV cache can be quantized too, with more care needed"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null
+        },
+        {
+          "id": "71ddaac0-ddc2-4f87-a901-c9f31afa5281",
+          "kind": "solution",
+          "title": "Not All Quantization Methods Are Equal",
+          "body": "Post-training quantization (PTQ) compresses an already-trained model using a small calibration set — no retraining needed. Two widely used PTQ methods take different approaches to minimizing the damage.",
+          "bullets": [
+            "GPTQ: quantizes layer-by-layer using second-order error information to compensate for each weight it rounds — can quantize a 175B model in about 4 GPU-hours",
+            "AWQ: observes that a small fraction (~1%) of weight channels are disproportionately important, and protects exactly those from heavy quantization error",
+            "Quantization-aware training (QAT) retrains the model with quantization in the loop — costlier, but recovers more accuracy at very low bit-widths"
+          ],
+          "symbol": "wrench.and.screwdriver.fill",
+          "table": null
+        },
+        {
+          "id": "07077ee9-28ba-4850-b905-f1f6f0760ff0",
+          "kind": "comparison",
+          "title": "The Memory Math, Concretely",
+          "body": "For a 70-billion-parameter model, precision choice alone swings weight memory from \"needs a multi-GPU server\" to \"fits on one workstation card.\"",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Precision",
+              "Bytes/param",
+              "Approx. weight memory (70B)"
+            ],
+            "rows": [
+              [
+                "FP16 / BF16",
+                "2",
+                "~140 GB"
+              ],
+              [
+                "INT8",
+                "1",
+                "~70 GB"
+              ],
+              [
+                "INT4 / NVFP4",
+                "0.5",
+                "~35 GB"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "4390f94b-2bcd-4803-b16c-ccf0e6f6e980",
+          "kind": "example",
+          "title": "Worked Example: GPTQ's Reported Speedups",
+          "body": "The GPTQ paper quantized GPT-style models down to 3-4 bit weights and measured end-to-end inference speedups over FP16 of about 3.25x on an NVIDIA A100 and about 4.5x on a more cost-effective A6000 — while quantizing even a 175B-parameter model in roughly 4 GPU-hours on a single 80GB A100.",
+          "bullets": [
+            "Calibration used just 128 short text segments — no full retraining pass",
+            "Speedup came from both smaller weights and less memory traffic per token",
+            "This is a one-time offline cost: quantize once, deploy the compressed model many times"
+          ],
+          "symbol": "bolt.fill",
+          "table": null
+        },
+        {
+          "id": "cfd8efee-01b5-40bf-be01-f4873673b154",
+          "kind": "concept",
+          "title": "Where It Breaks: Pitfalls and When to Skip It",
+          "body": "Quantization isn't free, and pushing it too far hurts exactly the capabilities that matter most for an LLM.",
+          "bullets": [
+            "Below ~4 bits, multi-step reasoning and math degrade faster than simple classification or short-form QA",
+            "A few \"outlier\" activation channels can dominate error if not specifically protected (this is what AWQ targets)",
+            "Calibration data that doesn't match your real traffic can quantize the model well on the wrong distribution",
+            "If you're already memory-headroom-rich and latency isn't the bottleneck, quantizing adds engineering risk for little benefit"
+          ],
+          "symbol": "xmark.octagon.fill",
+          "table": null
+        },
+        {
+          "id": "53947480-229c-4d35-b8ac-10c47ce22990",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Quantization trades numeric precision for memory and speed: scale + low-bit integers approximate the original floats",
+            "INT8 is close to a free lunch; INT4/NVFP4 saves roughly 4x memory over FP16 but needs a careful method",
+            "GPTQ (error-compensated, layer-by-layer) and AWQ (protect salient channels) are the two workhorse PTQ methods",
+            "Watch reasoning-heavy tasks specifically — they degrade first as you push bit-width down"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "5c68b66f-312e-42c1-9af7-a5f9ade38889",
+            "prompt": "Roughly how much weight memory does a 70-billion-parameter model need in FP16, and in INT4?",
+            "options": [
+              "140GB in FP16, about 35GB in INT4",
+              "70GB in FP16, about 70GB in INT4 (no change)",
+              "35GB in FP16, about 140GB in INT4",
+              "14GB in both cases"
+            ],
+            "correctIndex": 0,
+            "explanation": "FP16 uses 2 bytes per parameter (70B × 2 ≈ 140GB), while INT4 uses about 0.5 bytes per parameter (70B × 0.5 ≈ 35GB) — roughly a 4x reduction."
+          },
+          {
+            "id": "d02873be-615f-4fb0-8eb0-31dc05c56843",
+            "prompt": "What's the key idea behind AWQ (activation-aware weight quantization)?",
+            "options": [
+              "It retrains the entire model from scratch at low precision",
+              "It quantizes every weight to the same precision with no exceptions",
+              "It identifies a small fraction of especially important weight channels and protects them from heavy quantization error",
+              "It only works on activations, never on weights"
+            ],
+            "correctIndex": 2,
+            "explanation": "AWQ's core observation is that a small percentage of weight channels matter disproportionately for accuracy; by protecting just those, it reduces quantization error without needing full retraining."
+          },
+          {
+            "id": "36a893d3-4ae8-410f-bfce-541547df67cd",
+            "prompt": "Which capability tends to degrade first as you push a model to very low bit-widths (e.g. 2-3 bits)?",
+            "options": [
+              "Multi-step reasoning and math",
+              "Simple short-form classification",
+              "Nothing degrades at any bit-width",
+              "Only image generation tasks degrade"
+            ],
+            "correctIndex": 0,
+            "explanation": "Research on low-bit quantization consistently finds that multi-step reasoning and mathematical tasks are more sensitive to precision loss than simpler classification or short-form QA tasks."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "08b961f7-6636-4943-83ab-1f3bf768071f",
+          "title": "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (arXiv:2210.17323)",
+          "url": "https://arxiv.org/abs/2210.17323"
+        },
+        {
+          "id": "e7b22ba3-8d33-4664-a43c-18e7160068db",
+          "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration (arXiv:2306.00978)",
+          "url": "https://arxiv.org/abs/2306.00978"
+        }
+      ]
+    },
+    {
+      "id": "264135e9-edbb-4ec0-bc4b-6dfafd91e8f4",
+      "title": "Nemotron 3.5 Super VL: NVIDIA's Open Multimodal Agent Model",
+      "subtitle": "120B parameters, 12B active, open weights — built for agents that read screens, not just chat.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "nvidia",
+        "open models",
+        "mixture of experts",
+        "multimodal",
+        "ai agents",
+        "new model release"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "eye.fill",
+      "summary": "NVIDIA released Nemotron 3.5 Super VL, a 120B-parameter open mixture-of-experts model (12B active per token) that combines reasoning and tool use with text, image, document, and video understanding, aimed squarely at long-running specialized agents rather than general chat.",
+      "publishedDate": "2026-10-24T18:49:03Z",
+      "slides": [
+        {
+          "id": "44c02c82-d785-4296-bc33-5586cea7cd7d",
+          "kind": "cover",
+          "title": "NVIDIA Opens Up a 120B Multimodal Agent Model",
+          "body": "Released October 15, 2026, Nemotron 3.5 Super VL is an open mixture-of-experts model built to combine reasoning, tool use, and multimodal understanding for agents that run for a long time on a single task.",
+          "bullets": [
+            "120B total parameters, 12B active per token (MoE)",
+            "Handles text, images, charts, documents, and video",
+            "Open weights on Hugging Face, OpenRouter, ModelScope, and NVIDIA NIM"
+          ],
+          "symbol": "eye.fill",
+          "table": null
+        },
+        {
+          "id": "3868bd9b-f8cd-4b1a-8811-1459cd84dfe3",
+          "kind": "problem",
+          "title": "Frontier Chat Models Are Overkill for Many Agents",
+          "body": "A specialized agent that reads a dashboard, extracts numbers from a chart, and calls two tools doesn't need a trillion-parameter general chat model — it needs something fast, cheap, and good enough, running close to the data it's working on.",
+          "bullets": [
+            "Closed frontier models add latency and cost to every single agent step",
+            "Many agent workloads are narrow and repetitive, not open-ended conversation",
+            "Teams increasingly want to run agent models on their own hardware, not just an API"
+          ],
+          "symbol": "bolt.slash.fill",
+          "table": null
+        },
+        {
+          "id": "14f2f817-7274-4cdf-bb98-8c4677411821",
+          "kind": "architecture",
+          "title": "How Super VL Is Built",
+          "body": "Super VL is a mixture-of-experts model: only 12B of its 120B parameters activate for any given token, which is what keeps it fast despite the large total size. NVIDIA trained it on roughly 26 trillion tokens across pretraining and continued pretraining, then post-trained it with about 3.8 million samples plus reinforcement learning across dozens of task environments.",
+          "bullets": [
+            "MoE routing: 120B total / 12B active parameters per token",
+            "Multimodal input: text, images, charts, web pages, documents, and video",
+            "~26T tokens of pretraining + continued pretraining, then RL across many environments"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "9235d2f5-5db8-42e2-b59d-cceff81ab6d3",
+          "kind": "comparison",
+          "title": "The Pitch: Throughput Per GPU",
+          "body": "NVIDIA's headline claim is speed per dollar of hardware, not a leaderboard win: on a single GPU, the company reports up to 5x higher throughput on agentic tasks than other open models in its size category.",
+          "bullets": [],
+          "symbol": "speedometer",
+          "table": {
+            "headers": [
+              "Claim",
+              "Figure"
+            ],
+            "rows": [
+              [
+                "Throughput vs. similarly-sized open models (single GPU)",
+                "up to 5x"
+              ],
+              [
+                "Active parameters per token",
+                "12B of 120B total"
+              ],
+              [
+                "Deployment targets",
+                "DGX Spark, DGX Station, RTX, Jetson, data center/cloud"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "42d7e661-d5bd-4646-a9f9-bfbafee7bcd9",
+          "kind": "example",
+          "title": "Worked Example: A Screen-Reading Support Agent",
+          "body": "Imagine an agent that watches a support dashboard: it reads a chart image showing error rates, cross-references a text log, and decides whether to open a ticket. Super VL's multimodal input means one model handles the chart, the log text, and the tool call to file the ticket — without stitching together separate vision and text models.",
+          "bullets": [
+            "One model ingests the chart image and the text log in the same context",
+            "Reasoning + tool use let it decide and act, not just describe what it sees",
+            "Runs locally on workstation-class GPUs, keeping the dashboard data on-premises"
+          ],
+          "symbol": "rectangle.and.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "1eabde50-d0c3-4ade-9fb9-2c03a0d16714",
+          "kind": "concept",
+          "title": "What Open and Fast Doesn't Mean",
+          "body": "Super VL is optimized for agentic throughput and openness, not for topping general-intelligence leaderboards. Open MoE agent models in this class typically trade some ceiling on the hardest, most open-ended reasoning tasks for speed, cost control, and the ability to self-host and fine-tune.",
+          "bullets": [
+            "Best fit: narrow, repeatable, multimodal agent tasks run at volume",
+            "Weaker fit: open-ended frontier reasoning where raw capability matters more than cost per call",
+            "Running it well still requires MoE-aware serving infrastructure (e.g. vLLM, TRT-LLM), not just a single GPU and a prayer"
+          ],
+          "symbol": "scalemass.fill",
+          "table": null
+        },
+        {
+          "id": "ea03ba85-46c8-48b3-a929-9e7cdb6332d1",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Super VL is a 120B/12B-active open MoE model aimed at long-running, multimodal agents — not a chatbot",
+            "It reads text, images, charts, documents, and video in one model, cutting the need to stitch together separate vision/text pipelines",
+            "NVIDIA's core claim is up to 5x throughput per GPU versus similarly-sized open models, not a raw-intelligence record",
+            "Open weights plus multi-platform availability (HF, OpenRouter, ModelScope, NIM) make it a serious option for self-hosted agents"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "81228e23-06ec-45b2-9242-f7b3174f3093",
+            "prompt": "What does it mean that Nemotron 3.5 Super VL has \"120B total / 12B active\" parameters?",
+            "options": [
+              "It only has 12B parameters; 120B is a marketing figure",
+              "It's a mixture-of-experts model: 120B parameters exist, but only about 12B are used to process any given token",
+              "It runs at 12B parameters on mobile and 120B on servers",
+              "120B is the training data size in tokens, not a parameter count"
+            ],
+            "correctIndex": 1,
+            "explanation": "Mixture-of-experts models route each token through only a subset of their total parameters. Super VL has 120B parameters total but activates roughly 12B of them per token, which is what keeps inference fast."
+          },
+          {
+            "id": "1b665bb9-c785-4eea-85ed-7df72f7d895a",
+            "prompt": "What is NVIDIA's main headline claim about Super VL's performance?",
+            "options": [
+              "It tops every general-intelligence leaderboard",
+              "It is the smallest open model ever released",
+              "On a single GPU it delivers up to 5x higher throughput on agentic tasks versus similarly-sized open models",
+              "It requires no GPU to run at all"
+            ],
+            "correctIndex": 2,
+            "explanation": "NVIDIA's stated pitch for Super VL is throughput per GPU for agentic workloads — up to 5x versus other open models its size — not a claim about topping intelligence benchmarks."
+          },
+          {
+            "id": "a931801a-d8e6-44de-976b-bd22ec9676dc",
+            "prompt": "Why might a team choose Super VL over a larger closed frontier model for an agent?",
+            "options": [
+              "Super VL is always more intelligent on every task",
+              "It can be self-hosted, is cheaper per call, and handles multimodal input in one model for narrow, repeatable agent tasks",
+              "Closed frontier models cannot process images at all",
+              "Open models are never allowed to use tools"
+            ],
+            "correctIndex": 1,
+            "explanation": "For narrow, high-volume, multimodal agent tasks, an open, self-hostable model optimized for throughput and cost can be a better fit than a larger general-purpose closed model, even if it isn't the top scorer on broad reasoning benchmarks."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "775761d4-0a0c-416c-b0de-03a32cf97156",
+          "title": "NVIDIA Nemotron 3.5 Super VL Powers Specialized Agents with Multimodal Reasoning",
+          "url": "https://developer.nvidia.com/blog/nvidia-nemotron-3-5-super-vl-powers-specialized-agents-with-multimodal-reasoning/"
+        },
+        {
+          "id": "92e0fdf0-9764-4277-bd60-581e6c812727",
+          "title": "From Data Center to Desktop: NVIDIA Expands Nemotron Family With Super VL and Bolt",
+          "url": "https://blogs.nvidia.com/blog/nemotron-3-5-super-vl/"
+        }
+      ]
+    },
+    {
+      "id": "6be71180-e763-4d28-a4d9-d70beaec69b6",
+      "title": "Future Chunk Prediction: Teaching Video Models Real Physics",
+      "subtitle": "A free training trick that stops AI video from faking motion it never learned.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "video generation",
+        "autoregressive models",
+        "diffusion",
+        "arxiv paper",
+        "physics-iq",
+        "tencent"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "film.fill",
+      "summary": "Tencent ARC Lab's \"Looking Ahead\" paper shows that autoregressive video models can pass training by exploiting frame-to-frame redundancy instead of learning real dynamics. Their fix, Future Chunk Prediction, adds a free auxiliary task during training and lifts physical-plausibility scores by double digits without touching inference speed.",
+      "publishedDate": "2026-10-24T18:49:03Z",
+      "slides": [
+        {
+          "id": "a3914030-8b2c-4ce0-94b6-2a0726c6f27e",
+          "kind": "cover",
+          "title": "Your AI Video Model Might Be Cheating",
+          "body": "A new paper from Nanjing University, Tencent's ARC Lab, and Zhejiang University argues that autoregressive video generators often pass training without ever learning how scenes evolve.",
+          "bullets": [
+            "arXiv:2610.29989, posted Oct 21, 2026",
+            "Trending on Hugging Face Daily Papers",
+            "Code + 1.3B/5B model weights released on GitHub"
+          ],
+          "symbol": "film.fill",
+          "table": null
+        },
+        {
+          "id": "1f1ec8b7-44c0-42fc-aa20-06014299ed91",
+          "kind": "problem",
+          "title": "Teacher Forcing Lets Models Shortcut Dynamics",
+          "body": "Autoregressive video models are trained with teacher forcing: at each step they see the real previous frames, not their own predictions. Neighboring frames are so similar that the model can produce a plausible next frame just by copying local texture — without ever modeling how objects actually move.",
+          "bullets": [
+            "Temporal redundancy between adjacent frames hides the lack of real motion understanding",
+            "A model can minimize training loss while learning almost nothing about physics",
+            "The gap only shows up later, as drift, melting objects, or impossible motion in long rollouts"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "061f1f8b-7c7d-4b16-b5a3-987a384e52d0",
+          "kind": "solution",
+          "title": "Future Chunk Prediction: Guess Frames You Can't See Yet",
+          "body": "FCP adds a second, auxiliary head during training that must predict a video chunk far ahead in time — using only the intermediate features of the current chunk, with the in-between frames hidden. Copying local texture can't solve that; the model has to learn actual scene evolution.",
+          "bullets": [
+            "Trained jointly with the normal teacher-forced denoising objective",
+            "Uses only the raw video pixels already in the training set — no extra encoder, no extra labels",
+            "The auxiliary head is deleted at inference time, so generation speed is unchanged"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "3b324c28-dedf-49fa-9714-fee2da8fda01",
+          "kind": "comparison",
+          "title": "Double-Digit Gains on a Physical-Plausibility Benchmark",
+          "body": "The authors evaluate on Physics-IQ, a benchmark built to catch exactly this kind of shortcut: models are scored on whether generated video obeys real-world physics, not just whether it looks sharp.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Metric",
+              "Baseline",
+              "With FCP"
+            ],
+            "rows": [
+              [
+                "Physics-IQ (image-to-video)",
+                "baseline",
+                "+11.2%"
+              ],
+              [
+                "Physics-IQ (video-to-video)",
+                "baseline",
+                "+9.4%"
+              ],
+              [
+                "Compute to match baseline quality",
+                "100%",
+                "42.1% (−57.9%)"
+              ],
+              [
+                "Training data to match baseline quality",
+                "100%",
+                "36.6% (−63.4%)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "da455f78-3149-408b-9cd7-2c8081a9e93c",
+          "kind": "example",
+          "title": "Worked Example: A Dropped Ball",
+          "body": "Picture a short clip of a ball falling toward a table. A baseline autoregressive model, prompted with only the first few frames, can render a visually convincing ball and table — then let the ball pass through the table or freeze mid-air, because it never had to predict that far ahead during training.",
+          "bullets": [
+            "Without FCP: locally smooth frames, but physically incoherent long-range motion",
+            "With FCP: the model was already forced, during training, to predict the ball's position several chunks ahead from current features alone",
+            "Result: fewer violations of continuity, contact, and momentum in the Physics-IQ evaluation"
+          ],
+          "symbol": "circle.lefthalf.filled",
+          "table": null
+        },
+        {
+          "id": "93c09db1-3aa8-4d21-a526-632feeb1ddd9",
+          "kind": "concept",
+          "title": "Where This Helps Less — and the Open Questions",
+          "body": "FCP is an auxiliary training signal, not a new architecture, so it inherits the backbone's limits. It doesn't fix a model that's fundamentally too small or undertrained, and gains were only demonstrated at 1.3B–5B scale.",
+          "bullets": [
+            "Adds training-time compute and complexity for a benefit that only shows up in long or physically tricky rollouts",
+            "Short clips with little real dynamics (talking-head video, static scenes) have less to gain",
+            "Scaling behavior at tens of billions of parameters, and interaction with other auxiliary losses, isn't yet shown in the paper"
+          ],
+          "symbol": "questionmark.circle.fill",
+          "table": null
+        },
+        {
+          "id": "b9f01843-7f45-4fe0-897d-c4a3a11e143f",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Local frame-to-frame smoothness is not the same as learning real-world dynamics",
+            "Future Chunk Prediction forces a model to predict distant frames from current features alone — texture-copying can't solve that",
+            "It's inference-free: the auxiliary head is dropped after training, so there's no generation-speed penalty",
+            "Reported gains: +11.2% / +9.4% on Physics-IQ, with 57.9% less compute and 63.4% less data to hit baseline quality"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b61898fd-9277-43b8-b77b-302707b79dbd",
+            "prompt": "Why can a baseline autoregressive video model get low training loss without really learning scene dynamics?",
+            "options": [
+              "Because the loss function ignores motion entirely",
+              "Because adjacent frames are so similar that copying local texture already predicts the next frame well",
+              "Because the model is only trained on static images",
+              "Because teacher forcing removes all frames from training"
+            ],
+            "correctIndex": 1,
+            "explanation": "Teacher forcing feeds the model real previous frames, and neighboring frames are highly redundant — so local continuity alone can minimize loss without the model ever learning how objects move."
+          },
+          {
+            "id": "554c3741-1fc6-486a-8db4-99a7ea5d4244",
+            "prompt": "What does Future Chunk Prediction (FCP) actually force the model to do during training?",
+            "options": [
+              "Predict a temporally distant video chunk from the current chunk's intermediate features, without seeing the frames in between",
+              "Generate video at a higher resolution than normal",
+              "Replace the denoising objective entirely with a classification task",
+              "Memorize the exact pixels of the next frame"
+            ],
+            "correctIndex": 0,
+            "explanation": "FCP's auxiliary head must predict a far-future chunk using only current intermediate features — the in-between frames are hidden, so shortcutting via local similarity doesn't work."
+          },
+          {
+            "id": "be8a0e20-b711-447a-887a-b4b94a7cfaf9",
+            "prompt": "Why doesn't FCP slow down video generation at inference time?",
+            "options": [
+              "It only runs on every 10th frame",
+              "It uses a smaller model during inference",
+              "The auxiliary FCP head is used only during training and is discarded before inference",
+              "It compresses the output video afterward"
+            ],
+            "correctIndex": 2,
+            "explanation": "FCP is purely a training-time auxiliary objective. Once training finishes, the extra prediction head is removed, so the deployed model's inference path — and its speed — is unchanged."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "d5e01000-e4d1-455b-b5e2-d318d54053bd",
+          "title": "Looking Ahead: Modeling Future Evolution in Autoregressive Video Generation (arXiv:2610.29989)",
+          "url": "https://arxiv.org/abs/2610.29989"
+        },
+        {
+          "id": "8337b66b-dc7b-4a4e-88ee-a021e5a91e0d",
+          "title": "TencentARC/Looking-Ahead (code + model weights)",
+          "url": "https://github.com/TencentARC/Looking-Ahead"
+        }
+      ]
+    },
+    {
       "id": "f08b6562-c963-4817-94cc-1f2f56025771",
       "title": "Claude Opus 5.5: Same-Class Intelligence, 40% Cheaper",
       "subtitle": "Anthropic's first 5.5-family model trims cost and boundary-crossing without losing ground to Fable 5.1",
@@ -10590,563 +11160,6 @@
           "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
         }
       ]
-    },
-    {
-      "title": "OSS Scanner: Anthropic Turns Claude Loose on Open-Source Bugs",
-      "subtitle": "A free, opt-in vulnerability hunter that already turned 72 of 74 reports into real wolfSSL fixes.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "security",
-        "vulnerability-research",
-        "open-source",
-        "claude",
-        "oss-scanner"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "ant.fill",
-      "summary": "Anthropic launched OSS Scanner, a free opt-in service that runs its strongest Claude models against open-source codebases to find vulnerabilities, bisect when they were introduced, and draft candidate patches — with no human review before a report reaches maintainers. Early validation found 88% of a penetration-tester-checked sample were real, disclosure-worthy bugs.",
-      "slides": [
-        {
-          "id": "01a24bce-7413-48dc-8a32-79de3fc79633",
-          "kind": "cover",
-          "title": "Claude Goes Hunting for Bugs in Your Dependencies",
-          "body": "On October 8, 2026, Anthropic's Frontier Red Team launched OSS Scanner: a free, opt-in service that points its strongest models at open-source codebases and reports what it finds.",
-          "bullets": [
-            "No fee, no fuzzing harness to write — maintainers just opt in",
-            "Modeled on Google's OSS-Fuzz, but swaps fuzzers for language-model reasoning"
-          ],
-          "symbol": "ant.fill",
-          "table": null
-        },
-        {
-          "id": "a1a9e585-9005-4604-a5ae-e0ae3a9bafbb",
-          "kind": "problem",
-          "title": "Most Open-Source Security Runs on Volunteer Hours",
-          "body": "Critical infrastructure software — TLS libraries, parsers, compression codecs — is often maintained by a handful of volunteers with no dedicated security budget.",
-          "bullets": [
-            "Fuzzing tools like OSS-Fuzz are effective but only catch bugs that crash on malformed input, not logic or protocol-level flaws",
-            "Manual security audits of C/C++ codebases are expensive and rare outside well-funded projects",
-            "Anthropic frames the gap plainly: defenders need the same frontier capability attackers already have access to"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "680526c0-cac8-4239-9042-906bc66a6eb8",
-          "kind": "solution",
-          "title": "The Service: Scan, Explain, Bisect, Patch",
-          "body": "OSS Scanner runs periodic scans of enrolled projects using Anthropic's strongest models, including Claude Mythos, at no cost to the project.",
-          "bullets": [
-            "Each report ships a self-contained reproducer — code that triggers the bug, not just a description of it",
-            "Where possible, the report bisects history to show the exact commit that introduced the vulnerability",
-            "A candidate patch is attached when the model can produce one",
-            "Enrollment: a project's core maintainers submit a pull request to the anthropics/oss-scanner GitHub repo using its standard template"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "fcfc8e28-a68f-491a-a4fd-3bf00b4f8234",
-          "kind": "comparison",
-          "title": "Fuzzing vs. a Model That Reads the Code",
-          "body": "OSS Scanner borrows OSS-Fuzz's eligibility bar (projects with \"critical impact on infrastructure and user security\") but finds bugs a different way.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "",
-              "OSS-Fuzz",
-              "OSS Scanner"
-            ],
-            "rows": [
-              [
-                "Technique",
-                "Automated fuzzing harnesses",
-                "LLM reasoning over source + history"
-              ],
-              [
-                "Catches",
-                "Crashes on malformed input",
-                "Logic bugs, chained flaws, protocol issues"
-              ],
-              [
-                "Output",
-                "Crash + stack trace",
-                "Reproducer + explanation + bisection + candidate patch"
-              ],
-              [
-                "Human review before delivery",
-                "N/A (crash is objective)",
-                "None — reports can be wrong"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "b40d9af4-a7ff-4bdb-8351-a7defd1f10a5",
-          "kind": "example",
-          "title": "Worked Example: wolfSSL's Early Results",
-          "body": "wolfSSL, a widely embedded TLS library, was one of the projects validating the service before launch.",
-          "bullets": [
-            "72 of wolfSSL's 74 OSS Scanner reports turned out to be valid — Anthropic describes it as \"all but two\"",
-            "Five of those valid reports were serious enough to become CVEs",
-            "Separately, in a blind check across 48 projects, expert penetration testers reviewed 97 critical/high-severity findings: 85 (88%) cleared the bar for coordinated disclosure, 11 more were real but duplicates of known issues, and only 1 was a false positive",
-            "On the CyberGym benchmark, LLM vulnerability-finding rates went from under 20% to over 85% in about a year — the capability jump that made this service viable now rather than earlier"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        },
-        {
-          "id": "bf847a00-3a39-4902-bc4a-0cf9c0d17490",
-          "kind": "problem",
-          "title": "The Catch: Nobody Checks the Report Before You Get It",
-          "body": "OSS Scanner's reports are fully model-generated with no human triage before delivery, so maintainers are the first line of review.",
-          "bullets": [
-            "That 1-in-97 false-positive rate in validation is a best case — live traffic across more projects may differ",
-            "Projects without spare triage bandwidth can instead use Anthropic's separate, human-verified coordinated disclosure process",
-            "This is distinct from Claude Security, Anthropic's paid enterprise scanning and patching product — OSS Scanner is the free, community-facing sibling",
-            "Enrollment is still case-by-case, not automatic — a low-traffic hobby project is unlikely to qualify"
-          ],
-          "symbol": "exclamationmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "dbdf1931-7ec2-4c04-a416-01e2a210d863",
-          "kind": "takeaways",
-          "title": "What Shipped, in Numbers",
-          "body": "Over the six months before launch, Anthropic's models had already produced tens of thousands of candidates — most were filtered before anything reached a maintainer.",
-          "bullets": [
-            "29,000+ candidate vulnerabilities generated; about 6,000 manually reviewed and triaged internally",
-            "Nearly 5,000 reports sent directly to maintainers, including some unvalidated ones at their request",
-            "Eligibility mirrors OSS-Fuzz: projects need outsized infrastructure/security impact, decided case by case",
-            "The real shift isn't the tool — it's that LLM bug-finding crossed a capability threshold (CyberGym: <20% → >85% in a year) that makes scanning every eligible OSS project with a frontier model plausible for the first time"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "9e514a81-8344-4fa7-a25f-86f44348c27d",
-            "prompt": "What does an OSS Scanner report include beyond a description of the bug?",
-            "options": [
-              "Only a CVE number",
-              "A self-contained reproducer, a bisection to the introducing commit where possible, and a candidate patch when available",
-              "A fuzzing harness the maintainer must run themselves",
-              "A bill for the scan"
-            ],
-            "correctIndex": 1,
-            "explanation": "OSS Scanner aims to hand maintainers something actionable: code that reproduces the bug, where it was likely introduced, and a draft fix — not just a one-line alert."
-          },
-          {
-            "id": "4e7fcfaa-1f88-49f1-bb62-fc92457162de",
-            "prompt": "In the validation test across 48 projects, what fraction of the 97 critical/high findings turned out to be real?",
-            "options": [
-              "About 50%",
-              "About 88% met the disclosure bar, and nearly all the rest were real but already-known duplicates",
-              "Exactly 0% — all were false positives",
-              "100%, with zero duplicates or errors"
-            ],
-            "correctIndex": 1,
-            "explanation": "85 of 97 (88%) cleared Anthropic's coordinated-disclosure bar; 11 more were genuine but duplicated known issues, and only 1 was a false positive — a strong signal quality for a fully model-generated, unreviewed report."
-          },
-          {
-            "id": "d002eefd-7297-4ab6-8641-023a6cf1c678",
-            "prompt": "Why does Anthropic frame OSS Scanner as being enabled specifically now rather than a year or two earlier?",
-            "options": [
-              "Open-source licenses changed to permit it",
-              "LLM vulnerability-finding performance on the CyberGym benchmark rose from under 20% to over 85% in about a year",
-              "OSS-Fuzz was discontinued",
-              "GitHub introduced a new API for it"
-            ],
-            "correctIndex": 1,
-            "explanation": "The service leans on a recent capability jump — CyberGym scores roughly quadrupling in a year — which is what made scanning at this scale and reliability newly practical."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "c877bae9-db4e-428d-a177-adc7bc5a6cdf",
-          "title": "Launching an opt-in vulnerability-finding service for open-source software — Anthropic",
-          "url": "https://www.anthropic.com/research/launching-opt-in-vuln-finding-service-for-open-source"
-        }
-      ],
-      "id": "03c3cebd-0401-4cb3-85c6-5ae4838697a5",
-      "publishedDate": "2026-10-18T00:48:45Z"
-    },
-    {
-      "title": "RLHF: Teaching a Language Model What People Actually Want",
-      "subtitle": "The three-model pipeline behind ChatGPT-style alignment — and why DPO and GRPO exist to escape its cost.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rlhf",
-        "alignment",
-        "ppo",
-        "reward-model",
-        "fine-tuning"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "hand.thumbsup.fill",
-      "summary": "Reinforcement Learning from Human Feedback (RLHF) turns a raw next-token predictor into a model that follows instructions, by training a reward model on human preference comparisons and then optimizing the policy against it with a KL penalty that keeps it from drifting too far. It's powerful but expensive — juggling up to four models at once — which is exactly the cost that later methods like DPO and GRPO were built to cut.",
-      "slides": [
-        {
-          "id": "e261e9c6-6c61-4537-ac3d-77ae985c314c",
-          "kind": "cover",
-          "title": "Pretraining Teaches a Model to Predict Text, Not to Help You",
-          "body": "A model trained only to predict the next token on internet text has no notion of 'be helpful,' 'be honest,' or 'refuse this.' RLHF is the step that bolts those preferences on.",
-          "bullets": [
-            "Same base model, wildly different behavior after RLHF — it's a post-training step, not a different architecture"
-          ],
-          "symbol": "hand.thumbsup.fill",
-          "table": null
-        },
-        {
-          "id": "96f9ac48-82da-4e72-86c1-8d8b3dc70ec7",
-          "kind": "problem",
-          "title": "You Can't Write a Loss Function for 'Helpful'",
-          "body": "There's no ground-truth label for the best response to an open-ended prompt — but humans can reliably compare two candidate answers and say which is better.",
-          "bullets": [
-            "Comparisons are cheap and consistent for labelers; absolute quality scores are not",
-            "That asymmetry — easy to rank, hard to score — is the whole reason RLHF trains a reward model instead of hand-writing one"
-          ],
-          "symbol": "questionmark.circle.fill",
-          "table": null
-        },
-        {
-          "id": "adcb0505-ae3f-43ce-b5b6-9e427e40acc8",
-          "kind": "solution",
-          "title": "The Three-Stage Pipeline",
-          "body": "RLHF, as popularized by OpenAI's InstructGPT, runs in three stages on top of a pretrained base model.",
-          "bullets": [
-            "1) Supervised fine-tuning (SFT): fine-tune on a smaller set of human-written demonstration responses",
-            "2) Reward model (RM): show labelers pairs of model outputs for the same prompt, collect which one they prefer, and train a separate model to predict that preference as a scalar score",
-            "3) RL fine-tuning (PPO): optimize the SFT model's weights to maximize the reward model's score on its own generated outputs"
-          ],
-          "symbol": "list.number",
-          "table": null
-        },
-        {
-          "id": "57edc559-a1fd-4ba4-a64e-436cf57caf9b",
-          "kind": "architecture",
-          "title": "The Leash: a KL Penalty Against the Reference Model",
-          "body": "Pure reward-maximization will find degenerate outputs that score well on the reward model without actually being better — so the real objective subtracts a penalty for straying from the SFT policy.",
-          "bullets": [
-            "Objective per sample: reward_RM(prompt, output) − β · KL(policy_output ‖ SFT_reference_output)",
-            "β controls the leash: too loose and the model reward-hacks; too tight and it barely moves from the SFT model",
-            "Running PPO this way means four models live in memory at once: the policy, the frozen SFT reference, the reward model, and a value/critic network that estimates expected future reward"
-          ],
-          "symbol": "link",
-          "table": null
-        },
-        {
-          "id": "6aa5bb31-4b7a-4e5c-a5f7-0592c0cbdd79",
-          "kind": "example",
-          "title": "Worked Example: Small but Aligned Beats Big but Raw",
-          "body": "InstructGPT's headline result: a 1.3B-parameter model fine-tuned with RLHF was preferred by human labelers over the raw 175B-parameter GPT-3 base model's outputs — despite having roughly 100x fewer parameters.",
-          "bullets": [
-            "The gap wasn't capability — the 175B base model could write fine prose — it was instruction-following and judgment about what the user actually asked for",
-            "This is the result that made 'RLHF a small model' look more valuable than 'scale a raw model,' for product-facing use"
-          ],
-          "symbol": "arrow.up.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "c5c8ba49-e748-4e60-ba7e-05b308fbb841",
-          "kind": "problem",
-          "title": "Where RLHF Breaks",
-          "body": "RLHF's own mechanics create failure modes that show up directly in deployed models.",
-          "bullets": [
-            "Reward hacking: the policy learns quirks the reward model over-rewards — hedging, sycophancy, excessive length — without getting genuinely more helpful",
-            "Mode collapse: optimizing against one reward signal pushes outputs toward safe, bland, repetitive phrasing",
-            "Alignment tax: RLHF'd models can regress on some benchmarks (e.g. certain closed-book QA tasks) relative to the base model",
-            "Cost and instability: training and serving four models simultaneously (policy, reference, reward model, critic) is memory-heavy and sensitive to hyperparameters"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f6f3bd06-7cde-4de9-bba5-b6cff8fbf754",
-          "kind": "comparison",
-          "title": "Why DPO and GRPO Exist",
-          "body": "Both later methods target the same expensive piece of RLHF: the extra models it has to keep around during training.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Method",
-              "Separate reward model?",
-              "Separate critic/value model?",
-              "Core idea"
-            ],
-            "rows": [
-              [
-                "RLHF (PPO)",
-                "Yes",
-                "Yes",
-                "Maximize RM score minus a KL penalty to the reference policy"
-              ],
-              [
-                "DPO",
-                "No",
-                "No",
-                "Preference pairs feed a direct classification-style loss — no RL loop at all"
-              ],
-              [
-                "GRPO",
-                "Optional (or rule-based reward)",
-                "No",
-                "Replace the critic with a group-relative baseline over sampled outputs"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "6a858981-1f61-4e44-85ac-5809332063b3",
-          "kind": "takeaways",
-          "title": "The Core Idea to Keep",
-          "body": null,
-          "bullets": [
-            "RLHF's job: convert 'humans can rank two answers' into a training signal, via a learned reward model",
-            "The KL penalty is what keeps reward-maximization from degenerating into reward-hacking",
-            "It's expensive specifically because of how many models PPO needs in memory at once — not because preference learning itself is expensive",
-            "DPO and GRPO aren't rejections of RLHF's goal, they're cheaper paths to the same goal, which is why RLHF is still the method taught first"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "26c3f210-dd13-464e-a0b1-dac95cddc6d5",
-            "prompt": "What does the reward model in RLHF learn to predict?",
-            "options": [
-              "The probability of the next token",
-              "A scalar score reflecting which of two candidate responses humans preferred",
-              "The exact ground-truth answer to the prompt",
-              "The perplexity of the base model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Humans can't reliably give an absolute quality score, but they can reliably compare two outputs — so the reward model is trained on pairwise preference comparisons and learns to output a score consistent with those rankings."
-          },
-          {
-            "id": "2db98645-1098-4d04-921d-f4650eec5cc2",
-            "prompt": "Why does RLHF subtract a KL-divergence penalty from the reward score during PPO?",
-            "options": [
-              "To make training run faster",
-              "To stop the policy from drifting too far from the reference model and exploiting quirks in the reward model",
-              "To eliminate the need for a reward model entirely",
-              "To shrink the model's parameter count"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without the penalty, pure reward-maximization can find degenerate outputs that score high on the reward model without being genuinely better — the KL term keeps the policy anchored near the SFT model."
-          },
-          {
-            "id": "cbbcc6f8-fe44-4b1f-818e-0c1a0a4a2521",
-            "prompt": "What specific cost do DPO and GRPO each cut from the original RLHF pipeline?",
-            "options": [
-              "DPO removes the reward model and the RL loop; GRPO removes the separate critic/value model",
-              "Both remove the need for any human preference data",
-              "Both replace PPO with supervised fine-tuning only",
-              "Both require training on vision data instead of text"
-            ],
-            "correctIndex": 0,
-            "explanation": "DPO turns preference pairs directly into a classification-style loss, skipping the reward model and PPO loop entirely; GRPO keeps a reward signal but drops the critic, estimating a baseline from a group of sampled outputs instead."
-          }
-        ]
-      },
-      "references": [],
-      "id": "d9d67bc0-5522-431c-9553-0cfd7616a693",
-      "publishedDate": "2026-10-18T00:48:45Z"
-    },
-    {
-      "title": "Contextual Retrieval: Fixing RAG's Missing-Context Problem",
-      "subtitle": "The trick that cut retrieval failures by 67% without touching the embedding model.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "retrieval",
-        "embeddings",
-        "chunking",
-        "contextual-retrieval"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "rectangle.and.text.magnifyingglass",
-      "summary": "Splitting documents into chunks for RAG strips away the context that made each chunk meaningful, so embedding and keyword search both miss relevant passages. Contextual Retrieval fixes this by prepending a short, LLM-written context to every chunk before indexing — cutting retrieval failure rates by up to 67% when combined with reranking.",
-      "slides": [
-        {
-          "id": "78977f13-2807-47d5-bc38-665af82b2fb9",
-          "kind": "cover",
-          "title": "Why Does RAG Keep Missing the Right Chunk?",
-          "body": "A chunk that reads \"The company's revenue grew by 3% over the previous quarter\" never says which company or which quarter — so a query asking exactly that can't find it.",
-          "bullets": [
-            "Splitting documents into small chunks is what makes RAG retrieval fast — and it's also what breaks it",
-            "Anthropic's Contextual Retrieval technique fixes this at the chunk level, not the embedding model level"
-          ],
-          "symbol": "rectangle.and.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "ab7b566d-799a-4cbf-b37d-a90b9ca3fd92",
-          "kind": "problem",
-          "title": "Chunking Throws Away the Context That Makes a Chunk Findable",
-          "body": "Standard RAG splits a document into independent chunks and embeds each one alone, with no memory of the document it came from.",
-          "bullets": [
-            "A query for \"ACME Corp revenue growth in Q2 2023\" can fail against a chunk that never mentions ACME, Q2, or 2023 by name",
-            "This hurts both retrieval paths at once: dense embedding similarity and sparse keyword/BM25 search",
-            "Across Anthropic's own evaluation sets (codebases, fiction, ArXiv papers), the baseline failure rate — relevant chunks missing from the top 20 results — averaged 5.7%"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "7c628dbc-8eab-4952-abf7-491d11aea082",
-          "kind": "solution",
-          "title": "The Fix: Give Every Chunk Its Context Back Before Indexing",
-          "body": "An LLM reads the whole document plus one chunk, and writes a short (50-100 token) blurb situating that chunk — then that blurb is prepended to the chunk before it's indexed.",
-          "bullets": [
-            "Contextual Embeddings: the context + chunk text is what actually gets embedded, so semantic search now 'sees' the company name, date, and section it belongs to",
-            "Contextual BM25: the same contextualized text also builds the keyword index, so exact-match search benefits too",
-            "Anthropic's reference implementation used Claude 3 Haiku to generate the per-chunk context at low cost",
-            "Both signals (embeddings + BM25) still feed a combined retrieval step — this augments existing RAG, it doesn't replace it"
-          ],
-          "symbol": "text.insert",
-          "table": null
-        },
-        {
-          "id": "7cde1ec1-37a8-4b9c-b704-19956d8c38bb",
-          "kind": "architecture",
-          "title": "Making the Cost Tractable: Prompt Caching",
-          "body": "Generating context for every chunk naively means re-sending the entire source document to the LLM once per chunk — expensive at scale.",
-          "bullets": [
-            "Fix: load the full document into the prompt cache once, then reuse that cached context for every chunk's context-generation call",
-            "Anthropic's estimate: about $1.02 per million document tokens processed, for an 8k-token document split into ~800-token chunks",
-            "Caching cut latency by more than 2x and cost by up to 90% versus re-sending the document per chunk",
-            "This is a one-time preprocessing cost per document, but it recurs every time the corpus is updated"
-          ],
-          "symbol": "bolt.fill",
-          "table": null
-        },
-        {
-          "id": "50de0dc9-3fae-41f7-85fe-0549b2203253",
-          "kind": "example",
-          "title": "Worked Example: The Financial-Filing Chunk",
-          "body": "A 10-K filing gets split into chunks. One chunk, standing alone, says only: \"The company's revenue grew by 3% over the previous quarter.\"",
-          "bullets": [
-            "Without context: a query for \"ACME Corp Q2 2023 revenue growth\" scores this chunk low on both embedding similarity and keyword overlap — it gets buried outside the top 20",
-            "With Contextual Retrieval: the prepended context reads something like \"This chunk is from ACME Corp's Q2 2023 SEC filing; the previous quarter was Q1 2023 with revenue of $314M\"",
-            "Now the chunk embeds near the query and matches on 'ACME Corp', 'Q2 2023', and 'revenue' in BM25 — it surfaces in the top results instead of being missed entirely"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "ea4ff32c-768f-4e95-b474-286dc311d672",
-          "kind": "comparison",
-          "title": "How Much Each Layer Actually Helps",
-          "body": "Measured as failure rate: the share of relevant chunks NOT retrieved in the top 20, averaged across domains using Gemini embeddings.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Configuration",
-              "Failure rate",
-              "Reduction vs. baseline"
-            ],
-            "rows": [
-              [
-                "Baseline (plain embeddings)",
-                "5.7%",
-                "—"
-              ],
-              [
-                "+ Contextual Embeddings",
-                "3.7%",
-                "35%"
-              ],
-              [
-                "+ Contextual BM25",
-                "2.9%",
-                "49%"
-              ],
-              [
-                "+ Reranking (top 150 → top 20)",
-                "1.9%",
-                "67%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "6c06a271-b4f1-4c60-9e88-a8a6f01973ec",
-          "kind": "takeaways",
-          "title": "When It's Worth It — and When It Isn't",
-          "body": "Contextual Retrieval is a preprocessing technique, not a free lunch — weigh its cost against what you actually need.",
-          "bullets": [
-            "Skip RAG entirely if your corpus is under ~200K tokens: just put the whole thing in the prompt with caching — simpler and often cheaper",
-            "Reranking adds real runtime latency and per-query cost; it buys the biggest single jump (49% → 67%) but tune how many candidates you rerank",
-            "The context-generation cost scales with corpus size and recurs on every update — budget for ongoing preprocessing, not just a one-time job",
-            "Generic document summaries prepended to chunks gave little benefit in Anthropic's tests — the gain comes from chunk-specific context, not boilerplate"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "23cf326e-53da-4741-be3c-b341d9a06215",
-            "prompt": "What specific problem does Contextual Retrieval solve in standard RAG pipelines?",
-            "options": [
-              "Embedding models are too slow for production use",
-              "Chunks lose the surrounding context that would make them matchable to a query",
-              "Vector databases run out of memory with large corpora",
-              "LLMs can't generate answers from retrieved text"
-            ],
-            "correctIndex": 1,
-            "explanation": "Splitting a document into independent chunks strips out references like company names or dates that lived elsewhere in the document, so a chunk can fail to match a query that's actually about it — on both embedding and keyword search."
-          },
-          {
-            "id": "3d681f33-f98a-422d-913b-05952ab32b30",
-            "prompt": "In Anthropic's benchmark, which combination produced the largest reduction in retrieval failure rate?",
-            "options": [
-              "Contextual Embeddings alone",
-              "Contextual BM25 alone",
-              "Contextual Embeddings + Contextual BM25 + reranking",
-              "Switching to a larger embedding model"
-            ],
-            "correctIndex": 2,
-            "explanation": "Stacking all three — contextual embeddings, contextual BM25, and a final reranking pass — took the failure rate from a 5.7% baseline down to 1.9%, a 67% reduction, the biggest gain coming from adding the reranker on top of the contextual signals."
-          },
-          {
-            "id": "d0e1cd18-1b71-4b8e-9df7-c131cbd11d43",
-            "prompt": "What makes generating per-chunk context affordable at scale, according to Anthropic's implementation?",
-            "options": [
-              "Using a smaller, less accurate embedding model",
-              "Skipping context generation for most chunks",
-              "Prompt caching the full source document once, then reusing it across each chunk's context-generation call",
-              "Generating context only after retrieval, not before indexing"
-            ],
-            "correctIndex": 2,
-            "explanation": "Without caching, generating context for every chunk means resending the whole document per chunk. Caching the document once and reusing it cut both latency (>2x) and cost (up to 90%) for the preprocessing step."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing Contextual Retrieval",
-          "url": "https://www.anthropic.com/news/contextual-retrieval"
-        }
-      ],
-      "id": "8b9ce912-91b7-4c50-b33b-00b8d780695d",
-      "publishedDate": "2026-10-17T18:47:35Z"
     }
   ]
 }
