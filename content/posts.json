@@ -1,6 +1,199 @@
 {
   "posts": [
     {
+      "id": "68e9f026-3209-463f-96ae-5ea7a565eaf7",
+      "title": "HNSW: How Vector Search Skips Checking Everything",
+      "subtitle": "A layered graph of shortcuts turns a billion-item search into a few dozen hops",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "vector-search",
+        "hnsw",
+        "ann",
+        "embeddings",
+        "rag",
+        "vector-database"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "doc.text.magnifyingglass",
+      "summary": "HNSW (Hierarchical Navigable Small World) is the graph structure behind most vector database nearest-neighbor search: it builds several layers of a proximity graph, sparse long-range links on top and dense short-range links at the bottom, so a query can greedily hop toward its nearest neighbors in roughly logarithmic time instead of scanning every vector. It trades a small, tunable chance of missing the true nearest neighbor for orders-of-magnitude faster search, at the cost of extra memory for the graph and messier deletes.",
+      "publishedDate": "2026-10-25T12:45:52Z",
+      "heroImageURL": null,
+      "slides": [
+        {
+          "id": "36391914-c8d6-4fe0-adae-fb22109110dd",
+          "kind": "cover",
+          "title": "Your RAG pipeline never actually checks every vector",
+          "body": "When a vector database answers a similarity query over tens of millions of embeddings in a few milliseconds, it isn't comparing the query against every single one. It's walking a graph.",
+          "bullets": [
+            "Exact nearest-neighbor search is linear in the number of vectors — too slow past a few hundred thousand",
+            "HNSW (Hierarchical Navigable Small World) is the graph index most vector DBs use instead",
+            "It's approximate: it can miss the single best match in exchange for huge speedups"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "f6ce6b8a-84b6-41c4-8446-5d100e77999e",
+          "kind": "problem",
+          "title": "Brute-force kNN scales with every vector you add",
+          "body": "Comparing a query embedding against N stored vectors costs O(N x d) — d is the embedding dimension. Double your corpus, double every query's latency. There's no shortcut without changing the data structure.",
+          "bullets": [
+            "A 768-dim embedding search over 10M vectors means 7.68 billion multiply-adds per query, brute force",
+            "Latency grows linearly with corpus size — fine at 10K rows, unworkable at 100M",
+            "Adding a GPU helps the constant factor, not the underlying linear scaling"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": null
+        },
+        {
+          "id": "3e83eb97-e39a-4301-bf4e-6a138f5154b3",
+          "kind": "solution",
+          "title": "Build a graph where greedy hops lead toward the answer",
+          "body": "HNSW inserts every vector as a node and wires it to its approximate nearest neighbors, forming several stacked layers. The top layer is sparse with long-range links; each layer below is denser, and the bottom layer contains every node with only short-range, local links — a classic 'small world' structure.",
+          "bullets": [
+            "Search starts at an entry point in the top layer and greedily moves to whichever neighbor is closer to the query",
+            "When no neighbor at the current layer is closer, the search drops down one layer and keeps greedily hopping",
+            "By the bottom layer, the search is already near the true neighborhood, so only a small local candidate list needs checking",
+            "Parameter M caps links per node; higher M means better recall but a bigger graph"
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "863139eb-74b5-4b7a-a57c-498d2d49cfc3",
+          "kind": "comparison",
+          "title": "HNSW vs. the other common index choices",
+          "body": "Relative shape of the tradeoffs, not figures from any specific benchmark — actual numbers depend heavily on dataset, dimension, and tuning.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Index",
+              "Query speed",
+              "Recall",
+              "Memory",
+              "Updates"
+            ],
+            "rows": [
+              [
+                "Flat / brute force",
+                "Slowest (linear scan)",
+                "Exact (100%)",
+                "Lowest (raw vectors only)",
+                "Trivial — just append"
+              ],
+              [
+                "IVF (inverted file)",
+                "Fast, needs tuned cluster count",
+                "Good, tunable via nprobe",
+                "Low — centroids + lists",
+                "Cheap append, periodic retrain"
+              ],
+              [
+                "HNSW",
+                "Fastest for high recall",
+                "Very high, tunable via ef",
+                "Highest — graph edges on top of vectors",
+                "Inserts easy; deletes need tombstones"
+              ],
+              [
+                "LSH",
+                "Fast",
+                "Lower, more false positives",
+                "Moderate",
+                "Easy append"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "6cf682c5-7638-4b4e-ab7f-182242950a00",
+          "kind": "example",
+          "title": "Worked example: searching 1 million product embeddings",
+          "body": "Say a catalog has 1M product embeddings indexed with HNSW using M=16 (max 16 links per node) and ef_construction=200 (candidate list size while building). A query arrives with ef_search=50.",
+          "bullets": [
+            "The search enters at the top layer's single entry point and greedily walks toward the query — maybe 4-5 hops across a handful of sparse layers",
+            "At the bottom layer it maintains a candidate list of up to ef_search=50 nodes, expanding outward from the current best",
+            "Total distance computations end up in the hundreds, not the full 1,000,000 — because the graph already pruned almost everywhere irrelevant",
+            "Raising ef_search to 200 checks more candidates, trading some latency for a few extra points of recall"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "9bdd3c8a-fd6e-489a-adf7-d38f45f79a95",
+          "kind": "takeaways",
+          "title": "Where HNSW pays off — and where it bites you",
+          "body": "HNSW is the default in Pinecone, Weaviate, Qdrant, Milvus, and pgvector's hnsw index type for good reason, but it isn't free.",
+          "bullets": [
+            "Graph edges add real memory on top of the raw vectors — often 1.5-2x the vector data size, which matters at hundreds of millions of rows",
+            "Deletes aren't native: most implementations mark nodes as tombstones and periodically rebuild rather than truly removing them, so delete-heavy workloads degrade the graph over time",
+            "Build time is nontrivial — inserting a vector means searching the graph as it exists so far, so index construction itself is sequential-ish work, not a cheap bulk load",
+            "For a small, mostly-static corpus (a few thousand to low tens of thousands of vectors), brute-force flat search can be just as fast and far simpler to reason about — skip HNSW there",
+            "Filtered search (e.g. 'nearest neighbors where category = X') isn't natively graph-aware, so heavily filtered queries can force the search to explore far more of the graph than usual"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "a368c4cf-56a2-418a-b63d-276e14eed3cc",
+          "kind": "concept",
+          "title": "The core idea in one line",
+          "body": "HNSW turns 'is this vector close to my query?' from a question you ask N times into a question you ask a few dozen times, by pre-building shortcuts that route a greedy walk straight into the right neighborhood.",
+          "bullets": [
+            "Sparse long links on top get you across the space fast; dense short links at the bottom get you precise",
+            "Recall vs. speed is a dial (ef_search), not a fixed property of the index",
+            "It's approximate by design — the right trade when 'almost certainly the nearest neighbors, instantly' beats 'guaranteed exact, eventually'"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b477ac78-0343-4940-b122-6597e3779b79",
+            "prompt": "Why can HNSW answer a nearest-neighbor query without comparing it to every stored vector?",
+            "options": [
+              "It pre-computes and caches the answer to every possible query",
+              "It compresses all vectors into a single average vector",
+              "It walks a multi-layer graph greedily, using sparse long-range links to jump close fast and dense local links to refine, checking only a small candidate set",
+              "It randomly samples a subset of vectors each time and hopes one is close"
+            ],
+            "correctIndex": 2,
+            "explanation": "HNSW's layered proximity graph lets a query greedily hop toward its neighborhood, layer by layer, so only the nodes actually visited along the way and their close neighbors get checked — not the whole dataset."
+          },
+          {
+            "id": "cb688f35-720f-41dc-91da-f3b6e8a421a0",
+            "prompt": "What does raising the ef_search parameter trade for higher recall?",
+            "options": [
+              "Nothing — it's strictly free",
+              "More query latency, since a larger candidate list gets explored and compared",
+              "Less memory usage",
+              "It only affects index build time, not search"
+            ],
+            "correctIndex": 1,
+            "explanation": "ef_search controls how large a candidate list the search maintains while exploring the graph. A bigger list means more distance computations per query — slower, but more likely to find the true nearest neighbors."
+          },
+          {
+            "id": "acdb18bb-29c5-4f5e-bed4-a3c777fa4e68",
+            "prompt": "When is plain brute-force (flat) search often the better choice over HNSW?",
+            "options": [
+              "Any time the corpus exceeds 1,000 vectors",
+              "Never — HNSW always wins",
+              "When the corpus is small and mostly static, where brute force is simple, exact, and already fast enough",
+              "Only when running on a GPU"
+            ],
+            "correctIndex": 2,
+            "explanation": "HNSW's graph overhead (memory, build time, tombstone-based deletes) only pays off once brute-force scanning is actually too slow. For small or rarely-changing collections, exact flat search is simpler and the performance gap barely matters."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "8d3965d2-0e8b-4359-bf2b-56c32dae5e62",
       "title": "Multi-Head Latent Attention: Shrinking the Cache That Eats Your GPU",
       "subtitle": "Compress keys and values into one latent vector, decompress per head at attention time",
@@ -11008,190 +11201,6 @@
         }
       ],
       "publishedDate": "2026-10-18T18:48:53Z"
-    },
-    {
-      "id": "282c25a4-a04e-4875-9ebf-14bbfb1d3182",
-      "title": "OpenGCUA: Letting the Model Run Your Whole Computer",
-      "subtitle": "Code execution plus harness-to-model decision transfer cuts agent steps 53%",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "computer-use agents",
-        "agentic ai",
-        "open source",
-        "benchmarks",
-        "tool use"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "desktopcomputer",
-      "summary": "OpenGCUA, an open stack from Alibaba's Tongyi-MAI team, lets agents write code instead of clicking one GUI element at a time, and moves key decisions from a fixed harness into the model itself. Across eight frontier models on OSWorld-v2, mean partial score rose from 45.3 to 64.9 while steps per task fell 53%.",
-      "slides": [
-        {
-          "id": "45862dad-52c0-4863-beb5-03213858044d",
-          "kind": "cover",
-          "title": "Why Can't an Agent Just Use a Whole Computer?",
-          "body": "Frontier computer-use agents like GPT-6 Astra are closed systems. A new open stack, OpenGCUA, tries to show what makes them work — and open-sources the whole pipeline.",
-          "bullets": [],
-          "symbol": "desktopcomputer",
-          "table": null
-        },
-        {
-          "id": "8fcdbd52-243e-4f76-a5f4-f595baca3607",
-          "kind": "problem",
-          "title": "GUI-Only Agents Hardcode Three Decisions",
-          "body": "Most computer-use agents fix the same three choices inside the harness, not the model.",
-          "bullets": [
-            "What to observe: take a fresh screenshot after every single action, even trivial ones",
-            "How to act: one GUI click, type, or scroll per step — no branching, no loops",
-            "How to track progress: no persistent plan across a long task"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "454f98cf-80ef-482a-85ea-417860bbb15c",
-          "kind": "solution",
-          "title": "Two Ideas: Code Execution + Decision Transfer",
-          "body": "OpenGCUA's core move is handing those three decisions to the model instead of the scaffold.",
-          "bullets": [
-            "Code execution: the model writes a Python program per step that mixes accessibility-tree reads, app APIs, shell commands, and GUI clicks — with loops and branches",
-            "Harness-to-model decision transfer: the model decides when it actually needs a screenshot, instead of taking one every step",
-            "Before each program it writes an <intent> statement and keeps a running todo list, so planning survives across dozens of steps"
-          ],
-          "symbol": "chevron.left.forwardslash.chevron.right",
-          "table": null
-        },
-        {
-          "id": "218eade3-4578-4d6e-b209-178ec5e98711",
-          "kind": "comparison",
-          "title": "The Numbers: Fewer Steps, Higher Scores",
-          "body": "Measured on the OSWorld-v2 offline benchmark across eight frontier models (GPT-6 Astra, Claude Opus 5, Gemini 3.8 Flash, GLM-5.3-Flash, Qwen3.8-Max, Qwen3.8-Flash, Kimi K3, DeepSeek-V4.1-Flash).",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Metric",
-              "GUI-only baseline",
-              "OpenGCUA"
-            ],
-            "rows": [
-              [
-                "Mean partial score",
-                "45.3",
-                "64.9 (+19.6)"
-              ],
-              [
-                "Steps per task",
-                "baseline",
-                "-53% on average"
-              ],
-              [
-                "GPT-6 Astra steps/task",
-                "102",
-                "34"
-              ],
-              [
-                "Strongest-weakest gap",
-                "39.1 pts",
-                "18.0 pts"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis"
-        },
-        {
-          "id": "be509038-cee3-4d96-910d-31692def6600",
-          "kind": "example",
-          "title": "Worked Example: Reorganizing 200 Files",
-          "body": "Imagine the task is 'sort these 200 downloaded files into folders by date modified.'",
-          "bullets": [
-            "GUI-only agent: screenshot, click file, read date, drag to folder, screenshot again — repeated 200 times, burning hundreds of steps",
-            "OpenGCUA agent: writes one short script that reads all file metadata via the accessibility API and loops to move each file, taking a screenshot only to confirm the result",
-            "The paper reports code execution alone adds +6.1 points and cuts steps 14.8% versus GUI+CLI access, averaged over three models"
-          ],
-          "symbol": "folder.badge.gearshape",
-          "table": null
-        },
-        {
-          "id": "67ac3b2b-f43c-4db6-9d8a-c6086a5753ba",
-          "kind": "problem",
-          "title": "Weaker Models Gain the Most — and Limits Remain",
-          "body": "The gains aren't evenly spread, and the real-device story is still early.",
-          "bullets": [
-            "GLM-5.3-Flash improved +35.2 points and DeepSeek-V4.1-Flash +29.8 — code execution narrows the gap between strong and weak models more than it widens it",
-            "On four real macOS tasks, Qwen3.8-Max burned 19.4x the reasoning tokens of GPT-6 Astra and still finished only 3 of 4 tasks, versus 4 of 4 for GPT-6 Astra",
-            "The real-device harness and cross-device SDK are both marked 'preliminary' — this is a research preview, not a production agent"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "6e35c1e6-a92d-4081-92c7-7c8c160f9a67",
-          "kind": "takeaways",
-          "title": "Why This Matters",
-          "body": "OpenGCUA is a case for an architectural idea, not just a leaderboard entry.",
-          "bullets": [
-            "Letting models write code to interact with a computer, instead of clicking through a fixed GUI loop, is a more general interface than screenshot-and-click",
-            "Full trajectories for all eight evaluated models are public, so anyone can study why one model times out or loops where another doesn't",
-            "Released under Apache-2.0 with code, prompts, and eval trajectories — a rare fully-open look at a computer-use stack"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5312d34a-550a-4b43-ae45-06bf77a2b727",
-            "prompt": "What are the two core ideas behind OpenGCUA?",
-            "options": [
-              "A bigger model and more training data",
-              "Code execution and harness-to-model decision transfer",
-              "A faster screenshot renderer and a new GUI library",
-              "Reinforcement learning from human feedback on clicks"
-            ],
-            "correctIndex": 1,
-            "explanation": "OpenGCUA's headline contribution is letting the model write code to act (instead of one GUI click per step) and moving decisions like 'when to look at the screen' from the fixed harness into the model."
-          },
-          {
-            "id": "816f338c-04a8-4eb7-a373-706fe7d7965f",
-            "prompt": "On the OSWorld-v2 offline benchmark, what happened to steps-per-task under OpenGCUA?",
-            "options": [
-              "They roughly doubled",
-              "They stayed the same but accuracy rose",
-              "They fell by about 53% on average, alongside a +19.6 point score gain",
-              "They fell only for the single strongest model"
-            ],
-            "correctIndex": 2,
-            "explanation": "Across eight frontier models, mean partial score rose from 45.3 to 64.9 while steps per task dropped 53% on average — fewer, more effective actions per task."
-          },
-          {
-            "id": "5072ef64-e4b0-4afa-91ba-7f7d3c3a1773",
-            "prompt": "Which models benefited most from the OpenGCUA approach?",
-            "options": [
-              "The strongest models got relatively stronger, widening the gap",
-              "All models gained identically",
-              "Weaker models like GLM-5.3-Flash and DeepSeek-V4.1-Flash gained the most, shrinking the gap between strongest and weakest",
-              "Only closed frontier models like GPT-6 Astra improved"
-            ],
-            "correctIndex": 2,
-            "explanation": "The strongest-to-weakest score gap shrank from 39.1 to 18.0 points, driven by large gains for weaker models — code execution seems to compensate for weaker raw reasoning."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "bd75fa83-c14e-4f41-b34a-4f9baed5dfb6",
-          "title": "OpenGCUA: Toward a Fully Open Stack for Generalist Computer Use (arXiv:2610.22200)",
-          "url": "https://arxiv.org/abs/2610.22200"
-        },
-        {
-          "id": "7391abde-c2b2-4d49-8af6-1041be6b6bec",
-          "title": "Tongyi-MAI/OpenGCUA on GitHub",
-          "url": "https://github.com/Tongyi-MAI/OpenGCUA"
-        }
-      ],
-      "publishedDate": "2026-10-18T12:49:33Z"
     }
   ]
 }
