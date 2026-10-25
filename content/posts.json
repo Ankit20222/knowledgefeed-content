@@ -1,6 +1,202 @@
 {
   "posts": [
     {
+      "id": "35928c97-d085-481f-96d3-60d0a350911d",
+      "title": "Hybrid Search: Why Vector Search Alone Keeps Missing Exact Matches",
+      "subtitle": "BM25 catches the needle; embeddings catch the meaning. RRF fuses both.",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "hybrid search",
+        "bm25",
+        "vector search",
+        "reranking",
+        "retrieval"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.merge",
+      "summary": "Dense vector search is great at paraphrase and meaning but routinely buries exact tokens — IDs, error codes, rare names — that a simple keyword index would rank first. Hybrid search runs a lexical index (BM25) and a vector index in parallel, then fuses the two rankings with Reciprocal Rank Fusion so neither failure mode dominates.",
+      "publishedDate": "2026-10-25T18:45:19Z",
+      "slides": [
+        {
+          "id": "f01fcbec-272d-4b78-957c-6346f76acf97",
+          "kind": "cover",
+          "title": "One Retriever Is Never Enough",
+          "body": "Dense embeddings and keyword search fail in opposite ways. Hybrid search runs both and combines the rankings instead of picking a winner.",
+          "bullets": [],
+          "symbol": "magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "90d65eae-5e8f-4219-8f84-f18ff68374ee",
+          "kind": "problem",
+          "title": "Embeddings Blur Exact Tokens Into Meaning",
+          "body": "A dense embedding packs a whole sentence into one vector optimized for semantic similarity, not character-level recall. Rare, unique strings get averaged away.",
+          "bullets": [
+            "Query 'ERR_CONN_RESET-4432' can rank a doc about 'connection timeout issues' above the one doc that literally contains that exact code.",
+            "Product SKUs, part numbers, legal citations, and people's names behave the same way — embeddings cluster them near their topic, not near their exact spelling.",
+            "A pure keyword index (BM25) would rank the exact-match document first every time — but it can't find a paraphrased query with zero shared words."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "cb318b11-e142-4e8e-82ae-f0b5600c3f1c",
+          "kind": "solution",
+          "title": "Run Both Retrievers, Fuse the Rankings",
+          "body": "BM25 scores a document by term frequency (saturating, so the 10th occurrence of a word barely counts) divided by document length, with rare terms weighted higher via inverse document frequency. It has no notion of meaning, only exact (or stemmed) token overlap.",
+          "bullets": [
+            "Step 1: send the query to a lexical index (BM25/Elasticsearch) and a vector index (HNSW/IVF) in parallel — same query, two independent ranked lists.",
+            "Step 2: fuse with Reciprocal Rank Fusion (RRF): score(doc) = Σ 1 / (k + rank_i) across each list it appears in, where k=60 is the standard default from the original RRF paper.",
+            "A doc ranked #1 in BM25 but absent from the vector list still scores 1/61 ≈ 0.016 — high enough to surface, because RRF rewards TOP ranks in ANY list, not average rank.",
+            "No score normalization needed — RRF only looks at rank position, so it sidesteps the fact that BM25 and cosine-similarity scores live on totally different scales."
+          ],
+          "symbol": "arrow.triangle.merge",
+          "table": null
+        },
+        {
+          "id": "fe57de8b-90bb-4e91-ae84-28ef774ffeca",
+          "kind": "architecture",
+          "title": "The Pipeline: Two Indexes, One Fused List",
+          "body": "Both retrievers run concurrently, not in sequence — hybrid search adds a parallel branch, not a slower chain.",
+          "bullets": [
+            "Query → BM25 index → top-K lexical candidates (e.g. K=100)",
+            "Query → embedding model → vector index → top-K semantic candidates (K=100)",
+            "Both candidate lists → RRF fusion → single ranked list → (optional) cross-encoder reranker on the top ~20 → final context for the LLM.",
+            "Each index is maintained independently, so a doc update means writing to both — that's the operational cost you're paying for the recall gain."
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null
+        },
+        {
+          "id": "bdad4f08-9bae-4afa-a3bb-1f2770f57b07",
+          "kind": "comparison",
+          "title": "Where Each Approach Wins",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Approach",
+              "Exact IDs/codes/names",
+              "Paraphrase/synonyms",
+              "Extra infra"
+            ],
+            "rows": [
+              [
+                "BM25 only",
+                "Excellent",
+                "Poor",
+                "One index"
+              ],
+              [
+                "Vector only",
+                "Poor",
+                "Excellent",
+                "One index + embedding model"
+              ],
+              [
+                "Hybrid + RRF",
+                "Excellent",
+                "Excellent",
+                "Two indexes + fusion step"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "8dec8f06-441d-4247-91de-6cb41482b24d",
+          "kind": "example",
+          "title": "Worked Example: The Error Code That Vector Search Lost",
+          "body": "A support-ticket search for \"ERR_CONN_RESET-4432 keeps happening after deploy\" against 50k internal docs.",
+          "bullets": [
+            "Vector-only: top result is a generic 'troubleshooting connection timeouts' guide — close in meaning, wrong doc. The exact-match runbook ranks #14, likely never seen.",
+            "BM25-only: the runbook containing 'ERR_CONN_RESET-4432' ranks #1 on exact token match, but a differently-worded query like 'socket keeps dropping after release' would miss it entirely.",
+            "Hybrid + RRF: the runbook is #1 in BM25 (score contribution 1/61) and still appears somewhere in the vector list (say rank 8, contributing 1/68) — its combined RRF score beats documents that only appear in one list, so it surfaces at #1 either way the question is phrased."
+          ],
+          "symbol": "number",
+          "table": null
+        },
+        {
+          "id": "2529958c-1f72-4999-bae2-14e52b7525ec",
+          "kind": "concept",
+          "title": "When Hybrid Search Isn't Worth It",
+          "body": "Hybrid search is a real engineering cost, not a free upgrade — add it only when the failure mode it fixes is actually present in your corpus.",
+          "bullets": [
+            "Small corpora (a few thousand docs): a single reranker pass over the full set is often cheaper and just as accurate as maintaining two indexes.",
+            "Pure-paraphrase workloads with no IDs, codes, or jargon (e.g. casual chat search) gain little from BM25 and just add latency and ops overhead.",
+            "The fusion constant k and per-list top-K still need tuning per corpus — the RRF defaults aren't universal, and skipping that tuning silently caps your recall gains.",
+            "Two indexes mean two things to keep in sync; a doc deleted from one and not the other produces ghost hits or silent gaps."
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "46b1bd2e-8e35-43de-bab9-453fab78a73a",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Vector search and keyword search fail in opposite, complementary ways — exact tokens vs. paraphrased meaning.",
+            "Reciprocal Rank Fusion (score = Σ 1/(k+rank), k≈60) combines ranked lists without needing to normalize incompatible similarity scores.",
+            "Hybrid search is two indexes running in parallel, not a slower sequential pipeline — the cost is operational (sync, tuning), not latency.",
+            "Add a cross-encoder reranker on the fused top-K for the final precision boost most production RAG systems use."
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "a18a42bb-ea8a-4508-8cbb-2171f574f45a",
+            "prompt": "A user searches for an exact error code like 'ERR_CONN_RESET-4432'. Why might a pure vector (embedding) search fail to surface the one document containing that exact string?",
+            "options": [
+              "Vector search only works on documents shorter than 100 words",
+              "Embeddings compress text toward semantic meaning, so an exact rare token can be outweighed by overall topical similarity to other documents",
+              "Vector indexes cannot store numbers or symbols",
+              "Vector search always returns documents in alphabetical order"
+            ],
+            "correctIndex": 1,
+            "explanation": "Embeddings are trained to cluster by meaning, not exact spelling. A document that's merely topically close (e.g., 'connection timeouts') can out-rank the one literal match because the embedding doesn't specially weight rare exact tokens — that's precisely what a lexical index like BM25 is good at."
+          },
+          {
+            "id": "495d6b40-bfc6-49a8-ad06-e785771fb188",
+            "prompt": "In Reciprocal Rank Fusion, a document's score from one ranked list is 1/(k + rank). Why use rank position instead of the retriever's raw similarity score?",
+            "options": [
+              "Rank-based fusion is always faster to compute than score-based fusion",
+              "BM25 scores and cosine-similarity scores live on different, incompatible scales, so combining raw scores directly would be meaningless without careful normalization — rank position sidesteps that",
+              "Raw scores are not available from vector databases",
+              "Using ranks guarantees the top result is always correct"
+            ],
+            "correctIndex": 1,
+            "explanation": "BM25 scores can range widely and unboundedly based on term statistics, while cosine similarity is bounded between -1 and 1. Averaging or summing them directly would let whichever retriever has a bigger numeric range dominate. RRF avoids this entirely by only using each document's rank position within its own list."
+          },
+          {
+            "id": "bf32b563-da8a-4c24-a34b-cfe0887b6238",
+            "prompt": "When is hybrid search LEAST likely to be worth its added complexity?",
+            "options": [
+              "When the corpus is large and full of product IDs, error codes, and jargon",
+              "When queries are a mix of exact lookups and paraphrased questions",
+              "When the corpus is small (a few thousand docs) with no exact-match identifiers, so a single reranker pass over all candidates is already fast and accurate",
+              "When latency budgets are generous"
+            ],
+            "correctIndex": 2,
+            "explanation": "Hybrid search earns its keep when exact-match tokens exist AND the corpus is large enough that you can't just rerank everything. For a small corpus with no IDs or jargon, the two-index operational overhead (sync, tuning, infra) usually isn't worth the marginal recall gain."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "869eca56-5bc6-466b-abe4-89b98cfda9bf",
+          "title": "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods (Cormack, Clarke & Buettcher, 2009) — the original RRF paper",
+          "url": "https://dl.acm.org/doi/10.1145/1571941.1572114"
+        }
+      ]
+    },
+    {
       "id": "68e9f026-3209-463f-96ae-5ea7a565eaf7",
       "title": "HNSW: How Vector Search Skips Checking Everything",
       "subtitle": "A layered graph of shortcuts turns a billion-item search into a few dozen hops",
@@ -11006,198 +11202,6 @@
           "id": "bf747cea-37c0-411c-a24a-b137abeb6bec",
           "title": "Code Review is now generally available",
           "url": "https://claude.com/resources/articles/code-review-is-now-generally-available"
-        }
-      ],
-      "publishedDate": "2026-10-18T18:48:53Z"
-    },
-    {
-      "id": "186fa8b7-ec2d-4546-953c-3b7fb0d91714",
-      "title": "Consistent Hashing: Scaling Without a Full Reshuffle",
-      "subtitle": "Why adding one node shouldn't move 80% of your keys",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "system-design",
-        "distributed-systems",
-        "caching",
-        "sharding",
-        "interview-prep"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "circle.grid.hex.fill",
-      "summary": "Plain hash(key) % N remaps most keys every time a node joins or leaves a cluster. Consistent hashing fixes this by placing nodes and keys on the same ring so only a local neighborhood of keys moves — and virtual nodes keep that movement evenly spread across the real machines.",
-      "slides": [
-        {
-          "id": "b4cafac1-8e7b-47c4-a8e1-024437a42392",
-          "kind": "cover",
-          "title": "Add One More Node Without Reshuffling Everything",
-          "body": "Consistent hashing is the technique behind scaling caches and databases without a cache-miss storm every time the cluster changes size.",
-          "bullets": [
-            "Naive hash(key) % N remaps almost every key when N changes",
-            "Consistent hashing keeps roughly 1/N of keys moving when a node joins or leaves",
-            "Used in DynamoDB, Cassandra, memcached clients, CDNs, and load balancers"
-          ],
-          "symbol": "circle.grid.hex.fill",
-          "table": null
-        },
-        {
-          "id": "6ee67e46-8225-455f-bd2c-d9db369742dc",
-          "kind": "problem",
-          "title": "Why hash(key) % N Breaks at Scale",
-          "body": "The modulo operation ties every key's owner directly to the total node count — so the moment that count changes, almost nothing stays put.",
-          "bullets": [
-            "Changing N from 4 to 5 nodes relocates roughly (N-1)/N of all keys — about 80% churn",
-            "Every node addition or removal triggers a mass cache-miss storm across the whole cluster",
-            "At scale, with hundreds of shards, this makes routine horizontal scaling operationally painful"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "23256a6b-8fcd-4e25-92e0-250267901f12",
-          "kind": "solution",
-          "title": "Put Nodes and Keys on the Same Ring",
-          "body": "Instead of hashing keys against a count, hash both nodes and keys onto one fixed circular space.",
-          "bullets": [
-            "Hash both server IDs and keys onto a fixed ring, e.g. the range 0 to 2^32-1",
-            "A key belongs to the first node found clockwise from its position on the ring",
-            "Adding a node only steals keys from its immediate clockwise neighbor — not from every other node in the cluster"
-          ],
-          "symbol": "circle.dotted",
-          "table": null
-        },
-        {
-          "id": "46d3130c-c708-4293-8727-c77f1b4a010c",
-          "kind": "architecture",
-          "title": "Virtual Nodes Fix the Lumpy-Ring Problem",
-          "body": "A handful of physical nodes placed directly on the ring creates uneven arcs — some nodes end up owning far more keys than others.",
-          "bullets": [
-            "Fix: hash each physical node into 100-200 virtual points scattered around the ring, instead of just one",
-            "Load evens out because the uneven-arc variance averages away across many virtual positions per real node",
-            "This is exactly what Cassandra and DynamoDB both do in production to keep load balanced"
-          ],
-          "symbol": "circle.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "98fadb52-5900-4805-8542-25331d623249",
-          "kind": "example",
-          "title": "Worked Example: 4 Nodes Become 5",
-          "body": "A ring holding nodes A, B, C, D at fixed hash positions, with keys assigned clockwise.",
-          "bullets": [
-            "Adding node E inserts it onto the ring between C and D",
-            "Only the keys that previously mapped to D and fall before E's new position move to E — roughly 1/5 of total keys",
-            "Every other node's keys (A, B, C, and D's remaining keys) are completely untouched by the change"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "1c2eb1df-0b32-45fa-b546-26bb535a70d4",
-          "kind": "comparison",
-          "title": "Key Movement: Mod-N vs. Consistent Hashing",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Scheme",
-              "Keys moved, 4→5 nodes",
-              "Needs a full remap table?"
-            ],
-            "rows": [
-              [
-                "Mod-N hashing",
-                "~80% of all keys",
-                "Yes — every key, every node"
-              ],
-              [
-                "Consistent hashing",
-                "~20% of all keys",
-                "No — only the new node's ring neighbor"
-              ],
-              [
-                "Consistent hashing + virtual nodes",
-                "~20%, evenly spread across real nodes",
-                "No"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "e3eb6503-ddcc-4a02-a7bc-0cac5b1b98cd",
-          "kind": "concept",
-          "title": "When It's Overkill or Risky",
-          "body": "Consistent hashing solves a real problem, but it's not free complexity you want everywhere.",
-          "bullets": [
-            "For a fixed, rarely-resized cluster, plain mod-N hashing is simpler and perfectly fine — don't add ring complexity you don't need",
-            "Without virtual nodes, a small number of physical nodes can still land unevenly on the ring and get a lumpy load distribution",
-            "Consistent hashing alone doesn't handle replication — systems like DynamoDB add a replication factor on top, storing each key on the next R nodes clockwise"
-          ],
-          "symbol": "minus.circle",
-          "table": null
-        },
-        {
-          "id": "9773aa22-e8d4-4589-94cc-4b19d14ad0d4",
-          "kind": "takeaways",
-          "title": "Why This Matters",
-          "body": "The core idea generalizes far beyond caches — it's the same trick behind sharding and request routing at scale.",
-          "bullets": [
-            "Core idea: map nodes and keys onto the same ring so only a local neighborhood of keys moves when membership changes",
-            "Virtual nodes are what actually make load balanced in real production systems — not the ring alone",
-            "In use today in DynamoDB, Cassandra, Riak, and many CDN and load-balancer designs",
-            "Interview tip: always mention virtual nodes — that's almost always the follow-up question after you describe the basic ring"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6addc643-7bb0-470d-93eb-335274eacbf9",
-            "prompt": "With plain hash(key) % N, what happens when a cluster goes from 4 nodes to 5?",
-            "options": [
-              "No keys move",
-              "About 20% of keys move",
-              "About 80% of keys move",
-              "Exactly one key moves"
-            ],
-            "correctIndex": 2,
-            "explanation": "Mod-N hashing ties every key's owner to the total node count N, so changing N remaps roughly (N-1)/N of all keys — about 80% churn going from 4 to 5 nodes."
-          },
-          {
-            "id": "f70da73b-72c5-4e8d-885a-45c9d370597f",
-            "prompt": "What problem do 'virtual nodes' solve in a consistent hashing scheme?",
-            "options": [
-              "They encrypt data on the ring",
-              "They replace the need for a hash function",
-              "They even out load when a small number of physical nodes land unevenly on the ring",
-              "They eliminate the need for a hash ring entirely"
-            ],
-            "correctIndex": 2,
-            "explanation": "A few physical nodes placed directly on the ring can create uneven arcs. Hashing each physical node into 100-200 virtual positions averages that variance away, balancing load across real machines."
-          },
-          {
-            "id": "027ec01a-cee5-44da-8251-0ae8baf130f2",
-            "prompt": "When node E is inserted onto the ring between nodes C and D, which keys move to E?",
-            "options": [
-              "Every key in the system",
-              "Only the keys that previously belonged to D and now fall before E's position",
-              "A random 50% sample of all keys",
-              "No keys move — only metadata changes"
-            ],
-            "correctIndex": 1,
-            "explanation": "Only the keys in the arc between C and E's new position — previously owned by D — move to E. Every other node's keys are untouched, which is the whole point of consistent hashing."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "0c8d9f88-a3d6-497a-848d-6d679fdac510",
-          "title": "Consistent hashing (overview, with original Karger et al. 1997 paper citation)",
-          "url": "https://en.wikipedia.org/wiki/Consistent_hashing"
         }
       ],
       "publishedDate": "2026-10-18T18:48:53Z"
