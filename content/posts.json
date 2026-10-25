@@ -1,6 +1,191 @@
 {
   "posts": [
     {
+      "id": "8d3965d2-0e8b-4359-bf2b-56c32dae5e62",
+      "title": "Multi-Head Latent Attention: Shrinking the Cache That Eats Your GPU",
+      "subtitle": "Compress keys and values into one latent vector, decompress per head at attention time",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "attention",
+        "kv-cache",
+        "inference",
+        "transformers",
+        "mla",
+        "llm-architecture"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Multi-Head Latent Attention (MLA) compresses the keys and values every attention head would normally cache into one small shared latent vector, then reconstructs full per-head keys and values on the fly with learned projections. It shrinks the KV cache far more than grouping heads (GQA/MQA) without averaging away per-head expressiveness, at the cost of extra matmuls and a split-out rotary component.",
+      "publishedDate": "2026-10-25T06:46:02Z",
+      "heroImageURL": null,
+      "slides": [
+        {
+          "id": "7bfba09c-1a42-4b76-91de-f0c5ef58025d",
+          "kind": "cover",
+          "title": "The KV cache, not the weights, is what runs out of memory",
+          "body": "Every token an LLM generates adds a key and value vector to a running cache for every attention head, in every layer. At long context lengths that cache can outgrow the model's own weights in GPU memory.",
+          "bullets": [
+            "Long-context serving is bottlenecked by cache size, not FLOPs",
+            "MLA compresses that cache into a shared latent per token",
+            "First shipped in DeepSeek-V2, then DeepSeek-V3"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "4a519f8f-136e-4cfb-b9fd-b8633f041809",
+          "kind": "problem",
+          "title": "Standard multi-head attention caches one K and V per head, per layer, per token",
+          "body": "In vanilla multi-head attention (MHA), each of the H heads has its own key and value vector of size d_head. The KV cache per token per layer is 2 x H x d_head numbers (the 2 is for K and V) — and you pay that for every layer and every token you've generated so far.",
+          "bullets": [
+            "Cache size scales linearly with sequence length, heads, and layers",
+            "Doubling context length doubles the cache; it does not touch the weights",
+            "More concurrent requests means more caches live in memory at once, which caps batch size"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "f2625e6d-85e1-415a-9e1f-393b93088f77",
+          "kind": "solution",
+          "title": "MQA and GQA cut the cache by sharing; MLA cuts it by compressing",
+          "body": "Multi-Query Attention (MQA) gives every head the same single K/V pair — cheapest cache, but heads lose their distinct 'view' of the sequence. Grouped-Query Attention (GQA) is a middle ground: a few shared K/V groups split across heads. MLA takes a different path: project each token's K and V down into one small shared latent vector, cache only that latent, and reconstruct full per-head K and V from it with a learned up-projection matrix at attention time.",
+          "bullets": [
+            "The latent is low-rank: far fewer dimensions than H x d_head",
+            "Up-projection matrices are learned per-head, so heads stay distinct — nothing is literally shared/copied like in GQA",
+            "Rotary position embeddings (RoPE) don't survive this compression cleanly, so MLA splits off a small decoupled RoPE slice that bypasses compression and is cached separately, uncompressed"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "table": null
+        },
+        {
+          "id": "afdc7705-b4a5-40b3-9e6d-4896d0fe6b4f",
+          "kind": "comparison",
+          "title": "Cache footprint per token, same head count and head dimension",
+          "body": "Relative KV cache size per token per layer for H heads of dimension d_head, compared to plain MHA (2 x H x d_head). Figures are illustrative of the mechanism's shape, not a benchmark from any specific paper.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Variant",
+              "What's cached per token",
+              "Relative cache size",
+              "Per-head distinctness"
+            ],
+            "rows": [
+              [
+                "MHA",
+                "Full K, V for every head",
+                "1x (baseline)",
+                "Full"
+              ],
+              [
+                "MQA",
+                "One shared K, V for all heads",
+                "~1/H",
+                "None — all heads read identical K/V"
+              ],
+              [
+                "GQA",
+                "K, V per group (groups < heads)",
+                "~groups/H",
+                "Partial — heads in a group are identical"
+              ],
+              [
+                "MLA",
+                "One low-rank latent vector + small RoPE slice",
+                "Smaller than GQA at similar group counts",
+                "Full — each head gets its own learned reconstruction"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "dac90ef3-7472-448b-8238-de2513962322",
+          "kind": "example",
+          "title": "Worked example: 8 heads, 64 dims each, one layer, one token",
+          "body": "Take H=8 heads with d_head=64. MHA caches 2 x 8 x 64 = 1024 numbers for that token in that layer. A GQA setup with 2 groups caches 2 x 2 x 64 = 256 numbers, but now 4 heads in each group see the exact same K and V — they've lost their individual perspective. MLA instead caches a single compressed latent of, say, 256-512 numbers (a hyperparameter, not tied to head count) plus a small decoupled RoPE slice. At inference, 8 separate learned matrices expand that one latent back into 8 distinct per-head K/V pairs — so you get GQA-like cache savings without GQA's head-collapsing.",
+          "bullets": [
+            "Compression ratio is a design knob (latent size), not fixed by head count like GQA",
+            "The up-projection weights are learned during pretraining, not bolted on after",
+            "Decompression adds a matmul per attention call — a compute-for-memory trade"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "e149fd77-5fea-4cea-b47d-79a2a9bfcd0a",
+          "kind": "takeaways",
+          "title": "When this trade is worth making — and when it isn't",
+          "body": "MLA pays off hardest exactly where KV cache dominates: very long context, high concurrency serving. It pays off least where cache was never the bottleneck.",
+          "bullets": [
+            "Don't bolt MLA onto an already-trained MHA model — the up/down-projection matrices need to be learned jointly with the rest of the network during pretraining, so retrofitting it post-hoc throws away that benefit",
+            "The decoupled RoPE path adds real implementation and kernel complexity versus plain GQA — only worth it once cache savings matter",
+            "On short-context, low-concurrency workloads (a single long-running chat, a small on-device model) the extra decompression matmuls can cost more than the cache savings buy back",
+            "Needs a fused, optimized kernel to realize its speed advantage — a naive implementation can be slower than GQA despite the smaller cache"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        },
+        {
+          "id": "cedcc1a9-54fb-423e-82aa-76a343b15572",
+          "kind": "concept",
+          "title": "The core idea in one line",
+          "body": "MLA bets that a token's keys and values across all heads share most of their information — so store that shared signal once, in compressed form, and let cheap per-head matrices recover what each head actually needs at attention time.",
+          "bullets": [
+            "GQA shrinks the cache by making heads share identical values",
+            "MLA shrinks the cache by finding a smaller representation that still lets every head differ",
+            "The latent dimension is tunable, decoupling cache size from head count entirely"
+          ],
+          "symbol": "lightbulb.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2c72450e-e112-4f15-b09f-81c79aaf66c3",
+            "prompt": "What does Multi-Head Latent Attention (MLA) actually store in the KV cache?",
+            "options": [
+              "A full key and value vector for every attention head",
+              "One shared key/value pair reused by all heads",
+              "A single compressed low-rank latent vector (plus a small decoupled RoPE slice), later expanded per head",
+              "Nothing — it recomputes keys and values from scratch at every step"
+            ],
+            "correctIndex": 2,
+            "explanation": "MLA caches a compressed latent representation of K/V, not the full per-head vectors (MHA) or a single shared pair (MQA). Per-head keys and values are reconstructed from that latent using learned up-projection matrices when attention is computed."
+          },
+          {
+            "id": "b9034e9c-f22b-43e9-832a-6cbe23dc0b17",
+            "prompt": "Why does MLA split out a separate, uncompressed path for rotary position embeddings (RoPE)?",
+            "options": [
+              "RoPE is only needed during training, not inference",
+              "RoPE's rotation makes the key space harder to compress losslessly through a shared low-rank projection, so it's kept outside the compressed latent",
+              "RoPE requires more memory than the rest of the key vector combined",
+              "It's a historical artifact with no technical reason"
+            ],
+            "correctIndex": 1,
+            "explanation": "Applying RoPE's position-dependent rotation before compressing keys into a shared latent interferes with the low-rank structure MLA relies on, so MLA decouples a small RoPE-carrying slice of the key vector and caches it separately, uncompressed."
+          },
+          {
+            "id": "94ef9931-59a8-4bd9-ac38-6782e4a92cb9",
+            "prompt": "In which scenario does MLA's cache savings matter least?",
+            "options": [
+              "Serving many concurrent users with 100K+ token contexts",
+              "A single short chat session on a small model where memory was never the bottleneck",
+              "A high-throughput inference cluster running at max batch size",
+              "A long-document summarization service"
+            ],
+            "correctIndex": 1,
+            "explanation": "MLA trades extra decompression compute for a smaller cache. When context is short and concurrency is low, the cache was never the constraint, so that compute trade can be a net loss rather than a win."
+          }
+        ]
+      },
+      "references": []
+    },
+    {
       "id": "10e68e23-85a4-42b6-9057-6cc209de8ca0",
       "title": "WeVisOne-VL: One Model for Boxes, Masks, and Mattes",
       "subtitle": "Tencent swaps SAM for a 9.6M-parameter decoder bolted onto a single <OBJ> token.",
@@ -11004,202 +11189,6 @@
           "id": "7391abde-c2b2-4d49-8af6-1041be6b6bec",
           "title": "Tongyi-MAI/OpenGCUA on GitHub",
           "url": "https://github.com/Tongyi-MAI/OpenGCUA"
-        }
-      ],
-      "publishedDate": "2026-10-18T12:49:33Z"
-    },
-    {
-      "id": "ea125451-80b3-4c33-9b8c-8f091846007a",
-      "title": "Scion: Why Anthropic Replaced Git in Its Own Monorepo",
-      "subtitle": "Always-online clients, a server that owns history, and ~200x less infrastructure",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "release",
-      "tags": [
-        "version control",
-        "distributed systems",
-        "infrastructure",
-        "scale",
-        "monorepo"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.branch",
-      "summary": "Anthropic migrated its entire monorepo off git to an in-house system called Scion, built around always-online clients and a server that owns history, blame, and merges. The result: about 200x less infrastructure than the old git mirror fleet and checkouts that take seconds instead of minutes.",
-      "slides": [
-        {
-          "id": "b6a525fa-a214-43ea-963c-61e48aefa2b4",
-          "kind": "cover",
-          "title": "Why Anthropic Stopped Using Git",
-          "body": "Claude-written code grew Anthropic's monorepo faster than git's distributed, offline-first design could handle — so they built a replacement: Scion.",
-          "bullets": [],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "60d4f068-415e-492e-9431-6edf94b0a5aa",
-          "kind": "problem",
-          "title": "Git Wasn't Built for an Always-Online Fleet of Agents",
-          "body": "Daily merged changes rose from about 2,500 in May 2026 to over 30,000 by September — roughly 12x in four months.",
-          "bullets": [
-            "Main branch history is nearly 100GB; a compressed working copy alone is over 25GB",
-            "About 25 million checkouts per day for CI, before counting developer machines, agent sandboxes, and research jobs",
-            "A naive git fetch model at that volume implies over 600 petabytes of traffic a day",
-            "Several hundred internal git mirrors were running at peak just to keep up, and they kept drifting from the tip of main"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "25d0147f-1ca5-41f7-8673-d193620d2cdf",
-          "kind": "solution",
-          "title": "Scion: Assume the Client Is Always Online",
-          "body": "Instead of git's offline-first model where every clone holds the full history, Scion flips the assumption.",
-          "bullets": [
-            "Clients fetch data on demand from a reachable server rather than syncing a full copy",
-            "The server owns history, blame, commits, merges, and rebases; the client just keeps a bounded local cache",
-            "'Source control as an API': CI jobs and bisect/revert tools can query history or run operations with no local repository at all",
-            "Commits happen server-side with no push step, so cost scales with the size of the change, not the size of the repo"
-          ],
-          "symbol": "server.rack",
-          "table": null
-        },
-        {
-          "id": "577c164c-4d3f-4dc7-a12f-c403c4a22abe",
-          "kind": "architecture",
-          "title": "Three Tiers, One Protocol",
-          "body": "Scion's data model is a changeset in a write-ahead log, not a git-style tree snapshot.",
-          "bullets": [
-            "A changeset lists only the files changed relative to its first parent, with content-addressed pointers to compressed blobs",
-            "scion-daemon runs per node for local jobs; scion-cache runs per region and streams objects from memory; scion-server is authoritative, backed by Spanner and cloud storage",
-            "Ref updates (like moving 'main') are a compare-and-swap on a single Spanner row, decoupled from changeset creation",
-            "Design borrows from Google's Piper and Meta's Sapling/Mononoke, whose Bonsai data model directly influenced Scion's changesets"
-          ],
-          "symbol": "square.stack.3d.up",
-          "table": null
-        },
-        {
-          "id": "cbf6bc9c-0806-49dd-a634-c61c4f05510c",
-          "kind": "comparison",
-          "title": "Git Mirror Fleet vs. Scion",
-          "body": "",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Metric",
-              "Old git mirror fleet",
-              "Scion"
-            ],
-            "rows": [
-              [
-                "Checkout time",
-                "Minutes",
-                "Seconds"
-              ],
-              [
-                "Infrastructure (CPU/mem)",
-                "Baseline",
-                "~200x less"
-              ],
-              [
-                "Cache hit rate per tier",
-                "n/a",
-                ">99%"
-              ],
-              [
-                "CI capacity",
-                "Baseline",
-                "+25%"
-              ]
-            ]
-          },
-          "symbol": "chart.bar.xaxis"
-        },
-        {
-          "id": "bb00d619-5036-4f45-baa1-31e41c62a8ae",
-          "kind": "example",
-          "title": "Worked Example: A Bisect Job With No Checkout",
-          "body": "An automated bisect pipeline needs to find which of 10,000 commits introduced a regression.",
-          "bullets": [
-            "On git, that means cloning or fetching enough history locally to walk the commit graph, then checking out candidate commits one by one",
-            "On Scion, the bisect tool calls the history API directly — reading ancestry and blame as RPCs — and only materializes a sparse working copy for the final candidate it needs to actually run",
-            "Anthropic also had Claude Mythos Preview rewrite the hand-built git-to-Scion ingestion pipeline itself, cutting its memory use 20x and roughly quadrupling its speed"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "93812470-f65a-4372-b7ec-b942ccd74031",
-          "kind": "problem",
-          "title": "Not a General Git Replacement",
-          "body": "Anthropic is explicit that Scion only pays off at a specific kind of scale.",
-          "bullets": [
-            "It only makes sense for enormous monorepos with heavy always-online CI and agent traffic — not a typical multi-repo team's workflow",
-            "Migrating took a dedicated team of seven people about five months, plus building a matching code review tool (Antique), code search, and a new IAM system alongside it",
-            "Global merge locks don't fit agent-scale commit rates, so Scion leans on post-merge and pre-deploy testing instead — occasional conflicts slip through and get fixed after the fact",
-            "Anthropic is still working with GitHub, GitLab, and the open-source community on whether any of these ideas (server-side RPCs, scalable server architectures) can go mainstream"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null
-        },
-        {
-          "id": "e3e829be-83c9-4fff-bef3-b164567795ad",
-          "kind": "takeaways",
-          "title": "Why This Matters",
-          "body": "Scion is a concrete data point on what breaks when AI agents, not just humans, become your main committers.",
-          "bullets": [
-            "Git's core assumption — every client eventually holds a full, offline copy of history — stops scaling once checkouts are driven by thousands of always-online CI jobs and agent sandboxes",
-            "Treating source control as a queryable API, not just a sync protocol, let Anthropic cut infrastructure roughly 200x versus its old mirror fleet",
-            "It's a preview of an infrastructure problem other large AI labs and engineering orgs will likely hit as agentic coding volume grows"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8216eb45-25b2-48b1-937d-e8da66b892c6",
-            "prompt": "What's the central design shift Scion makes versus git?",
-            "options": [
-              "Scion stores more data on each client than git does",
-              "Scion assumes clients are always online and fetch on demand, while the server owns history, blame, and merges",
-              "Scion removes the need for a server entirely",
-              "Scion only works for single-file repositories"
-            ],
-            "correctIndex": 1,
-            "explanation": "Git is distributed and offline-first: every clone eventually holds a full copy. Scion assumes clients are always connected, so they fetch what they need on demand while the server stays authoritative over history."
-          },
-          {
-            "id": "f7732695-b5e0-4e47-8c43-0778e1a5de8d",
-            "prompt": "What triggered Anthropic to build Scion in the first place?",
-            "options": [
-              "A security vulnerability discovered in git",
-              "A licensing dispute with GitHub",
-              "Daily merged changes grew roughly 12x in four months, overwhelming git-based infrastructure",
-              "A decision to open-source all internal tooling"
-            ],
-            "correctIndex": 2,
-            "explanation": "Daily merged changes rose from about 2,500 in May 2026 to over 30,000 by September, driven largely by AI-assisted coding — git's offline-first design and the surrounding mirror fleet couldn't keep up."
-          },
-          {
-            "id": "988b3e75-9711-48c7-890e-382c4fca6e68",
-            "prompt": "According to Anthropic, when does Scion's approach make sense?",
-            "options": [
-              "For any team using git, regardless of size",
-              "Only for small personal projects",
-              "Only for enormous monorepos with heavy always-online CI and agent traffic — not a general git replacement",
-              "Only for repositories with no CI pipeline"
-            ],
-            "correctIndex": 2,
-            "explanation": "Anthropic is explicit that Scion isn't a general-purpose git replacement — it only pays off at a scale where hundreds of git mirrors and tens of millions of daily checkouts were already straining, and it requires building matching review, search, and CI tooling."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "f0d9c285-b6b9-49dc-9d3b-aabdb31fbfd7",
-          "title": "Redesigning source control at Anthropic",
-          "url": "https://www.anthropic.com/engineering/redesigning-source-control"
         }
       ],
       "publishedDate": "2026-10-18T12:49:33Z"
