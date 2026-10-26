@@ -1,6 +1,222 @@
 {
   "posts": [
     {
+      "id": "aa39ad6a-59c2-43a4-8c94-5c5f12df6dde",
+      "title": "Mixture of Experts: Scaling Params Without Scaling Compute",
+      "subtitle": "Why DeepSeek-V3 has 671B parameters but only touches 37B of them per token",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture of experts",
+        "moe",
+        "sparse models",
+        "llm architecture",
+        "routing",
+        "scaling laws"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.grid.3x3.fill",
+      "heroImageURL": null,
+      "summary": "Mixture-of-Experts (MoE) replaces a transformer's single feed-forward block with many smaller 'expert' blocks and a learned router that activates only a handful per token. That decouples a model's total parameter capacity from its per-token compute cost — which is why DeepSeek-V3 can carry 671B parameters while only computing with 37B of them for any given token. The catch: you still have to store and shard every expert, and keeping the router from collapsing onto a favorite few takes real engineering.",
+      "publishedDate": "2026-10-26T12:55:14Z",
+      "slides": [
+        {
+          "id": "7bc02d37-cd29-4f66-ab91-30d182957e77",
+          "kind": "cover",
+          "title": "Mixture of Experts: Scaling Params Without Scaling Compute",
+          "body": "MoE swaps one big feed-forward block per transformer layer for many smaller 'expert' blocks and a router that activates only a few per token — so a model can carry far more total parameters while each token's forward pass stays cheap.",
+          "bullets": [
+            "Traces to Shazeer et al.'s 2017 'Outrageously Large Neural Networks', scaled into transformers by Google's GShard (2020) and Switch Transformer (2021)",
+            "Mixtral 8x7B: 46.7B total params, ~12.9B active per token (top-2 of 8 experts)",
+            "DeepSeek-V3: 671B total params, 37B active per token (top-8 of 256 experts)"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "da596341-5c84-4c5f-a543-bba930407fd3",
+          "kind": "problem",
+          "title": "Dense models pay full price for every token",
+          "body": "In a standard (dense) transformer, every parameter in every feed-forward layer runs for every token, whether or not that token needed it.",
+          "bullets": [
+            "A 70B dense model spends all 70B parameters' worth of compute on 'the' and on a multi-step proof alike — no specialization, no skipping",
+            "Scaling a dense model from 70B to 700B multiplies both training AND inference compute by roughly 10x, which quickly becomes impractical",
+            "Capacity (total parameters) and compute (FLOPs per token) don't have to be the same knob — that's the gap MoE exploits"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3d9b028e-a979-45bf-9cda-91958b0396f6",
+          "kind": "concept",
+          "title": "A learned router picks which experts fire",
+          "body": "Each MoE layer replaces one FFN with N parallel 'expert' FFNs of identical shape but independent weights, plus a small router network.",
+          "bullets": [
+            "The router is a linear layer + softmax over N experts, run per token, producing a score for each expert",
+            "Only the top-k highest-scoring experts actually run for that token — the rest are skipped entirely, not just down-weighted",
+            "The chosen experts' outputs are combined via a weighted sum (using the router's own scores) and added back into the residual stream, just like a normal FFN output"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "e4edd3e9-0861-4ebd-ba41-ee055447d207",
+          "kind": "architecture",
+          "title": "Load balancing is the part that actually breaks",
+          "body": "Nothing in the basic setup stops the router from collapsing onto a favorite handful of experts, wasting the rest as dead weight.",
+          "bullets": [
+            "Unchecked training reinforces early-popular experts ('rich get richer'), leaving many experts undertrained",
+            "Switch Transformer and successors add an auxiliary load-balancing loss that penalizes uneven routing, nudging tokens toward underused experts",
+            "DeepSeek-V3 instead uses an auxiliary-loss-free scheme: a per-expert bias that's adjusted each step based on how overloaded or underloaded that expert currently is, avoiding the accuracy tax a balancing loss imposes on the main objective",
+            "Imbalance also hurts hardware: experts are usually sharded across GPUs, so a lopsided router leaves some GPUs idle while others queue up all-to-all traffic"
+          ],
+          "symbol": "rectangle.3.group.fill",
+          "table": null
+        },
+        {
+          "id": "0afd75e3-abd2-4e02-ad30-399665809f80",
+          "kind": "example",
+          "title": "Worked example: DeepSeek-V3's 671B-but-37B trick",
+          "body": "DeepSeek-V3 splits 671B total parameters across 256 routed experts (plus a shared expert) per MoE layer, but activates only 37B per token.",
+          "bullets": [
+            "One forward pass for one token touches: the always-on shared expert + its top-8 routed experts out of 256 — about 3% of the routed-expert pool, per layer",
+            "That's why DeepSeek-V3's reported training compute (~2.788M H800 GPU-hours) looks closer to a ~37B dense model than a 671B one",
+            "But the weights for all 671B parameters still have to live somewhere: MoE saves compute per token, not VRAM — serving it well means spreading experts across many GPUs/nodes"
+          ],
+          "symbol": "number.circle.fill",
+          "table": null
+        },
+        {
+          "id": "b6d72efc-3f9b-4d55-80ce-ba1b164ec7a7",
+          "kind": "comparison",
+          "title": "Dense vs. MoE, concretely",
+          "body": "",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "Dense (e.g. a 70B model)",
+              "MoE (e.g. DeepSeek-V3)"
+            ],
+            "rows": [
+              [
+                "Total parameters",
+                "70B",
+                "671B"
+              ],
+              [
+                "Active params per token",
+                "70B (all of them)",
+                "37B"
+              ],
+              [
+                "Compute per token",
+                "Scales with total params",
+                "Scales with active params only"
+              ],
+              [
+                "Weight memory to serve",
+                "~140GB (fp16)",
+                "~1.3TB (fp16) — needs multi-node serving"
+              ],
+              [
+                "Training/serving complexity",
+                "Simple, well-tooled",
+                "Needs expert parallelism, load balancing, all-to-all comms"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "7627748c-6709-494c-a191-b7890d283e29",
+          "kind": "takeaways",
+          "title": "The tradeoffs that keep MoE from being free lunch",
+          "body": "The sparsity that saves compute doesn't save memory, and it adds real systems complexity.",
+          "bullets": [
+            "Low-batch, single-user serving loses much of the benefit: you still pay to load every expert's weights, and a small batch may not even fill one expert efficiently",
+            "Fine-tuning is trickier — a handful of experts can overfit on a narrow dataset while others go untouched, so updates need care about which layers change",
+            "Cross-GPU token dispatch (all-to-all) can dominate wall-clock time on slow interconnects — MoE's compute savings assume fast NVLink/InfiniBand networking",
+            "Below a modest parameter count, the routing and balancing machinery often isn't worth it — a simple dense model is easier to train and serve and can be just as good"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "table": null
+        },
+        {
+          "id": "f806a39a-7326-42f7-92b2-14a429d836fc",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "MoE isn't a different model family — it's a way to buy capacity without buying proportional compute.",
+          "bullets": [
+            "A learned router + top-k selection lets a token activate only a handful of experts, decoupling total parameter count from per-token compute cost",
+            "Load balancing (an auxiliary loss, or DeepSeek-V3's bias-based scheme) is what keeps every expert actually useful instead of a few absorbing all the training signal",
+            "The trade is memory and communication, not compute: every expert's weights must still be stored and shardable, since any token could route to any of them",
+            "This is why most open frontier models since 2024 (Mixtral, DeepSeek-V3, and others) lean on some MoE variant instead of scaling a dense model further"
+          ],
+          "symbol": "flag.checkered",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c881e429-db69-46cc-92c3-80e594872e1f",
+            "prompt": "What problem does Mixture-of-Experts primarily solve?",
+            "options": [
+              "It removes the need for a router entirely",
+              "It decouples a model's total parameter capacity from the compute cost of processing each token",
+              "It eliminates backpropagation during training",
+              "It converts a transformer into a convolutional network"
+            ],
+            "correctIndex": 1,
+            "explanation": "Dense models pay full compute for every parameter on every token. MoE adds many experts per layer but only runs the top-k for a given token, so total capacity (parameters) and per-token compute diverge."
+          },
+          {
+            "id": "912a891a-7cd7-45c6-87a7-cd4ff9e4a04e",
+            "prompt": "DeepSeek-V3 activates about 37B of its 671B total parameters per token. Why doesn't this save on GPU memory the way it saves on compute?",
+            "options": [
+              "Because memory and compute are measured in unrelated units that can't be compared",
+              "Because serving still requires holding every expert's weights somewhere, since different tokens in a batch can route to different experts",
+              "Because DeepSeek-V3 doesn't actually use sparse routing in practice",
+              "Because the router itself contains 634B of the model's parameters"
+            ],
+            "correctIndex": 1,
+            "explanation": "Sparsity is per-token, not per-model. Across a batch, different tokens route to different experts, so all experts' weights must stay loaded (often spread across many GPUs) even though any single token only touches a fraction of them."
+          },
+          {
+            "id": "78a6f945-495a-4d2f-9420-2bd508e24c86",
+            "prompt": "What problem does a load-balancing mechanism (an auxiliary loss, or DeepSeek-V3's bias term) solve during MoE training?",
+            "options": [
+              "It speeds up the router's softmax computation",
+              "It prevents the router from collapsing onto a small set of favorite experts while leaving others undertrained",
+              "It reduces the total number of parameters in the model",
+              "It removes the need for a shared expert"
+            ],
+            "correctIndex": 1,
+            "explanation": "Without correction, early-popular experts receive more gradient signal and become even more popular, starving the rest. Balancing mechanisms push routing toward underused experts so the whole expert pool stays useful."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "a13dab32-51e8-4476-94be-ef83530831d2",
+          "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity (arXiv 2101.03961)",
+          "url": "https://arxiv.org/abs/2101.03961"
+        },
+        {
+          "id": "859da77f-ac29-4db7-ba10-7e47ac49154d",
+          "title": "Mixtral of Experts (arXiv 2401.04088)",
+          "url": "https://arxiv.org/abs/2401.04088"
+        },
+        {
+          "id": "bcb9bd9c-9a8b-4f6b-a4c3-97fb5950514b",
+          "title": "DeepSeek-V3 Technical Report (arXiv 2412.19437)",
+          "url": "https://arxiv.org/abs/2412.19437"
+        }
+      ]
+    },
+    {
       "id": "c91567a8-7c37-45bd-a63c-32745a7c2d60",
       "title": "Hybrid Reasoning Agents: Latent Thought Meets Tool Use",
       "subtitle": "One model toggles between silent latent reasoning and transparent text, cutting cost 2.7-3.7x.",
@@ -11080,176 +11296,6 @@
       ],
       "id": "f94704f8-ed61-4ca3-b51c-d3f840403248",
       "publishedDate": "2026-10-19T12:50:51Z"
-    },
-    {
-      "id": "41a62ad4-47a5-4490-835d-5f172a9a1b8d",
-      "title": "The Gemini Agent: One AI Worker for Chat, Code, Ops",
-      "subtitle": "Google Cloud merges chatbot, coder, and automation tool into a single persistent agent.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "gemini",
-        "ai agents",
-        "google cloud",
-        "enterprise ai",
-        "automation"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "briefcase.fill",
-      "summary": "Google Cloud launched the Gemini agent, a single agent meant to replace separate chat, coding, and automation tools: it runs in the cloud so work continues after you close your laptop, spins up sub-agents for multi-step jobs, and can even act as a 'coworker' with its own identity and inbox. The launch leans on vendor-reported customer wins, not independent benchmarks, and most industry-specific features are still in preview.",
-      "slides": [
-        {
-          "id": "9e7e52c2-a6a8-4308-927c-d982cd3c9c3d",
-          "kind": "cover",
-          "title": "Google Cloud's bet: one agent, not ten tools",
-          "body": "Announced October 8, 2026, the Gemini agent is pitched as a 'single, universal agent for work' that answers questions, writes code, creates media, and runs multi-day tasks from one prompt box.",
-          "bullets": [],
-          "symbol": "briefcase.fill"
-        },
-        {
-          "id": "f017f463-8083-4d6f-89a7-1d31ee228a52",
-          "kind": "problem",
-          "title": "Enterprises were stitching together point tools",
-          "body": "A chatbot for Q&A, a separate coding assistant, a separate automation platform — none sharing memory or context, and all work stopping the moment you close the laptop.",
-          "bullets": [
-            "Context resets between the chat tool, the coding tool, and the automation tool",
-            "Long-running jobs die when the session or device disconnects",
-            "No single identity or audit trail when an agent touches sensitive systems"
-          ],
-          "symbol": "puzzlepiece.extension"
-        },
-        {
-          "id": "bee7506c-aad7-4bd9-b761-95c35470443e",
-          "kind": "solution",
-          "title": "A persistent agent that keeps working after you close the laptop",
-          "body": "Work executes in the cloud, not in a browser tab, so multi-hour or multi-day tasks survive a closed laptop, and memory carries across devices.",
-          "bullets": [
-            "Four memory types: session, semantic, procedural, episodic",
-            "Spins up temporary sub-agents to run steps in parallel or in sequence",
-            "Can act as a 'coworker agent' with a persistent role and its own @agents.company.com address",
-            "Routes each job to the best model in the Gemini family — or to Anthropic's Claude"
-          ],
-          "symbol": "bolt.fill"
-        },
-        {
-          "id": "967367df-f0f9-4572-8d8f-facc797c9c86",
-          "kind": "architecture",
-          "title": "Governance built for agents that touch real systems",
-          "body": "Because a coworker-style agent can reach Salesforce, Snowflake, or Jira, Google wrapped it in identity and cost controls rather than leaving access ungated.",
-          "bullets": [
-            "Each agent gets a cryptographically attested identity with least-privilege permissions",
-            "Every action logs to an audit trail attributed to that agent",
-            "Agents execute inside an Agent Sandbox; all traffic passes an Agent Gateway enforcing org policy",
-            "Per-project spend caps auto-pause an agent; work resumes from the console"
-          ],
-          "symbol": "lock.shield.fill"
-        },
-        {
-          "id": "07ef92cf-f38a-4ba8-b4e0-fefe29e56674",
-          "kind": "example",
-          "title": "Overnight contract review, not a 30-second query",
-          "body": "You hand the coworker agent 200 vendor contracts before leaving the office. It keeps working after you close your laptop, flags risky clauses, and drops a summary in Drive by morning — no re-prompting required.",
-          "bullets": [
-            "Bradesco: document review time cut from 1 hour to 5 minutes (customer-reported)",
-            "Commerzbank: document review cut from 20 hours to 1 hour (customer-reported)",
-            "PayPal: 10 million multi-model requests per week running through the platform"
-          ],
-          "symbol": "doc.text.magnifyingglass"
-        },
-        {
-          "id": "6f5b85f1-662c-42a6-bcdc-f7dbacbfa6c6",
-          "kind": "comparison",
-          "title": "Consolidation, not a new model family",
-          "table": {
-            "headers": [
-              "Old approach",
-              "Gemini agent"
-            ],
-            "rows": [
-              [
-                "Separate chatbot, coder, automation tool",
-                "One agent, one prompt box"
-              ],
-              [
-                "Session ends when tab closes",
-                "Cloud execution continues multi-day"
-              ],
-              [
-                "One model for everything",
-                "Routes per-task across Gemini models and Claude"
-              ],
-              [
-                "Ad hoc access to enterprise systems",
-                "Cryptographic identity + audit trail per agent"
-              ]
-            ]
-          },
-          "bullets": [],
-          "symbol": "tablecells"
-        },
-        {
-          "id": "8a991f86-c4a8-4fa3-9968-2cd668ade6e9",
-          "kind": "takeaways",
-          "title": "Read the vendor numbers, not the vendor story",
-          "body": "The capability set is genuinely broad, but the headline wins (Bradesco, Snap, Commerzbank) are customer-reported outcomes, not independently audited benchmarks — and most industry-specific packages (government, healthcare, retail) are still 'coming soon,' not shipped.",
-          "bullets": [
-            "Financial Services and Legal specializations: preview only",
-            "Government, Healthcare, Retail specializations: not yet available",
-            "No general-availability date was given for the agent itself",
-            "The real story is governance (identity, sandboxing, spend caps) catching up to agent autonomy"
-          ],
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f49d84ca-6b4d-496d-8870-e3a1c554a92c",
-            "prompt": "What lets a 'coworker agent' act differently from a normal chatbot session in this launch?",
-            "options": [
-              "It uses a larger context window",
-              "It has a persistent role, its own identity, and an @agents.company.com address",
-              "It only runs on-device for privacy",
-              "It can only be used inside Gmail"
-            ],
-            "correctIndex": 1,
-            "explanation": "The coworker mode gives the agent a standing identity (with its own email and least-privilege permissions) rather than existing only inside one chat session — that's what lets it be added to a Chat space or tagged in a doc comment like a teammate."
-          },
-          {
-            "id": "f23b2416-b7c0-4540-a0a0-88567000bd04",
-            "prompt": "Which models does the Gemini agent route work to?",
-            "options": [
-              "Only Gemini models",
-              "Only open-source models",
-              "The Gemini family and, for some tasks, Anthropic's Claude",
-              "Whichever model the user manually selects every time"
-            ],
-            "correctIndex": 2,
-            "explanation": "Google says the agent picks the best model per job across its own Gemini family and Anthropic's Claude models, with more models planned — multi-model routing, not a single fixed model."
-          },
-          {
-            "id": "20dfdb1d-1e26-418d-84d4-962b9acb48bd",
-            "prompt": "How should you treat the Bradesco (1hr→5min) and Commerzbank (20hr→1hr) figures in the announcement?",
-            "options": [
-              "As independently audited benchmark results",
-              "As vendor-reported customer outcomes, worth noting but not verified by a third party",
-              "As guaranteed results for any company that adopts the agent",
-              "As fabricated marketing with no basis"
-            ],
-            "correctIndex": 1,
-            "explanation": "These are customer case-study numbers cited by Google, not results from an independent benchmark suite — a useful signal of real-world impact, but not something to treat as a controlled, reproducible measurement."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "b7f00cad-464b-4ff6-8513-56dedb6c5c72",
-          "title": "Welcome to Gemini at Work 2026: Introducing the Gemini agent",
-          "url": "https://cloud.google.com/blog/products/ai-machine-learning/welcome-to-gemini-at-work-2026"
-        }
-      ],
-      "publishedDate": "2026-10-19T06:49:37Z"
     }
   ]
 }
