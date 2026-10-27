@@ -1,6 +1,380 @@
 {
   "posts": [
     {
+      "id": "cc316fe2-1360-49a1-abb0-479dd94c85b8",
+      "title": "llm-d 1.0: Open-Source LLM Serving Built for Agents",
+      "subtitle": "Google, Red Hat, and IBM ship a CNCF stack that treats a GPU/TPU fleet like one brain, not N boxes.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "release",
+      "tags": [
+        "llm-d",
+        "inference optimization",
+        "kubernetes",
+        "vllm",
+        "distributed systems",
+        "agentic ai"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "network",
+      "summary": "llm-d 1.0, a CNCF Sandbox project co-founded by Google, Red Hat, and IBM, coordinates fleets of vLLM/SGLang replicas behind one endpoint using cache-aware routing, prefill/decode disaggregation, and tiered KV cache offload. Real deployments reported 2.4x-4x throughput gains and 35-85% TTFT cuts, but it's infrastructure for fleets under shared-prefix, bursty, or agentic load — not a single lightly-used replica.",
+      "publishedDate": "2026-10-27T18:49:37Z",
+      "slides": [
+        {
+          "id": "883b59c7-e06a-4122-9886-1de124bdbb07",
+          "kind": "cover",
+          "title": "One Endpoint, Thousands of Agents Hammering It",
+          "body": "On Oct 20, 2026, Google, Red Hat, and IBM shipped llm-d 1.0 at the PyTorch Conference — a CNCF Sandbox project that turns a fleet of vLLM/SGLang replicas into one coordinated serving pool, built for the traffic pattern agents create: bursty, prefix-heavy, and impossible to load-balance with plain round robin.",
+          "bullets": [
+            "500+ contributors from 25+ organizations",
+            "Built on top of Kubernetes + vLLM/SGLang, not a replacement for either",
+            "Runs on Google Cloud TPUs (Ironwood/TPU7x) and GPUs"
+          ],
+          "symbol": "network",
+          "table": null
+        },
+        {
+          "id": "d702a780-45e5-4173-bb27-08557ac76331",
+          "kind": "problem",
+          "title": "Round-Robin Load Balancing Breaks Under Agent Traffic",
+          "body": "Agents don't send one isolated request — they fan out across tools, share long system prompts, and arrive in spiky bursts. A generic load balancer scatters related requests across different replicas.",
+          "bullets": [
+            "Replicas recompute the same prompts from scratch",
+            "Accelerator memory fills up with duplicate KV cache state",
+            "One bursty agent loop can stall every interactive user sharing that replica"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "157216d9-2390-4f6f-ba88-93152b15e354",
+          "kind": "solution",
+          "title": "Cache-Aware Routing Sends Requests Where the Prefix Already Lives",
+          "body": "Instead of round robin, llm-d's router tracks which replica already holds a prompt's cached prefix in memory, weighing that against current load and predicted latency before picking a target.",
+          "bullets": [
+            "Router state tracks per-replica cached prefixes, not just raw load",
+            "Prefill, decode, and multimodal encode run as separate pools",
+            "DisaggregatedSet (built on LeaderWorkerSet) manages pools as one unit for prefill/decode-aware rolling updates"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "9cb88d1b-7474-47d3-a178-76021b87c4eb",
+          "kind": "architecture",
+          "title": "KV Cache Gets Tiered Instead of Dropped",
+          "body": "When accelerator memory fills up, llm-d offloads KV cache down a tier — host RAM, then SSD or Google Cloud Managed Lustre — using vLLM's OffloadingConnector, Mooncake, or SGLang's HiCache, instead of evicting and recomputing later.",
+          "bullets": [
+            "Flow control gives latency-sensitive traffic priority over bursty agent loops",
+            "llm-d-async-processor pulls lower-priority work from Pub/Sub or Redis queues into spare capacity",
+            "RL training can time-slice idle accelerator cycles — duty cycle rose from a ~40% baseline to over 70%"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null
+        },
+        {
+          "id": "ceb631c6-25da-4bad-a748-cc1c2478bd84",
+          "kind": "comparison",
+          "title": "The Published Numbers, At Three Different Scales",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Deployment",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Agentic coding on Ironwood TPU vs. plain K8s Service",
+                "Median TTFT cut over 85%, throughput up 2.4x"
+              ],
+              [
+                "GKE Inference Gateway (Gemini platform)",
+                "Prefix cache hit rate 35% to 70%; P95 TTFT down over 50% under bursty chat"
+              ],
+              [
+                "17,000-node multi-region GKE, mixture-of-experts model",
+                "Throughput scaled 2.9x across 3 clusters at 99.9% success, under 1% routing overhead"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "864bcc50-903a-44c5-90e3-28e6f2fc84b4",
+          "kind": "example",
+          "title": "ZenteiQ: 1.47B to 5.97B Tokens a Day, Same 1,000 TPUs",
+          "body": "ZenteiQ, running physical-AI inference on GKE with llm-d, reported over 4x higher aggregate throughput — daily generated token capacity went from 1.47 billion to 5.97 billion tokens per 1,000 TPU v6e accelerators. Snap separately reported prefix cache hit rates of 75-80%, and Mistral uses llm-d's priority bands and disaggregated serving to hold latency SLOs for its paid tiers.",
+          "bullets": [],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "b34d4797-ceb0-4dd3-9367-88b4465bb3cd",
+          "kind": "problem",
+          "title": "This Is Infrastructure for Fleets, Not Single Replicas",
+          "body": "llm-d adds real operational surface: Kubernetes objects, router state, offload tiers. That cost only pays off once you have enough replicas and enough shared-prefix traffic for cache-aware routing to matter.",
+          "bullets": [
+            "A single vLLM replica serving low, steady traffic gains little from this — skip it",
+            "Disaggregating prefill/decode needs enough load to keep both pools busy, or you're just adding network hops",
+            "Offload tiers (host RAM, then SSD/Lustre) only help if prompts are long or shared enough to be worth caching"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d3f1d173-dcfb-4563-8acb-dc23d7ea867f",
+          "kind": "takeaways",
+          "title": "Serve the Fleet Like One Brain, Not N Boxes",
+          "body": null,
+          "bullets": [
+            "llm-d 1.0 (CNCF Sandbox; Google, Red Hat, IBM) coordinates vLLM/SGLang replicas behind one endpoint",
+            "Cache-aware routing + prefill/decode disaggregation + tiered KV offload target agentic traffic specifically",
+            "Real deployments saw 2.4x-4x throughput gains and 35-85% TTFT cuts depending on workload and scale",
+            "Worth adopting once you run a fleet with shared-prefix, bursty, or agentic traffic — not for one lightly-loaded replica"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "d7d37a85-c90d-4fad-9ee1-46637fb814bd",
+            "prompt": "What specific traffic pattern is llm-d's cache-aware routing designed to exploit?",
+            "options": [
+              "Random, unrelated one-off prompts with no shared prefixes",
+              "Requests that share long cached prefixes, routed to the replica that already holds them",
+              "Only requests from a single tenant with identical prompts",
+              "Encrypted traffic that can't be inspected by the router"
+            ],
+            "correctIndex": 1,
+            "explanation": "Cache-aware routing tracks which replica already holds a prompt's cached prefix and routes new requests there instead of round-robin, avoiding redundant recomputation — exactly the pattern agentic workloads create by sharing long system prompts and tool context across calls."
+          },
+          {
+            "id": "b06498cb-f98c-4170-b4b4-ad14e8dc6028",
+            "prompt": "Why does llm-d separate prefill, decode, and multimodal encode into different pools instead of running them on the same replicas?",
+            "options": [
+              "To make the Kubernetes YAML simpler",
+              "Because prefill (compute-heavy) and decode (memory-bandwidth-heavy) have different resource profiles, so disaggregating lets each scale and schedule independently",
+              "Because vLLM cannot run prefill and decode on the same GPU at all",
+              "To avoid using DisaggregatedSet objects"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prefill is compute-bound (processing the whole prompt at once) while decode is memory-bandwidth-bound (generating one token at a time). Running them as separate pools, managed together via DisaggregatedSet, lets each be scaled and updated according to its own bottleneck."
+          },
+          {
+            "id": "0f27450f-bc5d-41ee-9f07-ca8dd38a8a10",
+            "prompt": "Based on llm-d's own numbers, when does adopting it make the least sense?",
+            "options": [
+              "A 17,000-node multi-region GKE deployment serving a mixture-of-experts model",
+              "A single, lightly-loaded vLLM replica with steady, non-shared-prefix traffic",
+              "An agentic coding workload with heavy prefix reuse across many replicas",
+              "A fleet mixing TPUs and GPUs with Pub/Sub-queued background requests"
+            ],
+            "correctIndex": 1,
+            "explanation": "llm-d's gains come from coordinating many replicas around shared cached prefixes and bursty load. A single replica with steady, low traffic has no cross-replica cache to route around and no burstiness to smooth out, so the added operational complexity doesn't pay off."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "98dd5775-4cd1-4986-9611-ef5e8b15ca03",
+          "title": "llm-d 1.0: An open-source stack for distributed inference",
+          "url": "https://cloud.google.com/blog/topics/ai-infrastructure/llm-d-1-0-an-open-source-stack-for-distributed-inference"
+        }
+      ]
+    },
+    {
+      "id": "b17bdbb3-79db-4953-84a6-153749b86a67",
+      "title": "PagedAttention: Treating GPU Memory Like Virtual Memory",
+      "subtitle": "The vLLM trick that cut LLM serving memory waste from 60-80% to under 4%.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "paged attention",
+        "vllm",
+        "kv cache",
+        "memory management",
+        "inference optimization",
+        "llm serving"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "tablecells.fill",
+      "summary": "PagedAttention splits each sequence's KV cache into fixed-size, non-contiguous blocks addressed through a per-sequence block table — the same trick operating systems use for virtual memory paging. It cut wasted KV cache memory from 60-80% to under 4% in the original vLLM benchmarks and made memory sharing across parallel samples nearly free via copy-on-write.",
+      "publishedDate": "2026-10-27T18:49:36Z",
+      "slides": [
+        {
+          "id": "9a49c5d7-2c1a-4017-8828-04e271dc8aa9",
+          "kind": "cover",
+          "title": "Your KV Cache Is Wasting Most of Its Memory",
+          "body": "Before PagedAttention, LLM servers reserved one contiguous memory slab per request sized for its maximum possible length — even if the request finished after 20 tokens. The original vLLM paper measured 60-80% of that reserved memory going unused.",
+          "bullets": [
+            "Introduced in 'Efficient Memory Management for LLM Serving with PagedAttention' (Kwon et al., UC Berkeley, SOSP 2023)",
+            "KV cache holds every generated token's attention keys/values, and it grows with every new token",
+            "Reserving memory up front for the worst case is the root problem"
+          ],
+          "symbol": "tablecells.fill",
+          "table": null
+        },
+        {
+          "id": "3e6727d5-4aea-4d54-b56c-9d534001bd25",
+          "kind": "problem",
+          "title": "Contiguous Allocation Means Fragmentation, Three Ways",
+          "body": "Treating the KV cache like a flat C array forces three kinds of waste.",
+          "bullets": [
+            "Internal fragmentation: reserving for max_tokens when the request only needs a fraction of it",
+            "External fragmentation: variable-size slabs leave memory holes nothing else fits into",
+            "No sharing: two requests with an identical prefix (e.g. the same system prompt) each get their own full copy"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "34ad8053-bfa2-408d-b3bd-284bf38553e2",
+          "kind": "solution",
+          "title": "Split the KV Cache Into Fixed-Size Blocks, Like OS Paging",
+          "body": "PagedAttention stores each sequence's KV cache as a set of fixed-size blocks (16 tokens each, in the original implementation) that don't have to be contiguous in memory — the same trick operating systems use for virtual memory paging.",
+          "bullets": [
+            "Each sequence keeps a block table mapping logical token positions to physical block addresses",
+            "Blocks are allocated on demand as generation proceeds, not reserved for the max length upfront",
+            "The attention kernel reads KV values through this block table instead of assuming a flat array"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "e8e3642b-868e-43a6-8414-5c0cc9d8bd18",
+          "kind": "architecture",
+          "title": "Copy-on-Write Makes Prompt Sharing Nearly Free",
+          "body": "When multiple sequences share a prefix (a system prompt, or parallel samples from one request), their block tables point at the same physical blocks with a reference count. Only when a sequence generates a token that diverges does it get its own private copy of that one block.",
+          "bullets": [
+            "Parallel sampling (e.g. 5 candidate completions) shares the prompt's blocks across all 5 instead of copying them 5 times",
+            "Beam search shares blocks across live beams, forking only on divergence",
+            "This mirrors copy-on-write virtual memory pages in operating systems"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "1bc6e312-a2e2-45bc-b9de-9f48eb87d521",
+          "kind": "comparison",
+          "title": "What the Original Benchmarks Showed",
+          "body": null,
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Metric",
+              "Before (contiguous allocation)",
+              "With PagedAttention"
+            ],
+            "rows": [
+              [
+                "Memory wasted on reserved-but-unused KV cache",
+                "60-80%",
+                "Under 4%"
+              ],
+              [
+                "Throughput vs. HuggingFace Transformers (as reported in the paper)",
+                "1x baseline",
+                "Up to 24x higher"
+              ],
+              [
+                "Throughput vs. an optimized FasterTransformer-class baseline",
+                "1x baseline",
+                "2-4x higher"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "dc0a6846-8ab1-4e4a-a5cc-f74a189d87b5",
+          "kind": "example",
+          "title": "Worked Example: One System Prompt, Five Completions",
+          "body": "Say a request asks for 5 sampled completions of a 500-token system+user prompt. Without PagedAttention, the server reserves KV cache for that full prompt 5 separate times — 2,500 tokens' worth of memory before a single new token is generated. With PagedAttention, all 5 sequences' block tables point at the same roughly 31 physical blocks (at 16 tokens/block) for that shared prefix; only each sequence's own generated continuation gets private blocks.",
+          "bullets": [],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "fd58c70a-bb56-44b8-9799-e4eefe77e2d4",
+          "kind": "problem",
+          "title": "The Cost: Kernel Complexity and a Block Size to Tune",
+          "body": "Paging isn't free. The attention kernel must gather KV values through indirection (the block table) instead of a flat memory read, adding overhead per block fetch.",
+          "bullets": [
+            "Too small a block size brings back fragmentation in nearly-empty trailing blocks, just smaller",
+            "Too large a block size reduces sharing granularity between sequences that diverge early",
+            "Block-table indirection adds bookkeeping cost that only pays off once memory pressure, not raw latency, is the bottleneck"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "445c6ca4-636f-4fd3-85e1-53a02be2f7b6",
+          "kind": "takeaways",
+          "title": "Why Nearly Every Modern LLM Server Uses This Now",
+          "body": null,
+          "bullets": [
+            "PagedAttention manages KV cache as fixed-size, non-contiguous blocks — like OS virtual memory paging",
+            "It cut wasted KV cache memory from 60-80% down to under 4% in the original vLLM benchmarks",
+            "Copy-on-write block sharing makes parallel sampling and beam search nearly free in memory",
+            "It's the reason systems like vLLM, SGLang, and llm-d can pack far more concurrent sequences onto the same GPU/TPU fleet"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "fa019239-f821-4a92-b804-cf1d07f4a374",
+            "prompt": "What specific memory problem does PagedAttention solve for LLM serving?",
+            "options": [
+              "Slow disk I/O when loading model weights",
+              "Wasted memory from reserving KV cache for a request's maximum possible length upfront",
+              "The LLM producing incorrect outputs",
+              "Network latency between the client and server"
+            ],
+            "correctIndex": 1,
+            "explanation": "Before PagedAttention, servers reserved one contiguous KV cache slab sized for the worst-case sequence length, wasting 60-80% of it. PagedAttention allocates fixed-size blocks on demand instead."
+          },
+          {
+            "id": "d3d51b6a-d5e7-4908-97d6-1a743f2767d4",
+            "prompt": "How does PagedAttention let 5 parallel sampled completions of the same prompt share memory?",
+            "options": [
+              "It doesn't — each completion still gets its own full copy",
+              "Their block tables point at the same physical blocks for the shared prefix, copying a block only when a sequence diverges",
+              "It compresses the KV cache for each sequence separately",
+              "It deletes the prompt's KV cache once the first completion starts"
+            ],
+            "correctIndex": 1,
+            "explanation": "This is copy-on-write: identical block tables point at shared physical blocks until one sequence generates a token that diverges, at which point only that block gets copied — the same mechanism operating systems use for virtual memory pages."
+          },
+          {
+            "id": "7238afc8-4575-43fd-9854-291b9202f96c",
+            "prompt": "What's a real tradeoff of picking a very small KV cache block size in PagedAttention?",
+            "options": [
+              "It always maximizes memory efficiency with no downside",
+              "It increases sharing granularity, but adds more per-block bookkeeping overhead in the attention kernel",
+              "It makes copy-on-write impossible",
+              "It forces every sequence to use the same maximum length"
+            ],
+            "correctIndex": 1,
+            "explanation": "Smaller blocks reduce the waste left in a trailing partially-full block and increase sharing granularity, but each block adds a lookup through the block table, so the attention kernel pays more indirection overhead — block size is a deliberate tuning point, not a free win."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "1bd0c980-ac7f-4393-9674-456605047ff7",
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (vLLM)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        }
+      ]
+    },
+    {
       "title": "MCP: Solving AI's M×N Integration Problem",
       "subtitle": "One open protocol so any AI app can talk to any tool or data source",
       "category": "MCP",
@@ -11006,367 +11380,6 @@
       "references": [],
       "publishedDate": "2026-10-21T00:48:16Z",
       "heroImageURL": null
-    },
-    {
-      "title": "211 Designs, 17 Binders: Claude Builds Antivenom Candidates",
-      "subtitle": "An autonomous protein-design campaign against five scorpion neurotoxins, graded by wet-lab binding data.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "protein design",
-        "ai for science",
-        "autonomous agents",
-        "biology",
-        "anthropic"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "atom",
-      "summary": "Anthropic let Claude run an end-to-end protein-design campaign against five scorpion neurotoxins — picking targets, generating 318,484 candidate binders, choosing which 211 to synthesize, and drafting the report. Wet-lab testing at two independent labs confirmed 17 real binders, including two with nanomolar affinity, validated with the same hit-rate as human-led campaigns.",
-      "slides": [
-        {
-          "id": "1d065541-be5a-4797-9f90-ff823b5233c2",
-          "kind": "cover",
-          "title": "Can an AI Agent Run Its Own Wet-Lab Campaign?",
-          "body": "Scorpion stings hit over 1.2 million people a year and kill more than 3,250, mostly children with poor medical access. Anthropic tested whether Claude could help design a cheaper path to antivenom, almost entirely on its own.",
-          "bullets": [
-            "Target: five neurotoxins from five regions — Cn2 (Mexico), Ts1 (Brazil), AaH I & AaH II (North Africa), LqhIII (Middle East)",
-            "Claude worked ~24 hours autonomously from one prompt, then got four follow-up prompts",
-            "Partners: Citrini Research (collaboration), Adaptyv Bio and Twist Bioscience (independent wet-lab testing)"
-          ],
-          "symbol": "atom",
-          "table": null
-        },
-        {
-          "id": "863c3b2b-4d4d-4cee-9c38-709019babbaf",
-          "kind": "problem",
-          "title": "Why This Is a Hard Design Problem",
-          "body": "No de novo binder against any of these five scorpion neurotoxins had been published before — Claude had no template to copy.",
-          "bullets": [
-            "Each toxin binds sodium channels differently, so a binder has to mimic a precise 3D epitope, not just 'something toxin-shaped'",
-            "The campaign also tried multitoxin binders — single proteins meant to neutralize 2-3 toxins from the same family at once",
-            "Ground truth only exists after real binding assays — there's no simulator that reliably predicts a tight binder before synthesis"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "374ade00-e4f6-4e64-a023-8399053c5db6",
-          "kind": "solution",
-          "title": "The Pipeline Claude Ran End-to-End",
-          "body": "Claude didn't just generate sequences — it ran the whole campaign loop, from structure selection to lab emails.",
-          "bullets": [
-            "Picked toxin structures from the PDB and AlphaFold DB, then chose 5 hotspot residues per toxin to target",
-            "Used 12 different design tools to generate 318,484 candidate binders, filtering out anything resembling known proteins",
-            "Co-folded and screened 553,052 design-toxin pairs, then selected 180 designs in about 64 hours (~10,000 GPU-hours total)",
-            "Drafted the emails sending final sequences to Twist Bioscience, then analyzed the resulting SPR data and wrote the report"
-          ],
-          "symbol": "gearshape.2.fill",
-          "table": null
-        },
-        {
-          "id": "e6feda03-9c1f-4a3c-b7f5-23c690d4d4cf",
-          "kind": "comparison",
-          "title": "Single-Toxin vs. Multitoxin Hit Rates",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Design strategy",
-              "Designs tested",
-              "Confirmed binders",
-              "Hit rate"
-            ],
-            "rows": [
-              [
-                "Single toxin (12/toxin x 5)",
-                "60",
-                "11",
-                "18%"
-              ],
-              [
-                "β-family (Ts1 + Cn2)",
-                "30",
-                "0 (met criteria)",
-                "0%"
-              ],
-              [
-                "α-family (AaH I/II + LqhIII)",
-                "30",
-                "0 (met criteria)",
-                "0%"
-              ],
-              [
-                "All five toxins at once",
-                "91",
-                "0 (met criteria)",
-                "0%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1dfd1eb0-3882-42cc-9cb0-52fd12d2fb4a",
-          "kind": "example",
-          "title": "Worked Example: Cn2-B1, the Top Candidate",
-          "body": "Cn2-B1 and Cn2-B2 were two of the seven confirmed Cn2 binders, and the strongest of the whole campaign.",
-          "bullets": [
-            "Both bound Cn2 with single-digit nanomolar affinity (KD), confirmed independently at Adaptyv Bio and Twist Bioscience",
-            "Hit bar required binding in every replicate at both labs, KD ≤ 1 µM, and no cross-reaction with an unrelated control protein (CLEC12A)",
-            "Competition assays suggest Cn2-B1 binds the same or an overlapping epitope as antibody LR, which is already reported to neutralize Cn2 in mice",
-            "Existing nanobodies against Cn2 bind sub-nanomolar — so Cn2-B1 is real and promising, but not yet at the best-in-class affinity bar"
-          ],
-          "symbol": "testtube.2",
-          "table": null
-        },
-        {
-          "id": "2f0503eb-b24a-4e7f-9b39-1df5d2da878d",
-          "kind": "takeaways",
-          "title": "What Worked, What Didn't, What's Next",
-          "body": "This is a real result with real limits — Anthropic is explicit that this is not an antivenom.",
-          "bullets": [
-            "17 of 211 designs (8%) were confirmed binders; the single-toxin hit rate (18%) matches typical human-led design campaigns",
-            "Every multitoxin design failed to hit the bar for more than one toxin — ambitious generalization is still the harder problem",
-            "Only recombinant toxins were tested — no venom-purified toxin, no cell/animal neutralization data yet",
-            "Next steps for Cn2-B1: confirm against venom-derived toxin, run patch-clamp functional assays, then test protection in mice"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8caa22af-f709-4fdd-8b3c-e00f87a51caf",
-            "prompt": "What was the overall hit rate for single-toxin designs in this campaign?",
-            "options": [
-              "18% (11 of 60)",
-              "100%",
-              "50%",
-              "0%"
-            ],
-            "correctIndex": 0,
-            "explanation": "11 of the 60 single-toxin designs (12 per toxin across five toxins) met the binding criteria — an 18% hit rate, which Anthropic notes is in line with typical human-led protein design campaigns."
-          },
-          {
-            "id": "ad60b7fd-4520-4723-b493-72ef21398012",
-            "prompt": "How did multitoxin binder designs perform compared to single-toxin designs?",
-            "options": [
-              "They performed better — higher hit rate across all toxins",
-              "None of the multitoxin designs met the criteria for binding more than one toxin",
-              "They were not attempted in this campaign",
-              "They worked equally well for all five toxins"
-            ],
-            "correctIndex": 1,
-            "explanation": "None of the β-family, α-family, or all-five-toxin designs met the hit criteria for more than one toxin — generalizing a single binder across multiple toxin targets proved much harder than single-toxin design."
-          },
-          {
-            "id": "a0236313-39d6-44fc-81f5-d10d2408ca25",
-            "prompt": "What specifically did Claude do autonomously in this campaign, beyond generating sequences?",
-            "options": [
-              "Nothing — researchers chose targets and thresholds manually",
-              "It only ran the final data analysis",
-              "It chose target structures and hotspots, set quality thresholds, selected which designs to synthesize, and drafted lab emails and the report",
-              "It performed the physical wet-lab binding assays itself"
-            ],
-            "correctIndex": 2,
-            "explanation": "Claude operated across the whole pipeline — selecting toxin structures and hotspot residues, setting its own filtering thresholds, choosing most of the 180 designs (including the top binder), drafting outreach emails to Twist Bioscience, and writing up the results. The physical assays were run by Adaptyv Bio and Twist Bioscience."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "718e0d7b-d531-4685-a129-46ab666503f8",
-          "title": "How Claude designed protein binders against scorpion neurotoxins",
-          "url": "https://www.anthropic.com/research/claude-scorpion-toxin-binder-design"
-        }
-      ],
-      "id": "7c798ebb-1de2-4c8d-99c5-e1f77fbb641e",
-      "publishedDate": "2026-10-20T18:48:38Z"
-    },
-    {
-      "title": "Magnetar: A zkVM 10-39x Faster, With No Trusted Setup",
-      "subtitle": "Microsoft Research's new proof system lets any Rust, Go, or C program prove it ran correctly — verified in milliseconds.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "release",
-      "tags": [
-        "zero-knowledge proofs",
-        "zkvm",
-        "cryptography",
-        "verifiable computing",
-        "microsoft research"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "checkmark.shield.fill",
-      "summary": "Magnetar is Microsoft Research's new zero-knowledge virtual machine: it proves that an ordinary Rust, Go, or C program ran correctly, without a trusted setup and resting only on standard hash functions. It's 10-39x faster than the previous fastest comparable systems and verifies a proof in about 12 milliseconds.",
-      "slides": [
-        {
-          "id": "70902b3b-d23a-4dbf-aab0-b62820e70134",
-          "kind": "cover",
-          "title": "A Certificate That a Program Ran Correctly",
-          "body": "A zero-knowledge proof lets a program return its output plus a short certificate that it executed correctly — checkable in milliseconds, without rerunning it or trusting whoever ran it.",
-          "bullets": [
-            "Released by Microsoft Research (Srinath Setty), October 15, 2026",
-            "Builds on over a decade of MSR work making zero-knowledge proofs practical for general-purpose code",
-            "Paper: 'Magnetar: High-speed post-quantum RV64 zkVM from standard hashes'"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "table": null
-        },
-        {
-          "id": "fb850253-97cd-48a7-8952-6aa8fd93078e",
-          "kind": "problem",
-          "title": "The Three Walls Blocking zkVM Adoption",
-          "body": "Microsoft frames the barrier as three separate problems, and claims Magnetar addresses all three at once.",
-          "bullets": [
-            "Efficiency: proving execution has historically been orders of magnitude slower than just running the program",
-            "Generality/usability: many prior systems require hand-written circuits instead of proving ordinary code as written",
-            "Long-term security: many fast systems lean on elliptic curves or novel assumptions that may not survive quantum computers"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "9d1fd18d-b3cf-4b54-954e-c38799b06422",
-          "kind": "solution",
-          "title": "How Magnetar Proves a Program Ran Correctly",
-          "body": "Magnetar proves execution of the RISC-V RV64 instruction set — so any language with a mature RISC-V compiler is provable without rewriting it as a circuit.",
-          "bullets": [
-            "Built on the sum-check-based approach pioneered by Spartan (2019), which needs no trusted setup",
-            "Its processor model builds on Phalanx, exploiting the fact that the same instruction cycle repeats at every step",
-            "Long computations are proven 'in pieces and then combined,' drawing on folding techniques from the Nova family",
-            "Commitments are hash-based (in the Brakedown lineage) — verification is mostly hash evaluations and binary-field arithmetic"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "d586c8a5-a0cb-47c0-9a2d-ac4be4678dd7",
-          "kind": "comparison",
-          "title": "Magnetar vs. Prior zkVMs (as reported)",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Magnetar",
-              "Prior fastest zkVMs"
-            ],
-            "rows": [
-              [
-                "Proving throughput",
-                "7.2-8.7M RISC-V instr/sec (laptop)",
-                "Baseline"
-              ],
-              [
-                "Speedup (15 benchmarks)",
-                "10-39x faster on average",
-                "1x"
-              ],
-              [
-                "Token-transfer benchmark",
-                ">300x faster",
-                "1x"
-              ],
-              [
-                "Verification time",
-                "~12 ms per proof",
-                "Varies"
-              ],
-              [
-                "Trusted setup required",
-                "No",
-                "Often yes"
-              ],
-              [
-                "Core assumption",
-                "Standard hash function only (e.g. SHA-256/3)",
-                "Often elliptic curves"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "a1fbb3b4-1090-4495-810b-5c2ad479410f",
-          "kind": "example",
-          "title": "Worked Example: Proving a Token Transfer",
-          "body": "Microsoft's own benchmark: proving correct execution of a token transfer inside a small EVM (Ethereum Virtual Machine) interpreter.",
-          "bullets": [
-            "The program is ordinary interpreter code — no manual circuit design needed, since Magnetar proves the compiled RISC-V binary directly",
-            "On this benchmark, Magnetar ran more than 300x faster than the two (unnamed) baseline systems it was compared against",
-            "The resulting proof verifies in ~12 ms — fast enough to check on every transaction without re-executing it",
-            "Same pattern generalizes to proving a ledger stayed consistent, or that a business/data pipeline ran its stated logic"
-          ],
-          "symbol": "arrow.left.arrow.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "1fb6e397-c607-40cd-9f2d-ab7fd7f37d9a",
-          "kind": "takeaways",
-          "title": "What This Changes, and What's Still Open",
-          "body": "Magnetar makes 'prove it ran correctly' practical for ordinary code — but it isn't a drop-in privacy tool for every use case.",
-          "bullets": [
-            "Big win: no circuit rewrites — compile existing Rust/Go/C to RISC-V and prove the binary as-is",
-            "Hash-only security means the post-quantum story is simpler, but the construction trades on less battle-tested commitment schemes than pairing-based SNARKs",
-            "The post doesn't name the specific competing zkVMs in its benchmarks or publish proof sizes — treat the speedup numbers as Microsoft's own, pending independent replication",
-            "Not yet a public code release — current access is via contact for ZKP use cases, not an open-source repo"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "6568d55e-3834-45ac-8e7c-8c6bc4d5080d",
-            "prompt": "What cryptographic assumption does Magnetar rely on for its security?",
-            "options": [
-              "Elliptic-curve pairings",
-              "Lattice-based cryptography",
-              "Only a standard hash function (e.g. SHA-256 or SHA-3) — no trusted setup, no elliptic curves",
-              "A novel, unproven conjecture about error-correcting codes"
-            ],
-            "correctIndex": 2,
-            "explanation": "Magnetar's design deliberately avoids elliptic curves, lattices, and novel conjectures, relying only on standard hash functions — which is also why it's described as post-quantum."
-          },
-          {
-            "id": "3ede9a49-3177-4dae-a059-41fdaecba76b",
-            "prompt": "Why can Magnetar prove ordinary Rust, Go, or C programs without rewriting them as circuits?",
-            "options": [
-              "It doesn't — every program still needs a hand-written circuit",
-              "It proves execution of the compiled RISC-V (RV64) instruction stream, so any language with a RISC-V compiler is provable as-is",
-              "It only supports a custom DSL designed for Magnetar",
-              "It interprets Python bytecode directly"
-            ],
-            "correctIndex": 1,
-            "explanation": "Magnetar operates at the RISC-V instruction-set level, so normal toolchains compile Rust/Go/C down to RISC-V and Magnetar proves that binary executed correctly — no circuit design required."
-          },
-          {
-            "id": "a559aed0-822f-4dc3-a803-e5d686fbafef",
-            "prompt": "On the reported 15-benchmark comparison, how much faster is Magnetar than the prior fastest comparable zkVMs, on average?",
-            "options": [
-              "1.3x",
-              "2x",
-              "10-39x",
-              "1000x"
-            ],
-            "correctIndex": 2,
-            "explanation": "Microsoft reports a 10-39x average speedup across 15 benchmarks against the fastest existing comparable zkVMs on the same machine, with one token-transfer benchmark showing a 300x+ gap."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "64811084-52ef-4e99-85a2-77ac627c04bf",
-          "title": "Proof-based general-purpose computing with Magnetar",
-          "url": "https://microsoft.com/en-us/research/blog/proof-based-general-purpose-computing-with-magnetar"
-        }
-      ],
-      "id": "3dff3add-62dd-4cda-a7e2-d6bcdb555f75",
-      "publishedDate": "2026-10-20T18:48:37Z"
     }
   ]
 }
