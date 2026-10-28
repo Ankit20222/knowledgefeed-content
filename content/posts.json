@@ -1,6 +1,369 @@
 {
   "posts": [
     {
+      "id": "07a992e5-ef82-4edd-b543-bac90ef22875",
+      "title": "Softmax Has Had a Gradient Bug This Whole Time",
+      "subtitle": "Google DeepMind found two floating-point bugs baked into the math every transformer trains on",
+      "category": "AI Concepts",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "softmax",
+        "cross-entropy",
+        "numerical-stability",
+        "training",
+        "grokking",
+        "distillation"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "number",
+      "summary": "Barron, Gnanapragasam, and Tschannen (Google DeepMind) show that standard softmax and cross-entropy implementations silently round gradients to the wrong value in two common situations, and that a simple rewrite fixes both: it removes the 'Slingshot' loss spikes seen during grokking and stops student models drifting from their teacher during distillation.",
+      "slides": [
+        {
+          "id": "d04facce-10c5-4f9e-a31b-ebdfbc3cfa1d",
+          "bullets": [
+            "Paper: 'A Fix for Softmax and Cross-Entropy' — Barron, Gnanapragasam, Tschannen (Google DeepMind), Oct 22, 2026",
+            "Two separate numerical bugs, both invisible until a model gets confident"
+          ],
+          "body": "Softmax and cross-entropy are two of the most-used functions in deep learning. A new Google DeepMind paper argues the way everyone implements them has been subtly wrong in floating point since the beginning.",
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "cover",
+          "title": "The Bug Hiding Inside Every Transformer's Loss Function"
+        },
+        {
+          "id": "bdf0b371-6ace-4fb0-9e5c-dea091520d1d",
+          "bullets": [
+            "Reported rounding point: a logit margin of roughly ~5.5 in bf16, ~16.6 in fp32, ~36.7 in fp64",
+            "Breaks a core invariant: softmax gradients are supposed to always sum to zero",
+            "Happens precisely in the late-training / high-confidence regime most models spend most of their time in"
+          ],
+          "body": "Once the correct logit pulls far enough ahead of the rest, floating point rounds its predicted probability to exactly 1.0 — and the gradient on that logit rounds to exactly 0, even though the true gradient is just very small, not zero.",
+          "symbol": "arrow.down.to.line",
+          "table": null,
+          "kind": "problem",
+          "title": "Bug #1: 'Softmax Collapse' Zeroes a Gradient That Shouldn't Be Zero"
+        },
+        {
+          "id": "7eb14da9-e48a-42ba-bf1f-0bd372e42794",
+          "bullets": [
+            "Shows up specifically in knowledge distillation, where student and teacher logits converge",
+            "The leftover gradient quietly pushes the student to drift away from a teacher it has already matched"
+          ],
+          "body": "When a student model's logits match its teacher's almost exactly, the cross-entropy gradient should cancel to zero. In floating point it doesn't fully cancel — leaving a small, persistent, wrong gradient.",
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "kind": "problem",
+          "title": "Bug #2: 'Softmax Cancellation' Haunts Distillation"
+        },
+        {
+          "id": "4f4a2faa-bba1-48d6-abe8-de2b34f3aa91",
+          "bullets": [
+            "Drop-in rewritten log-softmax, softmax, and cross-entropy — same formulas, safer computation",
+            "No architecture change, no new hyperparameters, no retraining pipeline changes"
+          ],
+          "body": "The paper doesn't change what softmax or cross-entropy mean — it changes the order of floating-point operations so the cancellations that should happen mathematically actually happen numerically, before rounding destroys the signal.",
+          "symbol": "wrench.and.screwdriver.fill",
+          "table": null,
+          "kind": "solution",
+          "title": "The Fix: Rewrite the Arithmetic, Not the Math"
+        },
+        {
+          "id": "4e147e93-0f82-42eb-98c1-e7ce89a4dd7f",
+          "bullets": [
+            "With weight decay: fixed softmax reaches the 'grokked' generalizing solution faster and without spikes",
+            "Without weight decay: the buggy version's accuracy can collapse after memorization; the fix prevents that collapse",
+            "A third-party tinygrad reproduction of the grokking experiment reported the same pattern"
+          ],
+          "body": "On grokking tasks (where a model suddenly generalizes long after memorizing), the buggy softmax produces 'Slingshot' loss spikes — sudden violent jumps late in training. The fixed version removes them.",
+          "symbol": "waveform.path.ecg",
+          "table": null,
+          "kind": "example",
+          "title": "Worked Case: Grokking Gets Faster and Less Violent"
+        },
+        {
+          "id": "b3c6019a-1538-469d-b715-c583b14b815f",
+          "bullets": [],
+          "body": null,
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Behavior",
+              "Standard softmax/CE",
+              "Fixed softmax/CE"
+            ],
+            "rows": [
+              [
+                "Gradient when target logit dominates",
+                "Rounds to exactly 0",
+                "Stays correctly small but nonzero"
+              ],
+              [
+                "Slingshot loss spikes during grokking",
+                "Present",
+                "Removed"
+              ],
+              [
+                "Accuracy after memorization (no weight decay)",
+                "Can collapse",
+                "Stays stable"
+              ],
+              [
+                "Distillation with matched logits",
+                "Residual drift",
+                "Gradient properly cancels"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Before vs. After the Fix"
+        },
+        {
+          "id": "48195381-023d-4efa-93a2-6a7d46fbc95c",
+          "bullets": [
+            "Early in training, logits aren't extreme enough to trigger either bug — low impact there",
+            "Matters most for grokking-style tasks, long low-loss training runs, and distillation with a strong student",
+            "Not yet merged into PyTorch or JAX core — teams have to adopt the rewritten ops themselves"
+          ],
+          "body": "This isn't a bug that ruins every training run. It mostly bites in specific regimes, and the fix isn't yet in mainstream frameworks by default.",
+          "symbol": "exclamationmark.circle",
+          "table": null,
+          "kind": "problem",
+          "title": "Where It Matters Less — and the Catch"
+        },
+        {
+          "id": "8fed8145-de53-4fe8-a053-b64b5bbf73f4",
+          "bullets": [
+            "Two of deep learning's most-used functions had silent floating-point bugs that only show up when a model gets confident",
+            "The fix is a numerically careful rewrite of the same math — no retraining strategy changes needed",
+            "Biggest payoff: smoother grokking, no post-memorization accuracy collapse, and cleaner distillation"
+          ],
+          "body": null,
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "65e031d3-62a4-4833-8736-3d90c78b0ed6",
+            "explanation": "When one logit pulls far enough ahead, the true gradient on it shrinks exponentially but stays nonzero — standard floating-point softmax rounds it all the way to 0, breaking the rule that softmax gradients must sum to zero.",
+            "prompt": "What triggers 'Softmax Collapse'?",
+            "options": [
+              "The learning rate is set too high",
+              "The target logit dominates enough that floating point rounds its gradient to exactly zero",
+              "The batch size is too small for the vocabulary",
+              "The model runs out of GPU memory mid-step"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "871c90ff-fdc6-4bf3-977f-8dd4b7d106cf",
+            "explanation": "When a student's logits nearly match its teacher's, the gradient should cancel to exactly zero — but floating-point rounding leaves a small residual gradient that nudges the student to drift away from a teacher it already matches.",
+            "prompt": "'Softmax Cancellation' is specifically a problem for which training setup?",
+            "options": [
+              "Knowledge distillation, when student and teacher logits converge",
+              "Data augmentation pipelines",
+              "Batch normalization layers",
+              "Learning rate warmup"
+            ],
+            "correctIndex": 0
+          },
+          {
+            "id": "cc2b9774-8219-4201-8f05-2d066dadfbd3",
+            "explanation": "On grokking tasks, the buggy implementation produces sudden violent 'Slingshot' loss spikes late in training; the numerically corrected version removes them and reaches the generalizing solution faster with weight decay.",
+            "prompt": "What training phenomenon does the fixed softmax/cross-entropy reportedly eliminate?",
+            "options": [
+              "Catastrophic forgetting",
+              "Mode collapse in GANs",
+              "'Slingshot' loss spikes during grokking",
+              "Vanishing gradients in RNNs"
+            ],
+            "correctIndex": 2
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "bf050d14-0e96-4624-8f09-9f05eabebf40",
+          "title": "A Fix for Softmax and Cross-Entropy (arXiv:2610.31642)",
+          "url": "https://arxiv.org/abs/2610.31642"
+        }
+      ],
+      "publishedDate": "2026-10-28T06:46:50Z"
+    },
+    {
+      "id": "05a7670d-83d0-4d69-9d9f-70c941dc1001",
+      "title": "Tokenization: Why LLMs Don't Read Letters",
+      "subtitle": "Byte-Pair Encoding turns text into subword chunks — and explains why models miscount letters in 'strawberry'",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "tokenization",
+        "bpe",
+        "llms",
+        "vocabulary",
+        "subword",
+        "embeddings"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "textformat.abc",
+      "summary": "LLMs never see raw characters or whole words — they see tokens produced by Byte-Pair Encoding (or a close variant), a vocabulary built by repeatedly merging the most frequent adjacent pair of symbols. That choice explains a model's token costs, its multilingual pricing penalty, and why it can stumble on letter-counting and arithmetic.",
+      "slides": [
+        {
+          "id": "e2999843-3ed2-4b42-acc9-5a6e47b0dfbe",
+          "bullets": [],
+          "body": "An LLM's first layer is an embedding lookup — it needs integer IDs, not characters. How text gets chopped into those IDs shapes everything downstream: cost, context length, and even which tasks the model is bad at.",
+          "symbol": "textformat.abc",
+          "table": null,
+          "kind": "cover",
+          "title": "Before Any Math Happens, Text Has to Become Numbers"
+        },
+        {
+          "id": "bbd3ac99-29ed-45eb-9ab5-999024790d6c",
+          "bullets": [
+            "Character-level: tiny vocab (~100 symbols), but sequences get 4-5x longer — brutal for a model with quadratic-ish attention cost",
+            "Word-level: short sequences, but the vocab explodes (millions of words across languages) and any typo or new word becomes an unknown token the model has never seen"
+          ],
+          "body": "Both naive options fail for different reasons.",
+          "symbol": "arrow.left.arrow.right",
+          "table": null,
+          "kind": "problem",
+          "title": "Why Not Just Use Characters or Whole Words?"
+        },
+        {
+          "id": "b5cf1152-4583-4259-a789-3998bb0df58e",
+          "bullets": [
+            "Start: every character is its own token ('t','h','e',' ',...)",
+            "Step: find the most frequent adjacent pair (e.g. 't'+'h'), merge it into one new token 'th'",
+            "Repeat tens of thousands of times until hitting a target vocab size",
+            "Real-world vocab sizes: GPT-4's cl100k_base ≈100k tokens; Llama 3 ≈128k tokens"
+          ],
+          "body": "BPE starts from individual bytes/characters and builds a fixed-size vocabulary by iteratively merging whichever adjacent pair of symbols appears most often in the training corpus.",
+          "symbol": "arrow.triangle.merge",
+          "table": null,
+          "kind": "solution",
+          "title": "Byte-Pair Encoding: Merge the Most Common Pair, Repeat"
+        },
+        {
+          "id": "c7a56c9e-d5b3-47f9-a76b-e67e614c69c9",
+          "bullets": [
+            "'tokenization' → roughly 'token' + 'ization' (2 tokens) in GPT-style BPE",
+            "'strawberry' often splits into pieces like 'str' + 'aw' + 'berry' — no single token is 's-t-r-a-w-b-e-r-r-y', which is why models have historically miscounted its letters",
+            "The model never sees individual letters inside a merged token — it has to infer spelling indirectly from training data"
+          ],
+          "body": "A common English word usually survives as one or two tokens because its subpieces were merged early (they're frequent). A rare or foreign word gets shredded into many small tokens.",
+          "symbol": "character.cursor.ibeam",
+          "table": null,
+          "kind": "example",
+          "title": "Worked Example: One Word, Several Tokens"
+        },
+        {
+          "id": "7d17e7ca-d03b-40a4-8f26-0a30dffcb11d",
+          "bullets": [],
+          "body": null,
+          "symbol": null,
+          "table": {
+            "headers": [
+              "Scheme",
+              "How it builds the vocab",
+              "Used by"
+            ],
+            "rows": [
+              [
+                "BPE",
+                "Greedily merge the most frequent adjacent pair",
+                "GPT-2/3/4 family"
+              ],
+              [
+                "WordPiece",
+                "Merge the pair that most increases training-data likelihood",
+                "BERT"
+              ],
+              [
+                "Unigram (SentencePiece)",
+                "Start big, prune tokens that hurt likelihood least",
+                "T5, many multilingual models"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Three Subword Schemes, Same Goal"
+        },
+        {
+          "id": "799f998d-9a50-4909-8d60-0f54e7afd13b",
+          "bullets": [
+            "Multilingual tax: vocabularies skew toward the training corpus's dominant language, so other scripts fall back to many small tokens — the same sentence can cost 2-5x more tokens (and $) in a low-resource language",
+            "Numbers and code: digits get split inconsistently across tokens, which is part of why LLMs are shakier at multi-digit arithmetic than at fluent prose",
+            "Tokenizer/model mismatch: fine-tuning or swapping a tokenizer without retraining embeddings silently breaks the model — token IDs only mean something relative to the vocab they were trained with"
+          ],
+          "body": "The vocabulary is trained on a corpus, and that corpus has biases that show up later as real dollars and real failures.",
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Pitfalls: Where Tokenization Quietly Costs You"
+        },
+        {
+          "id": "b2f4e5ae-c5ae-4f6a-8377-a84fb7762e90",
+          "bullets": [
+            "LLMs operate on subword tokens from BPE (or WordPiece/Unigram), not characters or whole words — it's the sweet spot between vocab size and sequence length",
+            "Token boundaries rarely match letter boundaries, which is exactly why letter-counting and spelling tasks trip models up",
+            "Non-English text and numbers often cost more tokens per unit of content — worth checking if you're optimizing latency or API spend"
+          ],
+          "body": null,
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "9f9e4129-e7eb-426c-bf16-19ee124d7e39",
+            "explanation": "Word-level vocabularies explode in size and still can't cover every possible word, typo, or new term. Subword tokenization caps vocabulary size while letting any string be built from known pieces.",
+            "prompt": "What problem does subword tokenization (like BPE) solve compared to whole-word tokenization?",
+            "options": [
+              "It makes the model's context window infinite",
+              "It avoids a massive vocabulary and the 'unknown word' problem for rare or new words",
+              "It removes the need for an embedding layer",
+              "It guarantees perfect spelling accuracy"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "4b879af5-7285-4657-a9ee-deaf584063dd",
+            "explanation": "BPE starts from individual characters/bytes and greedily merges the most frequent adjacent pair at each step, building up a fixed-size vocabulary of increasingly long subword chunks.",
+            "prompt": "What is the core iterative step in Byte-Pair Encoding?",
+            "options": [
+              "Randomly split words into fixed-length chunks",
+              "Translate the text into a canonical language first",
+              "Repeatedly merge the most frequent adjacent pair of symbols into a new token",
+              "Remove all whitespace before counting characters"
+            ],
+            "correctIndex": 2
+          },
+          {
+            "id": "44246484-7067-45f4-a2f8-7208400f9644",
+            "explanation": "Because the merge vocabulary was learned from a corpus dominated by one language, text in under-represented languages or scripts doesn't get the same long, efficient merged tokens — it gets chopped into more, smaller pieces, which directly raises token count and cost.",
+            "prompt": "Why do non-English languages often consume more tokens for the same amount of text?",
+            "options": [
+              "Those languages have more letters in their alphabet",
+              "The tokenizer's vocabulary was built mostly on merges frequent in the dominant training-corpus language, so other scripts fall back to smaller, more numerous tokens",
+              "Non-English text must always be translated before tokenization",
+              "Tokenizers apply a fixed per-language penalty multiplier"
+            ],
+            "correctIndex": 1
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-10-28T06:46:50Z"
+    },
+    {
       "id": "8d7a789a-5cc3-4e82-9c09-64c2bbf74bb2",
       "title": "Claude in the Lab: Early Results From Six Drug Programs",
       "subtitle": "Six biotech partners ran Claude through target design, lead optimization, and FDA paperwork — with receipts.",
@@ -10991,355 +11354,6 @@
           "url": "https://www.anthropic.com/news/distillation-defenses"
         }
       ]
-    },
-    {
-      "id": "80d3a686-68ce-4f99-bcaf-2ebfc37f2502",
-      "title": "RSI-Anything: Predicting Outcomes Before Paying for Real Feedback",
-      "subtitle": "A world model that lets self-improving AI filter its own ideas before the expensive check",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "recursive-self-improvement",
-        "world-models",
-        "reinforcement-learning",
-        "agents",
-        "research"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "RSI-Anything (arXiv 2610.13912) adds a predictive world model in front of costly real-world feedback — compiling code, running lab experiments, operating a GUI — so an improving policy only pays for evaluation on its most promising candidates. Reported gains span code repair, lab planning, GUI control, and reaction optimization.",
-      "publishedDate": "2026-10-21T12:47:43Z",
-      "slides": [
-        {
-          "id": "77b1a18a-f2f0-4d16-8908-65530209a5aa",
-          "kind": "cover",
-          "title": "The Bottleneck in Self-Improving AI Isn't Ideas — It's Checking Them",
-          "body": "RSI-Anything (Taoyong Cui, Ling Yang, Wanli Ouyang, Pheng Ann Heng et al., arXiv 2610.13912, Oct 9 2026) targets the cost of real-world feedback in recursive self-improvement.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "acd96d68-6062-4311-aa06-69f9ffc69dc6",
-          "kind": "problem",
-          "title": "Real Feedback Is Expensive, So You Can't Just Brute-Force Self-Improvement",
-          "body": "A self-improving agent wants to try many candidate actions or policy tweaks — but every real evaluation (a compiler run, a wet-lab experiment, a GUI action) costs time or money.",
-          "bullets": [
-            "Running everything through full external evaluation doesn't scale as the policy iterates",
-            "But skipping evaluation means the policy can't tell a good idea from a bad one",
-            "The paper's framing: use a learned world model as a cheap filter, and save real feedback for only the candidates worth it"
-          ],
-          "symbol": "hourglass",
-          "table": null
-        },
-        {
-          "id": "01fd6aba-61f7-477c-9875-4700b123ba1c",
-          "kind": "solution",
-          "title": "The Loop: Propose → Predict → Verify → Pay for the Best Only",
-          "body": "Built on JEPA-Anything, the predictive world model sits between the policy and the real environment.",
-          "bullets": [
-            "The policy proposes multiple candidate actions or revisions",
-            "A world model predicts each candidate's likely outcome — no real execution yet",
-            "A verifier discards clearly invalid or low-value candidates based on those predictions",
-            "Only the surviving high-utility candidates get costly external evaluation; those real observations update the policy — and, when the world model's predictions start drifting from reality, trigger a world-model adaptation step too"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "eec2586a-6d2d-404c-b976-316966f65c84",
-          "kind": "comparison",
-          "title": "Reported Gains Across Three Very Different Domains",
-          "body": "Numbers are the authors' own reported results (not independently replicated at time of writing).",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Domain",
-              "Baseline",
-              "With RSI-Anything"
-            ],
-            "rows": [
-              [
-                "Code repair (CodeContests, static verifier → full pipeline)",
-                "26.3%",
-                "29.2% → 31.2% after world-model adaptation"
-              ],
-              [
-                "Lab planning (across 5 policy versions)",
-                "21.80%",
-                "46.01%"
-              ],
-              [
-                "Reaction optimization (same 40-experiment budget vs. Bayesian opt.)",
-                "82.16%",
-                "96.15%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "5cad2d58-b36e-4361-aba8-d556a5c2c23d",
-          "kind": "example",
-          "title": "Worked Example: Fixing a Bug Without Running the Test Suite Every Time",
-          "body": "In the code-repair setting, a coding model (reported as ReasonFlux-Coder-7B) proposes several candidate patches for a failing test.",
-          "bullets": [
-            "Instead of compiling and running the full test suite for every candidate, the world model predicts which patches are likely to pass",
-            "Only the most promising patches get a real test run — reported average of about 3.7 real test invocations per task",
-            "Over successive rounds, this raised reported success from 26.3% (static verifier alone) to 31.2% (after the world model itself got updated)"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null
-        },
-        {
-          "id": "7512ebb1-6fd1-4144-be80-69760f1d36fc",
-          "kind": "problem",
-          "title": "Read the Numbers Carefully",
-          "body": "This is a single paper's self-reported results — treat it as a promising direction, not a settled benchmark.",
-          "bullets": [
-            "No independent replication yet; all figures above come from the authors",
-            "The world model can become unreliable as the policy evolves past what it was trained to predict — the paper's own fix is to periodically retrain the world model, which is itself a cost",
-            "Only three domains were tested (code repair, lab planning, reaction optimization, plus a GUI setting) — 'domain-general' is the claim, not yet an exhaustively proven property"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "cb71f3e3-f409-4625-9404-788d1193b3f7",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "A reusable pattern for anyone building self-improving agents: don't pay for real feedback on every idea — predict first, verify cheaply, and reserve expensive evaluation for your best shots.",
-          "bullets": [
-            "World models aren't just for robotics/video generation — here they're a filter that cuts evaluation cost in agentic self-improvement",
-            "The same framework reportedly transferred across code, lab science, and GUI control without domain-specific redesign",
-            "The adaptation step (updating the world model itself, not just the policy) is what keeps predictions from going stale as the policy improves"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "8e6be5a0-6dd1-4391-b527-23df59641201",
-            "prompt": "What problem does the world model in RSI-Anything solve?",
-            "options": [
-              "It generates more training data from scratch",
-              "It predicts a candidate action's outcome cheaply, before paying for real (expensive) feedback",
-              "It replaces the policy entirely",
-              "It only works for image generation"
-            ],
-            "correctIndex": 1,
-            "explanation": "The world model acts as a cheap pre-filter: it predicts outcomes for candidate actions so only the most promising ones need costly real-world evaluation (compiling code, running an experiment, etc.)."
-          },
-          {
-            "id": "813d161c-0c8d-4312-9e3e-8f55f19fd259",
-            "prompt": "In the code-repair benchmark, what was the reported success rate after the world model itself was adapted, versus using only a static verifier?",
-            "options": [
-              "31.2% vs 26.3%",
-              "50% vs 10%",
-              "90% vs 80%",
-              "26.3% vs 31.2%"
-            ],
-            "correctIndex": 0,
-            "explanation": "The paper reports 26.3% with a static verifier, 29.2% with predictive selection alone, and 31.2% once the world model was also adapted — each step adding real improvement."
-          },
-          {
-            "id": "b31b6ec7-0a88-4a3c-9d65-baea68096f38",
-            "prompt": "Why does RSI-Anything sometimes trigger a 'world-model adaptation' step, rather than only updating the policy?",
-            "options": [
-              "To save on GPU memory",
-              "Because the world model's predictions can drift and become unreliable as the policy itself evolves",
-              "It happens on a fixed schedule unrelated to performance",
-              "To reset the policy back to its starting point"
-            ],
-            "correctIndex": 1,
-            "explanation": "As the policy changes, it visits states the world model wasn't trained on well, so its predictions can degrade — the paper addresses this by adapting the world model itself when reliability drops, not just the policy."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "94671ecf-c4ae-4aa8-974a-c93b14136136",
-          "title": "RSI-Anything: Unlocking Recursive Self-Improvement with World Models",
-          "url": "https://arxiv.org/abs/2610.13912"
-        }
-      ]
-    },
-    {
-      "id": "79f78698-4f2b-41d9-a43b-df1eea073b90",
-      "title": "A2A: The Protocol for Agents Talking to Other Agents",
-      "subtitle": "MCP connects an agent to tools. A2A connects an agent to another agent it doesn't control.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "a2a",
-        "agent-protocols",
-        "mcp",
-        "interoperability",
-        "multi-agent"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.left.arrow.right.circle.fill",
-      "summary": "Agent2Agent (A2A) is an open protocol — now under Linux Foundation governance — for autonomous agents built by different teams or vendors to discover each other's capabilities and exchange long-running tasks, without either side seeing the other's internal reasoning.",
-      "publishedDate": "2026-10-21T12:47:42Z",
-      "slides": [
-        {
-          "id": "2e158db5-7330-4171-9cf4-9015f60bf259",
-          "kind": "cover",
-          "title": "MCP Connects an Agent to Tools. What Connects an Agent to Another Agent?",
-          "body": "Model Context Protocol standardizes how one agent calls tools and reads resources. Agent2Agent (A2A) standardizes something different: how two independent agents collaborate as peers.",
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right.circle.fill",
-          "table": null
-        },
-        {
-          "id": "5a7783e5-2aee-4306-a770-5990f3a04ca9",
-          "kind": "problem",
-          "title": "Peer Agents Aren't Tools — They're Opaque, Autonomous, and Someone Else's",
-          "body": "A tool is deterministic and fully specified. A peer agent — maybe built by another company — has its own reasoning you can't inspect and shouldn't need to.",
-          "bullets": [
-            "Before A2A, integrating another company's agent usually meant a one-off, custom API per vendor",
-            "A tool call is a single request/response; an agent-to-agent task can run for minutes or hours, with multiple back-and-forth updates",
-            "You need to discover what another agent can do and how to authenticate with it — without reading its source or prompts"
-          ],
-          "symbol": "person.2.fill",
-          "table": null
-        },
-        {
-          "id": "bc9c2d4b-6931-4e44-a21a-6cbc89051a50",
-          "kind": "solution",
-          "title": "The Core Primitives: Agent Card, Task, and Artifact",
-          "body": "A2A reached v1.0 in 2026 under Linux Foundation governance, with three supported transports: JSON-RPC 2.0, gRPC, and HTTP+JSON.",
-          "bullets": [
-            "Agent Card — a JSON manifest published at a well-known URI (/.well-known/agent-card.json) describing an agent's skills, capabilities, and supported auth methods (API key, OAuth 2.0, OIDC, mTLS)",
-            "Task — the unit of work sent to another agent; it has a lifecycle (submitted → working → completed/failed) and can run long, with streamed status updates over SSE",
-            "Artifact — the structured output a task produces, handed back to the caller once work is done"
-          ],
-          "symbol": "network",
-          "table": null
-        },
-        {
-          "id": "af634301-8818-4f21-a1cd-a0f5d2836adf",
-          "kind": "comparison",
-          "title": "MCP vs. A2A: Different Problems, Often Used Together",
-          "body": null,
-          "bullets": [],
-          "symbol": "list.bullet.rectangle.fill",
-          "table": {
-            "headers": [
-              "",
-              "MCP",
-              "A2A"
-            ],
-            "rows": [
-              [
-                "Connects",
-                "An agent to tools/data sources",
-                "An agent to another agent"
-              ],
-              [
-                "Interaction shape",
-                "Stateless tool/resource calls",
-                "Stateful, long-running tasks"
-              ],
-              [
-                "Visibility into the other side",
-                "You own/control the tool",
-                "The other agent's reasoning stays opaque"
-              ],
-              [
-                "Typical use",
-                "Inside one agent's own stack",
-                "Across team or company boundaries"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "07cb5a15-aa4b-4245-81c3-2e7dec225886",
-          "kind": "example",
-          "title": "Worked Example: A Travel Orchestrator That Doesn't Own a Flight Agent",
-          "body": "An orchestrator agent needs to book a trip but has no flight-search logic of its own.",
-          "bullets": [
-            "It fetches a specialized flight-search agent's Agent Card to learn its skills and required auth",
-            "It authenticates per the card's declared method, then submits a Task ('find flights: SFO→NRT, under $900, next week')",
-            "The flight agent streams status updates while it works, then returns an Artifact — a structured itinerary — without the orchestrator ever seeing how it searched"
-          ],
-          "symbol": "airplane",
-          "table": null
-        },
-        {
-          "id": "3117fc7c-aa13-4515-8fa3-2c91eca95e3e",
-          "kind": "problem",
-          "title": "When A2A Is the Wrong Tool",
-          "body": "Protocol overhead buys you something specific — don't pay for it when you don't need it.",
-          "bullets": [
-            "Inside a single codebase or team, a direct function call or MCP tool call is simpler than standing up Agent Cards and task lifecycles",
-            "Publishing an Agent Card publicly expands your attack surface — it's a discoverable manifest of what your agent can do",
-            "A2A adds real complexity (auth negotiation, task state management) that's wasted if you already control both sides of the integration"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "ec7f900d-144a-400c-ada2-17d6179aba2c",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "A2A and MCP solve adjacent but distinct problems, and a mature agent stack often uses both.",
-          "bullets": [
-            "MCP = agent to tool. A2A = agent to agent. Don't conflate them",
-            "Agent Cards give agents a standard way to advertise capabilities without exposing internals",
-            "Tasks and Artifacts make long-running, asynchronous agent collaboration a first-class citizen, not a workaround",
-            "Reach for A2A at organizational boundaries — skip it when you already control both ends"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cba9fbbb-4798-40db-b437-d16bb614acb6",
-            "prompt": "What is the key difference between what MCP and A2A each connect?",
-            "options": [
-              "They are two names for the same protocol",
-              "MCP connects an agent to tools/data sources; A2A connects an agent to another agent",
-              "MCP is for video, A2A is for text",
-              "A2A replaced MCP entirely in 2026"
-            ],
-            "correctIndex": 1,
-            "explanation": "MCP standardizes an agent's access to tools and resources it effectively owns. A2A standardizes collaboration between independent, autonomous agents that don't share internals."
-          },
-          {
-            "id": "1d32e4f7-f565-41ed-be92-9a14805d88f7",
-            "prompt": "Where does an A2A-compliant agent publish what it can do?",
-            "options": [
-              "In its system prompt",
-              "A JSON 'Agent Card' manifest at a well-known URI like /.well-known/agent-card.json",
-              "Nowhere — capabilities are negotiated verbally at runtime",
-              "In a Dockerfile"
-            ],
-            "correctIndex": 1,
-            "explanation": "The Agent Card is a discoverable JSON manifest describing an agent's skills, capabilities, and supported authentication methods, so other agents can learn how to work with it without inspecting its internals."
-          },
-          {
-            "id": "d9733b79-5a11-4633-9cce-35cc4036cdb7",
-            "prompt": "Why might two agents from different companies prefer A2A over a custom one-off API integration?",
-            "options": [
-              "A2A is always faster at the network level",
-              "It gives them a standard way to discover capabilities, negotiate auth, and manage long-running tasks — without either side needing to see the other's internal reasoning",
-              "Custom APIs are no longer legal",
-              "A2A eliminates the need for authentication"
-            ],
-            "correctIndex": 1,
-            "explanation": "The value of a shared protocol is avoiding a bespoke integration per vendor: standardized discovery (Agent Card), task lifecycle, and auth negotiation let independent agents interoperate as black boxes to each other."
-          }
-        ]
-      },
-      "references": []
     }
   ]
 }
