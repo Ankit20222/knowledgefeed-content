@@ -1,6 +1,203 @@
 {
   "posts": [
     {
+      "title": "Agentic RAG: When One Retrieval Pass Isn't Enough",
+      "subtitle": "Give the retriever a loop, not just a query",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "agentic-rag",
+        "retrieval",
+        "multi-hop",
+        "query-planning",
+        "tool-use"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Naive RAG embeds the user's question, fetches the top-k chunks once, and hopes that's enough. Agentic RAG treats retrieval as a loop an LLM controls: plan, retrieve, judge whether that's sufficient, and retrieve again if not — which is what multi-hop and ambiguous questions actually need.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "RAG That Can Ask a Second Question",
+          "body": "Standard RAG is one shot: embed the query, grab top-k chunks, stuff them in the prompt. Agentic RAG lets the model decide it didn't get enough, and go look again.",
+          "bullets": [],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "d77062a4-fe2e-483f-af26-86e38e388778"
+        },
+        {
+          "kind": "problem",
+          "title": "One Retrieval Pass Breaks on Multi-Hop Questions",
+          "body": "Naive RAG embeds the raw question and retrieves once. That works for direct lookups, but falls apart when the answer requires chaining facts that don't live in the same chunk.",
+          "bullets": [
+            "\"What's the refund policy?\" → one chunk has it. Naive RAG is fine.",
+            "\"Did the vendor who missed our Q2 SLA also miss Q1?\" → needs the vendor name from one doc, then a separate lookup of their Q1 record.",
+            "A single embedding of the full question often doesn't match either sub-fact well, so retrieval quietly returns irrelevant chunks and the model guesses.",
+            "No retry signal: a basic RAG pipeline can't tell it fetched the wrong thing — it just answers with whatever came back."
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "662e1a07-f0cf-40a5-a825-27fee162e6f6"
+        },
+        {
+          "kind": "solution",
+          "title": "The Loop: Plan → Retrieve → Judge → Retrieve Again",
+          "body": "Agentic RAG puts an LLM in the loop as a controller instead of a pass-through. It decides what to search for, checks what came back, and decides whether to search again, rephrase, or stop.",
+          "bullets": [
+            "Plan: decompose the question into sub-queries if it looks multi-part ('who missed the SLA' → then 'their Q1 record').",
+            "Retrieve: run each sub-query against the index (same vector store, same retriever — nothing new there).",
+            "Judge: an LLM call checks — does this context actually answer the sub-query, or is it noise?",
+            "Loop or stop: insufficient → rewrite the query or fetch the next sub-question; sufficient → synthesize the final answer."
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "id": "038b7a80-ffb4-4a73-9aba-944e025eaf59"
+        },
+        {
+          "kind": "architecture",
+          "title": "It's Tool Use, Not a New Retriever",
+          "body": "Agentic RAG isn't a different vector database or embedding model — it's the same retrieval stack wrapped as a callable tool that an agent loop invokes repeatedly.",
+          "bullets": [
+            "retrieve(query) is exposed as a function/tool, just like a calculator or a code-exec tool in a normal agent loop.",
+            "The 'brain' is the same LLM doing ReAct-style reasoning: think → call retrieve → observe chunks → think again.",
+            "Routing is part of the plan step: a question might route to the vector index, a SQL table, or a web-search tool depending on what it needs.",
+            "State (what's been retrieved so far, what's still missing) lives in the growing conversation/scratchpad, not in the retriever."
+          ],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "id": "a05e0c2b-de91-49ae-9bf2-e4069072ef23"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: A Two-Hop Question",
+          "body": "\"What was the churn rate of the customer segment that complained most in Q3 support tickets?\"",
+          "bullets": [
+            "Hop 1 — retrieve over support-ticket embeddings for 'most complaints Q3' → finds it's the 'SMB tier' segment.",
+            "Judge: this answers only half the question — churn rate is missing. Don't stop.",
+            "Hop 2 — issue a fresh query 'SMB tier churn rate Q3' against the metrics/docs index, not the ticket index.",
+            "Synthesize: combine 'SMB tier' (hop 1) + its churn number (hop 2) into one answer the user can check.",
+            "A single-pass retriever embedding the original sentence would likely miss both facts — neither sub-fact text matches the full question well."
+          ],
+          "symbol": "lightbulb.fill",
+          "id": "12369c7e-760c-42c4-8fd0-1a78460b27f8"
+        },
+        {
+          "kind": "comparison",
+          "title": "Naive vs. Agentic RAG",
+          "body": "The extra rounds buy accuracy on hard questions, but every round is a real LLM call — the cost is proportional, not free.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "",
+              "Naive RAG",
+              "Agentic RAG"
+            ],
+            "rows": [
+              [
+                "Retrieval rounds",
+                "1 (fixed)",
+                "2-5+ (adaptive)"
+              ],
+              [
+                "Latency",
+                "Low, predictable",
+                "2-5x higher, variable"
+              ],
+              [
+                "LLM calls per query",
+                "1 (generation only)",
+                "1 planner + N judge calls + 1 synthesis"
+              ],
+              [
+                "Good at multi-hop questions",
+                "Weak",
+                "Strong"
+              ],
+              [
+                "Good at simple lookups",
+                "Strong, cheap",
+                "Overkill"
+              ],
+              [
+                "Failure mode",
+                "Confidently wrong on gaps",
+                "Can loop or over-retrieve if judging is loose"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.doc.horizontal.fill",
+          "id": "622ada05-47a3-444d-ac0d-0daa38bcf6c8"
+        },
+        {
+          "kind": "concept",
+          "title": "When NOT to Reach for Agentic RAG",
+          "body": "Agentic RAG trades latency and cost for adaptability. That trade isn't worth it for most queries.",
+          "bullets": [
+            "Simple factual lookups (FAQ, policy lookup, 'what's X's price') — a single retrieval already has the answer; looping just adds latency and spend.",
+            "Tight latency budgets (chat UIs, voice) — 3-5 sequential LLM calls can turn a 1-second answer into 5-8 seconds.",
+            "Bound the loop explicitly (e.g. max 3 hops) — without a cap, a weak 'judge' step can keep deciding context is 'insufficient' and retrieve forever.",
+            "Harder to debug: a wrong answer could come from bad planning, a bad judge call, or bad retrieval — three places to check instead of one."
+          ],
+          "symbol": "hand.raised.fill",
+          "id": "011485a4-c896-4334-a745-667c50e98f14"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "Agentic RAG is a controller pattern, not a retrieval upgrade.",
+          "bullets": [
+            "Same vector store, same embeddings — the difference is an LLM loop deciding when to search again.",
+            "Reach for it specifically for multi-hop, comparative, or ambiguous questions where one retrieval demonstrably isn't enough.",
+            "For single-fact lookups, naive RAG is cheaper, faster, and just as accurate — don't pay for a loop you don't need.",
+            "Always cap the hop count; an unbounded 'retrieve until satisfied' loop is a cost and latency risk, not just an accuracy win."
+          ],
+          "symbol": "checkmark.circle.fill",
+          "id": "f4e1a5c7-b35b-488c-945c-750c2b5ed9e2"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What's the core weakness of naive (single-pass) RAG that agentic RAG is designed to fix?",
+            "options": [
+              "It can't store enough documents in the vector index",
+              "It retrieves exactly once, so it can't adapt when that one retrieval doesn't fully answer a multi-part question",
+              "It only works with OpenAI embeddings",
+              "It can't run on GPUs"
+            ],
+            "correctIndex": 1,
+            "explanation": "Naive RAG embeds the raw question and fetches top-k chunks a single time. If the answer needs facts chained across documents, that one pass often returns irrelevant or incomplete context — and the pipeline has no way to notice or recover.",
+            "id": "a741a38d-6f4e-43cc-a175-b56ccc9dc98e"
+          },
+          {
+            "prompt": "In the agentic RAG loop (plan → retrieve → judge → retrieve again → synthesize), what does the 'judge' step actually do?",
+            "options": [
+              "Picks which embedding model to use",
+              "Re-ranks all chunks by publish date",
+              "Decides whether the retrieved context actually answers the current sub-query, triggering another retrieval round if not",
+              "Compresses the final prompt to fit the context window"
+            ],
+            "correctIndex": 2,
+            "explanation": "The judge is an LLM call that checks sufficiency: does this chunk answer what we just asked? If not, the loop rewrites the query or moves to the next sub-question instead of answering with incomplete context.",
+            "id": "a00bc499-e447-457a-bfd5-0dc1c5533f72"
+          },
+          {
+            "prompt": "You're building a FAQ chatbot that answers single-fact questions like 'What's your return window?' Why is agentic RAG probably the wrong choice here?",
+            "options": [
+              "Agentic RAG can't use a vector database",
+              "A single retrieval pass already finds the answer, so the extra planning and judging rounds only add latency and LLM-call cost with no accuracy gain",
+              "Agentic RAG requires a different embedding model",
+              "FAQ answers are too short for RAG to work at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Agentic RAG pays for adaptability with extra sequential LLM calls (planner, judge, synthesis). For simple lookups a single retrieval already succeeds, so the loop adds cost and latency without improving the answer — naive RAG is the better fit.",
+            "id": "69e07d70-d1f2-4f8d-a175-4116c3b3eb0d"
+          }
+        ]
+      },
+      "references": [],
+      "id": "545b32f8-81f0-440c-880e-a5863a1d9a7a",
+      "publishedDate": "2026-10-28T18:46:09Z"
+    },
+    {
       "title": "Agent Memory: How AI Agents Remember Across Sessions",
       "subtitle": "Context windows are a notepad, not a filing cabinet — here's what fixes that.",
       "category": "AI Agents",
@@ -11176,196 +11373,6 @@
       },
       "references": [],
       "id": "190380b3-5e32-4ad8-bdec-adc4c66dc984",
-      "publishedDate": "2026-10-21T18:49:35Z"
-    },
-    {
-      "title": "Token Bucket vs. Sliding Window: Picking a Rate Limiter",
-      "subtitle": "The same '100 requests per minute' rule can mean very different things to your backend, depending on which algorithm enforces it.",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rate limiting",
-        "system design",
-        "api design",
-        "backend",
-        "distributed systems"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "timer",
-      "summary": "Rate limiting algorithms trade off memory, accuracy, and burst tolerance differently. Fixed windows are simple but leak bursts at the boundary; token bucket allows controlled bursts with O(1) memory; sliding window log is precise but costly; sliding window counters split the difference — and none of it works right in a distributed system without shared state.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Not All Rate Limiters Enforce the Same Rule",
-          "body": "\"100 requests per minute\" sounds like one rule — but fixed-window, sliding-window, and token-bucket implementations enforce meaningfully different real-world limits.",
-          "bullets": [],
-          "symbol": "timer",
-          "id": "ae0d4a76-243d-4ae3-b503-0f3b1c046240"
-        },
-        {
-          "kind": "problem",
-          "title": "The Fixed Window's Boundary Burst",
-          "body": "The simplest rate limiter — a counter that resets every minute — has a well-known flaw at window edges.",
-          "bullets": [
-            "A client sends 100 requests in the last second of window 1, then another 100 in the first second of window 2",
-            "Each window individually stayed within its 100-request cap — but the backend just took 200 requests in roughly 2 seconds",
-            "That's a 2x burst over the intended average rate, purely from the reset boundary — not from any bug in the counting logic",
-            "Fixed windows are still popular because they're O(1) memory and trivial to implement — the burst risk is a known, acceptable tradeoff for many APIs"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "806b5bb7-3d71-473c-ae99-4cc30832638c"
-        },
-        {
-          "kind": "solution",
-          "title": "Token Bucket: Bound the Burst, Not Just the Average",
-          "body": "A bucket holds up to N tokens and refills at a steady rate; each request consumes one token.",
-          "bullets": [
-            "Bucket capacity N caps the maximum burst size; refill rate R (tokens/sec) caps the long-run average rate",
-            "If the bucket is full, a client can legitimately fire N requests instantly — that's a feature, not a leak, because it's an explicit, bounded allowance",
-            "State per client is just two numbers: current token count and last-refill timestamp — O(1) memory regardless of traffic volume",
-            "This is the algorithm behind most cloud API gateways' documented 'burst limit' vs. 'sustained rate' distinction"
-          ],
-          "symbol": "drop.fill",
-          "id": "3020d344-65ef-46a1-a21a-a820f305a979"
-        },
-        {
-          "kind": "concept",
-          "title": "Sliding Window: Log vs. Counter",
-          "body": "Two ways to avoid the fixed-window boundary problem without token bucket's bucket semantics.",
-          "bullets": [
-            "Sliding window log: store the timestamp of every request in the trailing window; on each new request, drop timestamps older than the window and count what's left — perfectly accurate, but memory grows with request volume per client",
-            "Sliding window counter: keep only two fixed-window counts (current and previous), and estimate the sliding count as a weighted blend based on how far into the current window you are",
-            "The counter approach uses O(1) memory like fixed window, but smooths out the boundary burst to a close approximation instead of eliminating it exactly",
-            "Most production systems (e.g., Cloudflare's public rate-limiting writeups) use the sliding window counter precisely because log-based accuracy isn't worth the per-client memory cost at scale"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis",
-          "id": "5fee64e0-2185-462c-a866-64af69d2d9c4"
-        },
-        {
-          "kind": "comparison",
-          "title": "Four Algorithms, Side by Side",
-          "body": "",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Algorithm",
-              "Memory/client",
-              "Boundary burst risk",
-              "Allows deliberate bursts?"
-            ],
-            "rows": [
-              [
-                "Fixed window",
-                "O(1)",
-                "High (up to 2x)",
-                "No — and leaks one anyway"
-              ],
-              [
-                "Sliding window log",
-                "O(requests in window)",
-                "None — exact",
-                "No"
-              ],
-              [
-                "Sliding window counter",
-                "O(1)",
-                "Low — approximated away",
-                "No"
-              ],
-              [
-                "Token bucket",
-                "O(1)",
-                "None by design",
-                "Yes, up to bucket capacity"
-              ]
-            ]
-          },
-          "symbol": "list.bullet.rectangle",
-          "id": "9a77fe59-0907-4026-a1a5-c45ab79bb233"
-        },
-        {
-          "kind": "example",
-          "title": "Walking Through a Burst Client",
-          "body": "A client is capped at 1,000 requests/hour and sends 950 requests in the first minute, then goes idle.",
-          "bullets": [
-            "Fixed window: all 950 requests pass (under the 1,000 cap for that hour) — then the client can send another 950 the moment the hour rolls over, producing a visible 2-request-storm pattern at the boundary",
-            "Token bucket (capacity 1,000, refill ~0.28 tokens/sec): the 950 requests drain the bucket to 50 tokens; the client must now wait for tokens to trickle back in before bursting again — no hour-boundary cliff",
-            "Sliding window counter: correctly reflects that 950 of the last 60 seconds' worth of allowance is used, smoothly decaying rather than resetting all at once",
-            "This is why APIs that explicitly advertise a 'burst' allowance (vs. just an hourly cap) are almost always using token bucket under the hood"
-          ],
-          "symbol": "arrow.up.and.down.circle",
-          "id": "49f76f09-73f1-452d-88be-8217f5d133d1"
-        },
-        {
-          "kind": "problem",
-          "title": "The Part Every Algorithm Gets Wrong in Production: Distribution",
-          "body": "All four algorithms above assume one process holding the counter. Real backends don't.",
-          "bullets": [
-            "Behind a load balancer with 10 gateway instances, each running its own in-memory limiter, a client can get ~10x the intended limit by spreading requests across instances",
-            "Fixing this requires shared state — typically Redis — so every instance checks and decrements the same counter or bucket",
-            "That introduces a race condition: two instances can both read 'token available' before either writes 'token consumed,' double-spending the last token — the fix is an atomic operation (Redis `INCR` with `EXPIRE`, or a Lua script for token bucket's two-step check-and-decrement)",
-            "Don't use naive per-instance in-memory rate limiting behind multiple servers and assume the limit holds — it won't, by roughly the instance count"
-          ],
-          "symbol": "server.rack",
-          "id": "ec246cf6-e20c-4242-bde1-cd3ad128b604"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Picking One",
-          "body": "",
-          "bullets": [
-            "Need simplicity and can tolerate occasional small bursts: fixed window",
-            "Need to advertise an explicit burst allowance on top of a sustained rate: token bucket",
-            "Need the smoothest approximation at O(1) memory with no explicit burst policy: sliding window counter",
-            "Running behind more than one server instance: none of the above work without shared, atomically-updated state"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "id": "a6e68038-325f-4d68-8a09-3b4c7de60b79"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What is the core flaw in a naive fixed-window rate limiter?",
-            "options": [
-              "It uses too much memory per client to be practical",
-              "It cannot be implemented without a database",
-              "Requests clustered at the boundary between two windows can let a client send up to roughly 2x the intended rate in a short span",
-              "It cannot support any burst traffic at all"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because each window's counter resets independently, a client can max out the end of one window and the start of the next, briefly doubling the effective rate — even though neither window individually exceeded its cap.",
-            "id": "d9ea693e-deeb-4ef0-88ea-1a17d80061ff"
-          },
-          {
-            "prompt": "What makes token bucket different from a sliding window counter in how it treats bursts?",
-            "options": [
-              "Token bucket forbids all bursts; sliding window counter allows unlimited bursts",
-              "Token bucket explicitly allows a bounded burst up to the bucket's capacity, by design; sliding window counter only approximates a steady rate and has no explicit burst allowance",
-              "They are mathematically identical algorithms with different names",
-              "Sliding window counter requires more memory per client than token bucket"
-            ],
-            "correctIndex": 1,
-            "explanation": "Token bucket treats burst capacity as a first-class, intentional parameter — a full bucket can legally be drained all at once. Sliding window counter just smooths the rate estimate; it isn't designed to grant deliberate bursts.",
-            "id": "3e254020-27d6-413c-8bac-dfa2cf6bfb94"
-          },
-          {
-            "prompt": "Why does rate limiting break down behind multiple load-balanced server instances without extra work?",
-            "options": [
-              "Because token bucket only works on a single CPU core",
-              "Because each instance would track its own separate counter/bucket in memory, letting a client effectively multiply its limit by the number of instances it gets routed across",
-              "Because sliding window algorithms are incompatible with load balancers entirely",
-              "Because HTTPS prevents rate limiting counters from being shared"
-            ],
-            "correctIndex": 1,
-            "explanation": "If each instance keeps its own in-memory state, a client spread across N instances can get roughly N times the intended limit. Fixing this requires centralized, atomically-updated shared state (e.g., Redis) so all instances enforce one real counter.",
-            "id": "b9380c8e-2612-4a6a-aabe-e54f91aa9e55"
-          }
-        ]
-      },
-      "references": [],
-      "id": "f26fddd6-244e-43a8-a586-467f310a0f6d",
       "publishedDate": "2026-10-21T18:49:35Z"
     }
   ]
