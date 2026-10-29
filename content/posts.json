@@ -1,6 +1,196 @@
 {
   "posts": [
     {
+      "title": "MCP Authorization: OAuth for Remote Tool Servers",
+      "subtitle": "Why letting an agent call a tool over HTTP needed its own identity protocol",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "oauth",
+        "security",
+        "ai-agents",
+        "authorization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "key.horizontal.fill",
+      "summary": "MCP's original stdio transport needed no login because the OS process boundary was the trust boundary; once servers went remote over HTTP, the protocol borrowed OAuth 2.1 wholesale, added resource-indicator audience binding, and in its 2026-07-28 revision replaced open client registration with URL-based client identity. The core lesson: a bearer token minted for one MCP server must never be accepted by another.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Your Agent Just Asked a Stranger's Server for Access",
+          "body": "The moment an MCP tool server left localhost and moved onto the open internet, 'just trust the process' stopped being a security model.",
+          "bullets": [],
+          "symbol": "key.horizontal.fill",
+          "id": "7c628748-af6f-4546-adc3-9ad3f3958dd1"
+        },
+        {
+          "kind": "problem",
+          "title": "Stdio Had No Auth Because It Didn't Need One",
+          "body": "MCP launched as a local protocol: the client spawns the server as a child process over stdin/stdout. There is no network hop, so the OS process boundary and the user's own login are the only trust check that matters.",
+          "bullets": [
+            "Local stdio server: no token, no handshake — if you can spawn the process, you're already authorized",
+            "Remote HTTP server: now it's just another API on the internet, reachable by anyone who has the URL",
+            "The danger isn't 'no auth' — it's copying a token meant for one service and replaying it against another"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "1e90c04e-a78d-40cf-b260-f145515a4ac1"
+        },
+        {
+          "kind": "architecture",
+          "title": "Three Roles, Not Two",
+          "body": "MCP authorization borrows OAuth 2.1's separation of concerns: the thing issuing tokens is not the thing consuming them.",
+          "bullets": [
+            "MCP client — your agent/IDE, acts as the OAuth client",
+            "Authorization Server (AS) — issues access tokens, often a separate identity provider entirely",
+            "MCP server — the Resource Server; it never issues tokens, only validates them",
+            "Discovery flow: client fetches /.well-known/oauth-protected-resource (RFC 9728) from the MCP server to find which AS to use, then fetches that AS's metadata (RFC 8414)"
+          ],
+          "symbol": "network",
+          "id": "18594752-0699-4443-acc5-38d9a6961f74"
+        },
+        {
+          "kind": "solution",
+          "title": "CIMD Replaces Open Client Registration",
+          "body": "Earlier revisions leaned on Dynamic Client Registration (DCR, RFC 7591) so any client could self-register with the AS. The 2026-07-28 revision deprecates that in favor of Client ID Metadata Documents.",
+          "bullets": [
+            "Under CIMD, the client_id IS an https:// URL that serves a JSON metadata document — no registration write endpoint needed",
+            "Priority order: pre-registered credentials, then CIMD, then DCR only as a legacy fallback",
+            "Tradeoff: DCR's risk was an open write endpoint anyone could spam; CIMD's risk is the AS now fetches a URL the client picked — an SSRF surface that has to be guarded",
+            "PKCE (RFC 7636) is still mandatory on the authorization code exchange regardless of which registration path is used"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "id": "c13fd322-2bcc-411d-881f-d8c5dfd17f4b"
+        },
+        {
+          "kind": "comparison",
+          "title": "DCR vs. CIMD",
+          "body": "Two ways a never-seen-before MCP client proves its identity to the authorization server.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "",
+              "Dynamic Client Registration",
+              "Client ID Metadata Document"
+            ],
+            "rows": [
+              [
+                "client_id",
+                "Opaque string issued by the AS",
+                "The client's own https:// metadata URL"
+              ],
+              [
+                "Server-side cost",
+                "AS must host a registration endpoint",
+                "AS just fetches a URL at auth time"
+              ],
+              [
+                "Main risk",
+                "Unauthenticated registration spam / impersonation",
+                "SSRF if the AS fetches attacker-chosen URLs naively"
+              ],
+              [
+                "2026-07-28 status",
+                "Deprecated, fallback-only",
+                "Preferred default"
+              ]
+            ]
+          },
+          "id": "8eb9e6c3-2a50-45a4-9ac6-714b9e47a521"
+        },
+        {
+          "kind": "example",
+          "title": "The Confused-Deputy Scenario This Is Built to Stop",
+          "body": "Say your agent already holds a token for a Slack MCP server. A careless client implementation reuses that same bearer token against a GitHub MCP server instead of running a fresh OAuth flow.",
+          "bullets": [
+            "Without audience binding, the GitHub server has no way to tell the token wasn't meant for it",
+            "The spec's fix: clients attach a resource parameter (RFC 8707) naming the exact MCP server on both the authorize and token requests",
+            "The AS binds the token's audience to that resource; the MCP server must reject any token not issued for itself",
+            "Separately, the AS includes its iss value (RFC 9207) in the response so the client can confirm which authorization server actually answered"
+          ],
+          "symbol": "xmark.shield.fill",
+          "id": "d980ded4-6642-48aa-bb8e-b133ee4d55a6"
+        },
+        {
+          "kind": "concept",
+          "title": "The One Rule That Matters Most: Never Pass Tokens Through",
+          "body": "Token passthrough — accepting a token not issued by your own authorization server and relaying it onward — is the anti-pattern the spec calls out explicitly, because it silently breaks every other protection above it.",
+          "bullets": [
+            "MCP clients MUST NOT send a token to an MCP server other than one issued by that server's own authorization server",
+            "MCP servers MUST NOT accept or forward any token that isn't theirs, even if it 'happens to work'",
+            "Don't bolt this entire flow onto a local stdio server — there's no network boundary to defend, and OAuth there solves a problem you don't have",
+            "Scope tokens narrowly: a token good for 'read your calendar' should not also be valid for 'delete your repos'"
+          ],
+          "symbol": "exclamationmark.shield.fill",
+          "id": "e23f1e01-0b2a-4815-a911-827f6ffc415c"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "Remote MCP servers are OAuth 2.1 resource servers first, tool servers second.",
+          "bullets": [
+            "Local stdio = process trust, no OAuth needed; remote HTTP = full OAuth 2.1 resource-server flow",
+            "Discovery runs through RFC 9728 (protected resource metadata) then RFC 8414 (AS metadata)",
+            "CIMD (URL-as-client_id) is now preferred over Dynamic Client Registration",
+            "Audience-bind every token with RFC 8707's resource parameter — and never, ever pass a token through to a server it wasn't issued for"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "id": "7902f1a7-b1f1-4db9-b5dd-f00c47606294"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "An MCP client already holds a bearer token for Server A. Per the MCP authorization spec, can it reuse that same token when calling unrelated remote MCP Server B?",
+            "options": [
+              "Yes, if both servers trust the same user",
+              "No — the token's audience is bound to Server A; reusing it against Server B is the 'token passthrough' anti-pattern the spec forbids",
+              "Yes, as long as the token hasn't expired yet",
+              "Only if Server B is run by the same company as Server A"
+            ],
+            "correctIndex": 1,
+            "explanation": "Audience binding (via the RFC 8707 resource parameter) ties a token to the specific server it was issued for. Servers MUST NOT accept tokens issued for someone else — that's exactly the confused-deputy risk passthrough creates.",
+            "id": "86035594-73c2-4c4c-8bd3-92121b62729c"
+          },
+          {
+            "prompt": "In the 2026-07-28 MCP authorization spec, what is the preferred way for a brand-new client to identify itself to an authorization server it has never talked to before?",
+            "options": [
+              "Dynamic Client Registration (RFC 7591), unconditionally",
+              "A hardcoded shared secret baked into the client",
+              "A Client ID Metadata Document — the client_id itself is an https:// URL serving JSON metadata, so there's no registration write endpoint",
+              "Skipping client identification entirely for remote servers"
+            ],
+            "correctIndex": 2,
+            "explanation": "CIMD replaced DCR as the default: the AS fetches the client's self-hosted metadata URL at auth time instead of maintaining an open registration endpoint. DCR survives only as a fallback for authorization servers that don't yet support CIMD.",
+            "id": "109c63cd-82e5-43d5-88fa-5de3f494cad1"
+          },
+          {
+            "prompt": "Why doesn't a local MCP server launched over stdio (e.g. spawned as a subprocess by your editor) need the OAuth flow described in the authorization spec?",
+            "options": [
+              "Because stdio servers are always open source",
+              "Because there's no network boundary to cross — the OS process spawn itself is the trust check, so adding OAuth would protect against a threat that doesn't exist there",
+              "Because stdio servers can't access the internet at all",
+              "Because the spec explicitly bans OAuth on stdio transports"
+            ],
+            "correctIndex": 1,
+            "explanation": "The authorization spec targets HTTP-based remote servers specifically because they're reachable over a network by anyone with the URL. A stdio server only runs because the local user's own session already spawned it, so the identity question is already answered.",
+            "id": "a8fcd95a-72a6-476d-8f2b-f5451da72908"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Model Context Protocol — Authorization (spec revision 2026-07-28)",
+          "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+          "id": "43612055-6590-4e29-8b38-b98e13c53ed1"
+        }
+      ],
+      "id": "7059e115-9ec2-47f1-8b66-8aa04963e4fd",
+      "publishedDate": "2026-10-29T12:50:30Z"
+    },
+    {
       "id": "1f76bd71-7287-4c07-b761-bc6fbe788fb9",
       "title": "StudentSim: Training AI Students So Tutors Can Practice",
       "subtitle": "A simulated learner that fails the way you actually fail, so a tutor can rehearse on you before it meets you",
@@ -11181,182 +11371,6 @@
       ],
       "id": "c696d9a2-2de5-4a78-aff1-3c5c56816c5f",
       "publishedDate": "2026-10-22T06:48:48Z"
-    },
-    {
-      "title": "Claude Duet: An Agent That Works While You're Away",
-      "subtitle": "A background, VM-based Claude agent that drafts and prepares work on its own, then stops and asks before anything risky.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "claude",
-        "ai-agents",
-        "automation",
-        "product-release",
-        "anthropic"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "person.2.wave.2.fill",
-      "summary": "Anthropic's October 21, 2026 research preview, Claude Duet, runs as a proactive background agent on its own VM — built on Claude Opus 5.5, connected to 6,000+ apps, and gated so it always asks before sending, paying, signing, or deleting anything.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Claude Now Works in the Background",
-          "body": "Claude Duet is a research preview of a standalone app where Claude acts as a proactive agent instead of waiting for you to open a chat.",
-          "bullets": [
-            "Announced October 21, 2026, built on Claude Opus 5.5",
-            "Available by waitlist, starting with US Pro and Max subscribers",
-            "Standalone app on iOS, Android, and claude.ai — separate from the main Claude app for now"
-          ],
-          "symbol": "person.2.wave.2.fill",
-          "id": "3b9730cd-91de-4c6c-bfe8-70d12d8a419c"
-        },
-        {
-          "kind": "problem",
-          "title": "Too Many Tasks, Too Little Triage Time",
-          "body": "Anthropic targets professionals and small business owners who have more to track than they can realistically keep up with.",
-          "bullets": [
-            "Goal: free up time for bigger projects by auto-handling the routine triage",
-            "Anthropic frames it as an agent that 'comes to you with what needs your attention'",
-            "Early tester example cited: a small business with about 110 employees"
-          ],
-          "symbol": "tray.full.fill",
-          "id": "fce8cab4-0cda-438a-bc3a-9aca1b72424d"
-        },
-        {
-          "kind": "architecture",
-          "title": "Its Own VM, Its Own Browser",
-          "body": "Unlike a chat session, Duet doesn't need your device to stay on — it runs independently and checks in periodically.",
-          "bullets": [
-            "Runs on a dedicated virtual machine with its own browser",
-            "Carries over memory, skills, and connected apps from your existing Claude account",
-            "Checks connected accounts every few hours to stay within plan usage limits",
-            "You interact through one ongoing thread — text or voice, not separate chats per task"
-          ],
-          "symbol": "server.rack",
-          "id": "ad2dce1b-3a30-4cac-bf00-65f2d653d614"
-        },
-        {
-          "kind": "solution",
-          "title": "Free to Draft. Gated Before It Acts.",
-          "body": "The core safety design: Claude Duet can read, draft, and prepare work with no approval — but it always stops before anything irreversible.",
-          "bullets": [
-            "Approval required before: sending messages, making payments, signing documents, deleting anything",
-            "Permanently off-limits even WITH approval: trading securities, moving money between accounts",
-            "Credentials handled like Claude Managed Agents — the agent never directly sees passwords or sign-in tokens",
-            "A classifier blocks sharing the most sensitive data (credit card numbers, government IDs) outright"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "id": "613a2e62-92a6-4d7e-af20-c59db1797b4d"
-        },
-        {
-          "kind": "example",
-          "title": "A Monday Morning Brief",
-          "body": "With Gmail, Slack, and QuickBooks connected, a typical run looks like this:",
-          "bullets": [
-            "Duet compiles a short morning brief across all connected apps — only what needs attention, nothing else",
-            "It spots an overdue invoice in QuickBooks and drafts a follow-up email",
-            "It shows you the drafted email and waits — nothing sends until you approve it",
-            "Everything else (routine filing, low-priority Slack threads) is handled silently in the background"
-          ],
-          "symbol": "sun.max.fill",
-          "id": "80e24bed-e1ed-4d1f-88a8-211882ed1be8"
-        },
-        {
-          "kind": "comparison",
-          "title": "Chat Claude vs. Claude Duet",
-          "body": null,
-          "bullets": [],
-          "symbol": "square.split.2x1.fill",
-          "table": {
-            "headers": [
-              "",
-              "Claude app (chat)",
-              "Claude Duet"
-            ],
-            "rows": [
-              [
-                "Interaction",
-                "You open it, ask, wait",
-                "It flags you when something needs attention"
-              ],
-              [
-                "Where it runs",
-                "Your session, on request",
-                "Dedicated VM, checks in every few hours"
-              ],
-              [
-                "Connected apps",
-                "Per-conversation tools",
-                "6,000+ Marketplace connectors, standing"
-              ]
-            ]
-          },
-          "id": "98c2ab12-1570-425b-a047-38703fbd2182"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Where It Still Falls Short",
-          "body": "Anthropic is upfront about current limits on this research preview.",
-          "bullets": [
-            "May misjudge urgency or misread a thread's intent",
-            "Weaker on personal errands (e.g. booking tickets) than on work tasks",
-            "Can't yet show you its live browser session as it works",
-            "Heavier background checks and large tasks (financial models, decks) consume more of your Pro/Max usage limit"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "id": "65c0ea27-fb9f-43a6-9d53-e40203bc05ba"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What must Claude Duet always get your approval for, no exceptions?",
-            "options": [
-              "Reading your connected apps",
-              "Drafting an email",
-              "Sending messages, making payments, signing documents, or deleting anything",
-              "Generating a morning brief"
-            ],
-            "correctIndex": 2,
-            "explanation": "Duet can read, draft, and prepare independently, but it is gated to stop and show you the action before anything irreversible — sending, paying, signing, or deleting.",
-            "id": "6a7e97bb-96eb-446e-b449-74c1b64ebc7a"
-          },
-          {
-            "prompt": "What model is Claude Duet built on?",
-            "options": [
-              "Claude Haiku 5.5",
-              "Claude Opus 5.5",
-              "Claude Sonnet 5",
-              "A dedicated small Duet model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic's announcement states Claude Duet is built on Claude Opus 5.5.",
-            "id": "bcfe8140-9930-40ce-a952-5c2cbcd69f43"
-          },
-          {
-            "prompt": "Which action is off-limits for Claude Duet even if you approve it?",
-            "options": [
-              "Sending a drafted email",
-              "Trading securities or moving money between accounts",
-              "Reading your Slack messages",
-              "Drafting a sales forecast"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic lists trading securities and moving money between accounts as permanently off-limits for Duet, regardless of user approval — a harder line than the normal approval gate.",
-            "id": "d8942efb-1773-4c2e-9f42-90434967c039"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Introducing Claude Duet",
-          "url": "https://claude.com/resources/articles/claude-duet",
-          "id": "463a00d9-28f2-4baf-ad82-bdfa07485afd"
-        }
-      ],
-      "id": "cac683f9-07c2-437d-85d8-25416ed47c64",
-      "publishedDate": "2026-10-22T06:48:47Z"
     }
   ]
 }
