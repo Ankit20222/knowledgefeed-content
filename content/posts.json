@@ -1,6 +1,184 @@
 {
   "posts": [
     {
+      "title": "Constrained Decoding: Making LLMs Always Emit Valid JSON",
+      "subtitle": "One wrong comma breaks your agent's tool call — grammar-masked decoding makes that impossible.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "structured-output",
+        "decoding",
+        "json-schema",
+        "tool-calling",
+        "inference"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "curlybraces",
+      "summary": "Constrained decoding masks an LLM's output logits at every token so only choices that keep the text inside a grammar (like a JSON schema) can be sampled, turning 'please output JSON' into a hard guarantee instead of a polite request. It fixes syntax, not truth — you still need to validate the values, not just the shape.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Grammar-masked decoding: syntax you can trust",
+          "body": "LLMs generate one token at a time with no innate concept of 'valid JSON.' Constrained decoding bolts a grammar onto the sampler so invalid tokens are never even candidates.",
+          "bullets": [],
+          "symbol": "curlybraces",
+          "id": "b67c419b-5dc6-4e3c-be04-2baab2e32d04"
+        },
+        {
+          "kind": "problem",
+          "title": "Prompting for JSON is a request, not a contract",
+          "body": "Tell a model 'respond only in JSON' and it usually complies — until it doesn't. A stray trailing comma, an unescaped quote inside a string, or a numeric field returned as \"5\" instead of 5 all pass the model's own sense of 'close enough' but fail a strict parser.",
+          "bullets": [
+            "Agent pipelines call JSON.parse() or a typed decoder downstream — one malformed token and the whole tool call throws",
+            "Few-shot examples and 'JSON mode' system prompts reduce the error rate but never drive it to zero",
+            "At scale (millions of calls), even a 1-2% malformed-output rate means constant silent failures"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "id": "e83362fd-e01b-411e-8fe7-6057c25ab345"
+        },
+        {
+          "kind": "solution",
+          "title": "Mask the logits, don't trust the prompt",
+          "body": "The engine compiles your JSON Schema (or any CFG/regex) into a state machine. At each decoding step it tracks which state the partial output is in, computes which vocabulary tokens would keep the sequence inside the grammar from that state, and sets every other token's logit to -infinity before sampling.",
+          "bullets": [
+            "The model still chooses *which* valid token to use (so it keeps its 'judgment') — it just can't choose an invalid one",
+            "Implemented in llama.cpp (GBNF grammars), vLLM/SGLang (guided decoding via Outlines/XGrammar), and as 'strict' structured-output modes in major hosted APIs",
+            "Unlike JSON mode, this works token-by-token during generation, not as a post-hoc check-and-retry"
+          ],
+          "symbol": "line.3.horizontal.decrease.circle.fill",
+          "id": "64ba75e2-44af-408a-9425-df2f4bffdde1"
+        },
+        {
+          "kind": "architecture",
+          "title": "Why it isn't just 'validate every token the slow way'",
+          "body": "A vocabulary has tens of thousands of tokens. Checking each one against the grammar from scratch at every decoding step would be far too slow for interactive use, so engines precompile the mapping once.",
+          "bullets": [
+            "The schema is compiled once into an automaton (think: a pushdown automaton for nested objects/arrays, not just a flat regex)",
+            "For each automaton state, the engine precomputes (or caches on the fly) which tokens are legal from that state, so the per-step cost is a lookup, not a re-derivation",
+            "Tokenizers don't align with grammar symbols one-to-one (a single token can span a quote, a letter, and a comma) — the hard engineering problem is building that token-to-transition map correctly, not the grammar theory itself"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "id": "a8c67354-0ad8-45e0-8e72-c7f16afcfcb5"
+        },
+        {
+          "kind": "comparison",
+          "title": "Three ways to get structured output",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "Approach",
+              "Guarantee",
+              "Typical cost",
+              "Common failure"
+            ],
+            "rows": [
+              [
+                "Prompting + JSON mode",
+                "Best-effort",
+                "Lowest",
+                "Malformed syntax under edge cases"
+              ],
+              [
+                "Constrained/grammar decoding",
+                "Syntax always valid",
+                "Small per-token overhead",
+                "Still sampled wrong values, not just wrong shape"
+              ],
+              [
+                "Fine-tuned function-calling head",
+                "High for trained shapes",
+                "Training cost upfront",
+                "Breaks on schemas it wasn't trained on"
+              ]
+            ]
+          },
+          "id": "4acb971f-cd7c-451c-9e53-d6d6d2e285be"
+        },
+        {
+          "kind": "example",
+          "title": "A weather tool call that can't get stuck on a comma",
+          "body": "Schema: {\"city\": string, \"days\": integer}. Unconstrained, a model might emit {\"city\": \"NYC\" \"days\": 5} — missing comma, dead on arrival for JSON.parse(). With the schema compiled into the decoder, after the closing quote on \"NYC\" the automaton is in a state where only a comma (or whitespace then comma) is a legal next token — every other token's logit is masked to -infinity, so the model is physically unable to skip it.",
+          "bullets": [
+            "The model can still pick the wrong city or a nonsense day count — constrained decoding never checked those values",
+            "That's why production agents pair grammar decoding (shape) with a semantic validator (values) in the same call path"
+          ],
+          "symbol": "cloud.sun.fill",
+          "id": "76b4718b-1fea-44da-b752-421c8d5cc870"
+        },
+        {
+          "kind": "problem",
+          "title": "When it backfires: don't lock the cage before the model thinks",
+          "body": "Forcing a model directly into a rigid schema from token zero removes its room to reason, which can measurably hurt quality on anything that benefits from chain-of-thought.",
+          "bullets": [
+            "Fix: let the model write free-form reasoning into an unconstrained field first, then switch on the grammar only for the final structured field",
+            "Deeply recursive or highly branching schemas (e.g. arbitrary nested unions) can blow up the automaton's state space and slow decoding",
+            "Over-constrained enums can also starve the model into picking the 'least wrong' legal option when none of the allowed tokens actually fit — a silent correctness bug that looks like valid output"
+          ],
+          "symbol": "exclamationmark.bubble.fill",
+          "id": "1fa07318-3bbf-4d88-a7d9-32379625734f"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Constrained decoding masks invalid tokens at the logit level using a precompiled grammar automaton — it's enforced during sampling, not checked afterward",
+            "It guarantees syntax (valid JSON/schema shape), never semantics (correct values) — keep a separate validator for the latter",
+            "Let the model reason unconstrained first, then constrain only the final answer channel, to avoid quality loss from locking structure too early",
+            "Reach for it anywhere a parser or typed decoder sits downstream of an LLM: tool calls, agent action schemas, API responses"
+          ],
+          "symbol": "checkmark.circle.fill",
+          "id": "8a5e4eae-9423-48a4-b50c-be1b6e26c596"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does constrained (grammar-masked) decoding actually guarantee about an LLM's output?",
+            "options": [
+              "That the output is factually correct",
+              "That the output is syntactically valid against the grammar/schema",
+              "That inference will always be faster",
+              "That the model will use fewer tokens"
+            ],
+            "correctIndex": 1,
+            "explanation": "Masking logits so only grammar-legal tokens can be sampled enforces shape, not truth. A response can be perfectly valid JSON and still contain a hallucinated city name or wrong number — you still need a semantic validator for that.",
+            "id": "07cd0dda-139d-4cd5-991a-2ede3706f61f"
+          },
+          {
+            "prompt": "Why can't an inference engine just re-check every vocabulary token against the grammar from scratch at each decoding step?",
+            "options": [
+              "Grammars can't be represented as state machines",
+              "Vocabularies contain tens of thousands of tokens, so a full re-derivation every step would be far too slow for interactive use",
+              "LLMs don't expose their logits to the decoding loop",
+              "JSON Schemas are not expressible as context-free grammars"
+            ],
+            "correctIndex": 1,
+            "explanation": "That's why real implementations precompile the schema into an automaton once and reduce each step to a fast lookup of which tokens are legal from the current state, instead of recomputing validity for the whole vocabulary every time.",
+            "id": "a8308b8f-8d25-46f7-9df9-9250ca665cdc"
+          },
+          {
+            "prompt": "When is constrained decoding most likely to hurt output quality?",
+            "options": [
+              "When the schema has only one field",
+              "When the model is forced directly into the rigid structure from the very first token, with no room to reason first",
+              "When it's used for a weather API call",
+              "When the vocabulary is small"
+            ],
+            "correctIndex": 1,
+            "explanation": "Locking structure before the model has 'thought' removes the scratch space that chain-of-thought relies on. The common fix is to constrain only the final answer field and let reasoning happen unconstrained beforehand.",
+            "id": "9312bfb3-054e-4182-877f-d79e4e4b1385"
+          }
+        ]
+      },
+      "references": [],
+      "id": "14bc317e-ba3e-488a-bf8b-7b4999bdc630",
+      "publishedDate": "2026-10-31T12:46:56Z"
+    },
+    {
       "id": "f933265d-8fb2-47f2-885e-f26ddab95f5c",
       "publishedDate": "2026-10-31T06:48:55Z",
       "title": "Claude Cuts a Quantum Decoder's Gate Count by 12x",
@@ -11141,180 +11319,6 @@
         ]
       },
       "references": []
-    },
-    {
-      "title": "ATAS: An AI Video Generator That Remembers Its Scenes",
-      "subtitle": "It topped Hugging Face's Daily Papers with 337 upvotes by giving multi-shot video generation a working memory of its own film.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "video generation",
-        "agentic ai",
-        "world models",
-        "huggingface papers",
-        "memory"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "film",
-      "summary": "ATAS (Any Time, Any Space) treats multi-shot AI video generation as a state-management problem instead of a pure generation problem: it keeps a scene memory of static geometry and an event memory of what happened, retrieves from both before generating a shot, and only writes new observations back after a consistency check passes. It topped Hugging Face's Daily Papers in October 2026 and beat strong baselines on every cross-shot consistency metric tested.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "An AI Video Generator That Remembers Its Scenes",
-          "body": "Posted October 2026 by researchers from Zhejiang University, Monash, BAIR (UC Berkeley), and Adelaide, ATAS became the #1 trending paper on Hugging Face's Daily Papers with 337 upvotes.",
-          "bullets": [],
-          "symbol": "film",
-          "table": null,
-          "id": "7d5142c6-b23d-4b4e-ac10-6c70c1472c79"
-        },
-        {
-          "kind": "problem",
-          "title": "The Camera Comes Back, and the Room Has Changed",
-          "body": "Most AI video generators produce one shot at a time. String several shots into a scene — cut away, then cut back — and the model quietly redraws the same room differently.",
-          "bullets": [
-            "A character's jacket, a table's position, or the room's lighting can shift between a shot and a later shot set in the 'same' place",
-            "Each shot is mostly generated from its own prompt, with little explicit memory of earlier shots' geometry or events",
-            "Standard video-quality benchmarks (like raw VBench scores) don't penalize this — they score each clip in isolation",
-            "The failure gets worse the longer and more multi-shot the 'film' is, which is exactly the use case agentic video generation is being pushed toward"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "98f64feb-82eb-4c6c-a70c-cb5cf3c8c87b"
-        },
-        {
-          "kind": "solution",
-          "title": "Two Memories: What a Place Looks Like, What Happened There",
-          "body": "ATAS turns a screenplay into a sequence of shot requests tagged with location, camera angle, and event-time, then treats generation as retrieve-generate-verify-write.",
-          "bullets": [
-            "Scene memory holds static geometry — the 3D-ish layout of a location that shouldn't change between visits",
-            "Event memory holds time-indexed dynamic observations — what happened, in what state objects and characters were left",
-            "Before generating a shot, ATAS pulls matching evidence from both memories so the new shot is grounded in what already exists",
-            "After generating, it reconstructs and registers the new clip's observations back into memory — but only once a state-consistency review passes"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null,
-          "id": "f54012f8-3a7f-4e3a-b2c9-6c84c0ecc6d1"
-        },
-        {
-          "kind": "comparison",
-          "title": "The Numbers: Consistency Gains Across the Board",
-          "body": "On Wan 3.0, ATAS posted the top aggregate score among compared methods on every cross-shot consistency measure the authors tested.",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric (Wan 3.0 backbone)",
-              "ATAS",
-              "Best baseline"
-            ],
-            "rows": [
-              [
-                "ST-Bench cross-shot consistency (C-Top10)",
-                "0.719",
-                "0.602 (ReCA)"
-              ],
-              [
-                "Spatial revisit accuracy (PSNR_C)",
-                "15.968",
-                "15.255 (ViewCrafter, 3D-guided)"
-              ]
-            ]
-          },
-          "id": "9ca0ae58-d278-4892-8761-bc3d18a9f294"
-        },
-        {
-          "kind": "example",
-          "title": "Walking Through a 5-Shot Scene",
-          "body": "Imagine a screenplay: Shot 1 establishes a cafe with a cup on the table. Shots 2-4 cut away to a chase scene elsewhere. Shot 5 cuts back to the same cafe.",
-          "bullets": [
-            "ATAS tags Shot 5 with the cafe's location id, so it retrieves the cafe's scene memory — same table layout, same lighting, same background",
-            "It also retrieves event memory from Shot 1: if the cup was knocked over, Shot 5 shows it still spilled, not magically reset",
-            "A generator with no memory would likely redraw a generic, slightly different cafe and reset the cup — breaking continuity a viewer would notice immediately",
-            "This is the gap between 'a model that makes pretty clips' and 'a model that makes a coherent film'"
-          ],
-          "symbol": "arrow.uturn.left.circle.fill",
-          "table": null,
-          "id": "ca817e9e-b238-49d1-af75-82db5fc85843"
-        },
-        {
-          "kind": "problem",
-          "title": "Where the Memory Costs You",
-          "body": "The paper's own ablation shows the gains come from the full pipeline working together — and the approach isn't free.",
-          "bullets": [
-            "Ablating on Wan 3.0: cross-shot consistency (C-Top10) climbs from 0.536 with no memory, to 0.719 with scene memory, event memory, and the review gate combined",
-            "On the weaker Wan 2.7 backbone, ATAS actually trails the ReCA baseline on raw VBench visual quality — consistency and per-shot image quality can trade off",
-            "Retrieval, consistency review, and memory registration are extra agentic steps per shot, adding inference overhead a single-pass video model doesn't pay",
-            "The approach assumes a screenplay that tags location, camera, and event-time up front — unstructured, free-form prompting doesn't get these benefits automatically"
-          ],
-          "symbol": "hand.raised.fill",
-          "table": null,
-          "id": "d54401f4-a927-42b7-9d91-5b5f02d39bc1"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Consistency Is a State-Management Problem",
-          "body": null,
-          "bullets": [
-            "Bigger single-shot models don't automatically fix multi-shot continuity — ATAS's gains come from architecture, not scale",
-            "Separating 'what gets shown' (the delivered film) from 'what gets trusted into memory' (gated by a review pass) stops bad frames from poisoning later shots",
-            "The two-memory split — static scene geometry vs. dynamic event history — is a pattern that generalizes past video to any long-horizon agent needing to revisit places or states",
-            "ATAS beat Player-1 (330 upvotes the same week) to become Hugging Face's #1 trending paper, a strong trending/quality signal for a research-community audience"
-          ],
-          "symbol": "checklist",
-          "table": null,
-          "id": "fbcf7570-e880-483b-b977-b8a739cef0c1"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What core problem does ATAS address in AI video generation?",
-            "options": [
-              "Videos render too slowly on consumer GPUs",
-              "Multi-shot videos lose consistency when a shot revisits an earlier location or event",
-              "Video models can't generate audio to match the visuals",
-              "Screenplays can't be parsed into individual shots at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "ATAS targets cross-shot consistency: when a later shot returns to an earlier location or character state, most generators redraw it slightly differently. ATAS's memory system keeps that continuity intact.",
-            "id": "009b36e8-1547-4eaf-8938-f08252fbb3e9"
-          },
-          {
-            "prompt": "What are ATAS's two memory types, and what does each hold?",
-            "options": [
-              "A text memory and an audio memory",
-              "A short-term memory and a long-term memory, split by time only",
-              "A scene memory (static geometry) and an event memory (time-indexed dynamic observations)",
-              "A user memory and a model-weights memory"
-            ],
-            "correctIndex": 2,
-            "explanation": "Scene memory stores the static layout of a location, while event memory stores what happened there and when — together they let a new shot be grounded in both the place and its history.",
-            "id": "42dff63f-73ec-4a42-b902-62bd2f038926"
-          },
-          {
-            "prompt": "According to the paper's ablation on Wan 3.0, what happens to cross-shot consistency (C-Top10) as memory components are added?",
-            "options": [
-              "It stays flat regardless of which memory components are used",
-              "It drops from 0.719 to 0.536 as more memory is added",
-              "It rises from 0.536 with no memory to 0.719 with the full scene+event+review pipeline",
-              "It only improves on the ViewCrafter baseline, not on ATAS itself"
-            ],
-            "correctIndex": 2,
-            "explanation": "The ablation shows the consistency score climbing step by step as scene memory, event memory, and the consistency-review gate are added — the gains come from the combination, not any single piece.",
-            "id": "30eeb337-7213-4a4b-ad48-02992d9d271b"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Any Time, Any Space: A World-State-Centric Framework for Agentic Video Generation",
-          "url": "https://arxiv.org/abs/2610.20571",
-          "id": "b7b08b42-6c21-409c-a288-6986c2610ca6"
-        }
-      ],
-      "id": "d0fc0da4-6498-4b4b-afec-3abdcb940dee",
-      "publishedDate": "2026-10-23T18:51:58Z"
     }
   ]
 }
