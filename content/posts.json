@@ -1,6 +1,391 @@
 {
   "posts": [
     {
+      "title": "RoPE: Encoding Position by Rotating Vectors",
+      "subtitle": "How rotary embeddings give attention relative position for free",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "rope",
+        "positional encoding",
+        "attention",
+        "transformers",
+        "long context",
+        "llm architecture"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "Rotary Position Embeddings (RoPE) encode a token's position by rotating its query and key vectors through an angle proportional to that position. The rotation's key property — the resulting attention score depends only on the distance between two tokens, not their absolute positions — is why RoPE became the default in modern LLMs, and why it needs extra scaling tricks to handle context lengths it wasn't trained on.",
+      "slides": [
+        {
+          "id": "a05784b4-52e9-49bb-880c-31b024d8bda1",
+          "body": null,
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "kind": "cover",
+          "title": "Position, Encoded as a Rotation",
+          "bullets": [
+            "No position embedding table, no bias term added to attention scores",
+            "Just: rotate Q and K before the dot product"
+          ]
+        },
+        {
+          "id": "ee7c73dc-7bee-4525-9c98-524dde16a257",
+          "body": "Self-attention computes a weighted sum over all tokens using dot products of query and key vectors. Swap two tokens' positions and the raw dot products don't change — attention is permutation-invariant by construction. Something has to inject 'where' each token sits, or the model can't tell 'dog bites man' from 'man bites dog'.",
+          "symbol": "questionmark.circle",
+          "table": null,
+          "kind": "problem",
+          "title": "Attention Has No Sense of Order on Its Own",
+          "bullets": [
+            "Original Transformer fix: add a fixed sinusoidal vector per position to the input",
+            "BERT/GPT-2 fix: a learned embedding table, one row per position — capped at the trained max length"
+          ]
+        },
+        {
+          "id": "7635327f-aae9-4fd5-9dda-3774839da8a9",
+          "body": "RoPE splits each query/key vector into 2D pairs of dimensions. For a token at position m, each pair is rotated by an angle m·θ_i, where θ_i shrinks geometrically across dimension-pairs i (θ_i = base^(-2i/d), base is typically 10000+). Low-frequency pairs rotate slowly and capture long-range position; high-frequency pairs rotate fast and capture fine-grained local position.",
+          "symbol": "function",
+          "table": null,
+          "kind": "solution",
+          "title": "Rotate Instead of Add",
+          "bullets": [
+            "Applied only to Q and K — never to V",
+            "No extra parameters: it's a deterministic rotation matrix, not a learned table",
+            "Composes cleanly with KV caching since each cached key keeps a fixed rotation"
+          ]
+        },
+        {
+          "id": "d24a26d8-47b9-4aec-9811-6c94f67260da",
+          "body": "Rotating both q at position m and k at position n by m·θ and n·θ means their dot product depends only on (m − n)·θ — the rotation angles subtract out everything except the relative distance. Two tokens 50 apart produce the identical positional contribution to attention whether they sit at positions (2, 52) or (9000, 9050).",
+          "symbol": "equal.circle",
+          "table": null,
+          "kind": "concept",
+          "title": "The Property That Makes It Work: Relativity for Free",
+          "bullets": [
+            "No explicit relative-position lookup table needed — relativity falls out of the rotation algebra",
+            "This is the core reason RoPE generalizes better than naively-added absolute embeddings"
+          ]
+        },
+        {
+          "id": "66e558be-0ed6-4e8e-b56e-73cb7305f78e",
+          "body": "Take one frequency with θ = 0.01 rad per position step. Tokens at positions 2 and 5 rotate by 0.02 and 0.05 rad — a 0.03 rad gap. Tokens at positions 9002 and 9005 rotate by 90.02 and 90.05 rad — still a 0.03 rad gap. The attention contribution from that frequency is identical in both cases, because only the gap survives in the dot product, not the absolute rotation amount.",
+          "symbol": "number",
+          "table": null,
+          "kind": "example",
+          "title": "Worked Example: Same Gap, Same Angle",
+          "bullets": [
+            "This is why a model can in principle recognize 'two tokens 3 apart' anywhere in a long sequence",
+            "In practice it only holds reliably up to roughly the context length the model was trained on"
+          ]
+        },
+        {
+          "id": "7d281d50-457b-48cf-b28b-c00871c48a8f",
+          "body": null,
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Method",
+              "Extra params?",
+              "Extrapolates past training length?",
+              "Used by"
+            ],
+            "rows": [
+              [
+                "Learned absolute",
+                "Yes (position table)",
+                "Poor — undefined past table size",
+                "BERT, GPT-2"
+              ],
+              [
+                "ALiBi (distance bias)",
+                "No",
+                "Good, by design",
+                "BLOOM, MPT"
+              ],
+              [
+                "Vanilla RoPE",
+                "No",
+                "Poor beyond trained length",
+                "GPT-NeoX, early LLaMA"
+              ],
+              [
+                "RoPE + NTK/YaRN scaling",
+                "No",
+                "Good, up to the scaled target length",
+                "LLaMA 3, Qwen, most 2024+ LLMs"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "RoPE vs. the Alternatives",
+          "bullets": []
+        },
+        {
+          "id": "ad080612-d68c-47f1-a504-fd5a5831c556",
+          "body": "Push a vanilla-RoPE model past its trained context length and quality collapses: the model is now seeing rotation angles it never encountered during training, effectively out-of-distribution inputs to the attention dot product. The fix isn't retraining — it's rescaling the rotation frequencies (NTK-aware scaling, YaRN, or position interpolation) so familiar-looking angles cover a longer range.",
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "Where Vanilla RoPE Breaks — and the Fix",
+          "bullets": [
+            "Symptom: fluent output degrades sharply past the trained length, not gracefully",
+            "Fix class: stretch or interpolate θ_i so the model reuses angle ranges it already learned",
+            "Tradeoff: most scaling methods trade a little short-context precision for long-context stability"
+          ]
+        },
+        {
+          "id": "ce76e57a-2618-401a-9bbd-520575471783",
+          "body": null,
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "RoPE rotates Q and K in 2D sub-planes by an angle proportional to position — no learned table, no added bias",
+            "Rotating both vectors makes their dot product depend only on relative distance, which is what actually encodes 'position' to attention",
+            "Vanilla RoPE still degrades past its trained context length — that's what NTK-aware scaling and YaRN exist to fix",
+            "It's the de facto default in modern LLMs because it's parameter-free, relative by construction, and KV-cache-friendly"
+          ]
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "7cf386f0-5145-4c3b-a4d2-e8caa4121c69",
+            "explanation": "RoPE is applied to Q and K before the attention dot product; V is left untouched, so the rotated positional signal only affects how much attention a token gets, not what value it carries.",
+            "prompt": "What does RoPE actually rotate?",
+            "options": [
+              "The value (V) vectors only",
+              "The query and key (Q and K) vectors, in 2D sub-planes",
+              "The final output logits",
+              "The token embedding table itself, permanently"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "43f52880-854e-4e31-a795-87f8ea01ff61",
+            "explanation": "Rotating q at position m and k at position n by m·θ and n·θ leaves only (m−n)·θ in their dot product — the absolute positions cancel out, leaving pure relative distance.",
+            "prompt": "Why does rotating Q and K by position-dependent angles encode relative position?",
+            "options": [
+              "Because the rotation angles are learned from data",
+              "Because the dot product of two rotated vectors depends only on the difference between their rotation angles, i.e. their position gap",
+              "Because rotation increases the vector's magnitude proportional to position",
+              "It doesn't — RoPE still needs a separate relative-position bias term"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "d1c320ea-dcae-499e-a6b5-a0764c549fe3",
+            "explanation": "Rotation angles beyond the trained range are angles the model never learned to interpret, so attention quality drops sharply — scaling methods rescale θ so the model reuses familiar angle ranges for longer sequences.",
+            "prompt": "What happens when a vanilla-RoPE model is run on sequences longer than its training context, and what fixes it?",
+            "options": [
+              "Nothing — RoPE extrapolates perfectly by construction",
+              "It runs out of memory immediately; the fix is quantization",
+              "Quality degrades because the model sees out-of-distribution rotation angles; the fix is frequency rescaling like NTK-aware scaling or YaRN",
+              "It silently truncates the input with no quality change"
+            ],
+            "correctIndex": 2
+          }
+        ]
+      },
+      "references": [],
+      "id": "5fb4c755-0d5a-430c-97c7-b8b11d599dcf",
+      "publishedDate": "2026-11-01T00:46:52Z",
+      "body": null
+    },
+    {
+      "title": "Agent Skills Moves to the Linux Foundation",
+      "subtitle": "Anthropic hands the open skill standard to a vendor-neutral home",
+      "category": "AI News",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "agent skills",
+        "linux foundation",
+        "open standards",
+        "ai agents",
+        "mcp",
+        "interoperability"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "folder.badge.gearshape",
+      "summary": "Anthropic donated Agent Skills — the open SKILL.md standard for giving agents specialized know-how — to the Agentic AI Foundation, a Linux Foundation project that already hosts MCP. The standard already spans 70+ platforms, 1M published skills, and ~280M installs, and governance now sits with individual maintainers across companies instead of one vendor.",
+      "slides": [
+        {
+          "id": "01939f96-2c8f-4ddb-9b0b-76e6bbabb39c",
+          "body": null,
+          "symbol": "folder.badge.gearshape",
+          "table": null,
+          "kind": "cover",
+          "title": "A Skill Format Just Left Its Creator's Control",
+          "bullets": [
+            "Oct 22, 2026: Anthropic donates Agent Skills to the Agentic AI Foundation (AAIF)",
+            "AAIF is a Linux Foundation project — and it already hosts MCP"
+          ]
+        },
+        {
+          "id": "ed7ec4ac-d84b-4080-9f45-c219b78c8d38",
+          "body": "Agent Skills launched from Anthropic in October 2025 and was published as an open spec that December. But a format for 'how agents carry specialized knowledge' that lives under one company's GitHub org creates an obvious conflict: why would a competing platform build deep dependencies on infrastructure a rival controls?",
+          "symbol": "exclamationmark.shield",
+          "table": null,
+          "kind": "problem",
+          "title": "A Standard Owned by One Vendor Is a Standard Nobody Fully Trusts",
+          "bullets": [
+            "70+ platforms had already adopted Skills — including ChatGPT, Cursor, GitHub Copilot, and VS Code",
+            "That adoption outpaced the governance model: single-vendor ownership of a cross-platform standard"
+          ]
+        },
+        {
+          "id": "3b819ad7-1645-412b-a47d-d5392e7017e9",
+          "body": null,
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "kind": "solution",
+          "title": "What Actually Changed Hands",
+          "bullets": [
+            "The Agent Skills name, logo, GitHub org, and the agentskills.io domain all transfer to AAIF",
+            "Lead maintainers (David Soria Parra, Mahesh Murag) now act as individuals, not company representatives",
+            "Engineers from Anthropic, Google, OpenAI, and others maintain the spec jointly",
+            "AAIF was co-founded by Anthropic, Block, and OpenAI — and Anthropic donated MCP to it earlier too"
+          ]
+        },
+        {
+          "id": "eca9a713-248f-4ba6-8e27-8e5750e50d36",
+          "body": "A Skill is a directory containing a SKILL.md file plus whatever scripts or reference material the task needs. The SKILL.md carries the instructions an agent reads; the surrounding files are the tools it can reach for. That simplicity is exactly why a one-vendor format could spread to 70+ unrelated platforms — there's almost nothing proprietary to lock in.",
+          "symbol": "doc.text",
+          "table": null,
+          "kind": "concept",
+          "title": "A Skill Is Just a Folder — That's the Whole Trick",
+          "bullets": [
+            "SKILL.md = instructions and metadata an agent loads",
+            "Supporting scripts/resources = the actual capability the skill grants"
+          ]
+        },
+        {
+          "id": "ec3ea6ec-27a0-4916-83fa-53bbc1815af7",
+          "body": null,
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Metric",
+              "Figure"
+            ],
+            "rows": [
+              [
+                "Platforms integrated",
+                "70+ (incl. ChatGPT, Cursor, Copilot, VS Code)"
+              ],
+              [
+                "Skills published",
+                "~1,000,000"
+              ],
+              [
+                "Skill installs",
+                "~280,000,000"
+              ],
+              [
+                "Time from launch to donation",
+                "~1 year (Oct 2025 → Oct 2026)"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "The Scale That Forced the Governance Question",
+          "bullets": []
+        },
+        {
+          "id": "16354c5f-ceab-4541-940e-ddbfd6a8017d",
+          "body": "Say a developer writes a 'generate-changelog' skill for Claude Code: a SKILL.md plus a small script that diffs commits into release notes. Because the format is now a neutral standard with 70+ adopters, that same folder can run unmodified in GitHub Copilot or Cursor — no per-platform rewrite, and no risk that the format's rules change at one vendor's discretion.",
+          "symbol": "arrow.left.arrow.right",
+          "table": null,
+          "kind": "example",
+          "title": "Why a Cursor User Should Care",
+          "bullets": [
+            "One skill folder, many agent platforms, zero platform-specific forking",
+            "Governance change doesn't touch the file format — existing skills keep working as-is"
+          ]
+        },
+        {
+          "id": "308a3717-d892-4ba6-9e8b-f2b5c58414a6",
+          "body": "Vendor-neutral governance isn't the same as quality control. The roadmap AAIF proposes — versioned releases, a formal change process, security guidance for installing third-party skills — is still just a roadmap, not shipped tooling. With ~1M skills already published under the old, looser process, security review for untrusted skills remains an open problem, not a solved one.",
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "kind": "problem",
+          "title": "What Donation Doesn't Fix",
+          "bullets": [
+            "Security guidance for installing skills is 'proposed', not yet delivered",
+            "Anthropic, Google, and OpenAI co-founding AAIF means influence is shared, not absent",
+            "Nothing is required of current users — you can keep using the standard without joining AAIF"
+          ]
+        },
+        {
+          "id": "d3c667a7-a4e1-4250-b6ec-aa2172ba9207",
+          "body": null,
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "bullets": [
+            "Agent Skills (SKILL.md + scripts) is now governed by the Agentic AI Foundation, a Linux Foundation project — not by Anthropic alone",
+            "This follows the same path as MCP, which Anthropic donated to AAIF earlier",
+            "The format already reached 70+ platforms, ~1M published skills, and ~280M installs before the handoff",
+            "Nothing changes for existing users today — the shift is about who steers the spec next, not the file format itself"
+          ]
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "6b9a3e06-a3cc-4569-9bde-ddad83763a75",
+            "explanation": "AAIF is a Linux Foundation project that already hosts MCP, which Anthropic also donated earlier — this donation follows the same precedent.",
+            "prompt": "What organization did Anthropic donate Agent Skills to?",
+            "options": [
+              "The Agentic AI Foundation (AAIF), a Linux Foundation project",
+              "The Apache Software Foundation",
+              "A new standalone nonprofit created solely for Skills",
+              "The W3C"
+            ],
+            "correctIndex": 0
+          },
+          {
+            "id": "861890e2-bc89-4bcb-b479-38f41bfbc3be",
+            "explanation": "That minimal structure — instructions plus supporting files — is why the standard could spread to 70+ platforms with almost nothing proprietary to adopt.",
+            "prompt": "What does a Skill actually consist of?",
+            "options": [
+              "A fine-tuned model checkpoint",
+              "A folder with a SKILL.md file plus any needed scripts or reference material",
+              "A vector database index",
+              "A signed binary plugin"
+            ],
+            "correctIndex": 1
+          },
+          {
+            "id": "66daf630-6d76-4ad4-9fab-ebba2c141fe6",
+            "explanation": "The announcement is explicit that nothing is required of current users; the change is about governance, not the format itself.",
+            "prompt": "What does the donation immediately require of developers already using Agent Skills?",
+            "options": [
+              "They must join AAIF to keep using skills",
+              "They must migrate to a new file format within 90 days",
+              "Nothing — they can keep using or contributing to the standard without joining AAIF",
+              "They must pay a licensing fee to the Linux Foundation"
+            ],
+            "correctIndex": 2
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "951b208e-1e09-48ec-b8e1-e927c9aed5df",
+          "title": "Donating Agent Skills to the Agentic AI Foundation",
+          "url": "https://www.anthropic.com/news/donating-agent-skills-to-the-agentic-ai-foundation"
+        }
+      ],
+      "id": "111c7724-e944-43e1-b2a4-5b521853d403",
+      "publishedDate": "2026-11-01T00:46:52Z",
+      "body": null
+    },
+    {
       "id": "798fb5c8-9545-4f30-9184-ba83bc6d5a8b",
       "title": "Four Ways Claude Agents Overstepped Without Meaning To",
       "subtitle": "SQL injection, a police tip form, and free URL shorteners — real cases where agents worked around limits on live systems",
@@ -10952,389 +11337,6 @@
           "id": "04656843-77b0-4e79-84a1-836cbd13a961",
           "title": "UK AISI: Incident report — unsanctioned agent behaviour during cyber testing",
           "url": "https://www.aisi.gov.uk/blog/incident-report-unsanctioned-agent-behaviour-during-cyber-testing"
-        }
-      ]
-    },
-    {
-      "id": "e2bb189f-484d-4993-b1f6-7857c76ddeb2",
-      "title": "ReAct: Why Agents Think, Act, Then Look Before Thinking Again",
-      "subtitle": "The reasoning-acting loop running underneath almost every tool-using AI agent",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "react",
-        "agents",
-        "tool-use",
-        "reasoning",
-        "llm-agents"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "ReAct interleaves verbalized reasoning ('Thought') with real tool calls ('Action') and their real results ('Observation'), repeating until the task is done. Grounding each reasoning step in an actual observation — instead of an imagined one — is what lets an agent catch and correct its own wrong assumptions mid-task.",
-      "publishedDate": "2026-10-24T06:39:41Z",
-      "slides": [
-        {
-          "id": "5a1b1b31-4b20-4c92-a7bd-e9fc7576edc6",
-          "kind": "cover",
-          "title": "The Loop Behind Almost Every Tool-Using Agent",
-          "body": "Ask an LLM agent to answer a question it can't know offhand, and watch it alternate: think a little, do something, look at what actually happened, then think again. That loop has a name — ReAct — and understanding it explains both why agents work and why they're slow.",
-          "bullets": [],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "6436147a-203c-4074-bcea-31bfe1f5d660",
-          "kind": "problem",
-          "title": "Two Broken Alternatives: Reason-Only, or Act-Only",
-          "body": "Before interleaving reasoning and action, agent builders were stuck choosing between two flawed designs.",
-          "bullets": [
-            "Reason-only (plain chain-of-thought): the model reasons fluently but can't touch the real world, so it has to GUESS at facts — and a wrong guess early on silently poisons every step after it",
-            "Act-only: the model just fires off tool calls with no verbalized plan, so when a call fails or returns something unexpected, there's no reasoning trace explaining what it should try next",
-            "Neither design lets the model correct course using what it actually just learned"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "4d5729a9-9661-4b54-af1e-c6fb5d1622b1",
-          "kind": "solution",
-          "title": "The Fix: Alternate Thought, Action, and Real Observation",
-          "body": "ReAct makes the model emit an explicit reasoning step before each tool call, then feeds the tool's REAL output back in before the next reasoning step — closing the loop between thinking and the world.",
-          "bullets": [
-            "Thought: the model states what it believes and what it needs to find out next",
-            "Action: it calls a tool (search, calculator, database query, code execution) based on that thought",
-            "Observation: the tool's actual result is appended to the context, not an imagined one",
-            "Repeat until the model emits a final 'Answer' action instead of another tool call"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "e0a2b0ff-50d6-4f02-811a-3e553bb46c7a",
-          "kind": "architecture",
-          "title": "Why the Loop Structure Matters",
-          "body": "Every turn of the loop grows the context with the full trajectory so far — thoughts, actions, and observations all stay visible to later steps.",
-          "bullets": [
-            "The model never 'forgets' why it took an earlier action, because that reasoning is still sitting in context",
-            "Because Observations are real tool output, a wrong Thought gets corrected by evidence instead of compounding silently",
-            "Cost: context grows every single turn, which is exactly why long ReAct trajectories eventually run into context-window and latency limits",
-            "This is the same loop most production agent frameworks (LangChain agents, early AutoGPT-style loops, many MCP-based agents) build their tool-calling step around"
-          ],
-          "symbol": "cube.transparent",
-          "table": null
-        },
-        {
-          "id": "338e559c-2ae3-4761-bb90-ee68f5d5271e",
-          "kind": "example",
-          "title": "Worked Example: A Self-Correcting Lookup",
-          "body": "Task: 'What's the current population of the city that hosted the most recent Winter Olympics?'",
-          "bullets": [
-            "Thought 1: 'I believe the most recent Winter Olympics was in Beijing — let me confirm the host city.' Action: search('most recent Winter Olympics host city')",
-            "Observation 1: the search result shows a MORE RECENT Winter Games than the model assumed, hosted in a different city",
-            "Thought 2: 'My assumption was wrong — the real host city is different. Let me look up ITS population instead.' Action: search('population of <correct city>')",
-            "Observation 2: returns the real figure. Thought 3: 'I now have what I need.' Action: Answer(<figure>)",
-            "A reason-only model would have silently kept reasoning about the WRONG city for the rest of the answer"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "055e32ea-948c-4e93-a2d8-f77844b68887",
-          "kind": "comparison",
-          "title": "Reason-Only vs. Act-Only vs. ReAct",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "Approach",
-              "Grounded in real data?",
-              "Main failure mode"
-            ],
-            "rows": [
-              [
-                "Chain-of-thought only",
-                "No — reasons from memory/guesses",
-                "Confidently wrong on facts it doesn't know"
-              ],
-              [
-                "Act-only (tool calls, no reasoning trace)",
-                "Yes, but no explanation",
-                "Repeats failed actions with no visible plan to fix"
-              ],
-              [
-                "ReAct (Thought → Action → Observation)",
-                "Yes, every step",
-                "Context grows every turn; can still loop on a dead end"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "1914b491-9f5c-437b-bf9e-da86a7b16665",
-          "kind": "concept",
-          "title": "Tradeoffs and When Not to Use It",
-          "body": "Grounded reasoning isn't free — it costs latency, tokens, and robustness if you don't add guardrails.",
-          "bullets": [
-            "Every Thought-Action-Observation cycle is a full extra round trip: more latency and more tokens than a single-shot answer",
-            "Without a step limit, a model can loop — repeating a failed action because its Thought doesn't register that the path is dead",
-            "Free-text 'Thought:'/'Action:' parsing is fragile; most production agents now use structured tool-calling APIs for the Action step while keeping the same reason-act-observe loop underneath",
-            "Skip it for single-shot factual lookups where one retrieval call beats a multi-step loop — the extra reasoning steps just add latency with no benefit"
-          ],
-          "symbol": "minus.circle.fill",
-          "table": null
-        },
-        {
-          "id": "fbca4581-1648-4afc-8bec-a18608416d90",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "ReAct's real contribution isn't 'let the model use tools' — it's forcing every reasoning step to be checked against a real observation before the next one happens.",
-          "bullets": [
-            "The loop is Thought → Action → Observation, repeated until a final-answer action",
-            "Grounding in real tool output is what lets an agent catch and correct its own wrong assumptions mid-task",
-            "The cost is accumulating context and round-trip latency per step — budget for it with step limits",
-            "Modern agent frameworks still run this loop; they've mostly just swapped free-text parsing for structured tool calls"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "4cc004e0-44ed-4b9c-a3fe-fa58c3d81768",
-            "prompt": "What is the core loop that ReAct introduces for tool-using agents?",
-            "options": [
-              "Fine-tune on human demonstrations before every task",
-              "Thought, then Action, then Observation — repeated until a final answer",
-              "Only chain-of-thought reasoning, with no tool calls",
-              "Only tool calls, with no verbalized reasoning"
-            ],
-            "correctIndex": 1,
-            "explanation": "ReAct interleaves an explicit reasoning step (Thought) with a real tool call (Action) and the tool's real result (Observation), repeating the cycle until the model is ready to answer."
-          },
-          {
-            "id": "a20874f6-5d17-48c1-b8e0-b5255c810872",
-            "prompt": "Why does grounding reasoning in a real Observation help compared to pure chain-of-thought?",
-            "options": [
-              "It makes every response shorter",
-              "It lets the model catch and correct a wrong assumption using real information, instead of continuing to reason from a guess",
-              "It removes the need for any reasoning at all",
-              "It guarantees the model never calls the wrong tool"
-            ],
-            "correctIndex": 1,
-            "explanation": "A pure chain-of-thought model can only reason from what it already believes. Because ReAct feeds back the tool's actual output, a wrong initial guess gets corrected by evidence in the next Thought instead of silently poisoning the rest of the answer."
-          },
-          {
-            "id": "d3021d21-5c6c-4515-88ab-fc9e69d4c677",
-            "prompt": "What's a real practical cost of the ReAct loop in production agents?",
-            "options": [
-              "It cannot call external tools at all",
-              "Each cycle is a full extra round trip, so latency and token cost accumulate — and without a step limit, the model can loop on a failed action",
-              "It requires no context to be kept between steps",
-              "It only works with exactly one tool per task"
-            ],
-            "correctIndex": 1,
-            "explanation": "Every Thought-Action-Observation cycle adds a round trip and grows the context. If the model's Thought doesn't recognize a dead end, it can keep repeating a failed action — which is why production agents add step limits and timeouts."
-          }
-        ]
-      },
-      "references": []
-    },
-    {
-      "id": "194e602b-b330-49ca-9357-d6b6a4846dbf",
-      "title": "KronLSTM: A Delta Rule That Forgets Less On Purpose",
-      "subtitle": "Sepp Hochreiter's team fixes linear attention's memory-overwrite problem with one outer product",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "linear-attention",
-        "delta-rule",
-        "long-context",
-        "state-space-models",
-        "arxiv"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "function",
-      "summary": "NX-AI — led by LSTM co-inventor Sepp Hochreiter — proposes the Kronecker Delta Rule, a linear-attention update that corrects memory along a single key-value outer product instead of the whole key direction. The result, KronLSTM, interferes less with old memories and ships with open 1.5B models and Triton kernels.",
-      "publishedDate": "2026-10-24T00:48:42Z",
-      "slides": [
-        {
-          "id": "bc313e9c-52c6-4673-9b23-78cf413a2bb5",
-          "kind": "cover",
-          "title": "Fast Attention's Dirty Secret: It Overwrites Itself",
-          "body": "Linear-attention models like DeltaNet compress the whole context into a fixed-size matrix memory, updated one token at a time. That's what makes them fast — and what makes them forgetful.",
-          "bullets": [],
-          "symbol": "function",
-          "table": null
-        },
-        {
-          "id": "f5a063c9-9090-4e15-9a9b-0fd86a95824a",
-          "kind": "problem",
-          "title": "The Delta Rule's Blind Spot: Key Overlap Alone Decides",
-          "body": "DeltaNet-style models update memory by correcting the error along a key's direction — but that touches every stored value that shares any of that key, not just the one pair you meant to change.",
-          "bullets": [
-            "Standard delta rule: S_t = S_(t-1) - β(S_(t-1)k_t - v_t)k_t^T — the write direction depends on the key alone",
-            "Any other stored pair whose key overlaps k_t gets disturbed too, even if its value has nothing in common with v_t",
-            "Over a long context, repeated writes to similar keys slowly erase older, unrelated associations — the exact failure mode you don't want at 32K tokens"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "2f44df58-4cf9-46d1-8570-09902d995c04",
-          "kind": "solution",
-          "title": "The Fix: Correct Along the Key-Value Pair, Not the Key Alone",
-          "body": "The Kronecker Delta Rule treats the association as a single scalar — how strongly key k_t and value v_t are already linked — and writes along their outer product k_t⊗v_t, not just k_t.",
-          "bullets": [
-            "Interference on another stored pair (k_i, v_i) now scales with (v_i·v_t) × (k_i·k_t) — both the key AND value have to overlap for a write to disturb it",
-            "In the plain delta rule, key overlap alone was enough to cause interference — this rule adds a second independent condition that has to also be true",
-            "The authors prove the memory norm stays bounded and converges to a steady state, with no extra normalizer or stabilizer layer needed",
-            "It's mathematically the Widrow-Hoff rule applied to the Kronecker feature k_t⊗v_t — hence the name"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "9a876072-0d8d-4984-9e76-d3a97035cf5f",
-          "kind": "architecture",
-          "title": "KronLSTM: Same Recurrence, Different Family",
-          "body": "The write is still a rank-one update to a matrix state, so it slots into the same training trick (chunkwise WY/UT, from DeltaNet) that makes these models trainable at GPU scale.",
-          "bullets": [
-            "Open models: 1.5B params, 24 layers, 100B training tokens on FineWeb-Edu, in both 8K and 32K-context variants",
-            "A hybrid variant swaps in sliding-window attention at 4 of 24 layers — the same recipe Mamba-hybrids and Jamba use",
-            "Released as a fork of the flash-linear-attention (FLA) library, with Triton kernels for both training (chunked) and inference (fused recurrent)",
-            "Builds directly on the DeltaNet / Gated DeltaNet / KDA lineage — this is an incremental rule change, not a new architecture family"
-          ],
-          "symbol": "cube.transparent",
-          "table": null
-        },
-        {
-          "id": "e1afd24a-6903-4bd3-8872-530f68e88304",
-          "kind": "comparison",
-          "title": "Where This Sits in the Linear-Attention Family",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.doc.horizontal",
-          "table": {
-            "headers": [
-              "Rule",
-              "Write direction",
-              "Interference condition"
-            ],
-            "rows": [
-              [
-                "Delta rule (DeltaNet)",
-                "along key k_t",
-                "any key overlap with k_t"
-              ],
-              [
-                "Gated DeltaNet / KDA",
-                "along key k_t, plus forget gate",
-                "any key overlap with k_t"
-              ],
-              [
-                "Kronecker Delta Rule (KronLSTM)",
-                "along outer product k_t⊗v_t",
-                "key overlap AND value overlap"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "bac10f68-dd33-4552-8cdd-9f464e842911",
-          "kind": "example",
-          "title": "Worked Example: Two Similar Questions, Different Answers",
-          "body": "Say a long document mentions 'the capital of France' early on, then much later asks about 'the capital of Spain' using near-identical phrasing — so the keys for both facts are highly similar.",
-          "bullets": [
-            "Plain delta rule: writing the Spain fact (similar key, different value) partially erases the France fact, because the rule only checks key overlap",
-            "Kronecker rule: the write also checks whether the VALUES overlap — 'Paris' and 'Madrid' don't — so the France association survives largely intact",
-            "This is exactly the failure the authors target with state-tracking and long-context retrieval evaluations, where many similar-looking keys compete for the same memory slots"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "b8fd5c42-a1f2-4c00-8fcf-ca917d2319b0",
-          "kind": "problem",
-          "title": "What This Doesn't Solve",
-          "body": "A sharper interference condition is not a free lunch — it's a different set of tradeoffs.",
-          "bullets": [
-            "It's still a fixed-size matrix memory — there's a hard capacity limit per layer, just a less wasteful one",
-            "The extra Gram matrix (A^vv, the value-overlap term) adds compute over plain DeltaNet-style kernels during chunked training",
-            "It inherits the broader limitation of all linear-attention models: no exact recall of arbitrary past tokens, unlike full quadratic attention",
-            "Only 1.5B-scale checkpoints are public so far — whether the interference advantage holds at 10B+ scale is untested in the released artifacts"
-          ],
-          "symbol": "minus.circle.fill",
-          "table": null
-        },
-        {
-          "id": "133b2d44-05dc-46ca-9132-1403f65f5c19",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "A small change to WHICH direction you write a correction in — key alone vs. key-value pair — changes WHAT gets protected from interference.",
-          "bullets": [
-            "Linear-attention memory models fail by overwriting, not by running out of raw capacity — the fix targeted here is about selectivity, not size",
-            "Kronecker Delta Rule requires both key and value overlap for interference, instead of key overlap alone",
-            "It's a drop-in rule change inside the existing DeltaNet/chunkwise-training lineage — not a new architecture paradigm",
-            "From NX-AI, the lab led by Sepp Hochreiter (LSTM co-inventor) — open code, open 1.5B checkpoints, Triton kernels included"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "452612af-7726-4a1b-bbb7-cc6dd55d2d16",
-            "prompt": "In the standard delta rule used by models like DeltaNet, what determines whether a new write disturbs a previously stored key-value pair?",
-            "options": [
-              "Only how much the new VALUE overlaps the old value",
-              "Only how much the new KEY overlaps the old key",
-              "Both key and value overlap together",
-              "The total number of tokens seen so far"
-            ],
-            "correctIndex": 1,
-            "explanation": "The standard delta rule writes along the key direction alone, so any stored pair sharing key similarity with the new one gets disturbed — regardless of whether their values have anything in common."
-          },
-          {
-            "id": "f7e71ecc-fd6f-4032-973a-57f8d4accf34",
-            "prompt": "What's the key structural change the Kronecker Delta Rule makes?",
-            "options": [
-              "It adds a second attention head to double-check each write",
-              "It writes along the outer product of key and value, so interference needs overlap in BOTH",
-              "It removes the forget gate entirely",
-              "It switches from a matrix memory to a vector memory"
-            ],
-            "correctIndex": 1,
-            "explanation": "Writing along k_t⊗v_t rather than k_t alone means a stored pair is only disturbed when its key AND its value overlap the new one — a strictly narrower, more selective interference condition."
-          },
-          {
-            "id": "a2aab470-e852-42d5-b36a-4bfc055b6884",
-            "prompt": "What's a real limitation of KronLSTM, per the released artifacts?",
-            "options": [
-              "It cannot be trained with GPU kernels at all",
-              "It has no public checkpoints of any kind",
-              "It's still a fixed-size matrix memory, and only 1.5B-scale checkpoints have been publicly tested",
-              "It only works with full quadratic attention"
-            ],
-            "correctIndex": 2,
-            "explanation": "The rule improves selectivity, not capacity — the memory is still bounded. And since only 1.5B-parameter models were released, whether the advantage holds at larger scale remains unverified in public artifacts."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "c03a213a-93a1-4bea-b1a5-e487e76076d8",
-          "title": "Kronecker Delta Rule for Long Context Linear Attention (arXiv:2610.26834)",
-          "url": "https://arxiv.org/abs/2610.26834"
-        },
-        {
-          "id": "7edf0917-02c4-4412-acce-f9cb27d2ab88",
-          "title": "NX-AI/KronLSTM — code, Triton kernels, and pretrained checkpoints",
-          "url": "https://github.com/NX-AI/KronLSTM"
         }
       ]
     }
