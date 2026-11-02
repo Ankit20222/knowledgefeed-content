@@ -1,6 +1,203 @@
 {
   "posts": [
     {
+      "id": "8b9c29e1-7357-482f-9eee-cc0a11f7a568",
+      "title": "Quantization: Shrinking LLMs by Rounding Their Weights",
+      "subtitle": "Store weights in 4 or 8 bits instead of 16, and a 70B model suddenly fits on one GPU.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "quantization",
+        "inference",
+        "llms",
+        "model-compression",
+        "gptq",
+        "edge-ai"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "Quantization compresses a trained model's weights from 16-bit floats down to 8-bit or 4-bit integers, cutting memory and bandwidth needs by 2-4x with only a small, often-recoverable quality cost. Modern post-training methods like GPTQ and AWQ make this practical without retraining the whole model, which is why it's the default trick for running big LLMs on smaller hardware.",
+      "slides": [
+        {
+          "id": "91d12f99-5849-4322-89f1-d941b89e06ba",
+          "kind": "cover",
+          "title": "Why a 70B Model Doesn't Need 32 Bits Per Weight",
+          "body": "Every weight in a neural network is just a number. Quantization asks: do we really need 16 or 32 bits of precision to store it, or would 8 or even 4 bits do almost as well?",
+          "bullets": [
+            "A 70B-parameter model in FP16 needs ~140GB of memory just for weights",
+            "Quantized to INT4, the same weights fit in roughly 35-40GB — small enough for a single high-end consumer GPU",
+            "The technique is central to 'inference optimization': it shrinks cost and latency, not training time"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "39f931c4-21f5-4af7-8c58-7c59f61846a0",
+          "kind": "problem",
+          "title": "The Memory Wall: Compute Is Cheap, Moving Weights Isn't",
+          "body": "Modern GPUs can do trillions of operations per second, but inference is often bottlenecked by moving weights from GPU memory to the compute cores, not by the math itself.",
+          "bullets": [
+            "Autoregressive decoding generates one token at a time, re-reading the entire weight matrix from memory for every single token",
+            "Smaller weights mean less data to move per step, which directly speeds up token generation on memory-bandwidth-bound hardware",
+            "Big models also need more GPUs just to hold weights in VRAM, before a single request is served — fewer GPUs needed means lower cost per request"
+          ],
+          "symbol": "arrow.down.circle",
+          "table": null
+        },
+        {
+          "id": "e9bac024-8022-482a-a0fd-26668aaae4fb",
+          "kind": "solution",
+          "title": "From Floats to Integers: Scale, Round, Store",
+          "body": "At its core, quantization maps a range of floating-point values to a small set of integers using a scale factor (and sometimes a zero-point offset), then reverses the mapping at compute time.",
+          "bullets": [
+            "Per-tensor quantization uses one scale for a whole weight matrix; per-channel or per-group quantization uses many smaller scales for better accuracy",
+            "Post-training quantization (PTQ) — methods like GPTQ and AWQ — quantizes an already-trained model using a small calibration dataset, no retraining required",
+            "GPTQ quantizes weights layer-by-layer, adjusting remaining unquantized weights to compensate for the error just introduced — this is what keeps 4-bit models usably accurate",
+            "AWQ instead identifies the small fraction of 'salient' weight channels most sensitive to error (tied to large activation magnitudes) and protects those specifically"
+          ],
+          "symbol": "slider.horizontal.below.square.filled.and.square",
+          "table": null
+        },
+        {
+          "id": "1c364c39-bb39-475a-be71-748a56f5577b",
+          "kind": "comparison",
+          "title": "Precision Formats: The Memory/Quality Tradeoff",
+          "body": "Roughly how precision choice affects a model's footprint and typical quality impact (actual numbers vary by model and method):",
+          "bullets": [
+            "FP16 is the common training/serving baseline; INT8 is close to a free lunch for most models",
+            "INT4 with a good calibration method (GPTQ/AWQ) usually stays close to FP16 quality on most benchmarks, but the gap widens on tasks needing precise numerical or multi-step reasoning"
+          ],
+          "symbol": "chart.bar.xaxis",
+          "table": {
+            "headers": [
+              "Format",
+              "Bits/weight",
+              "~70B model size",
+              "Typical quality impact"
+            ],
+            "rows": [
+              [
+                "FP16",
+                "16",
+                "~140 GB",
+                "Baseline (no loss)"
+              ],
+              [
+                "INT8",
+                "8",
+                "~70 GB",
+                "Usually negligible"
+              ],
+              [
+                "INT4 (GPTQ/AWQ)",
+                "4",
+                "~35-40 GB",
+                "Small, task-dependent drop"
+              ],
+              [
+                "INT4 naive (no calibration)",
+                "4",
+                "~35-40 GB",
+                "Often noticeably worse"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "9b08817c-5b7b-4836-8a10-aaabc5629222",
+          "kind": "example",
+          "title": "Worked Example: Fitting a 70B Model on One GPU",
+          "body": "A team wants to self-host a 70B open-weight model for internal tooling but only has a single 48GB GPU.",
+          "bullets": [
+            "In FP16, the weights alone (~140GB) can't even load — they'd need 4+ high-memory GPUs just for storage",
+            "Quantized to 4-bit with AWQ, the weights shrink to ~35-40GB, leaving headroom for the KV cache and fitting on one card",
+            "They run a quick calibration pass (a few hundred representative prompts) so the quantizer knows which activation channels matter most before compressing",
+            "Result: one GPU serves the model at a modest quality cost, instead of needing a multi-GPU cluster for the same workload"
+          ],
+          "symbol": "desktopcomputer",
+          "table": null
+        },
+        {
+          "id": "89bca966-29f1-4f42-a9d5-0eadb9b14243",
+          "kind": "concept",
+          "title": "Pitfalls and When Not to Quantize",
+          "body": "Quantization isn't free, and pushing it too far or applying it carelessly can quietly break a model in ways standard benchmarks miss.",
+          "bullets": [
+            "Outlier activations (a small number of unusually large values) are the main source of quantization error — methods that ignore them degrade badly at low bit-widths",
+            "Aggregate benchmark scores can look fine while specific capabilities (precise arithmetic, long-context recall, rare-but-critical edge cases) quietly degrade",
+            "Calibration data that doesn't match real traffic (e.g. calibrating on English text, deploying on code) can quantize the wrong channels well and the wrong ones poorly",
+            "Below ~3-4 bits, quality loss tends to grow sharply — most production deployments stop at INT4 or INT8 rather than going lower",
+            "Hardware/kernel support matters: a quantization format is only as fast as the inference engine's kernels for it — not every format is accelerated on every GPU"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2017748a-7716-4afe-89c8-f7324dc9aa27",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": "Quantization trades a small, often-manageable amount of accuracy for large, reliable savings in memory and serving cost.",
+          "bullets": [
+            "INT8 is close to free; INT4 needs a good calibration method (GPTQ, AWQ) to stay accurate",
+            "The real bottleneck it solves is memory bandwidth during token-by-token decoding, not raw compute",
+            "Always validate on your actual task distribution, not just aggregate benchmarks — quality loss can be uneven across capabilities",
+            "It's a serving-time optimization, complementary to (not a replacement for) techniques like KV-cache compression or speculative decoding"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What is the primary bottleneck that weight quantization addresses during LLM inference?",
+            "options": [
+              "The number of floating-point operations the GPU can perform per second",
+              "Memory bandwidth — moving weights from memory to compute cores for every generated token",
+              "The size of the training dataset used to pretrain the model",
+              "Network latency between the client and the server"
+            ],
+            "correctIndex": 1,
+            "explanation": "Autoregressive decoding re-reads the full weight matrix for every token generated, so inference is often memory-bandwidth-bound, not compute-bound. Smaller (quantized) weights mean less data to move per step, which speeds up generation."
+          },
+          {
+            "prompt": "Why do methods like GPTQ and AWQ use a small calibration dataset instead of just rounding every weight independently?",
+            "options": [
+              "To retrain the entire model from scratch on new data",
+              "To measure which weights/channels matter most for real outputs, so errors can be minimized or compensated for where it counts",
+              "To generate synthetic training data for the next model version",
+              "Calibration data is required by law for releasing open-weight models"
+            ],
+            "correctIndex": 1,
+            "explanation": "Naive rounding treats every weight equally, but errors aren't equally costly. GPTQ compensates remaining weights for error introduced earlier in the same layer; AWQ protects the specific channels tied to large activations. Both use a small calibration set to find what actually matters — neither retrains the model."
+          },
+          {
+            "prompt": "A team quantizes a model to INT4 and sees nearly identical scores on standard benchmarks, but users report the model suddenly makes more arithmetic mistakes. What's the most likely explanation?",
+            "options": [
+              "INT4 quantization always improves reasoning performance",
+              "The benchmark suite doesn't cover the capability that degraded, even though aggregate scores look fine",
+              "This is impossible — quantization cannot affect specific capabilities",
+              "The GPU hardware is defective"
+            ],
+            "correctIndex": 1,
+            "explanation": "Quality loss from quantization is often uneven: broad benchmarks can look stable while precise, low-tolerance capabilities like multi-step arithmetic degrade more than average. This is why the pitfalls slide stresses validating on your actual task distribution, not just aggregate scores."
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers",
+          "url": "https://arxiv.org/abs/2210.17323"
+        },
+        {
+          "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration",
+          "url": "https://arxiv.org/abs/2306.00978"
+        }
+      ],
+      "publishedDate": "2026-11-02T06:47:07Z"
+    },
+    {
       "id": "bfe4080a-24bd-43ab-b0bd-f783a4d7352b",
       "title": "Claude Haiku 5.5: 75% Cheaper, Built for Agent Fleets",
       "subtitle": "Anthropic's smallest model gets an effort dial, a steep price cut, and a job as every bigger model's subagent.",
@@ -11122,189 +11319,6 @@
         }
       ],
       "publishedDate": "2026-10-25T00:40:48Z"
-    },
-    {
-      "id": "8f661d9b-1837-49b1-9068-901da5ef3e63",
-      "title": "KV Cache: Why LLMs Don't Recompute Every Token",
-      "subtitle": "The memory trade that makes fast chat replies possible — and expensive at long context.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "llm-inference",
-        "attention",
-        "memory",
-        "transformers",
-        "kv-cache"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "memorychip.fill",
-      "summary": "Every generated token needs attention scores against every prior token. The KV cache stores each layer's Key/Value projections once so decoding only computes the new token's attention — trading GPU memory for avoiding O(n²) repeated work, until that memory becomes the real bottleneck.",
-      "slides": [
-        {
-          "id": "c92586a4-192b-4043-b907-65244cd5eae4",
-          "kind": "cover",
-          "title": "The Hidden Memory Tax Behind Every Chat Reply",
-          "body": "Without a KV cache, generating token N means recomputing attention over all N-1 previous tokens from scratch — at every layer, for every token you've already generated.",
-          "bullets": [
-            "A KV cache stores each layer's Key and Value projections once they're computed",
-            "Each new token only computes attention against what's stored — not the whole conversation again"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "5bdf12f0-bf3a-4aa5-a82d-2988b193507d",
-          "kind": "problem",
-          "title": "Without Caching, Generation Redoes Work It Already Paid For",
-          "body": "Attention needs a Key and Value vector for every previous token, at every layer, to score against the current token's Query. Recomputing all of them on every step wastes compute that produced the identical result a moment ago.",
-          "bullets": [
-            "Token 500 would recompute K/V for tokens 1-499 all over again, at every one of the model's layers",
-            "That's pure waste: those K/V vectors for past tokens never change once computed"
-          ],
-          "symbol": "arrow.clockwise",
-          "table": null
-        },
-        {
-          "id": "3ebba243-e53f-4d93-921d-169a74a157ca",
-          "kind": "solution",
-          "title": "Compute Once, Append, Attend — Per Layer, Per Step",
-          "body": "At each decoding step the model computes Query/Key/Value only for the new token, appends that token's K and V to a running per-layer cache, then attends the new Query against everything stored so far.",
-          "bullets": [
-            "Cache shape per layer: [batch, num_kv_heads, sequence_length, head_dim] for K and for V",
-            "The Query for the new token is the only fresh computation that touches the full history"
-          ],
-          "symbol": "square.stack.3d.up.fill",
-          "table": null
-        },
-        {
-          "id": "1ad60d72-4ad6-44a3-ac32-cb58c9c77392",
-          "kind": "concept",
-          "title": "Worked Math: How Big Does This Get?",
-          "body": "For a 7B-class model with 32 layers, 32 KV heads, head dim 128, stored in fp16 (2 bytes): one token costs 2 (K and V) × 32 layers × 32 heads × 128 dims × 2 bytes ≈ 512KB. At an 8K-token context, that's roughly 4GB — per sequence, before the model's own weights.",
-          "bullets": [
-            "512KB/token × 8,192 tokens ≈ 4GB of cache for a single 8K-context conversation",
-            "Double the context, double the cache — it scales linearly with sequence length and with batch size"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": null
-        },
-        {
-          "id": "f7d072bb-aa53-4438-b8dc-980e49a9902d",
-          "kind": "comparison",
-          "title": "Fewer KV Heads Shrinks the Cache Directly",
-          "body": "Grouped-Query Attention (GQA) keeps many query heads but shares Key/Value projections across groups of them — cutting cache size by exactly the head-sharing ratio. Llama 2 70B is a real example: 64 query heads, grouped down to 8 KV heads.",
-          "bullets": [
-            "This is why GQA and KV-cache quantization (fp16 → int8/int4) matter more at long context than at short context",
-            "PagedAttention (used by vLLM) attacks the same budget from a different angle: less fragmentation, not fewer bytes per token"
-          ],
-          "symbol": "chart.bar.xaxis",
-          "table": {
-            "headers": [
-              "Attention variant",
-              "KV heads",
-              "Cache size vs. MHA"
-            ],
-            "rows": [
-              [
-                "MHA (standard)",
-                "64",
-                "1x"
-              ],
-              [
-                "GQA (Llama 2 70B)",
-                "8",
-                "1/8x"
-              ],
-              [
-                "MQA",
-                "1",
-                "1/64x"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "84928275-7567-470a-bc6d-59fdeaefda6c",
-          "kind": "example",
-          "title": "Why Your Batch Size Caps Out Before Your GPU Does",
-          "body": "Say a GPU has 24GB free after loading model weights, and each 8K-context conversation needs ~4GB of KV cache on an MHA model. You can fit roughly 6 concurrent conversations — not because the GPU ran out of FLOPs, but because the cache ran out of memory first.",
-          "bullets": [
-            "Swap to a GQA model with 1/8th the cache and the same GPU now fits far more concurrent sequences at the same context length",
-            "This is the actual mechanism behind 'continuous batching' needing a tight memory budget to pack requests efficiently"
-          ],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "3cbc9bc3-7500-4f68-b7ec-cc70f851954a",
-          "kind": "concept",
-          "title": "Where the Cache Becomes the Problem",
-          "body": "The KV cache is a straight trade: skip recomputation, pay in memory that grows without bound as conversations get longer or more concurrent.",
-          "bullets": [
-            "At long context or high concurrency, KV cache can dwarf the model weights' own memory footprint",
-            "Quantizing the cache (int8/int4) saves memory but adds a small, measurable accuracy cost — it's not free",
-            "The cache for one request generally can't be reused by an unrelated one, though shared prompt prefixes across requests can share cached K/V (the mechanism behind prompt caching)"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "328f729c-fb32-44b1-952d-a6b0ab76b77c",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "KV cache trades recomputation for memory: compute each token's K/V once, reuse it for every future step",
-            "Cache size scales linearly with context length × batch size — it's often the real limit on concurrency, not FLOPs",
-            "GQA, KV-cache quantization, and PagedAttention are three different levers on the same memory budget"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "5e4abaeb-778d-4843-bef9-a237f19f47bb",
-            "prompt": "What exactly does the KV cache store?",
-            "options": [
-              "The Key and Value projections computed for every previous token, at every layer",
-              "The full hidden state of the model at every layer",
-              "Only the final attention output for each token",
-              "The model's gradients during training"
-            ],
-            "correctIndex": 0,
-            "explanation": "Attention needs K and V vectors for every prior token at every layer to score against new Queries. The KV cache stores exactly those K/V projections once, so they never need recomputing."
-          },
-          {
-            "id": "2b318921-0ed5-4f73-99b3-cfa5c8732ece",
-            "prompt": "Why does Grouped-Query Attention (GQA) shrink the KV cache compared to standard multi-head attention (MHA)?",
-            "options": [
-              "It shares Key/Value projections across groups of query heads, so fewer distinct K/V vectors are cached — e.g. Llama 2 70B caches only 8 KV heads instead of 64",
-              "It deletes the cache after a fixed number of tokens",
-              "It stores K/V in a different data type automatically",
-              "It skips caching for the first half of the conversation"
-            ],
-            "correctIndex": 0,
-            "explanation": "GQA keeps many query heads for expressiveness but groups them to share far fewer Key/Value heads — Llama 2 70B goes from 64 query heads down to 8 KV heads, an 8x cache reduction, with no change to how many tokens are stored."
-          },
-          {
-            "id": "e11fa2b1-7283-48e1-a028-bff74f46282d",
-            "prompt": "In the worked example, why does a GPU's usable batch size cap out at a handful of concurrent long-context conversations even though it has plenty of compute left?",
-            "options": [
-              "The KV cache's memory footprint (linear in context length × batch size) fills the GPU's memory before compute becomes the bottleneck",
-              "The model can only process one conversation at a time",
-              "Long contexts are rejected by the attention mechanism above a hard limit",
-              "GPUs can't run more than 6 processes simultaneously"
-            ],
-            "correctIndex": 0,
-            "explanation": "Each additional concurrent sequence adds its own KV cache (here, ~4GB per 8K-context MHA conversation). Memory for the cache runs out well before the GPU's FLOPs are saturated, which is exactly why techniques that shrink the cache (GQA, quantization) let you serve more concurrent users on the same hardware."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-10-25T00:30:48Z"
     }
   ]
 }
