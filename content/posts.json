@@ -1,6 +1,408 @@
 {
   "posts": [
     {
+      "title": "SpecPilot: An Agent That Tunes Its Own Speculative Decoding",
+      "subtitle": "An agentic search loop pushed one speculative-decoding stack from 4.46x to 10.87x over plain autoregressive decoding — without changing a single output token.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "speculative-decoding",
+        "llm-inference",
+        "ai-agents",
+        "gpu-kernels",
+        "inference-optimization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "speedometer",
+      "summary": "SpecPilot is an agentic loop that automatically finds lossless speedups in already-deployed speculative decoding systems, raising one setup's speedup over autoregressive decoding from 4.46x to 10.87x. It works by repeatedly finding the biggest gap to a theoretical speed ceiling, dispatching agents to close it, and verifying every change keeps outputs identical to the stock model before keeping it.",
+      "slides": [
+        {
+          "id": "9bc87bd6-c70e-419d-89ce-8048d492a8b6",
+          "kind": "cover",
+          "title": "Speculative Decoding Still Leaves Speed on the Table",
+          "body": "Teams ship a speculative decoder once and move on. SpecPilot treats that shipped system as a starting point, not a finish line, and keeps optimizing it automatically.",
+          "bullets": [
+            "On an RTX PRO 6000, the shipped speculative decoder hit 4.46x over autoregressive decoding",
+            "SpecPilot's agentic search pushed the same deployment to 10.87x — 2.44x faster than the stock system",
+            "Every optimization is verified lossless: outputs must match the target model exactly"
+          ],
+          "symbol": "speedometer",
+          "table": null
+        },
+        {
+          "id": "76c5a558-78ad-42ea-a9eb-dc0d19104ae3",
+          "kind": "problem",
+          "title": "Why Shipped Speculative Decoders Underperform",
+          "body": "Speculative decoding already speeds up generation by having a cheap draft model propose tokens that a bigger target model verifies in parallel. But the released configuration is usually a fixed, generic setup.",
+          "bullets": [
+            "Draft-model settings (tree shape, draft length) are tuned once for a generic workload, not the specific GPU and batch size in production",
+            "GPU kernels often run far from the hardware's memory-bandwidth roofline, wasting cycles the draft/verify loop could use",
+            "No one keeps re-tuning after launch, so the gap between 'what's deployed' and 'what's physically possible' just sits there unclaimed"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "9ae38fc3-e992-4384-9310-25780ab06239",
+          "kind": "solution",
+          "title": "An Agentic Loop That Hunts the Gap to the Ceiling",
+          "body": "Each round, SpecPilot computes a cost model of the current system versus its theoretical ceiling, then dispatches agents at exactly the biggest gap.",
+          "bullets": [
+            "A cost model identifies where the deployment is furthest from its roofline each round — kernel latency, draft acceptance rate, batching overhead",
+            "Parallel agents propose fixes; a dedicated kernel sub-agent retunes GPU kernels that are far from their memory-bandwidth limit",
+            "A structured memory carries validated mechanisms forward across rounds and across different model/hardware deployments, so later searches reuse earlier discoveries"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "a3e99029-a187-411f-bfe2-2a061e458271",
+          "kind": "architecture",
+          "title": "Token Forcing: How It Stays Lossless While Changing Everything",
+          "body": "Speed means nothing if the model starts saying different things. SpecPilot's safety net is 'token forcing.'",
+          "bullets": [
+            "Every candidate optimization is checked by forcing its output tokens against what the stock target model would have produced",
+            "If outputs diverge, the change is rejected — only mechanisms that are provably lossless get kept in memory",
+            "This is why SpecPilot can mutate kernels, draft trees, and batching strategy aggressively: the verification step is the real speed limit, not caution"
+          ],
+          "symbol": "checkmark.shield.fill",
+          "table": null
+        },
+        {
+          "id": "97ee4cff-e547-4998-bccc-a756b0036490",
+          "kind": "comparison",
+          "title": "The Numbers: Stock vs. SpecPilot-Tuned, Single Request",
+          "body": "Speedups are measured over plain autoregressive (AR) decoding, 2048 new tokens, single concurrent request.",
+          "bullets": [
+            "Gains hold across two different draft systems (DFlash2, DSpark) and two different GPUs",
+            "The smallest gain over stock (2.24x) was still on the fastest stock baseline (H100)"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Deployment",
+              "Stock speedup (vs AR)",
+              "SpecPilot speedup (vs AR)",
+              "Gain over stock"
+            ],
+            "rows": [
+              [
+                "H100, Qwen3.8-27B + DFlash2",
+                "3.95x",
+                "8.86x",
+                "2.24x"
+              ],
+              [
+                "H100, Qwen3.8-27B + DSpark",
+                "3.74x",
+                "9.41x",
+                "2.52x"
+              ],
+              [
+                "RTX PRO 6000, Qwen3.8-27B + DFlash2",
+                "4.46x",
+                "10.87x",
+                "2.44x"
+              ],
+              [
+                "RTX PRO 6000, Muse-Glimmer-30B + DFlash2",
+                "4.69x",
+                "10.63x",
+                "2.27x"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "a57171a2-2636-465a-81b9-33189c5db222",
+          "kind": "example",
+          "title": "Same Optimization, Different Hardware, Different Fix",
+          "body": "On the RTX PRO 6000, Qwen3.8-27B with DFlash2 starts at 4.46x over AR — a weaker stock baseline than on H100, because the consumer GPU's memory bandwidth bottlenecks the draft/verify loop differently.",
+          "bullets": [
+            "SpecPilot's cost model flags the RTX PRO 6000 run as furthest from its kernel roofline, so the kernel sub-agent is dispatched first here",
+            "After retuning, this deployment reaches the highest absolute speedup in the whole study: 10.87x over AR",
+            "The structured memory from this run — 'this kernel pattern helps on memory-bandwidth-limited consumer GPUs' — carries over to the Muse-Glimmer-30B run on the same hardware, which lands at a similar 10.63x"
+          ],
+          "symbol": "cpu.fill",
+          "table": null
+        },
+        {
+          "id": "45fd0b42-8fb6-40f5-8a38-298aa1092fe0",
+          "kind": "concept",
+          "title": "Where the Gains Shrink",
+          "body": "SpecPilot's biggest wins are on single-request, latency-focused serving. Batched, throughput-focused serving tells a different story.",
+          "bullets": [
+            "Under batching (16-24 concurrent requests, H100, FP8), stock already reaches ~2x over AR — SpecPilot adds roughly another 2x on top, smaller relative gains than single-request mode",
+            "The paper's own accuracy sanity check (24-question set) shows AR scoring highest (177-178/240 in batching), stock close behind, SpecPilot slightly lower (167-172/240) — a reminder that 'lossless vs. the stock speculative decoder' isn't the same as 'identical to AR,' since no speculative decoder (stock included) is bitwise identical to AR",
+            "Running the agentic search itself costs real compute — it's worth paying for a high-traffic deployment, not a one-off experiment"
+          ],
+          "symbol": "arrow.down.right.topleft.bottomright",
+          "table": null
+        },
+        {
+          "id": "91ce83fa-60d9-48f2-a401-8a4a1ccb14ec",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "SpecPilot treats a shipped speculative-decoding system as a starting point, finding and closing the gap to its theoretical speed ceiling automatically",
+            "Token forcing — checking every change against the stock target model's outputs — is what lets it optimize aggressively while staying lossless",
+            "Measured gains: 2.24x-2.52x faster than already-shipped speculative decoders, reaching up to 10.87x over plain autoregressive decoding",
+            "Gains are largest for single-request, latency-sensitive serving; batched, throughput-focused serving sees smaller relative improvement"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b13a580f-8db8-4b46-ac69-cb420ae70157",
+            "prompt": "What does SpecPilot's cost model decide each round?",
+            "options": [
+              "Which users get priority access to the GPU",
+              "Where the current deployment is furthest from its theoretical speed ceiling, so agents can target that gap",
+              "How many tokens the draft model should generate per user request",
+              "Whether to switch to a completely different base model"
+            ],
+            "correctIndex": 1,
+            "explanation": "SpecPilot's loop is driven by a cost model that measures the gap between the current system and its roofline each round, then dispatches agents (including a kernel sub-agent) at exactly that gap — not a fixed checklist of fixes."
+          },
+          {
+            "id": "347014fc-005e-4799-a281-d7a51510827b",
+            "prompt": "How does SpecPilot guarantee its optimizations don't change what the model outputs?",
+            "options": [
+              "It never changes anything about the draft model",
+              "It uses token forcing — checking candidate changes' outputs against the stock target model, and rejecting any that diverge",
+              "It runs every optimization through a second, independent LLM for approval",
+              "It limits itself to optimizations that have been published in a peer-reviewed paper"
+            ],
+            "correctIndex": 1,
+            "explanation": "Token forcing is the verification mechanism: any optimization that doesn't reproduce the stock target model's outputs exactly is discarded, which is what lets SpecPilot aggressively retune kernels and draft strategy without risking correctness."
+          },
+          {
+            "id": "eb59e2e4-7195-4475-adc2-a3b626b57035",
+            "prompt": "Based on the results table, which statement is accurate?",
+            "options": [
+              "SpecPilot's gains over stock speculative decoding were roughly 2.2x-2.5x across the tested single-request deployments",
+              "SpecPilot only helped on one of the four tested deployments",
+              "SpecPilot's speedups were identical regardless of GPU or draft system used",
+              "Stock speculative decoding already matched SpecPilot's performance on H100"
+            ],
+            "correctIndex": 0,
+            "explanation": "Across H100 and RTX PRO 6000, with both DFlash2 and DSpark drafters, SpecPilot's gain over the already-shipped (stock) speculative decoder landed between roughly 2.24x and 2.52x in single-request mode."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "b1c0a428-fd80-4a8b-b30a-9c89044616a8",
+          "title": "SpecPilot: Autonomous Algorithm Discovery and Systems Optimization for Speculative Decoding (arXiv:2611.02501)",
+          "url": "https://arxiv.org/abs/2611.02501"
+        },
+        {
+          "id": "e10de310-8ad1-4e94-a59c-7bf46d98548f",
+          "title": "StargazerX0/SpecPilot on GitHub",
+          "url": "https://github.com/StargazerX0/SpecPilot"
+        }
+      ],
+      "publishedDate": "2026-11-04T18:47:57Z",
+      "heroImageURL": null,
+      "id": "2f04388d-11a8-49c0-8dc2-f37f9aada100"
+    },
+    {
+      "title": "Speculative Decoding: Guessing Ahead to Skip the Wait",
+      "subtitle": "A cheap draft model proposes several tokens at once; the big model checks them all in a single forward pass — and the math guarantees you get exactly the same output either way.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "speculative-decoding",
+        "llm-inference",
+        "latency",
+        "draft-model",
+        "sampling"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "hare.fill",
+      "summary": "Autoregressive decoding generates one token per full forward pass through the model, which wastes most of a GPU's compute waiting on memory. Speculative decoding lets a small draft model guess several tokens ahead, then verifies them against the big model in one parallel pass, accepting whatever prefix matches and resampling the rest — with no change to the final output distribution.",
+      "slides": [
+        {
+          "id": "e8a9ea45-d89c-4fdb-9d8e-a13ad0539455",
+          "kind": "cover",
+          "title": "One Token Per Forward Pass Is the Real Bottleneck",
+          "body": "Every token an LLM generates normally costs one full pass through every layer of the model. Speculative decoding breaks that one-token-per-pass rule without changing what the model says.",
+          "bullets": [
+            "A full forward pass to produce a single token leaves most GPU compute idle, waiting on memory bandwidth",
+            "Speculative decoding can produce several tokens per big-model pass instead of one",
+            "The output distribution is mathematically identical to normal decoding — this is not an approximation"
+          ],
+          "symbol": "hare.fill",
+          "table": null
+        },
+        {
+          "id": "b31d2715-0367-4ed0-acaa-4ea63b1f2747",
+          "kind": "problem",
+          "title": "Why Autoregressive Generation Is Memory-Bound, Not Compute-Bound",
+          "body": "People assume LLM inference is slow because the model is 'doing a lot of math.' During token-by-token generation, the real limiter is different.",
+          "bullets": [
+            "Generating one token needs the model's full weights streamed from GPU memory, but only a tiny batch (often size 1) to multiply against them",
+            "The GPU's compute units sit mostly idle during that pass — the bottleneck is how fast weights can be read from memory, not how fast the matrix multiplies run",
+            "Because this happens once per output token, generation latency scales linearly with output length, serially, with no way to parallelize across tokens the normal way"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "b668d2b6-5740-45a9-b282-7bb8ae539825",
+          "kind": "solution",
+          "title": "Draft, Then Verify in Parallel",
+          "body": "Speculative decoding splits generation into two roles: a small, fast draft model that guesses ahead, and the original big model that checks the guesses.",
+          "bullets": [
+            "The draft model autoregressively proposes k tokens (cheap, since it's small)",
+            "The target model runs ONE forward pass over all k draft tokens plus the real context — the same memory-bound pass now checks k+1 positions at once instead of 1",
+            "Rejection sampling compares each draft token's probability under the target model; accept the longest correct prefix, then resample a replacement for the first mismatch from the target's own distribution",
+            "This resampling step is exactly why the output distribution matches standard decoding exactly — it's a mathematical guarantee, not a heuristic"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "dba0905b-8ab3-4dc8-ab2c-e3ba8cd8fc84",
+          "kind": "example",
+          "title": "Walking Through One Verification Step",
+          "body": "Say the draft model proposes 5 tokens for \"The capital of France is Par-is , which\". The target model checks all 5 in one pass.",
+          "bullets": [
+            "Target model agrees with draft tokens 1-3 (\"is\", \"Par\", \"is\") — those are accepted for free, no extra forward pass needed",
+            "At token 4, the draft guessed \",\" but the target model's distribution favors a different token — the draft is rejected here",
+            "The target resamples token 4 from its own distribution (adjusted for what was rejected), and the draft model restarts guessing from there",
+            "Net result: 3 tokens produced for the cost of 1 target forward pass instead of 3 — the speedup scales with how often the draft guesses right"
+          ],
+          "symbol": "text.cursor",
+          "table": null
+        },
+        {
+          "id": "eba09f1f-e7c4-4f07-b4c2-7a62dabecf7b",
+          "kind": "comparison",
+          "title": "The Draft-Model Design Space",
+          "body": "Different techniques change how the draft tokens are produced, trading complexity for acceptance rate.",
+          "bullets": [
+            "A separate, smaller model in the same family tends to have higher token-agreement with the target than an unrelated small model",
+            "Tree-based methods (speculating multiple candidate continuations, not just one chain) raise the accepted-tokens-per-pass count further, at the cost of a bigger verification pass"
+          ],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "Draft source",
+              "Tradeoff"
+            ],
+            "rows": [
+              [
+                "Classic 2-model speculative decoding",
+                "Separate small model, same family",
+                "Simple, needs two models loaded and kept in sync"
+              ],
+              [
+                "Self-speculation (early-exit)",
+                "Earlier layers of the same model",
+                "No second model, but lower acceptance rate than a dedicated draft model"
+              ],
+              [
+                "Tree/multi-draft decoding",
+                "Several candidate continuations per step",
+                "Higher accepted-tokens-per-pass, costs a wider verification pass"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "614f6ef9-cf5f-40e8-9067-dac503e8c47a",
+          "kind": "concept",
+          "title": "When the Speedup Shrinks",
+          "body": "Speculative decoding's win depends entirely on how often the draft model guesses what the target would have said.",
+          "bullets": [
+            "Highly predictable text (boilerplate code, repeated structure, common phrases) gets accepted often — big speedups",
+            "Open-ended, creative, or unusual text gets rejected more often, shrinking the benefit toward zero",
+            "At large batch sizes, the target model's forward pass becomes compute-bound instead of memory-bound, so the 'free parallel verification' advantage shrinks — the biggest wins are in low-batch, latency-sensitive serving",
+            "You now have two models to keep loaded and aligned, plus a verification step to implement correctly — it's not free engineering complexity"
+          ],
+          "symbol": "arrow.down.right.topleft.bottomright",
+          "table": null
+        },
+        {
+          "id": "7524a734-ff9a-4af9-b4d9-598d65619a4b",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "LLM token generation is memory-bandwidth-bound, not compute-bound — most GPU compute sits idle per token",
+            "Speculative decoding has a cheap draft model guess ahead, then verifies all guesses in one parallel pass through the big model",
+            "Rejection sampling guarantees the final output distribution is mathematically identical to plain decoding — no quality tradeoff",
+            "The speedup depends on draft-acceptance rate: high for predictable text and low batch sizes, shrinking for creative text and large batches"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "57d0b673-0cb1-489a-8068-1dbbf8287601",
+            "prompt": "Why is single-token autoregressive generation usually memory-bandwidth-bound rather than compute-bound?",
+            "options": [
+              "GPUs cannot perform matrix multiplication fast enough for language models",
+              "Each step streams the full model weights from memory to multiply against a tiny batch, leaving compute units mostly idle",
+              "The model's vocabulary is too large to fit in memory",
+              "Token generation requires recomputing gradients at every step"
+            ],
+            "correctIndex": 1,
+            "explanation": "Decoding one token needs the entire set of weights read from GPU memory, but only a small amount of actual computation (often batch size 1), so the GPU spends most of its time waiting on memory bandwidth rather than doing math."
+          },
+          {
+            "id": "86d31ba5-20b2-4094-9a78-cdc1a2c4e36d",
+            "prompt": "Why does speculative decoding produce exactly the same output distribution as standard decoding?",
+            "options": [
+              "Because the draft model is a smaller, less accurate copy that averages out errors",
+              "Because rejection sampling only accepts a draft token if it matches the target distribution, and resamples mismatches directly from the target model's own distribution",
+              "Because the target model is run twice to double-check every token",
+              "It doesn't — speculative decoding trades a small amount of accuracy for speed"
+            ],
+            "correctIndex": 1,
+            "explanation": "The accept/reject/resample procedure is a form of rejection sampling: accepted tokens are confirmed matches, and any rejected token is replaced by one sampled from the target model's own distribution — a mathematical guarantee that the overall output distribution is unchanged."
+          },
+          {
+            "id": "de4c3a44-0f68-4f8d-a5c2-74908fc0fa7b",
+            "prompt": "Which scenario benefits LEAST from speculative decoding?",
+            "options": [
+              "A coding assistant autocompleting a common boilerplate pattern",
+              "A low-batch-size, single-user chat session",
+              "A high-batch-size serving setup generating highly creative, unpredictable text",
+              "A customer-support bot responding with frequently repeated phrasing"
+            ],
+            "correctIndex": 2,
+            "explanation": "At large batch sizes, the target model's verification pass becomes compute-bound instead of memory-bound, erasing the 'free parallel check' advantage, and creative/unpredictable text has a low draft-acceptance rate — both effects shrink the speedup toward zero."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "de450623-4f16-4176-8f0f-ad8b2ad20d3b",
+          "title": "Fast Inference from Transformers via Speculative Decoding (Leviathan et al., arXiv:2211.17192)",
+          "url": "https://arxiv.org/abs/2211.17192"
+        },
+        {
+          "id": "6821903c-0e7e-45fa-9a06-02c9967f0681",
+          "title": "Accelerating Large Language Model Decoding with Speculative Sampling (Chen et al., arXiv:2302.01318)",
+          "url": "https://arxiv.org/abs/2302.01318"
+        }
+      ],
+      "publishedDate": "2026-11-04T18:47:57Z",
+      "heroImageURL": null,
+      "id": "70ceea60-6d1f-4ad5-a910-aa4803ad8e5a"
+    },
+    {
       "title": "Knowledge Distillation: Training Small Models to Mimic Big Ones",
       "subtitle": "A 66M-parameter student can keep ~97% of a 110M teacher's accuracy by learning from its softened probabilities, not just its right answers.",
       "category": "LLMs",
@@ -10724,387 +11126,6 @@
           "url": "https://arxiv.org/abs/2309.06180"
         }
       ]
-    },
-    {
-      "title": "MCP: Solving AI's M×N Integration Problem",
-      "subtitle": "One open protocol so any AI app can talk to any tool or data source",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "ai-agents",
-        "tool-use",
-        "protocol",
-        "integration"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "The Model Context Protocol, open-sourced by Anthropic in November 2024, replaces one bespoke integration per (AI app, data source) pair with a single standard: a Host runs Clients that each speak JSON-RPC 2.0 to a Server exposing Tools, Resources, and Prompts. It turns an M×N integration problem into an M+N one, at the cost of a new trust boundary you have to take seriously.",
-      "slides": [
-        {
-          "id": "664238c4-f5d7-4b15-b2dd-fab29a20e90e",
-          "kind": "cover",
-          "title": "Every AI App Was Reinventing the Same Wiring",
-          "body": "Anthropic open-sourced the Model Context Protocol (MCP) in November 2024 to give AI assistants one standard way to reach the systems where data actually lives, instead of a custom connector per app per tool.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "9dd8c6ab-cf0a-4a58-9e19-6973ffb4c27a",
-          "kind": "problem",
-          "title": "The M×N Integration Problem",
-          "body": null,
-          "bullets": [
-            "Before MCP, every AI app (M of them — Claude, ChatGPT, a dozen IDE copilots) needed its own custom connector for every tool or data source (N of them — Slack, GitHub, Postgres, Drive)",
-            "That's M×N bespoke integrations, each with its own auth flow, error handling, and schema — none of it reusable across apps",
-            "A new tool meant writing N new integrations; a new AI app meant writing M new ones, and the pace of both was accelerating"
-          ],
-          "symbol": "square.stack.3d.down.right",
-          "table": null
-        },
-        {
-          "id": "186500a3-ffd4-476d-99e4-304295424af3",
-          "kind": "architecture",
-          "title": "Host, Client, Server — Connected by JSON-RPC 2.0",
-          "body": "MCP defines three roles: a Host application (e.g. Claude Desktop) runs one MCP Client per connection, and each Client speaks JSON-RPC 2.0 to exactly one MCP Server.",
-          "bullets": [
-            "Local servers run as a subprocess and communicate over stdio — common for filesystem, git, or local-database servers",
-            "Remote servers use Streamable HTTP, so one running server instance can serve many clients concurrently",
-            "Each server is scoped to a single system (GitHub, Postgres, Slack) and only exposes the capabilities it chooses to register"
-          ],
-          "symbol": "cable.connector",
-          "table": null
-        },
-        {
-          "id": "d2434eb3-33ef-400d-b425-7d995c9ee91f",
-          "kind": "concept",
-          "title": "Four Primitives, Split by Who Controls Them",
-          "body": null,
-          "bullets": [
-            "Tools — model-controlled actions (create_issue, run_query) that the LLM itself decides to invoke",
-            "Resources — app-controlled, read-only context (a file, a ticket, a row) attached without any tool call",
-            "Prompts — user-controlled templates that turn something like a slash command into a full, pre-built prompt",
-            "Sampling — lets a server ask the client's own LLM to complete a sub-task, inverting the usual request direction"
-          ],
-          "symbol": "list.bullet.rectangle",
-          "table": null
-        },
-        {
-          "id": "4f7200c5-3197-4390-87ba-3a21c611faf1",
-          "kind": "example",
-          "title": "Worked Example: Closing a GitHub Issue From Claude Desktop",
-          "body": null,
-          "bullets": [
-            "Claude Desktop (the Host) spins up the GitHub MCP Server as a local subprocess over stdio when it starts",
-            "User says 'close issue #42 as a duplicate of #40' — the model decides to call the close_issue Tool rather than answer from memory",
-            "The Client sends a JSON-RPC tools/call request with {issue: 42, state: closed, comment: 'duplicate of #40'}",
-            "The Server executes the real GitHub API call and returns a structured result, which the model turns back into a plain-language confirmation"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null
-        },
-        {
-          "id": "9235a6d2-e931-43ab-9b97-054b292c9430",
-          "kind": "comparison",
-          "title": "MCP Server vs. a One-Off Function-Calling Plugin",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "",
-              "Bespoke plugin",
-              "MCP server"
-            ],
-            "rows": [
-              [
-                "Reuse across apps",
-                "Rewritten per app from scratch",
-                "Write once — any MCP-compatible host can connect"
-              ],
-              [
-                "Discovery",
-                "Hardcoded into the app's code",
-                "Queried at runtime via tools/list, resources/list"
-              ],
-              [
-                "What it can expose",
-                "Usually actions only",
-                "Tools, read-only Resources, and Prompt templates"
-              ],
-              [
-                "Transport",
-                "App-specific HTTP call or SDK",
-                "Standard JSON-RPC 2.0 over stdio or Streamable HTTP"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "8ea81416-2219-4ed3-b4c6-9783359f1f59",
-          "kind": "problem",
-          "title": "Where MCP Still Bites: Trust, Not Protocol Bugs",
-          "body": "MCP's biggest real-world risks aren't in the wire format — they're in what a connected server is allowed to say and do.",
-          "bullets": [
-            "A Tool's description is plain text the model reads as context — a malicious or compromised server can hide instructions inside it (prompt injection via tool metadata)",
-            "Connecting a server grants it the blast radius of everything it can call: a filesystem server with write access is one crafted prompt away from deleting files",
-            "Remote servers increasingly use OAuth 2.1, but many community-built local servers still run with no authentication at all",
-            "Don't reach for MCP to wire up a single, app-specific action you'll never reuse — a direct function call is simpler and has a smaller attack surface"
-          ],
-          "symbol": "exclamationmark.shield",
-          "table": null
-        },
-        {
-          "id": "323cd7e2-8d3b-4e0c-8646-e487a36e70b0",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "MCP turns an M×N integration problem into an M+N one: one server per system, one client implementation per app",
-            "Tools, Resources, and Prompts split the same idea — give the model context and actions — by who controls each one: model, app, or user",
-            "Treat every connected server as untrusted input: audit its tool descriptions and scope its permissions as tightly as the task allows",
-            "Check for an existing official or community server before writing your own — the whole point of the protocol is not reinventing that wiring again"
-          ],
-          "symbol": "checkmark.circle",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e614c624-71e8-4aa5-814f-e1b03719c170",
-            "prompt": "What problem does MCP primarily solve?",
-            "options": [
-              "Making LLM inference faster at the hardware level",
-              "The M×N problem of custom integrations between AI apps and data sources",
-              "Reducing the memory footprint of attention during decoding",
-              "Compressing model weights for edge deployment"
-            ],
-            "correctIndex": 1,
-            "explanation": "MCP replaces one bespoke connector per (app, tool) pair with a single open protocol — a server written once can be used by any MCP-compatible host, turning M×N integrations into M+N."
-          },
-          {
-            "id": "9005dfad-ad43-4ac0-a83d-6bda32fbb60e",
-            "prompt": "Which MCP primitive is invoked because the model itself decides to call it, rather than the app or the user triggering it?",
-            "options": [
-              "Resources",
-              "Prompts",
-              "Tools",
-              "Transports"
-            ],
-            "correctIndex": 2,
-            "explanation": "Tools are the model-controlled primitive — the LLM chooses to invoke them, like create_issue or run_query. Resources are attached by the app, and Prompts are triggered by the user."
-          },
-          {
-            "id": "a4119a8e-c969-4a0c-ae6a-feea735b637d",
-            "prompt": "Why is a Tool's description a genuine security concern in MCP, not just a theoretical one?",
-            "options": [
-              "It must always be written in strict JSON Schema",
-              "It's capped at a fixed character limit by the spec",
-              "It's plain text fed directly to the model as context, so a malicious server can hide instructions inside it",
-              "It can only ever be set by the Host application, never the server"
-            ],
-            "correctIndex": 2,
-            "explanation": "Tool descriptions are read by the model exactly like any other context, so a compromised or malicious server can embed prompt-injection payloads inside them — which is why connecting an untrusted server carries real risk."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "3589df3d-e5cc-49a2-bf4c-31412acb5a5d",
-          "title": "Introducing the Model Context Protocol",
-          "url": "https://www.anthropic.com/news/model-context-protocol"
-        }
-      ],
-      "id": "2ef80ef7-c259-4b32-aa53-45f9d94e1fa9",
-      "publishedDate": "2026-10-27T12:51:18Z"
-    },
-    {
-      "title": "Player-1: Teaching Game Agents With Synthetic Practice",
-      "subtitle": "Tencent ARC and NUS train one control policy on 16 fabricated worlds, then watch it generalize to games it never saw",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "reinforcement-learning",
-        "game-agents",
-        "synthetic-data",
-        "generalization",
-        "ppo"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "gamecontroller.fill",
-      "summary": "Player-1 fine-tunes Qwen3.5 backbones on real gameplay, then runs PPO across 16 synthetic practice environments with verifiable rewards. The resulting policy triples the best external baseline on MineDojo-300 (a benchmark it never trained on) and transfers to FPS and browser-game tasks outside its training suite.",
-      "slides": [
-        {
-          "id": "8bc220c9-b43f-45ee-a10c-a14fb51073f2",
-          "kind": "cover",
-          "title": "A Game Agent That Barely Touched the Games It Gets Tested On",
-          "body": "Player-1, from Tencent's ARC Lab with NUS and NTU, learns broad game control mostly from fabricated practice worlds — then transfers that skill to games its RL stage never saw.",
-          "bullets": [],
-          "symbol": "gamecontroller.fill",
-          "table": null
-        },
-        {
-          "id": "a8265091-3870-4ed2-8b02-526405f0b09c",
-          "kind": "problem",
-          "title": "Teaching an Agent to Play Anything Means Playing Everything",
-          "body": null,
-          "bullets": [
-            "Most game agents imitate logged human play — strong on the exact game they trained on, fragile the moment camera angles, objectives, or control schemes shift",
-            "Hand-collecting human demonstrations for every genre (platformer, FPS, browser puzzle) doesn't scale the way text corpora do",
-            "RL directly inside real game engines is slow, heavy, and reward-sparse — most prior 'game RL' work stays stuck inside a single title"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "f57e82fc-e540-4231-a1a5-44e51b4504dd",
-          "kind": "solution",
-          "title": "Two Stages: Imitate Real Play, Then Drill in 16 Fake Worlds",
-          "body": "Player-1 is a post-training recipe layered on top of Qwen3.5-9B and Qwen3.5-35B-A3B.",
-          "bullets": [
-            "Stage 1 (SFT): fine-tune on 6,044 curated gameplay trajectories (295,097 interaction turns) across 172 games, mapped into one shared action space",
-            "That action space is richer than simple clicks — it adds relative pointer motion, sustained/held inputs, and composite multi-key actions, the vocabulary real games actually need",
-            "Stage 2 (RL): ~200 PPO steps across Player-1-Gym, 16 synthetic 2D/3D environments with programmatically verifiable rewards — no human-in-the-loop reward model required",
-            "The synthetic environments deliberately randomize observations and control dynamics, forcing the policy to generalize instead of memorizing one engine's quirks"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "b545e576-ff62-45dd-8fbb-6296b66c28d7",
-          "kind": "comparison",
-          "title": "SFT Alone vs. SFT + Synthetic RL",
-          "body": "The strongest external baseline the authors evaluated on MineDojo-300 reached 12.63% — Player-1-9B's 38.33% clears it by roughly 3x, without the RL stage ever touching Minecraft.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "After SFT only",
-              "After Player-1 RL"
-            ],
-            "rows": [
-              [
-                "MineDojo-300 (9B)",
-                "10.54%",
-                "38.33%"
-              ],
-              [
-                "MineDojo-300 (35B-A3B)",
-                "—",
-                "41.04%"
-              ],
-              [
-                "ViZDoom-10 (9B, held-out)",
-                "0.436 return",
-                "0.692 return"
-              ],
-              [
-                "GameWorld browser tasks (9B, held-out)",
-                "31.43%",
-                "34.45%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "49f00475-82b5-40f3-a190-407b6bbdd666",
-          "kind": "example",
-          "title": "Why ViZDoom and GameWorld Are the Real Test",
-          "body": null,
-          "bullets": [
-            "MineDojo-300 and the 16 Player-1-Gym environments are all 'games' in a loose sense — but ViZDoom (a first-person shooter) and GameWorld's browser tasks are genres the RL stage never trained on",
-            "Scores still climb on both held-out suites — evidence the gains are general control skill, not memorized tricks for one benchmark",
-            "Concretely: practicing platform-jumping and point-and-click puzzles in fabricated worlds measurably improves aiming and strafing in a shooter the model has never played"
-          ],
-          "symbol": "target",
-          "table": null
-        },
-        {
-          "id": "51693e63-adb7-4491-a8b2-a3392a2baa21",
-          "kind": "problem",
-          "title": "What Synthetic Practice Doesn't Fix",
-          "body": null,
-          "bullets": [
-            "The dataset, Player-1-Gym environments, and model weights were marked 'coming soon' at release — none of these numbers are independently reproducible yet",
-            "It's a two-stage pipeline (SFT, then RL) built on existing Qwen3.5 backbones, not a drop-in patch you can bolt onto an arbitrary agent",
-            "Synthetic worlds only approximate real-game physics and UI quirks — a model tuned entirely on fabricated environments can still meet a real game whose action vocabulary breaks its assumptions"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "7f4c18e2-0888-46bb-b144-8bb28d48aec6",
-          "kind": "takeaways",
-          "title": "The Takeaway",
-          "body": null,
-          "bullets": [
-            "The generalization win here comes from training-recipe design — synthetic verifiable-reward RL plus an expanded action space — not from a bigger model",
-            "The headline number: roughly 3x the best external baseline on a benchmark the RL stage never trained on",
-            "Watch for the promised release of Player-1-Gym, the dataset, and checkpoints to see whether outside groups can reproduce these results"
-          ],
-          "symbol": "flag.checkered",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "999c542f-43ad-43ab-a989-e9450fc82758",
-            "prompt": "Why does Player-1's RL stage train inside 16 synthetic Player-1-Gym environments instead of real game engines?",
-            "options": [
-              "Real games have better graphics",
-              "Synthetic environments give cheap, programmatically verifiable rewards and let the authors randomize dynamics to force generalization",
-              "Real games are copyrighted and can't be used for research",
-              "PPO technically cannot run inside a real game engine"
-            ],
-            "correctIndex": 1,
-            "explanation": "Real engines are slow, heavy, and reward-sparse. Synthetic Gym environments supply fast, verifiable rewards and let the authors deliberately vary dynamics so the policy can't just memorize one engine."
-          },
-          {
-            "id": "ca71d19e-4c2e-47f1-9975-391f6173905c",
-            "prompt": "Player-1-9B's MineDojo-300 success rate jumped from 10.54% (SFT only) to 38.33% (after RL), even though MineDojo-300 isn't one of the 16 Player-1-Gym environments. What does that gap mainly show?",
-            "options": [
-              "The SFT stage was wasted effort",
-              "The RL-trained control skills transfer to a benchmark the RL stage never directly trained on, rather than being memorized",
-              "The baseline model was broken",
-              "MineDojo-300 is identical to a Player-1-Gym environment"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because MineDojo-300 sits outside the 16 training environments, the large jump is evidence of transferable control skill, not benchmark-specific memorization."
-          },
-          {
-            "id": "7fa1e032-a9e5-44a0-a026-bb86e1a3e51f",
-            "prompt": "What's the biggest open caveat about Player-1's reported results?",
-            "options": [
-              "The paper lists no authors",
-              "The benchmarks used are confidential",
-              "The dataset, training environments, and model weights were announced as 'coming soon' rather than public at release, so results aren't yet independently verifiable",
-              "It only runs on CPUs"
-            ],
-            "correctIndex": 2,
-            "explanation": "Until Tencent ARC, NUS, and NTU ship the promised code, dataset, and checkpoints, outside groups can't reproduce the MineDojo-300, ViZDoom, or GameWorld numbers themselves."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "75c44110-0f96-43a4-b16a-2bc8cbb7e141",
-          "title": "Player-1: Learning to Play from Synthetic Experience (arXiv:2610.20584)",
-          "url": "https://arxiv.org/abs/2610.20584"
-        },
-        {
-          "id": "793f65a8-1655-4e3d-98c1-4c299ca63636",
-          "title": "TencentARC/Player-1 (GitHub)",
-          "url": "https://github.com/TencentARC/Player-1"
-        }
-      ],
-      "id": "8f51a4e1-84e8-4400-a327-8b07c9802d68",
-      "publishedDate": "2026-10-27T06:51:21Z"
     }
   ]
 }
