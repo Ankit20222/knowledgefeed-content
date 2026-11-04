@@ -1,6 +1,190 @@
 {
   "posts": [
     {
+      "title": "Prompt Caching: Skip Re-Reading What You Already Sent",
+      "subtitle": "A 1.25x write buys a 10x-20x cheaper read on every repeated token — if your prefix stays byte-identical.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "prompt-caching",
+        "kv-cache",
+        "llm-inference",
+        "cost-optimization",
+        "latency"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "clock.arrow.circlepath",
+      "summary": "Prompt caching persists the KV state computed for a prompt's prefix so a later request with the same prefix skips recomputing attention for it — cutting cost and time-to-first-token on repeated system prompts, tool schemas, and long documents. It only pays off when requests repeat a byte-identical prefix within the cache's TTL.",
+      "slides": [
+        {
+          "id": "cdd17b02-eed6-47e5-bd86-f428d1c280c6",
+          "kind": "cover",
+          "title": "Why Does Every API Call Re-Read Your Whole Prompt?",
+          "body": "A long system prompt, tool schema, or document gets reprocessed from token zero on every single request — even when 95% of it never changed.",
+          "bullets": [],
+          "symbol": "clock.arrow.circlepath",
+          "table": null
+        },
+        {
+          "id": "a9cb51ec-7e06-4edf-a7b4-e93ee4cf43e0",
+          "kind": "problem",
+          "title": "Prefill Cost Scales With Every Token You Send, Every Time",
+          "body": "Before a model generates its first output token, it runs a full forward pass over the entire input — the 'prefill' phase. That cost doesn't know your system prompt was identical to the last 10,000 calls.",
+          "bullets": [
+            "A support bot with a 3,000-token system prompt + tool schema pays for those 3,000 tokens on every single request",
+            "At scale (thousands of requests/day) that's pure duplicate compute — same input, same math, same bill",
+            "Latency suffers too: prefill time (time-to-first-token) grows with prompt length"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "c2d96248-b5c3-48ce-91d5-4d35005aebfd",
+          "kind": "solution",
+          "title": "Cache the KV State for the Prefix, Reuse It on the Next Call",
+          "body": "During prefill, each layer computes key/value vectors for every token — the 'KV cache.' Prompt caching persists that KV state after the request ends, keyed by a hash of the prefix.",
+          "bullets": [
+            "The next request's prefix hash is checked against stored entries from earlier calls",
+            "A match means attention for those tokens is never recomputed — only the new, variable suffix gets processed",
+            "On Claude, the cached prefix covers tools → system → messages, up to the block you mark with cache_control",
+            "Matching requires the prefix to be 100% identical, including text and images — one changed character invalidates it"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "fd4d1c6a-cf48-4088-a047-e4a4674135bc",
+          "kind": "example",
+          "title": "Worked Example: A Support Agent at 10,000 Requests/Day",
+          "body": "Claude Opus 5 base input is $5/MTok. A 3,000-token system prompt + tool schema, called 10,000 times a day, shows the gap plainly.",
+          "bullets": [
+            "No caching: 10,000 x 3,000 tokens x $5/MTok = $150/day just for that static prefix",
+            "With caching: one write at 1.25x ($6.25/MTok on a 3,000-token prefix ≈ $0.02) then 9,999 reads at 0.1x base ($0.50/MTok) ≈ $15/day total",
+            "Net: roughly a 90% cost cut on the repeated portion, plus a faster time-to-first-token since that prefix skips prefill",
+            "The win scales with repetition — a prompt that's never reused just eats the write premium for nothing"
+          ],
+          "symbol": "dollarsign.circle.fill",
+          "table": null
+        },
+        {
+          "id": "c6328b17-e559-4089-9c65-348d64840f46",
+          "kind": "comparison",
+          "title": "Not Every Provider Caches the Same Way",
+          "body": "The mechanism is similar everywhere — skip recompute on a matched prefix — but who controls the cache boundary differs.",
+          "bullets": [
+            "Manual breakpoints give you exact control over what's cached and for how long",
+            "Automatic matching needs zero code changes but less control over lifetime",
+            "Explicit cache objects suit very large, long-lived contexts reused across many sessions"
+          ],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "Provider",
+              "How the cache boundary is set"
+            ],
+            "rows": [
+              [
+                "Claude (Anthropic)",
+                "Manual cache_control breakpoints, up to 4 per request, 5-min or 1-hour TTL"
+              ],
+              [
+                "OpenAI",
+                "Automatic prefix matching on long prompts — no manual markers to place"
+              ],
+              [
+                "Gemini",
+                "Explicit cache object you create and pay to store, then reference by ID"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "71737d08-7527-4703-800f-ea2cb61d10c1",
+          "kind": "problem",
+          "title": "The Cache Only Helps If You Structure the Prompt Right",
+          "body": "Caching rewards a specific prompt shape: stable content first, variable content last.",
+          "bullets": [
+            "Put system prompt, tool definitions, and few-shot examples first, then the changing user turn last — reversing the order breaks every cache hit",
+            "A breakpoint on content that changes every call (like a live timestamp) means the hash never matches, so you pay the write premium every single time",
+            "The cache expires on a timer (5 minutes by default on Claude) — a workload that calls the API every 20 minutes never benefits, it only pays extra",
+            "Caching doesn't expand what the model can 'remember' — it's still bounded by the same context window, just cheaper to resubmit"
+          ],
+          "symbol": "wrench.and.screwdriver.fill",
+          "table": null
+        },
+        {
+          "id": "962f39a0-6c63-4eca-83de-18c4ca2dab3c",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Prompt caching reuses the KV cache for a byte-identical prefix — it's a compute/cost optimization, not new memory",
+            "Order your prompt: static instructions and tools first, variable content last, with the breakpoint on the last stable block",
+            "It only pays off under repetition within the TTL window — high-volume, shared-prefix workloads win; one-off calls lose the write premium",
+            "Check your usage response (cache_creation_input_tokens / cache_read_input_tokens) to confirm hits are actually happening"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "9403f568-f4e7-4bb5-ba3d-af1ee9799fdf",
+            "prompt": "What does prompt caching actually reuse between requests?",
+            "options": [
+              "The model's trained weights",
+              "The key/value (KV) vectors computed for the matching prefix tokens",
+              "The final text output from the previous response",
+              "The tokenizer's vocabulary file"
+            ],
+            "correctIndex": 1,
+            "explanation": "Caching persists the per-layer KV state computed during prefill for the prefix tokens, so attention over them doesn't need to be recomputed. The weights and tokenizer never change, and output text isn't what's stored."
+          },
+          {
+            "id": "53562059-8a06-4544-af90-7c299ecc8fab",
+            "prompt": "On Claude, why does editing a single word inside your cached system prompt invalidate the cache for every later request?",
+            "options": [
+              "The cache key is a hash of the entire prefix up to the breakpoint, so any change produces a different hash",
+              "The API randomly rotates cache keys every few requests for security",
+              "Only the first 100 tokens of the prompt are hashed, and that part never changes",
+              "Edited prompts are always routed to a different, uncached model"
+            ],
+            "correctIndex": 0,
+            "explanation": "The cache entry is keyed by a cumulative hash of everything from the start of the prefix through the marked block. Change any earlier token — even one word — and the hash no longer matches, so the request falls back to a full (paid) cache write."
+          },
+          {
+            "id": "cd684005-ea61-4088-acf8-51fcec30868b",
+            "prompt": "A workload calls the Claude API once every 20 minutes using the default cache TTL. What happens if it enables prompt caching?",
+            "options": [
+              "It saves money immediately because writes are always cheaper than no caching",
+              "Nothing changes — caching is free to enable and has no downside",
+              "It pays the ~1.25x write premium every call and never gets a cache hit, since the 5-minute entry always expires first",
+              "The 20-minute gap is automatically extended to keep the cache alive"
+            ],
+            "correctIndex": 2,
+            "explanation": "The default TTL is 5 minutes, refreshed only on a hit. A 20-minute gap between calls means the entry always expires before the next request arrives, so every call pays the write premium with no offsetting cheap read — a net cost increase over no caching at all."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "79e1d16f-d730-40a7-af53-35da94906f6c",
+          "title": "Prompt caching — Claude Docs",
+          "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+        },
+        {
+          "id": "7a897c96-e2ef-48bb-9be8-9ddf1f708f61",
+          "title": "Prompt caching with Claude (Anthropic)",
+          "url": "https://claude.com/blog/prompt-caching"
+        }
+      ],
+      "id": "47d36f5d-26a8-47ac-89a8-8a03a473fc07",
+      "publishedDate": "2026-11-04T06:49:05Z",
+      "heroImageURL": null
+    },
+    {
       "id": "f76eec76-8f35-49e0-88c0-b9c8fa85700b",
       "title": "FlashProve: Proof of Which Model Actually Replied",
       "subtitle": "A zero-knowledge proof that the model you paid for is the model that answered.",
@@ -10936,199 +11120,6 @@
         }
       ],
       "id": "1b5bbca7-bd55-41c4-9526-d3e8bde2d45e",
-      "publishedDate": "2026-10-27T00:49:32Z"
-    },
-    {
-      "title": "Consistent Hashing: Add One Server, Remap Almost Nothing",
-      "subtitle": "The ring-based trick behind DynamoDB, Cassandra, and Memcached scaling without a full data reshuffle",
-      "category": "System Design",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "consistent-hashing",
-        "distributed-systems",
-        "caching",
-        "sharding",
-        "load-balancing"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "circle.grid.3x3.fill",
-      "summary": "Consistent hashing maps both servers and keys onto the same hash ring so that adding or removing one node only moves roughly K/N keys, instead of the near-total remap that naive mod-N hashing causes. Virtual nodes fix the uneven load that a sparse ring creates.",
-      "slides": [
-        {
-          "id": "2ab88755-e800-4b87-aeb1-595eced0f3d8",
-          "kind": "cover",
-          "title": "Add One Server, Remap Almost Nothing",
-          "body": "Consistent hashing is the mechanism behind how Memcached, DynamoDB, Cassandra, and most CDNs add or remove nodes without reshuffling all their data.",
-          "bullets": [],
-          "symbol": "circle.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "9c03d416-2f14-45d4-80aa-dcd9307ce374",
-          "kind": "problem",
-          "title": "Naive Hashing: hash(key) % N Breaks Every Time N Changes",
-          "body": null,
-          "bullets": [
-            "A naive scheme routes each key to server hash(key) % N — simple, until N changes",
-            "Add or remove just ONE server and N changes, flipping the mod result for nearly every key, not only the ones that logically need to move",
-            "Going from 4 servers to 5 remaps roughly 80% of all keys in one step, even though only 1/5 of the data actually needed to relocate",
-            "For a cache, that's a near-total miss storm the instant you scale; for a database, it's a mass migration triggered by a routine capacity change"
-          ],
-          "symbol": "exclamationmark.arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "5872ab08-c641-4030-8aed-a614d25bcb20",
-          "kind": "solution",
-          "title": "The Ring: Hash Servers and Keys Onto the Same Space",
-          "body": null,
-          "bullets": [
-            "Map both servers and keys onto the same hash ring (e.g., positions 0 to 2^32-1) using one hash function",
-            "A key belongs to the first server found walking clockwise from the key's position on the ring",
-            "Adding a server only steals the slice of keys between its new position and the previous clockwise server — every other key stays exactly where it was",
-            "Removing a server only hands its slice of keys to its clockwise neighbor; nothing else moves",
-            "On average, only K/N keys move when one node joins N nodes holding K keys — not the whole key space"
-          ],
-          "symbol": "circle.dotted",
-          "table": null
-        },
-        {
-          "id": "6dc4d50d-7190-401d-b657-be8ae650a4ad",
-          "kind": "architecture",
-          "title": "Virtual Nodes Fix the Lumpy-Ring Problem",
-          "body": null,
-          "bullets": [
-            "With only a few real servers, random ring placement creates uneven gaps — some nodes end up owning a disproportionate share of keys",
-            "Each physical server gets many virtual positions on the ring instead of one; Cassandra and DynamoDB-style systems commonly use on the order of 100+ per server",
-            "More virtual nodes smooths load distribution and makes rebalancing finer-grained when a node joins or leaves",
-            "Tradeoff: more virtual nodes means more ring metadata to store and more bookkeeping on every membership change"
-          ],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "id": "6f3d21ec-d3e9-4c3a-8fff-6cd6dd94e62e",
-          "kind": "comparison",
-          "title": "Consistent Hashing vs. Naive Mod-N Hashing",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "",
-              "Mod-N hashing",
-              "Consistent hashing (ring)"
-            ],
-            "rows": [
-              [
-                "Keys remapped when 1 node added (4→5)",
-                "~80% of all keys",
-                "~1/5 of keys (K/N)"
-              ],
-              [
-                "Needs full re-shard on scale change",
-                "Yes",
-                "No"
-              ],
-              [
-                "Load distribution with few nodes",
-                "Even, by construction",
-                "Uneven without virtual nodes"
-              ],
-              [
-                "Used by",
-                "Simple fixed-size shard maps",
-                "DynamoDB, Cassandra, Memcached clients, many CDNs"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "8e00ade9-ffb8-4b8f-8162-97e358f9bd70",
-          "kind": "example",
-          "title": "Worked Example: Scaling a 3-Node Cache to 4 Nodes",
-          "body": null,
-          "bullets": [
-            "Ring positions (mod 12, for simplicity): Server A=1, B=5, C=9. Key \"user:42\" hashes to 7, landing on C (the first server clockwise from 7)",
-            "Add Server D at ring position 7.5. Only keys between B (5) and D (7.5) — the slice that used to belong to C — now route to D instead",
-            "Key \"user:42\" (position 7) now lands on D, not C. Keys hashing to 9–1 (C's remaining slice) and 1–5 (A's slice) are untouched",
-            "Net effect: D takes over roughly one slice's worth of keys from its clockwise neighbor; A and B's assignments never change"
-          ],
-          "symbol": "number.circle.fill",
-          "table": null
-        },
-        {
-          "id": "3382534c-c7f0-401c-a13f-b676a1a03092",
-          "kind": "problem",
-          "title": "When Consistent Hashing Isn't the Right Tool",
-          "body": null,
-          "bullets": [
-            "If your node count is small and mostly static, a simple fixed shard map is easier to reason about and debug",
-            "Hot keys still overload whichever single node owns them — consistent hashing balances key COUNT across nodes, not key TRAFFIC",
-            "Rebalancing still costs something: moved keys mean cache misses or data transfer, even though it's a fraction of a full reshuffle",
-            "The hash function matters: a poor one clusters keys unevenly even with virtual nodes, which is why production systems lean on well-tested hashes like MurmurHash rather than ad hoc ones"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "678f4184-1611-4644-bbc6-7cefb7b02c6a",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Consistent hashing bounds the \"blast radius\" of a membership change to roughly K/N keys, instead of remapping nearly everything",
-            "Virtual nodes trade a bit of metadata overhead for much smoother load distribution across real servers",
-            "It solves WHERE a key lives, not how hot that key gets — pair it with request-level load balancing or replication for hot-key problems",
-            "This is the mechanism quietly running underneath most distributed caches and databases you already use"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "30119fb8-1951-4262-a29b-8d8245a4c4b9",
-            "prompt": "In naive mod-N hashing, what happens when you go from 4 servers to 5?",
-            "options": [
-              "Only 1/5 of keys remap",
-              "Roughly 80% of keys remap to a different server",
-              "No keys remap",
-              "Exactly half the keys remap"
-            ],
-            "correctIndex": 1,
-            "explanation": "Because hash(key) % N depends directly on N, changing N from 4 to 5 flips the result for almost every key — not just the fraction that logically needs to move."
-          },
-          {
-            "id": "a984a438-3d06-41e5-8088-634f914e9a04",
-            "prompt": "What problem do virtual nodes solve in consistent hashing?",
-            "options": [
-              "They encrypt keys for security",
-              "They eliminate the need for a hash function",
-              "They smooth out uneven load when there are only a few physical servers on the ring",
-              "They make hashing computationally faster"
-            ],
-            "correctIndex": 2,
-            "explanation": "With few physical servers, random placement on the ring can leave some nodes with far more ring space (and keys) than others. Giving each server many virtual positions smooths that distribution."
-          },
-          {
-            "id": "21fd27ca-0017-425b-bbb0-a76fd9955f4c",
-            "prompt": "On average, how many keys move when you add one node to a consistent-hashing ring holding K keys across N nodes?",
-            "options": [
-              "All K keys",
-              "Roughly K/N keys",
-              "Zero keys",
-              "K multiplied by N"
-            ],
-            "correctIndex": 1,
-            "explanation": "Only the slice of the ring between the new node and its clockwise neighbor changes ownership — on average that's about K/N keys, not the full key set."
-          }
-        ]
-      },
-      "references": [],
-      "id": "77df6195-dbdd-4ac7-83b6-6e470bfa3d75",
       "publishedDate": "2026-10-27T00:49:32Z"
     }
   ]
