@@ -1,6 +1,208 @@
 {
   "posts": [
     {
+      "title": "Decoding Strategies: How LLMs Pick the Next Token",
+      "subtitle": "Greedy decoding is deterministic and boring — temperature, top-k, and top-p reshape or truncate the probability distribution to control how much the model gambles on its next word.",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "llms",
+        "decoding",
+        "sampling",
+        "temperature",
+        "inference",
+        "nlp"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "slider.horizontal.3",
+      "summary": "Every LLM call ends with a choice: which token comes next. Greedy decoding always picks the single most likely token, producing repetitive, deterministic text. Temperature, top-k, and top-p reshape or truncate the probability distribution before sampling, trading determinism for diversity — and picking the wrong setting can make a model either loop forever or hallucinate nonsense.",
+      "slides": [
+        {
+          "id": "1c6cf17c-9306-41fb-805a-d89d4f0e516b",
+          "kind": "cover",
+          "title": "A Language Model's Last Step Is a Dice Roll",
+          "body": "After the final layer, an LLM outputs a probability for every token in its vocabulary. What happens next — argmax, or something more interesting — is called decoding, and it shapes everything about the output's style and reliability.",
+          "bullets": [
+            "The model itself never 'decides' a word — a separate sampling procedure converts its raw probabilities into a chosen token",
+            "The exact same model weights can sound robotic or wildly creative, depending only on the decoding settings",
+            "Three knobs — temperature, top-k, top-p — are the ones nearly every API exposes"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "670dabbc-0f06-4a09-ab50-f5f199eddaa2",
+          "kind": "problem",
+          "title": "Greedy Decoding Gets Stuck in Loops",
+          "body": "The simplest strategy — always pick the highest-probability token (argmax) — sounds safe, but it has a well-known failure mode.",
+          "bullets": [
+            "Greedy decoding is fully deterministic: same prompt, same output, every time",
+            "It tends to produce repetitive, bland text — once a phrase becomes locally 'most likely,' the model keeps re-choosing it, looping in extreme cases",
+            "It can't express genuine uncertainty: if two tokens are 51% and 49% likely, greedy throws away the 49% option entirely, every single time"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "bb98c084-ed97-449b-8a6e-737a7fef8139",
+          "kind": "concept",
+          "title": "Temperature Rescales the Distribution Before Sampling",
+          "body": "Temperature (T) divides each token's logit before the softmax turns logits into probabilities: p_i = exp(logit_i / T) / Σ exp(logit_j / T).",
+          "bullets": [
+            "T < 1 sharpens the distribution — the gap between likely and unlikely tokens grows, pushing sampling toward argmax (T→0 becomes greedy decoding)",
+            "T > 1 flattens the distribution — low-probability tokens get a real chance, increasing diversity but also incoherence",
+            "T = 1 leaves the model's raw distribution untouched",
+            "Temperature never removes any token from consideration — it only reshapes probabilities across the full vocabulary"
+          ],
+          "symbol": "thermometer",
+          "table": null
+        },
+        {
+          "id": "12035ec3-13a8-4636-bd45-336b741a6fe8",
+          "kind": "concept",
+          "title": "Top-k and Top-p Cut the Candidate Pool First",
+          "body": "Where temperature reshapes the whole distribution, top-k and top-p throw away the long tail before sampling even happens.",
+          "bullets": [
+            "Top-k keeps only the k highest-probability tokens, renormalizes just those, and samples from that fixed-size pool (common default: k = 40-50)",
+            "Top-p (nucleus sampling) instead keeps the smallest set of tokens whose cumulative probability reaches p — e.g. p = 0.9 — and the pool size changes every step",
+            "Top-p adapts automatically: when the model is very confident (one token near 99%), the nucleus is tiny; when it's uncertain (a flat distribution), the nucleus widens to include many tokens",
+            "Top-k's fixed pool size is its weakness: k = 50 is huge when the model is confident, and too small when it's genuinely torn between hundreds of plausible tokens"
+          ],
+          "symbol": "line.3.horizontal.decrease.circle",
+          "table": null
+        },
+        {
+          "id": "ee3c6aa7-cecb-4a66-bdc4-45490fdcda8d",
+          "kind": "comparison",
+          "title": "Four Strategies, Side by Side",
+          "body": "Most production APIs combine temperature with top-p (and sometimes top-k) rather than relying on just one knob.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Strategy",
+              "Determinism",
+              "Candidate pool",
+              "Typical setting"
+            ],
+            "rows": [
+              [
+                "Greedy (argmax)",
+                "Fully deterministic",
+                "Always 1 token",
+                "Rarely used for chat"
+              ],
+              [
+                "Temperature only",
+                "Tunable randomness",
+                "Full vocabulary, reshaped",
+                "T = 0.7-1.0"
+              ],
+              [
+                "Top-k",
+                "Semi-random",
+                "Fixed k tokens",
+                "k = 40-50"
+              ],
+              [
+                "Top-p (nucleus)",
+                "Semi-random, adaptive",
+                "Smallest set ≥ cumulative p",
+                "p = 0.9-0.95"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "1308b496-5129-4ddb-a3b5-2090827e5b11",
+          "kind": "example",
+          "title": "Walking Through One Token Choice",
+          "body": "Suppose the model's next-token distribution is: 'cat' 0.50, 'dog' 0.30, 'fish' 0.10, 'rock' 0.06, 'cloud' 0.04.",
+          "bullets": [
+            "Greedy: always picks 'cat' — no exceptions, ever",
+            "Top-k=2: pool is {'cat','dog'} (0.50+0.30=0.80), renormalized to roughly 'cat' 0.625 / 'dog' 0.375 — 'fish', 'rock', 'cloud' can never be chosen",
+            "Top-p=0.9: keeps adding tokens until cumulative probability passes 0.9 — that's 'cat'+'dog'+'fish'+'rock' (0.50+0.30+0.10+0.06=0.96 ≥ 0.9), so only 'cloud' is excluded",
+            "Temperature=1.5 applied before either cutoff flattens the gaps, so 'fish', 'rock', even 'cloud' become meaningfully more likely to survive and get sampled"
+          ],
+          "symbol": "text.cursor",
+          "table": null
+        },
+        {
+          "id": "f5fd7dad-c82a-4d09-92a7-5a5e28433b45",
+          "kind": "concept",
+          "title": "Picking the Wrong Setting Breaks Different Things",
+          "body": "There's no single 'correct' setting — the right choice depends entirely on the task.",
+          "bullets": [
+            "Too low (near-greedy): safe for code generation and structured output where syntax must be exact, but prone to repetition loops in long-form text",
+            "Too high (T > 1.3, or top-p near 1.0 with a wide k): creative writing benefits from the diversity, but code and factual answers start hallucinating invalid syntax or invented facts",
+            "Stacking settings carelessly compounds the effect — high temperature AND high top-p AND high top-k together removes almost every safety net on the output",
+            "Most coding assistants default to T ≈ 0-0.3; most chat assistants default to T ≈ 0.7-1.0 with top-p ≈ 0.9 as the standard starting point"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "84a74807-1e31-4264-b2aa-16fe3a904ead",
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "Decoding is a separate step from the model itself — the same weights can sound deterministic or wildly creative depending only on these settings",
+            "Temperature reshapes probabilities across the whole vocabulary; top-k and top-p instead cut the tail before sampling even starts",
+            "Top-p adapts its candidate pool size to the model's confidence at each step; top-k's pool size stays fixed regardless of confidence",
+            "Low settings favor correctness-critical tasks (code, facts); higher settings favor creative, open-ended tasks — and stacking extremes compounds both the benefits and the risks"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "576f1feb-a1ed-4421-b4d4-e8dd95886178",
+            "prompt": "What does setting temperature very close to 0 do to next-token sampling?",
+            "options": [
+              "It makes the output more random and diverse",
+              "It sharply amplifies logit differences, making sampling nearly indistinguishable from greedy (argmax) decoding",
+              "It increases the model's effective vocabulary size",
+              "It disables the softmax step entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Dividing logits by a very small T exaggerates the gaps between them, so after softmax the distribution collapses toward a one-hot vector on the highest-probability token — functionally the same as greedy decoding."
+          },
+          {
+            "id": "274c6316-9d6e-4754-a7de-867ebabf61b1",
+            "prompt": "How does top-p (nucleus) sampling differ from top-k sampling?",
+            "options": [
+              "Top-p always samples from exactly p tokens, same as top-k's fixed k",
+              "Top-p dynamically sizes the candidate pool to the smallest set of tokens whose cumulative probability reaches p, while top-k uses a fixed pool size",
+              "Top-p ignores the model's probability distribution entirely",
+              "Top-p can only be used with greedy decoding"
+            ],
+            "correctIndex": 1,
+            "explanation": "Top-k always keeps exactly k tokens no matter how confident the model is, while top-p grows or shrinks its candidate set every step based on how the probability mass is actually distributed — a tiny nucleus when the model is sure, a wide one when it's torn."
+          },
+          {
+            "id": "a35e0b76-c66e-44b8-a83e-3ff8ccfb4f9c",
+            "prompt": "Why do most coding assistants default to a low temperature (around 0-0.3) rather than a high one?",
+            "options": [
+              "Low temperature makes inference run faster on the GPU",
+              "Low temperature reduces the API's token cost",
+              "Code has rigid syntax, so sampling low-probability tokens more often breaks compilation or introduces hallucinated APIs",
+              "High temperature disables top-p sampling"
+            ],
+            "correctIndex": 2,
+            "explanation": "Unlike prose, code fails hard on small mistakes — a single wrong token can break syntax or call a function that doesn't exist — so coding tools bias heavily toward the model's highest-confidence tokens rather than exploring the tail of the distribution."
+          }
+        ]
+      },
+      "references": [],
+      "publishedDate": "2026-11-05T00:45:30Z",
+      "heroImageURL": null,
+      "id": "b026aa75-84b9-4ca6-8a3d-dfb2710b164f"
+    },
+    {
       "title": "SpecPilot: An Agent That Tunes Its Own Speculative Decoding",
       "subtitle": "An agentic search loop pushed one speculative-decoding stack from 4.46x to 10.87x over plain autoregressive decoding — without changing a single output token.",
       "category": "AI Innovations",
@@ -10935,195 +11137,6 @@
           "id": "98dd5775-4cd1-4986-9611-ef5e8b15ca03",
           "title": "llm-d 1.0: An open-source stack for distributed inference",
           "url": "https://cloud.google.com/blog/topics/ai-infrastructure/llm-d-1-0-an-open-source-stack-for-distributed-inference"
-        }
-      ]
-    },
-    {
-      "id": "b17bdbb3-79db-4953-84a6-153749b86a67",
-      "title": "PagedAttention: Treating GPU Memory Like Virtual Memory",
-      "subtitle": "The vLLM trick that cut LLM serving memory waste from 60-80% to under 4%.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "paged attention",
-        "vllm",
-        "kv cache",
-        "memory management",
-        "inference optimization",
-        "llm serving"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "tablecells.fill",
-      "summary": "PagedAttention splits each sequence's KV cache into fixed-size, non-contiguous blocks addressed through a per-sequence block table — the same trick operating systems use for virtual memory paging. It cut wasted KV cache memory from 60-80% to under 4% in the original vLLM benchmarks and made memory sharing across parallel samples nearly free via copy-on-write.",
-      "publishedDate": "2026-10-27T18:49:36Z",
-      "slides": [
-        {
-          "id": "9a49c5d7-2c1a-4017-8828-04e271dc8aa9",
-          "kind": "cover",
-          "title": "Your KV Cache Is Wasting Most of Its Memory",
-          "body": "Before PagedAttention, LLM servers reserved one contiguous memory slab per request sized for its maximum possible length — even if the request finished after 20 tokens. The original vLLM paper measured 60-80% of that reserved memory going unused.",
-          "bullets": [
-            "Introduced in 'Efficient Memory Management for LLM Serving with PagedAttention' (Kwon et al., UC Berkeley, SOSP 2023)",
-            "KV cache holds every generated token's attention keys/values, and it grows with every new token",
-            "Reserving memory up front for the worst case is the root problem"
-          ],
-          "symbol": "tablecells.fill",
-          "table": null
-        },
-        {
-          "id": "3e6727d5-4aea-4d54-b56c-9d534001bd25",
-          "kind": "problem",
-          "title": "Contiguous Allocation Means Fragmentation, Three Ways",
-          "body": "Treating the KV cache like a flat C array forces three kinds of waste.",
-          "bullets": [
-            "Internal fragmentation: reserving for max_tokens when the request only needs a fraction of it",
-            "External fragmentation: variable-size slabs leave memory holes nothing else fits into",
-            "No sharing: two requests with an identical prefix (e.g. the same system prompt) each get their own full copy"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "34ad8053-bfa2-408d-b3bd-284bf38553e2",
-          "kind": "solution",
-          "title": "Split the KV Cache Into Fixed-Size Blocks, Like OS Paging",
-          "body": "PagedAttention stores each sequence's KV cache as a set of fixed-size blocks (16 tokens each, in the original implementation) that don't have to be contiguous in memory — the same trick operating systems use for virtual memory paging.",
-          "bullets": [
-            "Each sequence keeps a block table mapping logical token positions to physical block addresses",
-            "Blocks are allocated on demand as generation proceeds, not reserved for the max length upfront",
-            "The attention kernel reads KV values through this block table instead of assuming a flat array"
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "e8e3642b-868e-43a6-8414-5c0cc9d8bd18",
-          "kind": "architecture",
-          "title": "Copy-on-Write Makes Prompt Sharing Nearly Free",
-          "body": "When multiple sequences share a prefix (a system prompt, or parallel samples from one request), their block tables point at the same physical blocks with a reference count. Only when a sequence generates a token that diverges does it get its own private copy of that one block.",
-          "bullets": [
-            "Parallel sampling (e.g. 5 candidate completions) shares the prompt's blocks across all 5 instead of copying them 5 times",
-            "Beam search shares blocks across live beams, forking only on divergence",
-            "This mirrors copy-on-write virtual memory pages in operating systems"
-          ],
-          "symbol": "arrow.triangle.branch",
-          "table": null
-        },
-        {
-          "id": "1bc6e312-a2e2-45bc-b9de-9f48eb87d521",
-          "kind": "comparison",
-          "title": "What the Original Benchmarks Showed",
-          "body": null,
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Metric",
-              "Before (contiguous allocation)",
-              "With PagedAttention"
-            ],
-            "rows": [
-              [
-                "Memory wasted on reserved-but-unused KV cache",
-                "60-80%",
-                "Under 4%"
-              ],
-              [
-                "Throughput vs. HuggingFace Transformers (as reported in the paper)",
-                "1x baseline",
-                "Up to 24x higher"
-              ],
-              [
-                "Throughput vs. an optimized FasterTransformer-class baseline",
-                "1x baseline",
-                "2-4x higher"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "dc0a6846-8ab1-4e4a-a5cc-f74a189d87b5",
-          "kind": "example",
-          "title": "Worked Example: One System Prompt, Five Completions",
-          "body": "Say a request asks for 5 sampled completions of a 500-token system+user prompt. Without PagedAttention, the server reserves KV cache for that full prompt 5 separate times — 2,500 tokens' worth of memory before a single new token is generated. With PagedAttention, all 5 sequences' block tables point at the same roughly 31 physical blocks (at 16 tokens/block) for that shared prefix; only each sequence's own generated continuation gets private blocks.",
-          "bullets": [],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "fd58c70a-bb56-44b8-9799-e4eefe77e2d4",
-          "kind": "problem",
-          "title": "The Cost: Kernel Complexity and a Block Size to Tune",
-          "body": "Paging isn't free. The attention kernel must gather KV values through indirection (the block table) instead of a flat memory read, adding overhead per block fetch.",
-          "bullets": [
-            "Too small a block size brings back fragmentation in nearly-empty trailing blocks, just smaller",
-            "Too large a block size reduces sharing granularity between sequences that diverge early",
-            "Block-table indirection adds bookkeeping cost that only pays off once memory pressure, not raw latency, is the bottleneck"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "445c6ca4-636f-4fd3-85e1-53a02be2f7b6",
-          "kind": "takeaways",
-          "title": "Why Nearly Every Modern LLM Server Uses This Now",
-          "body": null,
-          "bullets": [
-            "PagedAttention manages KV cache as fixed-size, non-contiguous blocks — like OS virtual memory paging",
-            "It cut wasted KV cache memory from 60-80% down to under 4% in the original vLLM benchmarks",
-            "Copy-on-write block sharing makes parallel sampling and beam search nearly free in memory",
-            "It's the reason systems like vLLM, SGLang, and llm-d can pack far more concurrent sequences onto the same GPU/TPU fleet"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "fa019239-f821-4a92-b804-cf1d07f4a374",
-            "prompt": "What specific memory problem does PagedAttention solve for LLM serving?",
-            "options": [
-              "Slow disk I/O when loading model weights",
-              "Wasted memory from reserving KV cache for a request's maximum possible length upfront",
-              "The LLM producing incorrect outputs",
-              "Network latency between the client and server"
-            ],
-            "correctIndex": 1,
-            "explanation": "Before PagedAttention, servers reserved one contiguous KV cache slab sized for the worst-case sequence length, wasting 60-80% of it. PagedAttention allocates fixed-size blocks on demand instead."
-          },
-          {
-            "id": "d3d51b6a-d5e7-4908-97d6-1a743f2767d4",
-            "prompt": "How does PagedAttention let 5 parallel sampled completions of the same prompt share memory?",
-            "options": [
-              "It doesn't — each completion still gets its own full copy",
-              "Their block tables point at the same physical blocks for the shared prefix, copying a block only when a sequence diverges",
-              "It compresses the KV cache for each sequence separately",
-              "It deletes the prompt's KV cache once the first completion starts"
-            ],
-            "correctIndex": 1,
-            "explanation": "This is copy-on-write: identical block tables point at shared physical blocks until one sequence generates a token that diverges, at which point only that block gets copied — the same mechanism operating systems use for virtual memory pages."
-          },
-          {
-            "id": "7238afc8-4575-43fd-9854-291b9202f96c",
-            "prompt": "What's a real tradeoff of picking a very small KV cache block size in PagedAttention?",
-            "options": [
-              "It always maximizes memory efficiency with no downside",
-              "It increases sharing granularity, but adds more per-block bookkeeping overhead in the attention kernel",
-              "It makes copy-on-write impossible",
-              "It forces every sequence to use the same maximum length"
-            ],
-            "correctIndex": 1,
-            "explanation": "Smaller blocks reduce the waste left in a trailing partially-full block and increase sharing granularity, but each block adds a lookup through the block table, so the attention kernel pays more indirection overhead — block size is a deliberate tuning point, not a free win."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "1bd0c980-ac7f-4393-9674-456605047ff7",
-          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (vLLM)",
-          "url": "https://arxiv.org/abs/2309.06180"
         }
       ]
     }
