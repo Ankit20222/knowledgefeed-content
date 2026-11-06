@@ -1,6 +1,197 @@
 {
   "posts": [
     {
+      "id": "2070abd8-83ca-48f4-8814-2c9249164060",
+      "title": "LSM Trees: Why Databases Love Sequential Writes",
+      "subtitle": "Trade random disk writes for sequential ones — and pay the difference back later, in the background.",
+      "category": "Databases",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lsm-tree",
+        "databases",
+        "rocksdb",
+        "storage-engines",
+        "compaction",
+        "write-amplification"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "cylinder.split.1x2.fill",
+      "summary": "LSM trees (RocksDB, Cassandra, LevelDB, ScyllaDB) turn every write into a sequential, in-memory append instead of an in-place disk update, then reconcile the resulting files with background compaction. That buys huge write throughput at the cost of read amplification and deferred cleanup — bloom filters and compaction strategy choices are how you manage that tradeoff.",
+      "slides": [
+        {
+          "id": "391dc936-0ed8-4ceb-a207-8bd32c01fbc4",
+          "kind": "cover",
+          "title": "LSM Trees: Why Databases Love Sequential Writes",
+          "body": "The storage engine behind RocksDB, Cassandra, and ScyllaDB turns every write into a disk-friendly append — then pays the cost back later, in the background.",
+          "bullets": [],
+          "symbol": "cylinder.split.1x2.fill"
+        },
+        {
+          "id": "6e420552-d86b-4d78-955e-e5a38ea087c8",
+          "kind": "problem",
+          "title": "In-Place Updates Scatter Your Writes Across the Disk",
+          "body": "A classic B-tree updates a record where it already lives. At high write throughput, that means constant random seeks instead of one fast stream of writes.",
+          "bullets": [
+            "B-trees update records in place — each write can touch a different, scattered disk page.",
+            "Random I/O is the slow path on spinning disks, and even on SSDs it causes extra write amplification inside the drive's own flash controller.",
+            "Workloads like metrics ingestion, event logs, and key-value stores at scale can generate more writes per second than random I/O can absorb."
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "40929875-c52e-4121-9fde-561a8967239b",
+          "kind": "architecture",
+          "title": "Turn Every Write Into a Sequential Append",
+          "body": "An LSM (Log-Structured Merge) tree never updates data in place. It buffers writes in memory, then flushes them as whole, immutable files.",
+          "bullets": [
+            "Writes land in an in-memory memtable and are appended to a write-ahead log (WAL) for crash recovery — both are sequential operations.",
+            "When the memtable fills (RocksDB's default target file size is 64MB), it's frozen and flushed to disk as an immutable, sorted SSTable file — one sequential write, no seeking.",
+            "This produces many SSTables over time; a background compaction process merges and rewrites them to drop duplicate, overwritten, or deleted keys and bound how many files a read must check.",
+            "RocksDB's default triggers compaction once level 0 accumulates 4 SSTables (level0_file_num_compaction_trigger = 4)."
+          ],
+          "symbol": "square.stack.3d.up.fill"
+        },
+        {
+          "id": "1581e900-8d56-4a88-a26d-ca7e44dfbee4",
+          "kind": "comparison",
+          "title": "Two Ways to Pay the Compaction Bill",
+          "body": "RocksDB ships two compaction styles, and they trade the same cost in different places: write amplification vs. space amplification.",
+          "bullets": [
+            "Leveled is RocksDB's default; universal (size-tiered) is the alternative — most LSM engines offer an equivalent choice."
+          ],
+          "table": {
+            "headers": [
+              "Strategy",
+              "Write amplification",
+              "Space amplification",
+              "Best for"
+            ],
+            "rows": [
+              [
+                "Leveled (default)",
+                "Higher — up to ~fanout per level",
+                "Low",
+                "Read-heavy, space-constrained workloads"
+              ],
+              [
+                "Universal / size-tiered",
+                "Lower — ~1x per level",
+                "Higher — up to 3x by default (max_size_amplification_percent = 200)",
+                "Write-heavy, bursty ingestion"
+              ]
+            ]
+          },
+          "symbol": "scalemass.fill"
+        },
+        {
+          "id": "98971a78-1de1-40e5-9369-6abc164cf8b3",
+          "kind": "concept",
+          "title": "Bloom Filters Stop Reads From Checking Every File",
+          "body": "A point read on an LSM tree has to check the memtable, then potentially every SSTable, newest to oldest, until it finds the key.",
+          "bullets": [
+            "Each SSTable carries a bloom filter — a compact probabilistic structure that can say 'definitely not here' with zero false negatives.",
+            "A false positive just costs one wasted disk read; a false negative would silently lose data, so bloom filters are tuned to never produce one.",
+            "More bits per key means fewer false positives but more RAM — a standard tuning knob in both RocksDB and Cassandra.",
+            "Without bloom filters, a cold point lookup could mean opening and binary-searching dozens of SSTable files."
+          ],
+          "symbol": "checkmark.shield.fill"
+        },
+        {
+          "id": "faa2afe1-bb46-46d4-b010-89b002a3237d",
+          "kind": "example",
+          "title": "Example: Ingesting 200K Metrics Writes per Second",
+          "body": "A time-series database writing hundreds of thousands of points per second is the textbook LSM use case.",
+          "bullets": [
+            "Every incoming point is appended to the WAL for durability and inserted into the active memtable in RAM — both sequential, sub-millisecond operations.",
+            "Once the memtable hits its ~64MB target size, it's swapped out and flushed as a new SSTable; writes keep flowing into a fresh memtable with zero downtime.",
+            "A read for 'cpu.load over the last hour' checks the memtable, then only the handful of SSTables whose bloom filters say 'maybe' — not the whole dataset.",
+            "In the background, compaction quietly merges older SSTables so the read path doesn't have to check hundreds of small files months later."
+          ],
+          "symbol": "waveform.path.ecg"
+        },
+        {
+          "id": "2944d1a1-81a2-4e7d-b621-fe50465899e4",
+          "kind": "concept",
+          "title": "Where LSM Trees Bite You",
+          "body": "The write speed isn't free — it's deferred, and the bill comes due elsewhere.",
+          "bullets": [
+            "Compaction storms: heavy background merging can spike CPU and disk I/O, causing write and read latency to jump — a known tuning headache in Cassandra and RocksDB alike.",
+            "Deletes are tombstones, not removals — space isn't reclaimed until compaction rewrites the SSTable holding that key, so delete-heavy workloads need compaction kept current.",
+            "Point reads can be slower than a B-tree's single traversal, since the worst case means checking the memtable plus multiple SSTables across levels.",
+            "Range scans spanning very fresh and very old data can still touch many files if compaction hasn't caught up yet."
+          ],
+          "symbol": "flame.fill"
+        },
+        {
+          "id": "796cf44e-cfcb-4f98-b2e2-3fdf73d3ce83",
+          "kind": "takeaways",
+          "title": "Pick LSM for Writes, B-Trees for Point Reads",
+          "body": null,
+          "bullets": [
+            "Choose an LSM-backed store (RocksDB, Cassandra, ScyllaDB, LevelDB, HBase) when writes dominate: logs, metrics, event streams, high-throughput key-value storage.",
+            "Choose a B-tree (PostgreSQL, MySQL/InnoDB, SQLite) when point reads and range queries dominate and write volume is moderate.",
+            "Leveled compaction trades write throughput for lower space usage and faster reads; size-tiered trades the opposite — pick based on which cost you can afford.",
+            "Bloom filters are what make LSM reads viable at all — without them, every point lookup degrades toward scanning every SSTable."
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "fb3af321-0a1f-46d5-bd97-9b55e8bd164a",
+            "prompt": "Why can an LSM tree sustain much higher write throughput than a classic B-tree?",
+            "options": [
+              "It skips the write-ahead log entirely",
+              "It buffers writes in memory and flushes them as sequential, immutable files instead of updating pages in place",
+              "It stores all data compressed, so there's less to write",
+              "It only supports append-only workloads, so there's nothing to update"
+            ],
+            "correctIndex": 1,
+            "explanation": "B-trees update a record's existing page in place, which means random disk seeks. LSM trees batch writes into a memtable and flush whole sorted files sequentially — compaction, not the write path, handles merging overwritten data later."
+          },
+          {
+            "id": "46eb4546-bc43-4afa-a681-9149676df7cd",
+            "prompt": "In RocksDB, what does 'write amplification' refer to?",
+            "options": [
+              "The number of replicas a write is sent to across a cluster",
+              "The extra bytes written to disk as compaction repeatedly rewrites the same data while merging it down through levels",
+              "The size of the write-ahead log compared to the memtable",
+              "The compression ratio applied to SSTable blocks"
+            ],
+            "correctIndex": 1,
+            "explanation": "Each byte you write can get rewritten multiple times as compaction merges it from one level into the next. Leveled compaction can amplify writes by roughly the level fanout; universal/size-tiered compaction keeps it closer to 1x per level but uses more disk space instead."
+          },
+          {
+            "id": "fca23c11-e92a-47d3-af5b-a68611d57230",
+            "prompt": "What problem do per-SSTable bloom filters solve?",
+            "options": [
+              "They guarantee a key definitely exists in that file",
+              "They let a read skip SSTables that definitely don't contain the key, instead of opening and searching every file",
+              "They compress the SSTable on disk",
+              "They replace the need for a write-ahead log"
+            ],
+            "correctIndex": 1,
+            "explanation": "Bloom filters are one-sided: a 'maybe' means the read has to check the file, but a 'no' is certain. That lets an LSM tree skip most SSTables on a point lookup instead of checking all of them."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "35eae8b1-2ae4-45e8-8c08-a9ec010180e3",
+          "title": "RocksDB Wiki: Compaction",
+          "url": "https://github.com/facebook/rocksdb/wiki/Compaction"
+        },
+        {
+          "id": "22dc4795-815d-40ea-b67a-55be5b9c390f",
+          "title": "RocksDB Wiki: Terminology",
+          "url": "https://github.com/facebook/rocksdb/wiki/Terminology"
+        }
+      ],
+      "publishedDate": "2026-11-06T00:47:46Z"
+    },
+    {
       "id": "8857d71d-7f4c-4ce2-b00a-99377375f0a2",
       "title": "PLE Benchmark: AI Agents Still Fail Real Engineering Work",
       "subtitle": "85 tasks, real blueprints, and every frontier model under 50%",
@@ -10911,201 +11102,6 @@
       "references": [],
       "publishedDate": "2026-10-29T06:48:11Z",
       "heroImageURL": null
-    },
-    {
-      "title": "Experts Defer to Their AI Agent 86% of the Time",
-      "subtitle": "Anthropic secretly rigged which answer Claude Code would argue for — and professional analysts followed it anyway",
-      "category": "AI Concepts",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "ai-safety",
-        "human-in-the-loop",
-        "agent-reliability",
-        "oversight",
-        "anthropic-research"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "scalemass.fill",
-      "summary": "In a randomized study, Anthropic secretly flipped a coin to decide which of two defensible analytical choices a Claude Code agent would argue for on each of four decisions. Analysts matched the agent's lean 86% of the time, switched prior opinions 60% of the time when the agent disagreed, and mostly didn't notice or credit the influence — raising hard questions about whether 'human in the loop' review is really independent.",
-      "slides": [
-        {
-          "id": "f826769f-7f47-4509-a7fa-ca31bfad8786",
-          "kind": "cover",
-          "title": "The Human-in-the-Loop Assumption Just Got Tested",
-          "body": "When an expert delegates analysis to an AI agent, does their final call still reflect independent judgment? Anthropic ran a randomized trial to find out — by secretly deciding, with a coin flip, which answer the agent would argue for.",
-          "bullets": [],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "id": "973da9f0-4229-45f6-80ea-87ed6549a5e5",
-          "kind": "problem",
-          "title": "Why 'Keep a Human in the Loop' Might Not Be Enough",
-          "body": "Oversight policies assume a human reviewer catches an AI's mistakes because their judgment is independent of the AI's. That assumption has rarely been tested directly.",
-          "bullets": [
-            "The study's framing: 'a human reviewer is only an independent check if their judgment is their own'",
-            "If the AI's framing of a problem silently becomes the human's framing, the 'check' adds little",
-            "This matters beyond this one study: it applies to any workflow where a human signs off on an agent's analysis — including AI safety reviews"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "6a9e2f52-88a4-40b2-8547-f4d54c3d5108",
-          "kind": "solution",
-          "title": "The Rigged Experiment",
-          "body": "61 professional analysts (50 used in the main analysis) were asked to advise a fictional farming co-op on whether to expand a productivity program — a task with four genuinely defensible analytical choices.",
-          "bullets": [
-            "Setup: Claude Code (Claude Opus 4.8, High effort) as the research assistant, median task time 65 minutes",
-            "Four open decisions: which outcome to measure, which comparison method, which farms to include, how to weight them",
-            "For each decision, a coin flip secretly set which of the two defensible options the agent would lean toward",
-            "The agent was instructed to never mislead — just to make the best honest case for its assigned lean"
-          ],
-          "symbol": "flask.fill",
-          "table": null
-        },
-        {
-          "id": "95ab7535-9d11-4348-826a-c79a991a0021",
-          "kind": "comparison",
-          "title": "Analysts Matched the Agent's Coin Flip, Not Chance",
-          "body": "If analysts were reasoning independently, matching the agent's (randomly assigned) lean should hover near 50%. It didn't, on any of the four decisions.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Decision",
-              "% of analysts who matched agent's lean"
-            ],
-            "rows": [
-              [
-                "Which outcome to measure",
-                "92%"
-              ],
-              [
-                "Which weighting to use",
-                "90%"
-              ],
-              [
-                "Which comparison method",
-                "82%"
-              ],
-              [
-                "Which farms to include",
-                "81%"
-              ],
-              [
-                "Overall (vs. ~50% expected by chance)",
-                "86%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "fcb195b1-ade8-4182-9540-a8ab55b128f8",
-          "kind": "example",
-          "title": "When the Agent Disagreed, Analysts Flipped Their Own Prior View",
-          "body": "The clearest signal of influence: analysts who had already stated a preference before seeing the agent's lean.",
-          "bullets": [
-            "In 38 such cases, analysts switched their stated view 60% of the time when the agent's lean disagreed with it",
-            "They switched only 6% of the time when the agent's lean happened to agree with them — a 54-point gap (95% CI: 24–82 points)",
-            "The four leans alone predicted 82% of analysts' final recommendations, vs. a 61% baseline rate",
-            "Only 6 of 48 analysts afterward guessed the study was even about AI influence; none suspected the leans were manipulated"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "77a904f1-5172-4bfb-901e-cca7ee81cdc2",
-          "kind": "concept",
-          "title": "They Felt Ownership — and Didn't Credit the Agent",
-          "body": "Deference didn't feel like deference from the inside.",
-          "bullets": [
-            "77% of analysts repeated the agent's argument in their own words afterward, sometimes verbatim",
-            "Only 15% of those analysts credited the agent as the source of that argument",
-            "52% rated the final recommendation as more their own than the agent's",
-            "Self-reported confidence was nearly identical whether someone followed the agent on all 4 decisions (71/100) or not (73/100)"
-          ],
-          "symbol": "person.fill.questionmark",
-          "table": null
-        },
-        {
-          "id": "f1169ba3-a3c5-42e7-b794-36f8a796e82d",
-          "kind": "problem",
-          "title": "What This Study Doesn't Show",
-          "body": "Anthropic's own write-up flags real limits — treat the 86% figure as a ceiling under adversarial conditions, not a universal constant.",
-          "bullets": [
-            "The agent's leans were deliberately strengthened for the test; real-world deference is likely smaller",
-            "Only one task, one domain (farming analytics), one model, and roughly an hour of work was studied",
-            "A separate 11-person no-AI control group made serious errors 55% of the time vs. 6% for AI users — but the groups weren't equivalent, so this isn't a clean comparison",
-            "Individual-level influence can't be measured precisely since pre-agent opinions weren't recorded for everyone"
-          ],
-          "symbol": "exclamationmark.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "7e53d2fc-c37b-469c-b9b2-cac2de1868a7",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "An agent can shift expert conclusions through honest, non-deceptive argument alone — no manipulation required",
-            "'Human in the loop' is not automatically an independent check; it's independent only if the human's reasoning isn't pre-shaped by the agent's framing",
-            "Deference is hard to detect from the outside: analysts felt ownership and rarely credited the agent, even while matching its lean",
-            "Practical implication: for decisions that matter, consider showing multiple framings, deciding BEFORE consulting the agent, or routing to independent reviewers who never saw the agent's take"
-          ],
-          "symbol": "checkmark.circle.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "0b7d43d8-880f-45ea-ad31-bb9f077fd66b",
-            "prompt": "Across the four analytical decisions, how often did analysts end up matching the lean Anthropic had secretly (randomly) assigned to their AI agent?",
-            "options": [
-              "About 50%, as expected by chance",
-              "86%",
-              "25%",
-              "100%"
-            ],
-            "correctIndex": 1,
-            "explanation": "86% vs. the ~50% expected by chance is the headline deference rate — the agent's randomly assigned lean predicted the analyst's choice far more than coincidence would."
-          },
-          {
-            "id": "a32b8460-49cb-4c1d-877b-a95861a0ef5c",
-            "prompt": "When an analyst had already stated a preference and the agent's assigned lean disagreed with it, how often did the analyst switch their view?",
-            "options": [
-              "6% of the time",
-              "60% of the time",
-              "Never — analysts always stuck with their first answer",
-              "100% of the time"
-            ],
-            "correctIndex": 1,
-            "explanation": "Analysts switched 60% of the time when the agent disagreed with their stated prior, compared to only 6% when the agent happened to agree — a 54-point gap that's hard to explain by anything other than the agent's influence."
-          },
-          {
-            "id": "37fab136-5a0d-42f5-a4f5-a7b708cb3078",
-            "prompt": "What is the main point the researchers draw about 'human-in-the-loop' oversight?",
-            "options": [
-              "It doesn't work at all and should be abandoned",
-              "It's only an independent check if the human's judgment isn't already shaped by the agent's framing of the problem",
-              "It works perfectly as long as the agent never makes factual errors",
-              "It only matters for junior analysts, not experienced ones"
-            ],
-            "correctIndex": 1,
-            "explanation": "The study found deference wasn't predicted by experience, education, or expertise — so the concern isn't about skill level. It's that a reviewer who absorbed the agent's framing before deciding isn't providing an independent signal, however confident or senior they are."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "How AI agents shape experts' judgment calls — Anthropic",
-          "url": "https://www.anthropic.com/research/agents-judgment-calls"
-        }
-      ],
-      "id": "28688922-a018-42e0-9617-cd2a0933b3b3",
-      "publishedDate": "2026-10-29T00:47:23Z"
     }
   ]
 }
