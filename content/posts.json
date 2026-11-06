@@ -1,6 +1,203 @@
 {
   "posts": [
     {
+      "title": "MCP Transports: Why stdio Can't Serve a Fleet of Users",
+      "subtitle": "A local subprocess and a shared remote endpoint solve completely different problems.",
+      "category": "MCP",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mcp",
+        "model context protocol",
+        "stdio",
+        "streamable http",
+        "transport"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "point.3.connected.trianglepath.dotted",
+      "summary": "MCP defines exactly two standard transports: stdio, where the client spawns the server as a local subprocess and swaps newline-delimited JSON-RPC over stdin/stdout, and Streamable HTTP, a single-endpoint remote transport with optional SSE streaming, session IDs, and resumable connections. Picking the wrong one — or assuming the old HTTP+SSE transport it replaced still applies — breaks multi-user servers and connection recovery.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "MCP Has Two Transports. Most Tutorials Only Show You One.",
+          "body": "Every MCP message is JSON-RPC underneath. What changes between stdio and Streamable HTTP is how those messages physically travel — and that choice decides whether your server can ever leave your laptop.",
+          "bullets": [],
+          "symbol": "point.3.connected.trianglepath.dotted",
+          "table": null,
+          "id": "ed002848-042b-4e53-8d9e-adb5dd05dd60"
+        },
+        {
+          "kind": "problem",
+          "title": "A Subprocess Can't Answer Ten People at Once",
+          "body": "stdio works by the client launching the server as a child process and talking to it over pipes. That's fast and needs zero network config — but it only exists as long as that one process does, for that one client.",
+          "bullets": [
+            "Claude Desktop and Claude Code launch local MCP servers this way — one subprocess per client, per session",
+            "There's no listener, no port, no way for a second machine to connect",
+            "The original remote answer, HTTP+SSE from protocol version 2024-11-05, needed two separate endpoints (one for POST, one for the SSE stream) and had no way to resume a dropped connection — the spec deprecated it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "ab40de3b-590c-4936-8328-f329abf36bd7"
+        },
+        {
+          "kind": "concept",
+          "title": "stdio: Newline-Delimited JSON, Nothing Else on the Wire",
+          "body": null,
+          "bullets": [
+            "Client spawns the server process; server reads JSON-RPC requests/notifications from stdin, writes responses to stdout",
+            "Each message is exactly one line — no embedded newlines allowed inside a message",
+            "stderr is free for logs; the client may capture, forward, or ignore it",
+            "Shutdown: client closes stdin, then terminates the subprocess if it doesn't exit on its own"
+          ],
+          "symbol": "terminal.fill",
+          "table": null,
+          "id": "8eaad6dc-07ba-489e-a232-648363d7f6c3"
+        },
+        {
+          "kind": "architecture",
+          "title": "Streamable HTTP: One Endpoint, Two Verbs",
+          "body": null,
+          "bullets": [
+            "POST = client-to-server: one JSON-RPC message per request; the server replies with either a plain JSON object or upgrades to an SSE stream for the response",
+            "GET = server-to-client: the client can open a standing SSE stream without sending a POST first, for the server to push unsolicited requests/notifications",
+            "An Mcp-Session-Id header is issued at initialize; the client must echo it on every later request, and a missing/expired ID gets HTTP 400/404",
+            "The client must also send MCP-Protocol-Version on every request after initialize, or the server assumes the oldest version it knows"
+          ],
+          "symbol": "network",
+          "table": null,
+          "id": "a194c111-b2d2-4ff4-bcd2-feda8f88b27a"
+        },
+        {
+          "kind": "example",
+          "title": "Worked Example: A Dropped Connection Mid-Tool-Call",
+          "body": "A remote MCP server is running a 40-second web-crawl tool and streaming progress notifications back over an open SSE response. The client's WiFi drops at second 25.",
+          "bullets": [
+            "The dropped TCP connection is NOT a cancellation signal — the server keeps working unless it receives an explicit CancelledNotification",
+            "If the server tagged its SSE events with IDs, the client reconnects with GET and a Last-Event-ID header to resume exactly where the stream left off",
+            "Replay only works within that same logical stream — a client can't resume stream A's messages by reconnecting to stream B",
+            "Without event IDs, the client has no way to recover the in-flight result and must re-issue the request"
+          ],
+          "symbol": "wifi.exclamationmark",
+          "table": null,
+          "id": "9b406a09-ed67-4bb0-b90f-805bc7399e52"
+        },
+        {
+          "kind": "comparison",
+          "title": "Picking a Transport",
+          "body": null,
+          "bullets": [],
+          "symbol": "arrow.left.arrow.right",
+          "table": {
+            "headers": [
+              "",
+              "stdio",
+              "Streamable HTTP"
+            ],
+            "rows": [
+              [
+                "Where it runs",
+                "Local subprocess, same machine",
+                "Independent server process, any host"
+              ],
+              [
+                "Multi-client",
+                "No — one client per process",
+                "Yes — one endpoint, many clients, sessions tracked by header"
+              ],
+              [
+                "Resumability",
+                "None — crash means restart",
+                "Optional, via SSE event IDs + Last-Event-ID"
+              ],
+              [
+                "Typical use",
+                "Claude Desktop/Code launching a local tool server",
+                "Hosted MCP servers behind a URL, team or product integrations"
+              ]
+            ]
+          },
+          "id": "93ff3f1c-c2f9-426f-9039-20f80e00dd48"
+        },
+        {
+          "kind": "problem",
+          "title": "Where Teams Get This Wrong",
+          "body": null,
+          "bullets": [
+            "Building a brand-new server against the retired HTTP+SSE two-endpoint design instead of Streamable HTTP — it's deprecated, not a style choice",
+            "Treating a closed socket as 'the request failed' instead of sending CancelledNotification, so the server burns compute on work nobody is waiting for",
+            "Skipping Origin header validation on a remote server, which opens the door to DNS-rebinding attacks from a malicious webpage",
+            "Binding a local server to 0.0.0.0 instead of 127.0.0.1, exposing a dev tool meant for one laptop to the whole LAN"
+          ],
+          "symbol": "lock.shield.fill",
+          "table": null,
+          "id": "5354b002-15a6-4c80-94cf-78561c10991f"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Takeaways",
+          "body": null,
+          "bullets": [
+            "stdio is for one client talking to one locally-spawned process — simple, zero network surface, not multi-user",
+            "Streamable HTTP is the current remote transport: single endpoint, POST for calls, optional GET/SSE for server-pushed messages",
+            "Session IDs and SSE event IDs are what make a remote server resumable — a dropped connection isn't automatically a cancelled request",
+            "If you're still implementing two separate SSE/POST endpoints for a new server, you're building the transport the spec already deprecated"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "e152975a-abf4-48d6-a3c5-5f9f6ea4a1dc"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "A client's connection to a remote MCP server drops while a long-running tool call is in progress. What should the server do?",
+            "options": [
+              "Immediately stop the tool call — a dropped connection always means cancellation",
+              "Keep working unless it receives an explicit CancelledNotification; a dropped connection is not itself a cancellation",
+              "Restart the entire session from scratch",
+              "Nothing — Streamable HTTP servers can't detect dropped connections"
+            ],
+            "correctIndex": 1,
+            "explanation": "The spec explicitly separates 'connection dropped' from 'request cancelled.' Only an explicit CancelledNotification tells the server to stop; otherwise it should keep running and let the client resume or re-fetch the result.",
+            "id": "2e98ad82-4418-4894-87ec-78b08f2d9aef"
+          },
+          {
+            "prompt": "Why was the original HTTP+SSE transport (protocol version 2024-11-05) deprecated in favor of Streamable HTTP?",
+            "options": [
+              "SSE was removed from the protocol entirely",
+              "It required two separate endpoints (one for POST, one for the SSE stream) and had no resumability; Streamable HTTP unifies this into one endpoint with optional, resumable streaming",
+              "It was slower than stdio over a local network",
+              "It didn't support JSON-RPC"
+            ],
+            "correctIndex": 1,
+            "explanation": "Streamable HTTP keeps SSE as an option but folds everything through a single MCP endpoint that supports both POST and GET, and adds event IDs so a client can resume a stream with Last-Event-ID — something the old two-endpoint design couldn't do.",
+            "id": "92e098c1-0e85-4db1-ae22-dd0ae10c68ea"
+          },
+          {
+            "prompt": "Which transport would you choose for an MCP server meant to be used by many different users' AI clients over the internet?",
+            "options": [
+              "stdio, since it's simpler to implement",
+              "Streamable HTTP, since it supports multiple clients through one endpoint with session tracking",
+              "Either works identically for this case",
+              "Neither — MCP can't support remote multi-user servers"
+            ],
+            "correctIndex": 1,
+            "explanation": "stdio is inherently one-process-per-client because the client spawns the server as its own subprocess. Streamable HTTP is designed for exactly this case: one running server process, many clients, each tracked by its own Mcp-Session-Id.",
+            "id": "5f3cd049-82e7-48de-87e4-7fabd92c7657"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "MCP Specification — Transports (2025-06-18)",
+          "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports",
+          "id": "3b9073d4-e3f5-41ae-8bbb-de45dcdc535f"
+        }
+      ],
+      "id": "fa552854-7912-4541-877c-dcd1bcdaeb6b",
+      "publishedDate": "2026-11-06T18:48:31Z"
+    },
+    {
       "title": "What 207,000 Claude Sessions Reveal About Science",
       "subtitle": "Scientists lean on AI for crunching data, not dreaming up ideas.",
       "category": "AI Innovations",
@@ -10965,187 +11162,6 @@
         }
       ],
       "id": "ba34a4c7-2418-4270-b7f9-4c3a36713bbf",
-      "publishedDate": "2026-10-30T00:46:49Z"
-    },
-    {
-      "title": "AI Agents Help Crack a 31-Year-Old Math Conjecture",
-      "subtitle": "Microsoft Research used agentic AI search to find the key insight that resolved KLS.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "kls conjecture",
-        "agentic ai",
-        "mathematics",
-        "microsoft research",
-        "ai for math",
-        "research"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "function",
-      "summary": "Microsoft Research resolved the 31-year-old KLS conjecture in high-dimensional geometry, with human-directed agentic AI search surfacing the key mathematical criterion. Two independent groups confirmed the result the same day, and the central step was machine-checked in Lean 4.",
-      "slides": [
-        {
-          "id": "062c403f-61d5-4377-8d0d-0833dc3d1e4b",
-          "body": "In October 2026, Microsoft Research resolved the Kannan–Lovász–Simonovits (KLS) conjecture, open since 1995 — with agentic AI search playing a central role in finding the proof's key step.",
-          "bullets": [
-            "KLS conjecture proposed in 1995; called a central open problem by MSRI and discussed at the 2022 ICM",
-            "Proof completed by Microsoft Research's Xinzhi Zhang and Zhao Song, posted as arXiv:2610.01447",
-            "Two more independent groups posted full proofs the same day, built on the same key insight"
-          ],
-          "symbol": "function",
-          "table": null,
-          "kind": "cover",
-          "title": "A 31-Year-Old Conjecture Falls"
-        },
-        {
-          "id": "a609f164-600a-46c3-bd04-5c1f0e0ef306",
-          "body": "KLS asks whether, for broad families of high-dimensional probability distributions, the single best flat (hyperplane) cut is always nearly as good as the best cut of any shape — within a universal constant, regardless of dimension.",
-          "bullets": [
-            "These cuts govern how fast random walks mix through a distribution — central to high-dimensional sampling theory",
-            "Before: the best known bound still grew (slowly) with dimension (arXiv:2607.24164, July 2026)",
-            "After: Zhang and Song prove a fixed constant, independent of dimension — a full O(1) bound"
-          ],
-          "symbol": "cube.transparent.fill",
-          "table": null,
-          "kind": "problem",
-          "title": "What the Conjecture Actually Asks"
-        },
-        {
-          "id": "8a87d779-c959-491f-86b0-58eceabce88f",
-          "body": "Rather than asking an AI model to solve the whole conjecture, the researchers ran a structured, human-pruned search: multiple AI agents explored variations of an idea in parallel, and the researchers kept only the promising branches for the next round.",
-          "bullets": [
-            "Roughly 100 candidate research trajectories were explored, many involving long higher-order tensor calculations",
-            "The search surfaced a new mathematical criterion that became the foundation of the proof",
-            "A separate, unguided attempt using several leading AI models with a similar token budget did NOT succeed"
-          ],
-          "symbol": "brain.head.profile",
-          "table": null,
-          "kind": "solution",
-          "title": "How Agentic AI Search Found the Key Step"
-        },
-        {
-          "id": "860f22eb-62dd-43f2-b6b2-328e86c1396a",
-          "body": "The criterion alone wasn't enough — an October 1, 2026 draft still had a bound that grew with dimension (iterated logarithm). The authors then fed each improved bound back into the same argument, tightening it step by step.",
-          "bullets": [
-            "Oct 1, 2026 draft: dimension dependence shrunk to an iterated logarithm — still not O(1)",
-            "Oct 4, 2026: repeating the recursive refinement showed accumulated errors stay bounded by a universal constant — proof complete",
-            "The refinement trick was inspired by the authors' own earlier work on fast linear programming algorithms"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "kind": "concept",
-          "title": "Recursive Refinement Closed the Gap"
-        },
-        {
-          "id": "89fcbb9e-c413-4012-a2d4-2901bebcc16a",
-          "body": "Once the key criterion became public, two independent groups of experts produced their own full proofs the same day — a strong signal the result is real and that the criterion was the hard part.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Paper",
-              "What it contributed"
-            ],
-            "rows": [
-              [
-                "arXiv:2610.01447 (Zhang & Song)",
-                "Original O(1) bound plus the key criterion"
-              ],
-              [
-                "arXiv:2610.05474 (independent group)",
-                "Full proof built on the Microsoft criterion"
-              ],
-              [
-                "arXiv:2610.07728 (independent group)",
-                "Full proof via a closely related idea"
-              ]
-            ]
-          },
-          "kind": "comparison",
-          "title": "Three Groups, One Same-Day Convergence"
-        },
-        {
-          "id": "03c639e8-acd7-408e-b939-96f22dfca374",
-          "body": "The team didn't just publish and hope: they machine-checked the central criterion in the Lean 4 proof assistant (github.com/HongruZhao/KLS500) before finalizing, and plan to release a shortened, Lean-verified version of the full proof.",
-          "bullets": [
-            "Lean 4 formalization gives a computer-checked guarantee the logic has no gaps",
-            "That matters most exactly where the proof is weakest to human proofreading: long chains of tensor-heavy calculation",
-            "AI agents helped with exploration, derivations, and manuscript prep; humans set direction, picked ideas, and verified the final argument"
-          ],
-          "symbol": "checkmark.shield.fill",
-          "table": null,
-          "kind": "example",
-          "title": "Verified Before Publication, Not After"
-        },
-        {
-          "id": "74cf1e18-9c51-48e6-8397-465df57f16ec",
-          "body": null,
-          "bullets": [
-            "KLS (1995) is resolved: flat cuts are within a universal constant of the best cut of any shape, for any dimension",
-            "The breakthrough came from a criterion found via human-directed agentic search — not from an AI model solving the proof outright",
-            "An unguided, high-budget attempt with leading AI models alone did not find it — the human pruning step was essential",
-            "Same-day independent confirmation (two more full proofs) plus Lean formalization made the result trustworthy fast"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "kind": "takeaways",
-          "title": "Takeaways"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "19f2bd6a-70ec-4e3d-9776-11c9ef6b9927",
-            "prompt": "What does the KLS conjecture claim, in essence?",
-            "options": [
-              "That the best flat (hyperplane) cut of a high-dimensional log-concave distribution is within a universal constant of the best cut of any shape, regardless of dimension",
-              "That gradient descent always converges in high dimensions",
-              "That any neural network can approximate any function",
-              "That random walks never mix in high dimensions"
-            ],
-            "correctIndex": 0,
-            "explanation": "KLS is about comparing simple flat cuts to the best possible cut of any shape for log-concave distributions, and asserts the gap is bounded by a universal constant independent of dimension."
-          },
-          {
-            "id": "b7c1d4d7-8f56-47cd-800f-e46c45099f47",
-            "prompt": "What was the AI agents' actual role in the breakthrough, per the researchers?",
-            "options": [
-              "They fully solved the proof end-to-end with no human input",
-              "They explored roughly 100 candidate approaches in a human-pruned search that surfaced a key criterion; an unguided run with the same budget did not succeed",
-              "They only formatted the final paper's LaTeX",
-              "They were used solely to translate the paper into English"
-            ],
-            "correctIndex": 1,
-            "explanation": "The breakthrough came from structured, human-directed agentic search across ~100 trajectories — a separate unguided attempt with leading AI models and a similar token budget failed to find the criterion."
-          },
-          {
-            "id": "b5544872-7786-4913-851b-a27a62e1e06e",
-            "prompt": "How was the KLS result independently verified?",
-            "options": [
-              "It wasn't — no one has checked it",
-              "Two more groups of experts posted independent full proofs the same day, and the key criterion was formalized in the Lean 4 proof assistant",
-              "Only by running more AI benchmarks",
-              "By a popularity vote on arXiv"
-            ],
-            "correctIndex": 1,
-            "explanation": "Same-day independent full proofs from two other groups, plus a Lean 4 machine-checked formalization of the key criterion, gave fast, strong confirmation of the result."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "42c78ce9-3858-48a6-beeb-dc10af2cc0d3",
-          "title": "An O(1) Bound for the KLS Constant (arXiv:2610.01447)",
-          "url": "https://arxiv.org/abs/2610.01447"
-        },
-        {
-          "id": "57b0f9bf-5539-43e0-a904-2e8912afb3cb",
-          "title": "Solving a 31-year-old grand challenge in mathematics – the KLS conjecture (Microsoft Research Blog)",
-          "url": "https://www.microsoft.com/en-us/research/blog/solving-a-31-year-old-grand-challenge-in-mathematics-the-kls-conjecture/"
-        }
-      ],
-      "id": "d8ade51d-f7e2-4e6e-8d72-6af94431cf10",
       "publishedDate": "2026-10-30T00:46:49Z"
     }
   ]
