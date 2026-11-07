@@ -1,6 +1,443 @@
 {
   "posts": [
     {
+      "title": "Token Bucket vs. Leaky Bucket vs. Sliding Window",
+      "subtitle": "Three rate-limiting algorithms, three different answers to \"how much burst should we allow?\"",
+      "category": "System Design",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rate-limiting",
+        "token-bucket",
+        "system-design",
+        "api-design",
+        "backend",
+        "distributed-systems"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "speedometer",
+      "summary": "Rate limiting isn't one algorithm — it's a family with different tradeoffs. Token bucket allows bursts up to a budget, leaky bucket smooths everything to a constant rate, and sliding window fixes the boundary-burst flaw of naive fixed windows. Picking the wrong one either lets abusive traffic through or needlessly throttles legitimate bursts.",
+      "slides": [
+        {
+          "id": "7c43d443-7fea-4263-a968-71aecd6da045",
+          "bullets": [
+            "One misbehaving client can exhaust a database connection pool meant for everyone",
+            "Rate limiting admits traffic up to a budget, then says no — automatically",
+            "Three classic algorithms do this differently, and the differences matter in production"
+          ],
+          "symbol": "speedometer",
+          "body": null,
+          "table": null,
+          "kind": "cover",
+          "title": "Every Shared API Needs a Bouncer"
+        },
+        {
+          "id": "70316b61-7446-452a-b0a6-4d023bf80ac3",
+          "bullets": [
+            "A client can send 100 requests at 0:59 and another 100 at 1:00 — 200 requests inside 2 seconds, and the counter says both windows were fully compliant",
+            "That's up to 2x the intended rate in a short burst straddling the boundary",
+            "The fix isn't a bigger counter — it's tracking a moving interval instead of a clock-aligned one"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "body": "A naive fixed window (e.g. \"max 100 requests per clock-aligned minute\") has a boundary problem.",
+          "table": null,
+          "kind": "problem",
+          "title": "Why \"Just Count Requests Per Minute\" Breaks"
+        },
+        {
+          "id": "eb9d6ac2-ad7c-42e6-86f0-3e5c4d4ce76c",
+          "bullets": [
+            "Example: capacity 100 tokens, refill 1.67 tokens/sec (= 100/minute)",
+            "A request is allowed if a token is available; otherwise it's rejected or queued",
+            "Because the bucket can hold up to its full capacity, it naturally allows short bursts — a page that fires 20 requests at once still goes through if tokens are banked"
+          ],
+          "symbol": "drop.fill",
+          "body": "A bucket holds up to a fixed capacity of tokens and refills at a steady rate; each request spends a token.",
+          "table": null,
+          "kind": "concept",
+          "title": "Token Bucket: Spend From a Refilling Balance"
+        },
+        {
+          "id": "eefc1dbc-44ae-4237-9312-90ea6d654b44",
+          "bullets": [
+            "If the queue fills past capacity, excess requests are dropped outright",
+            "Unlike token bucket, it never lets a burst through faster than the leak rate — good for protecting a fragile downstream resource",
+            "The cost is latency: a legitimate burst gets queued and drained slowly instead of passing through immediately"
+          ],
+          "symbol": "arrow.down.right.and.arrow.up.left",
+          "body": "Requests queue up in the bucket; the bucket \"leaks\" — processes requests — at a fixed rate no matter how bursty the input is.",
+          "table": null,
+          "kind": "concept",
+          "title": "Leaky Bucket: Smooth Everything to a Constant Rate"
+        },
+        {
+          "id": "8c356bc0-9ae6-4d18-9971-ac8deae1f08e",
+          "bullets": [
+            "Sliding window log: store every request timestamp and count how many fall in the last N seconds — exact, but memory grows with request volume",
+            "Sliding window counter: blend the previous window's count and the current window's count, weighted by how much they overlap — O(1) memory, small approximation error",
+            "Either version closes the fixed-window boundary-burst gap"
+          ],
+          "symbol": "clock.arrow.2.circlepath",
+          "body": "Instead of resetting on the clock, track requests over the last N seconds, continuously.",
+          "table": null,
+          "kind": "concept",
+          "title": "Sliding Window: Count Requests in a Moving Interval"
+        },
+        {
+          "id": "1dbc2fe2-2bd4-484e-8f45-8b9fa486030a",
+          "bullets": [],
+          "symbol": "tablecells.fill",
+          "body": null,
+          "table": {
+            "headers": [
+              "Algorithm",
+              "Burst handling",
+              "Memory per key",
+              "Precision"
+            ],
+            "rows": [
+              [
+                "Fixed window",
+                "Poor — up to 2x at boundaries",
+                "O(1)",
+                "Low"
+              ],
+              [
+                "Token bucket",
+                "Allows bursts up to bucket size",
+                "O(1)",
+                "High"
+              ],
+              [
+                "Leaky bucket",
+                "None — fully smoothed output",
+                "O(1) + queue",
+                "High"
+              ],
+              [
+                "Sliding window log",
+                "Exact",
+                "O(n) requests",
+                "Exact"
+              ],
+              [
+                "Sliding window counter",
+                "Good, approximate",
+                "O(1)",
+                "Small error"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "Side by Side"
+        },
+        {
+          "id": "f2e8b209-6d5c-4c89-b9ef-c73f2ee29fa6",
+          "bullets": [
+            "Token bucket (capacity 100, refill 1.67/sec): a client can fire all 100 requests instantly — the bucket just empties — then must wait ~0.6 sec per additional request as it refills",
+            "Leaky bucket at the same 100/min rate: that same 100-request burst gets queued and drained over the full 60 seconds — no instant burst, but no 60-second wait either, just steady throughput",
+            "Neither is \"wrong\" — token bucket optimizes for responsiveness to bursts, leaky bucket optimizes for a flat load on whatever sits behind it"
+          ],
+          "symbol": "bolt.horizontal.fill",
+          "body": "Same budget, two algorithms, very different client experience.",
+          "table": null,
+          "kind": "example",
+          "title": "Worked Example: A 100 req/min API Key"
+        },
+        {
+          "id": "99838296-11ff-4696-aa10-d69fc3068987",
+          "bullets": [
+            "Need to allow legitimate bursts (page loads, batch jobs)? Token bucket.",
+            "Need to protect a fragile downstream resource — a DB connection pool, a legacy service — from any burst at all? Leaky bucket.",
+            "Need precise, fair per-user accounting for billing or abuse detection? Sliding window — log if exactness matters, counter if scale matters.",
+            "Pitfall: rate limiting by IP address punishes every user behind a shared NAT or corporate proxy for one user's traffic — key by API token or user ID instead.",
+            "Pitfall: one global counter for a sharded service creates a hot-key bottleneck — shard the limiter or use an atomic distributed counter (e.g. Redis plus a Lua script) to keep checks race-free."
+          ],
+          "symbol": "checklist",
+          "body": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "Picking the Right Algorithm (and the Pitfalls)"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "84db2351-a020-4827-9bb4-fa964f21c3ff",
+            "prompt": "What specific flaw does a naive fixed-window counter have that sliding window fixes?",
+            "options": [
+              "It allows unlimited requests with no cap at all",
+              "It can allow roughly double the intended rate in a short burst that straddles two window boundaries",
+              "It requires far more memory than any other approach",
+              "It cannot be implemented for HTTP APIs"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because the window resets on the clock, a client can max out the end of one window and the start of the next, allowing close to 2x the limit within a couple of seconds. Sliding window avoids this by tracking a moving interval instead of a clock-aligned one."
+          },
+          {
+            "id": "6b7265b1-db11-4af6-acfa-724c38beac91",
+            "prompt": "You need to protect a database connection pool from any burst, even a short one. Which algorithm fits best?",
+            "options": [
+              "Token bucket, because bursts are allowed up to the bucket's capacity",
+              "Leaky bucket, because it smooths all traffic to a constant output rate",
+              "Fixed window, because it is the simplest to implement",
+              "Sliding window log, because it is exact"
+            ],
+            "correctIndex": 1,
+            "explanation": "Leaky bucket queues incoming requests and drains them at a fixed rate regardless of how bursty the input is, so the downstream resource never sees more than its configured rate — exactly what a fragile connection pool needs."
+          },
+          {
+            "id": "e220375d-c5ca-4393-bfbf-faff2e95dda1",
+            "prompt": "Why is rate limiting purely by client IP address often a bad idea in production?",
+            "options": [
+              "IP addresses change too frequently to track reliably",
+              "Many distinct users can share one IP behind a NAT or corporate proxy, so limiting by IP punishes all of them for one user's traffic",
+              "IP-based keys require significantly more memory than token-based keys",
+              "No rate limiting algorithm supports keying by IP address"
+            ],
+            "correctIndex": 1,
+            "explanation": "Office networks, carrier-grade NAT, and VPNs often funnel many distinct users through a single public IP. Keying the limiter on IP conflates them into one shared budget — keying on API token or authenticated user ID avoids that false sharing."
+          }
+        ]
+      },
+      "references": [],
+      "id": "c8dd0c57-2e90-45d0-9847-0dbbb3328bdb",
+      "publishedDate": "2026-11-07T12:48:52Z"
+    },
+    {
+      "title": "How Claude Agents \"Dream\" to Build Long-Term Memory",
+      "subtitle": "Offline reflection cycles turn messy session logs into wikis — pushing task accuracy up by as much as 35 points.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "paper",
+      "tags": [
+        "agent-memory",
+        "dreaming",
+        "sleep-time-compute",
+        "claude",
+        "memory-architecture",
+        "evals"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "moon.stars.fill",
+      "summary": "Anthropic's engineering team proposes a four-layer agent memory hierarchy plus \"dreaming\" — offline compute where an agent reflects on its own logs to fix mistakes and build wiki-style notes. Across CL-Bench, a Pokemon Red run, a 350K-file corpus, and real legal briefs, memory boosted task accuracy substantially, but wikis can bloat, wrong notes can propagate, and gains varied a lot by task.",
+      "slides": [
+        {
+          "id": "abfb9d7e-f7f7-476b-850a-b238616b308f",
+          "bullets": [
+            "A coding agent's context resets between sessions, so hard-won lessons vanish with it",
+            "Logging every transcript just trades one problem (forgetting) for another (unbounded noise)",
+            "Anthropic's Nov 2026 write-up proposes a fix borrowed from human sleep: \"dreaming\""
+          ],
+          "symbol": "moon.stars.fill",
+          "body": null,
+          "table": null,
+          "kind": "cover",
+          "title": "Agents Forget Everything When the Session Ends"
+        },
+        {
+          "id": "edfda74f-fb51-4633-adfc-1e2a1b45e8f2",
+          "bullets": [
+            "In one Pokemon Red run, Claude Sonnet 3.7 wrote 413 files across 225 folders — then spent 17 straight steps reorganizing them instead of playing",
+            "That run earned exactly one gym badge; a later model (Fable 5) wrote about ten files, including a single global.md dashboard, and earned four badges",
+            "More storage isn't the goal — the right abstraction is: a few curated notes beat hundreds of raw ones"
+          ],
+          "symbol": "tray.full.fill",
+          "body": "Raw transcripts are search-able, but an agent that only has raw logs tends to drown in its own history instead of using it.",
+          "table": null,
+          "kind": "problem",
+          "title": "Why Just Logging Everything Fails"
+        },
+        {
+          "id": "935f2ffe-e4c1-47f0-a7b9-93028a37013a",
+          "bullets": [],
+          "symbol": "square.stack.3d.up.fill",
+          "body": "Anthropic organizes agent memory into layers of increasing distillation, from raw history up to what's actually loaded every session.",
+          "table": {
+            "headers": [
+              "Layer",
+              "What it holds"
+            ],
+            "rows": [
+              [
+                "Transcripts",
+                "Full, searchable event log of everything that happened"
+              ],
+              [
+                "Memory notes",
+                "Salient observations Claude writes mid-session"
+              ],
+              [
+                "Memory representations",
+                "Wikis — linked pages Claude maintains and revises"
+              ],
+              [
+                "Injected context",
+                "A small curated summary loaded into every new session"
+              ]
+            ]
+          },
+          "kind": "concept",
+          "title": "The Four-Layer Memory Hierarchy"
+        },
+        {
+          "id": "37a0a772-7f75-4627-805c-913d573ab4c4",
+          "bullets": [
+            "It builds on Letta and UC Berkeley's \"sleep-time compute\" idea: spend extra compute between sessions, not during them",
+            "Writing a note is a prediction — a verified fact predicts a future session will trust it without rechecking",
+            "Agent memory here explicitly excludes weight updates, in-context learning, and context compaction — it's knowledge that persists between sessions"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "body": "\"Dreaming\" is offline compute where the agent reviews its own logs to correct mistakes and write durable notes — modeled on how the hippocampus hands experiences to the neocortex during sleep.",
+          "table": null,
+          "kind": "solution",
+          "title": "Dreaming: Offline Consolidation, Not Weight Updates"
+        },
+        {
+          "id": "0e9e58f8-94d3-4ab7-ba26-031ec3fb744c",
+          "bullets": [
+            "Telling Opus 5 and Opus 4.7 to \"record only failures\" cut their memory gains by 0.234 and 0.150 points respectively — successes need recording too",
+            "Sonnet 4.6 only consulted its own memory on fewer than half its turns; Sonnet 5 did so 9 times out of 10"
+          ],
+          "symbol": "chart.bar.fill",
+          "body": "Mean reward on a database task, with and without memory, across model generations:",
+          "table": {
+            "headers": [
+              "Model",
+              "Baseline reward",
+              "With memory"
+            ],
+            "rows": [
+              [
+                "Opus 5.5",
+                "0.655",
+                "0.838"
+              ],
+              [
+                "Sonnet 5.5",
+                "0.644",
+                "0.833"
+              ],
+              [
+                "Opus 5",
+                "0.564",
+                "0.828"
+              ],
+              [
+                "Opus 4.7",
+                "0.383",
+                "0.700"
+              ],
+              [
+                "Sonnet 5",
+                "0.306",
+                "0.610"
+              ],
+              [
+                "Sonnet 4.6",
+                "0.330",
+                "0.364 (0.641 tuned)"
+              ]
+            ]
+          },
+          "kind": "comparison",
+          "title": "The Numbers: Memory vs. No Memory (CL-Bench)"
+        },
+        {
+          "id": "2c134213-6b58-45e0-9211-39001963f0f1",
+          "bullets": [
+            "A bad note sent the agent back to the start of a cave every time it tried the same path again",
+            "Without memory at all: the run never got past Mt. Moon",
+            "With an uncorrected wrong note: also never escaped — bad memory can be worse than none",
+            "With dreaming (the note gets revised offline): the corrected note let the agent reach Cerulean City by action 1,935"
+          ],
+          "symbol": "map.fill",
+          "body": "A concrete failure-and-recovery loop from the Pokemon Red test, where the agent got stuck behind a wrong memory note.",
+          "table": null,
+          "kind": "example",
+          "title": "Worked Example: Escaping the Mt. Moon Trap"
+        },
+        {
+          "id": "45444e74-9b67-4fbd-885e-db8e8811c677",
+          "bullets": [
+            "Stainless corpus: wiki-only accuracy rose from 13% to 48% over 128 dreaming sessions; wiki+search hit 61% vs. 53% for search alone, saving ~20,000 tokens per question",
+            "Harvey LAB, multi-document merger questions: wiki scored 87% vs. 73% for search alone — the wiki wins when answers require synthesizing across many documents",
+            "Harvey LAB, single-document task: the wiki showed no clear gain over search — nothing to synthesize across",
+            "On one dataset the wiki grew to 1.77x the size of the source corpus it was supposed to summarize"
+          ],
+          "symbol": "books.vertical.fill",
+          "body": "On a 350,000-file, ~420M-token corpus, and on real legal briefs (Harvey LAB), results split by task shape.",
+          "table": null,
+          "kind": "comparison",
+          "title": "Wikis Beat Search Alone — Except When They Don't"
+        },
+        {
+          "id": "ddffdb4d-92bb-41fd-b5e5-456b080f3be5",
+          "bullets": [
+            "Best fit: multi-session agents with real cross-session repetition — coding agents, long research tasks, anything touching the same corpus repeatedly",
+            "Weak fit: one-shot or single-document tasks, where there's nothing to consolidate across sessions",
+            "Dreaming costs real compute, and a single wrong note can quietly propagate into every future session until something corrects it",
+            "Keep the injected-context layer small — longer instruction files measurably reduce how well agents follow them",
+            "Prune wikis actively; left unchecked, they can grow larger than the corpus they're meant to summarize"
+          ],
+          "symbol": "checklist",
+          "body": null,
+          "table": null,
+          "kind": "takeaways",
+          "title": "When to Build a Memory Wiki (and When Not To)"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "36dd7c43-44bb-4cb9-832e-29b0e8509234",
+            "prompt": "What does \"dreaming\" refer to in this agent memory architecture?",
+            "options": [
+              "Fine-tuning the model's weights overnight",
+              "Offline reflection where an agent reviews its logs to fix notes and build wiki pages",
+              "A runtime technique for compressing the context window",
+              "A method for generating synthetic training data"
+            ],
+            "correctIndex": 1,
+            "explanation": "Dreaming is offline compute, modeled on how the hippocampus hands experiences to the neocortex during sleep: the agent reflects on past logs to correct mistakes and write durable notes or wiki pages. It never touches model weights."
+          },
+          {
+            "id": "592987d1-3536-44a2-bf8f-95a73eb18641",
+            "prompt": "In the CL-Bench evaluation, what happened when agents were told to \"record only failures\"?",
+            "options": [
+              "Memory gains increased because the notes stayed focused",
+              "Memory gains dropped by 0.15-0.23 points because successful strategies went unrecorded",
+              "There was no measurable effect on performance",
+              "The model stopped reading its memory entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "Restricting notes to failures discarded useful records of what worked, cutting Opus 5's and Opus 4.7's gains by 0.234 and 0.150 points respectively — memory needs successes recorded too, not just mistakes."
+          },
+          {
+            "id": "2b8cfbb6-b380-4fa7-be78-4481a9c5b522",
+            "prompt": "According to the Harvey LAB legal-brief results, when did the memory wiki NOT beat plain search?",
+            "options": [
+              "On multi-document merger questions",
+              "On a single-document task, where it showed no clear gain",
+              "On short contracts under one page",
+              "Wikis always won in every test"
+            ],
+            "correctIndex": 1,
+            "explanation": "The wiki's edge came from synthesizing facts scattered across many documents. A single-document task has nothing to aggregate across, so plain search matched it — memory helps most when a task needs cross-document synthesis."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "2f4ded7c-6a78-4d97-ab39-1004bacb208c",
+          "title": "The components of agent memory — Anthropic",
+          "url": "https://www.anthropic.com/research/components-of-agent-memory"
+        }
+      ],
+      "id": "160828df-2140-4a1f-b533-d5118ff28e2d",
+      "publishedDate": "2026-11-07T12:48:52Z"
+    },
+    {
       "id": "e2f0035a-490e-4695-8386-66605e9bc6ac",
       "title": "Claude Helps Solve the First Prokaryotic Vault Particle",
       "subtitle": "A phage protein named L05 builds a 9.5-megadalton shell — bigger inside than any known vault — and Claude ran the whole discovery pipeline.",
@@ -10800,361 +11237,6 @@
       "references": [],
       "id": "73613546-2425-4c47-a720-3ac27e1d5936",
       "publishedDate": "2026-10-30T18:48:45Z"
-    },
-    {
-      "id": "53e38e06-1048-4586-bb9b-a78a71b6f499",
-      "title": "DTCA: Credit Assignment for Diffusion Language Models",
-      "subtitle": "Diffusion LLMs denoise dozens of tokens at once — DTCA is the first RL signal that tells them which ones actually earned the reward.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "diffusion language models",
-        "reinforcement learning",
-        "credit assignment",
-        "llada",
-        "grpo",
-        "math reasoning"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "wand.and.stars",
-      "summary": "DTCA (Denoising Token Credit Assignment) gives reinforcement learning a token-level signal for diffusion language models, which normally only get a single pass/fail reward for an entire multi-step denoising trajectory. Trained from LLaDA-8B-Instruct with no extra SFT, it reports peak gains of up to 9.0 points on MATH500 and 5.3 points on GSM8K over the base model.",
-      "publishedDate": "2026-10-30T12:48:12Z",
-      "slides": [
-        {
-          "id": "35b4fcf6-8c10-4102-b8ca-63987449b3d3",
-          "kind": "cover",
-          "title": "One Reward, Dozens of Tokens Revealed at Once — Which Ones Deserved Credit?",
-          "body": "Diffusion language models like LLaDA generate text by starting from an all-masked sequence and iteratively denoising it — unmasking many tokens per step instead of one token at a time. A new paper, DTCA (arXiv:2610.35201), tackles a problem that's specific to training these models with RL: a single final reward doesn't say which denoising step, or which token, actually mattered.",
-          "bullets": [
-            "Built on LLaDA-8B-Instruct, an open 8B-parameter diffusion language model",
-            "Trained directly with RL — no additional supervised fine-tuning stage",
-            "Code released publicly (ZJU-OmniAI/DTCA on GitHub) alongside the arXiv preprint"
-          ],
-          "symbol": "wand.and.stars",
-          "table": null
-        },
-        {
-          "id": "109ae3e0-61f3-44fc-92bf-b6516c03b993",
-          "kind": "problem",
-          "title": "Autoregressive RL Has an Easy Credit Story. Diffusion LLMs Don't.",
-          "body": "In an autoregressive model, RL methods like PPO or GRPO can attribute reward to each token's log-probability in sequence — token-by-token credit falls out naturally. A diffusion LLM denoises the whole sequence over many steps, revealing multiple tokens per step, so a single scalar reward at the end gets smeared evenly across every token and every step.",
-          "bullets": [
-            "A right/wrong final-answer reward looks identical whether the model nailed it on step 2 or stumbled until step 20",
-            "Dozens of tokens get unmasked per step, all receiving the same uniform gradient regardless of how much each one mattered",
-            "Earlier work (DACA-GRPO) made a first pass at this; DTCA pushes it to a finer, per-token signal"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "2d52e666-fc58-43a6-80eb-d0d6968ee1f2",
-          "kind": "solution",
-          "title": "The Signal: How Much Clearer Did the Rest of the Sequence Get?",
-          "body": "DTCA scores each unmasked token by the confidence improvement it causes on the positions still masked at that step — if revealing this token makes the model suddenly much more certain about everything else, that token earns a bigger share of the eventual reward.",
-          "bullets": [
-            "Contribution weights come from the jump in prediction confidence on remaining masked positions after each token is revealed",
-            "Weights are aggregated by part-of-speech category — an operator or key number in a math problem is weighted differently than a filler word",
-            "A second calibration step adjusts the signal using the token-level entropy change the policy update itself induces, so already-confident tokens don't get overcorrected"
-          ],
-          "symbol": "slider.horizontal.3",
-          "table": null
-        },
-        {
-          "id": "48a5ecf8-b91d-4a42-b833-fcc3d53eeb55",
-          "kind": "example",
-          "title": "Worked Example: Solving a GSM8K Word Problem Step by Step",
-          "body": "Picture denoising a masked math solution: \"[M] [M] has 3 apples [M] buys 5 more [M] total is [M]\". When the model fills in the number \"8\" at the final blank, the confidence on every earlier masked position jumps — that token carries most of the useful signal.",
-          "bullets": [
-            "The token \"8\" (the final answer) gets a high contribution weight — revealing it resolves the whole sequence's ambiguity",
-            "A filler token like \"has\" or \"total\" gets a near-zero contribution weight — revealing it barely changes confidence elsewhere",
-            "DTCA's reward shaping pushes the RL update toward reinforcing accurate predictions of high-contribution tokens like \"8\", not toward tokens that were already easy to guess"
-          ],
-          "symbol": "number",
-          "table": null
-        },
-        {
-          "id": "ff5e8e05-52c1-4bb5-ad34-b2a8f98541bf",
-          "kind": "comparison",
-          "title": "Results: Consistent Gains Over the Base Model, Not Just One Benchmark",
-          "body": "The paper reports DTCA improving over LLaDA-8B-Instruct across both evaluated math benchmarks and across all tested generation budgets — not a single cherry-picked number.",
-          "bullets": [
-            "Reported as peak improvement over the base LLaDA-8B-Instruct model, not an absolute accuracy ceiling"
-          ],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Peak gain over base LLaDA-8B-Instruct"
-            ],
-            "rows": [
-              [
-                "MATH500",
-                "+9.0 points"
-              ],
-              [
-                "GSM8K",
-                "+5.3 points"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "ff1b2030-b13b-411d-9d26-cb4eccb73969",
-          "kind": "concept",
-          "title": "Where This Doesn't Help — or Isn't Proven Yet",
-          "body": "DTCA is a fresh, narrow result: strong on the two math benchmarks it was tested on, but the paper doesn't show it generalizing beyond that yet.",
-          "bullets": [
-            "Validated only on math reasoning (MATH500, GSM8K) with one model family (LLaDA-8B) — open-ended generation and other diffusion LLMs are untested",
-            "Computing per-token, per-step contribution weights adds real bookkeeping cost to every RL rollout, versus a single scalar reward",
-            "Diffusion LLMs remain a small niche next to autoregressive models — most production LLM RL pipelines (PPO, GRPO, DPO) have no credit-assignment problem like this to solve",
-            "This is a days-old preprint, not yet peer reviewed — the reported gains haven't been independently reproduced"
-          ],
-          "symbol": "exclamationmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "f6825e79-cad9-4a53-9999-444ae7349a6f",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "DTCA is the first method to give diffusion language model RL a genuinely token-level reward signal, derived from how much each unmasked token clarifies the rest of the sequence — and it shows consistent, measurable gains on math reasoning without any extra supervised fine-tuning.",
-          "bullets": [
-            "Diffusion LLMs denoise in parallel, so a single end-of-sequence reward can't tell tokens apart — DTCA fixes that with confidence-improvement-based contribution weights",
-            "Peak reported gains: +9.0 points on MATH500, +5.3 points on GSM8K over base LLaDA-8B-Instruct",
-            "Trained straight from the base instruct model with RL alone, no additional SFT stage",
-            "Still early: one model family, two math benchmarks, and an unreviewed preprint — treat the numbers as promising, not settled"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "06f834aa-4efe-436d-a174-9e78e6f18e1d",
-            "prompt": "Why is credit assignment harder for RL on diffusion language models than on autoregressive ones?",
-            "options": [
-              "Diffusion models don't use rewards at all",
-              "A diffusion model reveals many tokens per denoising step, so a single final reward can't say which step or token mattered",
-              "Autoregressive models can't be trained with RL",
-              "Diffusion models only ever output one token total"
-            ],
-            "correctIndex": 1,
-            "explanation": "Autoregressive RL can attribute reward token-by-token because generation is sequential. Diffusion LLMs unmask multiple tokens per step across many steps, so a single scalar reward gets smeared evenly across all of them unless something like DTCA breaks it apart."
-          },
-          {
-            "id": "3191cedd-b275-4130-8f38-5476dae24f99",
-            "prompt": "What signal does DTCA use to decide how much credit a given unmasked token deserves?",
-            "options": [
-              "The token's length in characters",
-              "A random weight assigned at initialization",
-              "How much the model's confidence on the remaining masked positions improves after that token is revealed",
-              "Whether the token appears in the training vocabulary"
-            ],
-            "correctIndex": 2,
-            "explanation": "DTCA's contribution weight is based on the confidence improvement on still-masked positions caused by revealing a given token — tokens that resolve more ambiguity elsewhere in the sequence get more credit."
-          },
-          {
-            "id": "138d7390-2d0d-4c49-b8ea-c1c1142e3ee6",
-            "prompt": "What's a fair limitation of DTCA's current results, based on the paper?",
-            "options": [
-              "It was tested on dozens of benchmarks across every model family",
-              "It has been independently reproduced by multiple labs",
-              "It's validated only on math reasoning benchmarks with one 8B diffusion model, and is an unreviewed preprint",
-              "It requires no additional compute compared to standard RL"
-            ],
-            "correctIndex": 2,
-            "explanation": "The reported gains (+9.0 on MATH500, +5.3 on GSM8K) are real but narrow: one model family, two math benchmarks, and a preprint that hasn't gone through peer review or independent reproduction yet."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "DTCA: Denoising Token Credit Assignment for Reinforcement Learning in Diffusion Language Models (arXiv:2610.35201)",
-          "url": "https://arxiv.org/abs/2610.35201"
-        },
-        {
-          "title": "ZJU-OmniAI/DTCA — official code release",
-          "url": "https://github.com/ZJU-OmniAI/DTCA"
-        }
-      ]
-    },
-    {
-      "id": "5c653fea-992a-4823-afee-42296ec15f34",
-      "title": "Mistral Large 4: A Trillion-Parameter Model Goes Open Weight",
-      "subtitle": "Three weeks of extra RL after its closed preview, and Mistral's flagship MoE ships with open weights instead of staying API-only.",
-      "category": "AI News",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "mistral",
-        "open weights",
-        "mixture of experts",
-        "open source llm",
-        "multimodal",
-        "llm release"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "cube.fill",
-      "summary": "On October 29, 2026, Mistral AI released open weights for Mistral Large 4 — a roughly 1-trillion-parameter, natively multimodal mixture-of-experts model with about 52 billion active parameters per token. It follows an October 6 closed preview and three more weeks of reinforcement learning, and ships with a quantized build runnable on four Nvidia B200/B300 GPUs.",
-      "publishedDate": "2026-10-30T12:48:12Z",
-      "slides": [
-        {
-          "id": "91c31d3d-f00b-4a41-8011-66915b9e8a17",
-          "kind": "cover",
-          "title": "Mistral's Biggest Model Just Stopped Being API-Only",
-          "body": "Mistral AI released open weights for Mistral Large 4 on October 29, 2026 — a mixture-of-experts model with roughly 1 trillion total parameters, natively multimodal across text and images, and now downloadable instead of locked behind an API.",
-          "bullets": [
-            "Follows an October 6 closed preview (\"ML4 Preview\") and three additional weeks of reinforcement learning",
-            "Weights published on Hugging Face; also available via Mistral's API/Studio and OpenRouter",
-            "Mistral's own framing: the best open-weight model for coding"
-          ],
-          "symbol": "cube.fill",
-          "table": null
-        },
-        {
-          "id": "8f0b2ab0-2766-4771-9c54-75784ff2cf03",
-          "kind": "problem",
-          "title": "Frontier-Scale Open Weights Were Almost Entirely a China Story",
-          "body": "Models in the trillion-parameter class have mostly stayed closed — GPT, Gemini, and Claude are API-only. The open-weight frontier had largely been held by Chinese labs like DeepSeek and Qwen, leaving a gap for teams in regulated or sovereignty-sensitive markets who want a frontier-scale model they can actually run on their own hardware.",
-          "bullets": [
-            "Enterprises needing to self-host or audit weights directly had no non-Chinese frontier-scale open option",
-            "European and regulated customers increasingly want sovereign control — running the model on their own infrastructure, not just calling a vendor's API",
-            "Mistral is a rare non-US, non-Chinese lab shipping at this parameter scale with open weights"
-          ],
-          "symbol": "globe",
-          "table": null
-        },
-        {
-          "id": "777d213f-e726-492f-8525-774456c6b723",
-          "kind": "architecture",
-          "title": "The Trick: 1 Trillion Total Parameters, Only ~52 Billion Active",
-          "body": "Mistral Large 4 is a mixture-of-experts model — most of its trillion parameters sit idle for any given token, with a routing mechanism activating only a fraction of them per forward pass. That's what makes a model this large computationally feasible to run at all.",
-          "bullets": [
-            "~1 trillion total parameters, ~52 billion active per token — only the relevant experts fire for a given input",
-            "A quantized build runs on just 4 Nvidia B200 or B300 GPUs, lowering the hardware bar for a model this size",
-            "Mistral's VP of Science, Pierre Stock, said the open release \"continues reinforcement learning training and delivers substantial gains with no signs of saturation\" relative to the preview"
-          ],
-          "symbol": "cpu.fill",
-          "table": null
-        },
-        {
-          "id": "3b9654e2-43df-4b2c-9e36-8895104c71f9",
-          "kind": "comparison",
-          "title": "How the Math Compares to Another Open Giant",
-          "body": "Mixture-of-experts is now the standard way labs ship frontier-scale open models — both of these recent releases keep total parameter count high while keeping active parameters (and thus inference cost) far lower.",
-          "bullets": [
-            "Active-parameter count, not total-parameter count, is the better proxy for how expensive a model actually is to run per token"
-          ],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "Model",
-              "Total params",
-              "Active params"
-            ],
-            "rows": [
-              [
-                "Mistral Large 4",
-                "~1 trillion",
-                "~52 billion"
-              ],
-              [
-                "DeepSeek V4.1 Flash",
-                "552 billion",
-                "8B (prefill) / 16B (decode)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "6de198fb-17de-41fa-a07c-92c09a18f3f6",
-          "kind": "example",
-          "title": "Worked Example: A Bank That Can't Send Data to a Third-Party API",
-          "body": "A European bank wants an AI coding/security copilot for its internal tooling, but compliance rules forbid sending proprietary code to an external API. With Mistral Large 4's weights public, the bank's infra team deploys the quantized build on 4 on-prem B300 GPUs instead of integrating a closed API.",
-          "bullets": [
-            "The model never leaves the bank's own infrastructure — no customer code or data crosses a third-party boundary",
-            "The team can audit, fine-tune, or roll back the exact weights in use, which a closed API never allows",
-            "Trade-off: the bank now owns the operational burden of serving a trillion-parameter-class model, including the GPU cluster and its upkeep"
-          ],
-          "symbol": "building.columns.fill",
-          "table": null
-        },
-        {
-          "id": "eb2f1ef6-1b8b-4dc9-a7ab-e1d52b0e9ac2",
-          "kind": "concept",
-          "title": "Read the Fine Print Before You Deploy",
-          "body": "\"Open weights\" doesn't automatically mean unrestricted use, and a day-one release always outpaces independent scrutiny.",
-          "bullets": [
-            "Early reporting points to a modified open license with some usage conditions attached — check the exact license text on the model's Hugging Face repo before deploying commercially, don't assume it's permissive",
-            "Even with only ~52B active parameters, a 1-trillion-parameter model still needs a serious multi-GPU footprint — this isn't something you run on a single consumer card",
-            "\"Best open-weight model for coding\" is Mistral's own claim at launch; independent, apples-to-apples benchmarking typically lags a release by weeks",
-            "If your workload doesn't need frontier-scale reasoning, a smaller open model will be cheaper and faster to serve than a trillion-parameter MoE"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "14600743-19a9-4b2b-a312-9ea1fa959b6b",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "Mistral Large 4's open-weight release is significant less for raw benchmark bragging rights and more for what it unlocks: a frontier-scale, self-hostable model from a non-US, non-Chinese lab, available just three weeks after its closed preview.",
-          "bullets": [
-            "~1 trillion total parameters, ~52 billion active per token (MoE), natively multimodal, released Oct 29, 2026",
-            "Ships with a quantized build that runs on 4 Nvidia B200/B300 GPUs — still serious infra, but far less than naive full-precision serving",
-            "Fills a real gap: open, frontier-scale, non-Chinese models were scarce before this",
-            "Verify the actual license terms and wait for independent benchmarks before treating launch-day claims as settled"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "ea10a340-aaff-4e97-8d41-53aa7008456f",
-            "prompt": "What architectural choice lets Mistral Large 4 have ~1 trillion total parameters while remaining feasible to run?",
-            "options": [
-              "It's a dense model where every parameter is used for every token",
-              "It's a mixture-of-experts model, activating only ~52 billion parameters per token",
-              "It runs entirely on CPU instead of GPU",
-              "It compresses all weights to 1-bit precision"
-            ],
-            "correctIndex": 1,
-            "explanation": "Mixture-of-experts routes each token through only a subset of the model's experts, so only ~52 billion of the ~1 trillion total parameters actually fire per token — that's what keeps inference cost manageable at this scale."
-          },
-          {
-            "id": "9cd60a65-d2cb-4a7e-95f6-46e2c384938f",
-            "prompt": "What gap does Mistral Large 4's open-weight release fill, according to the release?",
-            "options": [
-              "It's the first LLM ever released with open weights",
-              "It's a rare non-US, non-Chinese frontier-scale model with open weights, useful for sovereignty-sensitive deployments",
-              "It's the first model that can run on a phone",
-              "It's the first model trained without reinforcement learning"
-            ],
-            "correctIndex": 1,
-            "explanation": "Trillion-parameter-class models are mostly closed (GPT, Gemini, Claude), and most open-weight competitors at this scale have come from Chinese labs. Mistral Large 4 is a frontier-scale open-weight model from a non-US, non-Chinese lab."
-          },
-          {
-            "id": "57add764-d29b-47b1-a0f4-1aca597e3389",
-            "prompt": "Why should a team deploying Mistral Large 4 commercially check the license terms carefully, per the release?",
-            "options": [
-              "The model requires a monthly subscription even when self-hosted",
-              "Early reporting points to usage conditions attached to the open-weight license, not an unconditionally permissive one",
-              "The weights are only available for 24 hours after release",
-              "The license forbids running the model on GPUs"
-            ],
-            "correctIndex": 1,
-            "explanation": "\"Open weights\" isn't the same as an unrestricted license. Early reporting on Mistral Large 4 points to usage conditions in its license, so commercial deployers should verify the exact terms rather than assume full permissiveness."
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Mistral Large 4 (Le Chonk) is now open weight — Mistral AI",
-          "url": "https://mistral.ai/news/mistral-large-4-oss/"
-        }
-      ]
     }
   ]
 }
