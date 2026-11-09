@@ -1,6 +1,201 @@
 {
   "posts": [
     {
+      "title": "DPO: Preference Tuning Without a Reward Model",
+      "subtitle": "One classification-style loss replaces the reward model and the entire PPO loop.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "preference-tuning",
+        "alignment",
+        "fine-tuning"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "scalemass.fill",
+      "summary": "Direct Preference Optimization reframes RLHF's reward-model-plus-PPO pipeline as a single closed-form loss computed directly on the policy. It needs only the policy and a frozen reference model, no reward model, no sampling or rollouts — but it inherits the preference data's blind spots since it never samples from its own evolving policy during training.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "What If You Never Trained a Reward Model At All?",
+          "body": "Classic RLHF turns human preferences into a separate reward model, then uses reinforcement learning (PPO) to optimize a policy against it. DPO skips both steps and gets there with one loss function.",
+          "bullets": [],
+          "symbol": "scalemass.fill",
+          "table": null,
+          "id": "e2397ce9-d069-4e08-aa75-3d97c5da4b38"
+        },
+        {
+          "kind": "problem",
+          "title": "RLHF's Pipeline Is Four Models Deep",
+          "body": "To run PPO-based RLHF you typically need four models loaded at once, and the training loop itself is notoriously fragile.",
+          "bullets": [
+            "Policy model (being trained), frozen reference model, reward model, and a value/critic model — all in memory simultaneously",
+            "PPO requires sampling rollouts from the live policy every step, then scoring them with the reward model — slow and sample-inefficient",
+            "Reward hacking and hyperparameter sensitivity make PPO runs easy to destabilize without careful tuning"
+          ],
+          "symbol": "square.stack.3d.up.fill",
+          "table": null,
+          "id": "5acb2b79-f0d3-42c4-a14b-8863070936c1"
+        },
+        {
+          "kind": "solution",
+          "title": "The Trick: Reparameterize the Reward as the Policy",
+          "body": "Under a KL-constrained RLHF objective, the optimal policy has a known closed form. DPO inverts that relationship: instead of solving for the optimal policy given a reward, it expresses the reward directly in terms of the policy.",
+          "bullets": [
+            "Implicit reward: r(x,y) = β · log(π_θ(y|x) / π_ref(y|x)), up to a constant that cancels out in preference comparisons",
+            "Plugging that into the Bradley-Terry preference model collapses RLHF into a single supervised loss over (prompt, chosen, rejected) triples",
+            "No reward model is ever instantiated — the policy's own likelihood ratio against the reference IS the reward"
+          ],
+          "symbol": "arrow.triangle.swap",
+          "table": null,
+          "id": "6608df79-1111-407c-b3c9-1cefc0f8fe06"
+        },
+        {
+          "kind": "concept",
+          "title": "The Loss, Term by Term",
+          "body": "L_DPO = −E[log σ(β·log(π_θ(y_w|x)/π_ref(y_w|x)) − β·log(π_θ(y_l|x)/π_ref(y_l|x)))]",
+          "bullets": [
+            "y_w / y_l are the human-preferred (winning) and rejected (losing) responses from a static preference dataset",
+            "β is a temperature: small β lets the policy drift further from the reference (more capability change, more reward-hacking risk); large β keeps it close (safer, weaker signal)",
+            "σ is the sigmoid — this is literally a binary classifier trained to assign higher implicit reward to y_w than y_l",
+            "Only forward passes through policy + frozen reference are needed — no rollouts, no RL optimizer"
+          ],
+          "symbol": "chart.xyaxis.line",
+          "table": null,
+          "id": "350fcf3d-ef45-43dd-b28c-68afa3f4cc2b"
+        },
+        {
+          "kind": "comparison",
+          "title": "RLHF (PPO) vs. DPO",
+          "body": "Same goal — align a model to pairwise human preferences — very different machinery.",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "",
+              "RLHF (PPO)",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "Policy + reference + reward + value",
+                "Policy + frozen reference"
+              ],
+              [
+                "Needs live sampling?",
+                "Yes — rollouts every step",
+                "No — static preference pairs"
+              ],
+              [
+                "Core mechanism",
+                "Reinforcement learning (PPO)",
+                "Supervised classification loss"
+              ],
+              [
+                "Tuning difficulty",
+                "High — reward hacking, instability",
+                "Lower — one main knob (β)"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.doc.horizontal",
+          "id": "2b5f306b-f070-46ab-a358-e74174b06214"
+        },
+        {
+          "kind": "example",
+          "title": "Walking Through One Training Step",
+          "body": "Say your dataset has a prompt with two candidate replies, one marked preferred by a human annotator.",
+          "bullets": [
+            "Prompt: \"Explain recursion.\" y_w = a clear explanation with a worked example; y_l = a vague one-liner",
+            "Run both y_w and y_l through π_θ and the frozen π_ref to get four log-probabilities",
+            "Compute the scaled log-ratios for each response, subtract losing from winning, pass through σ, take −log",
+            "Backprop updates π_θ to push the winning response's log-ratio further above the losing one's — no reward model or sampled rollout involved anywhere in this step"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null,
+          "id": "97e28bec-b0c9-457e-b920-f1efc77a5336"
+        },
+        {
+          "kind": "problem",
+          "title": "Where DPO Breaks Down",
+          "body": "Removing the RL loop removes its failure modes too — but trades them for different ones.",
+          "bullets": [
+            "Fully offline: DPO never samples from its own current policy during training, so it can't self-correct once the policy drifts from what the fixed preference pairs cover",
+            "Length bias is a well-documented failure mode — models can learn that longer responses tend to be 'preferred' in the data and inflate verbosity instead of real quality (motivated follow-ups like length-normalized DPO variants)",
+            "β must be tuned per-dataset: too small over-optimizes the implicit reward (reward hacking); too large barely moves the model",
+            "Needs a reasonably capable SFT/reference checkpoint to start from — DPO sharpens existing behavior, it doesn't teach new capabilities"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "37c9de54-646b-4104-a6c1-7e595e6fe85a"
+        },
+        {
+          "kind": "takeaways",
+          "title": "The Core Idea to Keep",
+          "body": "DPO's contribution isn't a new objective — it's proving RLHF's existing objective already has a closed-form solution hiding in the policy itself.",
+          "bullets": [
+            "Reward model + PPO collapses into one supervised loss once you reparameterize reward as a log-ratio against a reference policy",
+            "That buys simplicity and stability, at the cost of giving up the self-correcting signal that online sampling provided",
+            "Pick DPO when you have solid preference pairs and want a cheap, stable run; lean toward online/iterative methods when the policy needs to keep exploring beyond what's in the dataset"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "8c5b2ec1-0702-4e51-90f3-3efffc60bb9e"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What does DPO eliminate that standard PPO-based RLHF requires?",
+            "options": [
+              "The frozen reference model",
+              "A separate reward model and the online RL sampling loop",
+              "The human preference data itself",
+              "The policy model being trained"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO reparameterizes the reward in terms of the policy's own log-ratio against a frozen reference, so no separate reward model or value model is needed, and no rollouts are sampled during training — it's trained as a supervised loss over static preference pairs.",
+            "id": "f7456667-ce09-4d9f-ab15-cea1d276a3bc"
+          },
+          {
+            "prompt": "In the DPO loss, what does the temperature β control?",
+            "options": [
+              "The learning rate of the optimizer",
+              "How many preference pairs are used per batch",
+              "How far the policy is allowed to drift from the reference model",
+              "Whether the reference model is frozen or trainable"
+            ],
+            "correctIndex": 2,
+            "explanation": "β scales the implicit reward's log-ratio term. A small β permits more deviation from the reference (stronger but riskier updates); a large β keeps the policy close to the reference (safer but weaker signal).",
+            "id": "93cdbb0b-5174-4a29-a43b-bc668c7aa747"
+          },
+          {
+            "prompt": "Why can't DPO self-correct if the policy drifts far from what its preference dataset covers?",
+            "options": [
+              "DPO uses a value model that automatically re-labels drifted outputs",
+              "DPO is fully offline — it never samples new rollouts from its own current policy during training, unlike online RLHF",
+              "DPO retrains the reference model continuously",
+              "This isn't actually a limitation of DPO"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because DPO trains on a static, pre-collected set of (chosen, rejected) pairs rather than sampling fresh rollouts from the live policy, it has no mechanism to gather new preference signal once the policy's outputs move beyond what that fixed dataset represents.",
+            "id": "4f1e013b-d845-48e1-b4d8-eef670b0c273"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (Rafailov et al., NeurIPS 2023)",
+          "url": "https://arxiv.org/abs/2305.18290",
+          "id": "85850e02-fa02-4703-931d-4eb8a7d08c58"
+        }
+      ],
+      "id": "f4851404-2f6a-4cbc-9c1b-50785c16e229",
+      "publishedDate": "2026-11-09T06:47:47Z"
+    },
+    {
       "title": "Claude Redesigned Quantum Circuits, Beat Published Records",
       "subtitle": "A closed feedback loop cut gate counts up to 17x on real quantum primitives.",
       "category": "AI Innovations",
@@ -11132,198 +11327,6 @@
         }
       ],
       "publishedDate": "2026-11-02T00:48:16Z"
-    },
-    {
-      "id": "0482b03a-3ff7-4030-af88-b0a2f36700f1",
-      "title": "Multi-Agent Orchestration: Supervisor vs. Swarm",
-      "subtitle": "When one agent isn't enough, how you wire many together matters more than which model you pick.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "multi-agent",
-        "orchestration",
-        "agentic-workflows",
-        "supervisor-pattern",
-        "agent-design"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "person.3.fill",
-      "summary": "Multi-agent orchestration splits one task across specialized agents instead of one agent doing everything — the supervisor, hierarchical, swarm, and blackboard patterns each trade off control, cost, and debuggability differently. It beats a monolithic agent on specialization and parallelism, but multiplies token spend and adds coordination risk, so it's worth reaching for only once a single well-prompted agent has actually failed.",
-      "slides": [
-        {
-          "id": "ccbbfda9-0281-4dd1-a4df-7f6742dda3c6",
-          "kind": "cover",
-          "title": "One Agent Hits a Wall. Multiple Agents Hit a Coordination Problem.",
-          "body": "Multi-agent orchestration is the set of patterns for splitting one open-ended task across several specialized LLM agents instead of asking one agent to do everything.",
-          "bullets": [
-            "Used by LangGraph, CrewAI, AutoGen, and Claude's own subagent tooling to split work across roles",
-            "The design choice that matters most isn't which model to use — it's how agents are organized and who's in control",
-            "More agents means more cost, more latency, and more ways for a task to silently go wrong"
-          ],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "353244bf-f41c-4bf4-ae1b-49effcc58d90",
-          "kind": "problem",
-          "title": "Why One Big Agent Eventually Breaks Down",
-          "body": "A single agent juggling research, coding, and review in one context window accumulates irrelevant history, loses track of its own goal, and burns tokens re-reading things it already decided.",
-          "bullets": [
-            "Context windows fill with tool output from unrelated subtasks, diluting attention on what matters right now",
-            "One failure — a bad tool call, a hallucinated fact — can derail the rest of the task with no checkpoint to recover from",
-            "A monolithic agent can't specialize: the same model and prompt handle planning, coding, and QA equally (and equally badly)"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "94bda375-24c4-4d44-941b-d9ef8928a6e8",
-          "kind": "solution",
-          "title": "The Supervisor Pattern: One Agent Delegates, Others Execute",
-          "body": "A supervisor agent breaks the task into subtasks, assigns each to a specialized worker, and assembles their results — the most common production pattern today.",
-          "bullets": [
-            "Workers only see their own subtask, not the full conversation — smaller, cleaner context per agent",
-            "The supervisor can retry, reassign, or skip a failed worker without restarting the whole task",
-            "Easiest pattern to debug: there's one place, the supervisor, that holds the overall plan"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "73f26983-e456-4782-8acf-469277058749",
-          "kind": "architecture",
-          "title": "Beyond Supervisor: Hierarchical and Peer-to-Peer Swarms",
-          "body": "A single supervisor doesn't scale to very large workflows alone — three other patterns fill the gaps.",
-          "bullets": [
-            "Hierarchical: supervisors-of-supervisors, each managing a team of workers, used when one supervisor's context can't hold the whole plan",
-            "Swarm / handoff: agents pass control directly to whichever agent is best suited next, with no fixed coordinator",
-            "Blackboard: agents don't talk to each other at all — they read and write a shared memory store, and whichever agent's trigger condition matches acts next"
-          ],
-          "symbol": "network",
-          "table": null
-        },
-        {
-          "id": "d61f3ae6-e293-4f3b-b365-7f22b1d36c0d",
-          "kind": "comparison",
-          "title": "Which Pattern, When",
-          "body": "Pick based on how predictable the workflow is and how much you need a single point of control.",
-          "bullets": [],
-          "symbol": "square.grid.2x2",
-          "table": {
-            "headers": [
-              "Pattern",
-              "Best for",
-              "Main risk"
-            ],
-            "rows": [
-              [
-                "Supervisor",
-                "Known subtask breakdown, need auditability",
-                "Supervisor becomes a bottleneck or context hog"
-              ],
-              [
-                "Hierarchical",
-                "Large workflows, many subtasks",
-                "Coordination overhead compounds per layer"
-              ],
-              [
-                "Swarm / handoff",
-                "Open-ended, unpredictable routing",
-                "Hard to trace who decided what, harder to debug"
-              ],
-              [
-                "Blackboard",
-                "Many agents reacting to shared state",
-                "Race conditions, no clear owner of the final decision"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "70598209-8bdf-4cca-8386-7d7405587ca5",
-          "kind": "example",
-          "title": "A Concrete Walkthrough: Automated Code Review",
-          "body": "A supervisor agent receives a pull request diff and splits review into three worker calls run in parallel, then merges their findings into one report.",
-          "bullets": [
-            "Worker A (security): scans only the diff for injection, auth, and secrets issues — a few thousand tokens of context, not the whole repo",
-            "Worker B (correctness): checks the diff's logic against the PR description and existing tests",
-            "Worker C (style): checks the diff against the repo's lint config",
-            "Supervisor merges three short reports into one, deduplicating overlapping findings — far cheaper than one agent reading the whole repo for every concern"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "f52285bd-f7ef-4f19-858c-74d553f057cc",
-          "kind": "concept",
-          "title": "The Tradeoffs Nobody Puts in the Demo",
-          "body": "Multi-agent systems trade single-agent simplicity for coordination cost, and that cost is easy to underestimate.",
-          "bullets": [
-            "Cost multiplies: 5 worker agents means roughly 5x the token spend of one agent working sequentially, even with smaller per-worker context",
-            "Latency can get worse, not better, if workers run sequentially instead of in parallel — orchestration adds round-trips",
-            "Shared state without a clear owner (blackboard, swarm handoffs) is a common source of silent task failure — nobody notices that no one actually finished the job",
-            "Rule of thumb: don't reach for multi-agent until a single well-prompted agent with good tools has actually failed on the task"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "15a02e6b-4d7e-43a3-8cf4-919896a53fe6",
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "Multi-agent orchestration splits one task across specialized agents — the pattern (supervisor, hierarchical, swarm, blackboard) matters more than the model choice",
-            "Supervisor is the default: one agent plans and delegates, workers execute with narrow context, the supervisor merges results",
-            "It costs more in tokens and latency than a single agent — use it when specialization or parallelism actually pays for that overhead, not by default"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f7da6b08-3d05-422e-861b-37ac664db9df",
-            "prompt": "In the supervisor pattern, what's the main advantage over one large monolithic agent?",
-            "options": [
-              "Each worker agent gets a smaller, focused context instead of the entire task history",
-              "It uses a completely different, cheaper model automatically",
-              "It eliminates the need for tool use",
-              "It guarantees lower latency in all cases"
-            ],
-            "correctIndex": 0,
-            "explanation": "Workers only see their own subtask, which keeps their context clean and focused — the supervisor holds the overall plan and merges results, but latency and cost aren't automatically improved."
-          },
-          {
-            "id": "3b928d69-089c-49b2-96c7-d7c294e7539a",
-            "prompt": "Which pattern lets agents hand off control directly to each other with no fixed coordinator?",
-            "options": [
-              "Swarm / peer-to-peer handoff",
-              "Supervisor",
-              "Hierarchical",
-              "Blackboard"
-            ],
-            "correctIndex": 0,
-            "explanation": "Swarm or peer-to-peer handoff designs let any agent pass control directly to whichever agent is best suited next, without a central supervisor making that call."
-          },
-          {
-            "id": "ab275ba1-6883-4e39-81bb-681f7917460f",
-            "prompt": "What's the most common hidden cost of adding more agents to a workflow?",
-            "options": [
-              "Token spend multiplies even when each agent's individual context is smaller",
-              "Agents automatically get smarter",
-              "The workflow becomes easier to debug",
-              "Context windows become irrelevant"
-            ],
-            "correctIndex": 0,
-            "explanation": "More agents means more separate LLM calls — even if each one has a smaller, focused context, the total token spend across all of them is usually higher than one well-prompted agent doing the work sequentially."
-          }
-        ]
-      },
-      "references": [],
-      "publishedDate": "2026-11-01T18:48:16Z"
     }
   ]
 }
