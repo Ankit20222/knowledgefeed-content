@@ -1,6 +1,199 @@
 {
   "posts": [
     {
+      "id": "b93872c2-27ea-41a5-ace6-fafb34e2369e",
+      "title": "Reranking: The Second Pass That Fixes Vector Search",
+      "subtitle": "Why fast retrieval and precise relevance need two different models, not one",
+      "category": "RAG",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "rag",
+        "reranking",
+        "cross-encoder",
+        "vector-search",
+        "retrieval"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "line.3.horizontal.decrease.circle.fill",
+      "summary": "Vector search (bi-encoders + ANN indexes like HNSW) is built for speed: it embeds the query once and compares it against precomputed document vectors. That speed comes from never letting the query and document interact until the final dot product, which caps how precise the ranking can be. A reranker fixes this by running a cross-encoder over a short candidate list, letting every query token attend to every document token before scoring — trading a little latency for a lot of precision, right before the top results reach the LLM.",
+      "slides": [
+        {
+          "id": "d41da0f1-ae5d-4179-a0d2-008f2ee7978e",
+          "bullets": [
+            "Reranking is the step between retrieval and generation that most tutorials skip",
+            "It's cheap to add and often the single highest-leverage fix for weak RAG quality"
+          ],
+          "kind": "cover",
+          "title": "Vector Search Finds Candidates. It Doesn't Rank Them Well.",
+          "body": "Most RAG pipelines stop at the embedding search step: embed the query, find nearest neighbors, hand the top-k to the LLM. That first pass is fast, but it's working with a compressed, lossy signal — and it shows up as subtly wrong rankings that a second, more careful pass can catch.",
+          "symbol": "line.3.horizontal.decrease.circle.fill"
+        },
+        {
+          "id": "0b82b1ce-9fb1-42b7-9872-70b5f8f1a76d",
+          "bullets": [
+            "Document vectors are precomputed and indexed (e.g., in HNSW) long before any query arrives — that's what makes search over millions of documents fast",
+            "But the query and document never interact during encoding — all the nuance gets squeezed into one fixed-size vector per side before comparison",
+            "Result: a document that shares topical/surface similarity can outscore one that's actually more relevant but phrased differently",
+            "Example failure: 'tuple vs list performance in Python' can rank a generic 'arrays vs linked lists' page above a specific 'tuples skip per-element overhead' page, because the generic page's vector sits closer in embedding space"
+          ],
+          "kind": "problem",
+          "title": "Bi-Encoders Score Without Ever Comparing Tokens",
+          "body": "A bi-encoder embeds the query and each document independently into fixed-size vectors, then scores relevance with a single dot product or cosine similarity between them.",
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "3018ec47-5790-4ea0-bacc-272f52b3a70b",
+          "bullets": [
+            "Every query token can attend to every document token (and vice versa) through self-attention — the model sees direct word-to-word relationships, not just two squashed vectors",
+            "This catches negation, specific entities, and fine-grained phrasing that bi-encoder similarity misses",
+            "The catch: because query and document are fused together, you can't precompute the document side in advance — scoring requires a full forward pass per (query, document) pair",
+            "That's why cross-encoders never run over a whole corpus; they only ever rerank a short list a bi-encoder already narrowed down"
+          ],
+          "kind": "solution",
+          "title": "Cross-Encoders Let Query and Document Attend to Each Other",
+          "body": "A cross-encoder takes the query and ONE candidate document concatenated together as a single input, and runs them jointly through a transformer.",
+          "symbol": "arrow.triangle.merge"
+        },
+        {
+          "id": "5778a56f-aeb1-438b-99e0-e17480272b6a",
+          "bullets": [
+            "Stage 1 — Retrieve: bi-encoder + ANN index (HNSW/IVF) scans millions of precomputed vectors in milliseconds, returns a shortlist (commonly the top 50-200 candidates)",
+            "Stage 2 — Rerank: cross-encoder scores only that shortlist, one forward pass per candidate, and reorders it",
+            "Stage 3 — Generate: only the reranked top 3-10 passages get passed into the LLM's context window",
+            "The expensive, token-level comparison only ever runs on dozens of candidates, never the full corpus — that's what keeps total latency bounded"
+          ],
+          "kind": "architecture",
+          "title": "The Two-Stage Pipeline",
+          "body": "Production RAG systems chain the two models so each does the job it's actually good at.",
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "1dfac92c-db3e-4f5b-8434-7234f8f0a307",
+          "bullets": [
+            "Bi-encoder's #1 result: a general 'HTTP status codes reference' page — broad topical overlap with 'API request' and '429', high embedding similarity, but it doesn't explain bursts",
+            "Bi-encoder's #7 result: a 'rate limiting and token bucket' doc — less surface overlap with the query's wording, so it starts lower",
+            "Cross-encoder reranks: it attends directly to 'burst of calls' alongside 'rate limiting' and 'token bucket', recognizes the causal match, and promotes the rate-limiting doc to #1",
+            "Net effect: the LLM now sees the doc that actually answers the question in its first few context slots, instead of burying it at position 7"
+          ],
+          "kind": "example",
+          "title": "Worked Example: A Support-Docs Query",
+          "body": "Query: 'why does my API request return 429 after a burst of calls'. The vector index returns 100 candidates.",
+          "symbol": "magnifyingglass"
+        },
+        {
+          "id": "e7bd28df-99a9-418a-8e6c-9a1e041075da",
+          "bullets": [],
+          "kind": "comparison",
+          "title": "Bi-Encoder Retrieval vs. Cross-Encoder Rerank",
+          "body": "Neither model replaces the other — they sit at different stages because their cost structure is opposite.",
+          "table": {
+            "headers": [
+              "Dimension",
+              "Bi-Encoder (Retrieval)",
+              "Cross-Encoder (Rerank)"
+            ],
+            "rows": [
+              [
+                "Document side precomputed?",
+                "Yes — indexed once, reused forever",
+                "No — recomputed per query"
+              ],
+              [
+                "Query-document interaction",
+                "None until final dot product",
+                "Full token-to-token attention"
+              ],
+              [
+                "Typical candidate set size",
+                "Millions (via ANN index)",
+                "Tens to a few hundred"
+              ],
+              [
+                "Per-query cost",
+                "One query embedding + index lookup",
+                "One forward pass per candidate"
+              ],
+              [
+                "Ranking precision",
+                "Coarse — good recall, noisier order",
+                "Fine-grained — better precision at the top"
+              ]
+            ]
+          },
+          "symbol": "tablecells"
+        },
+        {
+          "id": "46eef0ef-544f-4354-90cf-babae036f51e",
+          "bullets": [
+            "Recall ceiling: if the right passage didn't make the bi-encoder's top-k at all, no amount of reranking recovers it — fix retrieval (better chunking, hybrid search) first, not just the reranker",
+            "Latency budget: reranking 200 candidates with a cross-encoder can add real latency (serial or batched forward passes) — most systems cap the shortlist size to keep p99 latency in check",
+            "Not worth it when: ultra-low-latency paths (autocomplete, typeahead), tiny corpora where the bi-encoder is already near-perfect, or candidate sets under ~10 where reordering has little to fix",
+            "Don't skip evaluation: a reranker tuned on the wrong domain (e.g., a general-purpose model on legal or medical text) can actually hurt ranking quality — measure before and after on your own queries"
+          ],
+          "kind": "concept",
+          "title": "Where Reranking Breaks Down",
+          "body": "Reranking only reorders what retrieval already found — it can't invent a relevant document that never made the shortlist.",
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "ce044684-68b6-4263-88bb-63eafd4283b4",
+          "bullets": [
+            "Retrieval (bi-encoder + ANN index) answers 'which documents could possibly be relevant?' across millions of candidates, fast",
+            "Reranking (cross-encoder) answers 'of these few, which actually is relevant?' with far more signal per comparison",
+            "The reranker's output quality is capped by the retriever's recall — tune both, not just one",
+            "If your RAG answers feel 'almost right but missing the best source,' a reranking stage is often the highest-leverage fix to try before touching the LLM prompt"
+          ],
+          "kind": "takeaways",
+          "title": "Two Models, Two Jobs",
+          "body": "Bi-encoders win on scale; cross-encoders win on precision. Chaining them cheaply gets you both.",
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "c5f358f8-8ac2-408e-832e-49923e3d7cb7",
+            "prompt": "Why can't a cross-encoder be used to search millions of documents directly, the way a bi-encoder + ANN index can?",
+            "options": [
+              "Cross-encoders only work on short documents",
+              "Cross-encoders fuse the query and document together, so document vectors can't be precomputed — every pair needs its own forward pass at query time",
+              "Cross-encoders require a GPU and bi-encoders don't",
+              "Cross-encoders can only output binary relevance, not a ranked score"
+            ],
+            "correctIndex": 1,
+            "explanation": "A bi-encoder embeds documents independently ahead of time, so it can index and search millions of precomputed vectors. A cross-encoder concatenates the query and document and runs them jointly through a transformer, so there's no document-only representation to precompute — scoring every document would mean a full forward pass per document, per query."
+          },
+          {
+            "id": "b6698ab0-3065-484f-8648-083b1de70b3a",
+            "prompt": "In a two-stage retrieval pipeline, what does the reranking stage fundamentally depend on?",
+            "options": [
+              "The size of the LLM's context window",
+              "Whether the retrieval stage's shortlist already contains the truly relevant document",
+              "The number of attention heads in the cross-encoder",
+              "Whether the documents were chunked using fixed-size or semantic chunking"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reranking only reorders candidates it's given — it has a recall ceiling set by the first-stage retriever. If the relevant document was never retrieved into the shortlist, no reranker can promote it, because it was never in the list to begin with."
+          },
+          {
+            "id": "f1618a95-51b7-40f1-8cb0-423fd0000b8f",
+            "prompt": "Which scenario is the weakest fit for adding a reranking stage?",
+            "options": [
+              "A RAG system over millions of support articles where answer quality matters more than shaving milliseconds",
+              "An ultra-low-latency autocomplete feature with a strict few-millisecond budget",
+              "A legal document search system where precision at the top of the results matters a lot",
+              "A system where the bi-encoder's top results are often topically close but not quite the right passage"
+            ],
+            "correctIndex": 1,
+            "explanation": "Reranking adds a forward pass per candidate, which is real added latency. For an ultra-low-latency path like autocomplete, that cost usually isn't worth paying, whereas RAG answer quality use cases typically have more latency budget to spend on precision."
+          }
+        ]
+      },
+      "publishedDate": "2026-11-13T18:47:02Z",
+      "references": []
+    },
+    {
       "id": "2daba708-e57b-424f-970a-03d6d4f9a857",
       "title": "Constitutional Classifiers: How Claude Blocks Jailbreaks",
       "subtitle": "A written constitution, synthetic data, and a classifier that reads every input and output.",
@@ -11120,203 +11313,6 @@
       ],
       "id": "b057f937-040a-47a5-bdbe-66581310c96a",
       "publishedDate": "2026-11-07T00:48:45Z"
-    },
-    {
-      "title": "MCP Transports: Why stdio Can't Serve a Fleet of Users",
-      "subtitle": "A local subprocess and a shared remote endpoint solve completely different problems.",
-      "category": "MCP",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "mcp",
-        "model context protocol",
-        "stdio",
-        "streamable http",
-        "transport"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "point.3.connected.trianglepath.dotted",
-      "summary": "MCP defines exactly two standard transports: stdio, where the client spawns the server as a local subprocess and swaps newline-delimited JSON-RPC over stdin/stdout, and Streamable HTTP, a single-endpoint remote transport with optional SSE streaming, session IDs, and resumable connections. Picking the wrong one — or assuming the old HTTP+SSE transport it replaced still applies — breaks multi-user servers and connection recovery.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "MCP Has Two Transports. Most Tutorials Only Show You One.",
-          "body": "Every MCP message is JSON-RPC underneath. What changes between stdio and Streamable HTTP is how those messages physically travel — and that choice decides whether your server can ever leave your laptop.",
-          "bullets": [],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null,
-          "id": "ed002848-042b-4e53-8d9e-adb5dd05dd60"
-        },
-        {
-          "kind": "problem",
-          "title": "A Subprocess Can't Answer Ten People at Once",
-          "body": "stdio works by the client launching the server as a child process and talking to it over pipes. That's fast and needs zero network config — but it only exists as long as that one process does, for that one client.",
-          "bullets": [
-            "Claude Desktop and Claude Code launch local MCP servers this way — one subprocess per client, per session",
-            "There's no listener, no port, no way for a second machine to connect",
-            "The original remote answer, HTTP+SSE from protocol version 2024-11-05, needed two separate endpoints (one for POST, one for the SSE stream) and had no way to resume a dropped connection — the spec deprecated it"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "ab40de3b-590c-4936-8328-f329abf36bd7"
-        },
-        {
-          "kind": "concept",
-          "title": "stdio: Newline-Delimited JSON, Nothing Else on the Wire",
-          "body": null,
-          "bullets": [
-            "Client spawns the server process; server reads JSON-RPC requests/notifications from stdin, writes responses to stdout",
-            "Each message is exactly one line — no embedded newlines allowed inside a message",
-            "stderr is free for logs; the client may capture, forward, or ignore it",
-            "Shutdown: client closes stdin, then terminates the subprocess if it doesn't exit on its own"
-          ],
-          "symbol": "terminal.fill",
-          "table": null,
-          "id": "8eaad6dc-07ba-489e-a232-648363d7f6c3"
-        },
-        {
-          "kind": "architecture",
-          "title": "Streamable HTTP: One Endpoint, Two Verbs",
-          "body": null,
-          "bullets": [
-            "POST = client-to-server: one JSON-RPC message per request; the server replies with either a plain JSON object or upgrades to an SSE stream for the response",
-            "GET = server-to-client: the client can open a standing SSE stream without sending a POST first, for the server to push unsolicited requests/notifications",
-            "An Mcp-Session-Id header is issued at initialize; the client must echo it on every later request, and a missing/expired ID gets HTTP 400/404",
-            "The client must also send MCP-Protocol-Version on every request after initialize, or the server assumes the oldest version it knows"
-          ],
-          "symbol": "network",
-          "table": null,
-          "id": "a194c111-b2d2-4ff4-bcd2-feda8f88b27a"
-        },
-        {
-          "kind": "example",
-          "title": "Worked Example: A Dropped Connection Mid-Tool-Call",
-          "body": "A remote MCP server is running a 40-second web-crawl tool and streaming progress notifications back over an open SSE response. The client's WiFi drops at second 25.",
-          "bullets": [
-            "The dropped TCP connection is NOT a cancellation signal — the server keeps working unless it receives an explicit CancelledNotification",
-            "If the server tagged its SSE events with IDs, the client reconnects with GET and a Last-Event-ID header to resume exactly where the stream left off",
-            "Replay only works within that same logical stream — a client can't resume stream A's messages by reconnecting to stream B",
-            "Without event IDs, the client has no way to recover the in-flight result and must re-issue the request"
-          ],
-          "symbol": "wifi.exclamationmark",
-          "table": null,
-          "id": "9b406a09-ed67-4bb0-b90f-805bc7399e52"
-        },
-        {
-          "kind": "comparison",
-          "title": "Picking a Transport",
-          "body": null,
-          "bullets": [],
-          "symbol": "arrow.left.arrow.right",
-          "table": {
-            "headers": [
-              "",
-              "stdio",
-              "Streamable HTTP"
-            ],
-            "rows": [
-              [
-                "Where it runs",
-                "Local subprocess, same machine",
-                "Independent server process, any host"
-              ],
-              [
-                "Multi-client",
-                "No — one client per process",
-                "Yes — one endpoint, many clients, sessions tracked by header"
-              ],
-              [
-                "Resumability",
-                "None — crash means restart",
-                "Optional, via SSE event IDs + Last-Event-ID"
-              ],
-              [
-                "Typical use",
-                "Claude Desktop/Code launching a local tool server",
-                "Hosted MCP servers behind a URL, team or product integrations"
-              ]
-            ]
-          },
-          "id": "93ff3f1c-c2f9-426f-9039-20f80e00dd48"
-        },
-        {
-          "kind": "problem",
-          "title": "Where Teams Get This Wrong",
-          "body": null,
-          "bullets": [
-            "Building a brand-new server against the retired HTTP+SSE two-endpoint design instead of Streamable HTTP — it's deprecated, not a style choice",
-            "Treating a closed socket as 'the request failed' instead of sending CancelledNotification, so the server burns compute on work nobody is waiting for",
-            "Skipping Origin header validation on a remote server, which opens the door to DNS-rebinding attacks from a malicious webpage",
-            "Binding a local server to 0.0.0.0 instead of 127.0.0.1, exposing a dev tool meant for one laptop to the whole LAN"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null,
-          "id": "5354b002-15a6-4c80-94cf-78561c10991f"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": null,
-          "bullets": [
-            "stdio is for one client talking to one locally-spawned process — simple, zero network surface, not multi-user",
-            "Streamable HTTP is the current remote transport: single endpoint, POST for calls, optional GET/SSE for server-pushed messages",
-            "Session IDs and SSE event IDs are what make a remote server resumable — a dropped connection isn't automatically a cancelled request",
-            "If you're still implementing two separate SSE/POST endpoints for a new server, you're building the transport the spec already deprecated"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null,
-          "id": "e152975a-abf4-48d6-a3c5-5f9f6ea4a1dc"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "A client's connection to a remote MCP server drops while a long-running tool call is in progress. What should the server do?",
-            "options": [
-              "Immediately stop the tool call — a dropped connection always means cancellation",
-              "Keep working unless it receives an explicit CancelledNotification; a dropped connection is not itself a cancellation",
-              "Restart the entire session from scratch",
-              "Nothing — Streamable HTTP servers can't detect dropped connections"
-            ],
-            "correctIndex": 1,
-            "explanation": "The spec explicitly separates 'connection dropped' from 'request cancelled.' Only an explicit CancelledNotification tells the server to stop; otherwise it should keep running and let the client resume or re-fetch the result.",
-            "id": "2e98ad82-4418-4894-87ec-78b08f2d9aef"
-          },
-          {
-            "prompt": "Why was the original HTTP+SSE transport (protocol version 2024-11-05) deprecated in favor of Streamable HTTP?",
-            "options": [
-              "SSE was removed from the protocol entirely",
-              "It required two separate endpoints (one for POST, one for the SSE stream) and had no resumability; Streamable HTTP unifies this into one endpoint with optional, resumable streaming",
-              "It was slower than stdio over a local network",
-              "It didn't support JSON-RPC"
-            ],
-            "correctIndex": 1,
-            "explanation": "Streamable HTTP keeps SSE as an option but folds everything through a single MCP endpoint that supports both POST and GET, and adds event IDs so a client can resume a stream with Last-Event-ID — something the old two-endpoint design couldn't do.",
-            "id": "92e098c1-0e85-4db1-ae22-dd0ae10c68ea"
-          },
-          {
-            "prompt": "Which transport would you choose for an MCP server meant to be used by many different users' AI clients over the internet?",
-            "options": [
-              "stdio, since it's simpler to implement",
-              "Streamable HTTP, since it supports multiple clients through one endpoint with session tracking",
-              "Either works identically for this case",
-              "Neither — MCP can't support remote multi-user servers"
-            ],
-            "correctIndex": 1,
-            "explanation": "stdio is inherently one-process-per-client because the client spawns the server as its own subprocess. Streamable HTTP is designed for exactly this case: one running server process, many clients, each tracked by its own Mcp-Session-Id.",
-            "id": "5f3cd049-82e7-48de-87e4-7fabd92c7657"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "MCP Specification — Transports (2025-06-18)",
-          "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports",
-          "id": "3b9073d4-e3f5-41ae-8bbb-de45dcdc535f"
-        }
-      ],
-      "id": "fa552854-7912-4541-877c-dcd1bcdaeb6b",
-      "publishedDate": "2026-11-06T18:48:31Z"
     }
   ]
 }
