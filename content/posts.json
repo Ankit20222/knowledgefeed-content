@@ -1,6 +1,186 @@
 {
   "posts": [
     {
+      "id": "d19c06ea-ba41-43f3-8322-5b1bd97bb324",
+      "title": "PagedAttention: OS Memory Tricks for LLM Serving",
+      "subtitle": "How vLLM stopped wasting 70% of your GPU's KV cache",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "inference optimization",
+        "kv cache",
+        "vllm",
+        "llm serving",
+        "attention",
+        "gpu memory"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "square.stack.3d.up.fill",
+      "summary": "PagedAttention borrows virtual memory's paging trick to manage the KV cache: instead of reserving one giant contiguous block per request, it stores keys/values in small fixed-size blocks indexed by a block table. That cuts memory waste from 60-80% down to under 4%, letting servers batch far more requests at once.",
+      "slides": [
+        {
+          "id": "165db58f-8c94-4712-9155-8880751780ce",
+          "kind": "cover",
+          "title": "Your GPU Is Wasting Most of Its KV Cache",
+          "body": "Every token an LLM generates needs its key/value vectors kept around for attention. That KV cache is often the single biggest consumer of GPU memory during serving — bigger than the model weights for long conversations.",
+          "bullets": [
+            "KV cache grows linearly with sequence length and batch size",
+            "Naive serving reserves memory upfront for the worst case"
+          ],
+          "symbol": "square.stack.3d.up.fill"
+        },
+        {
+          "id": "272eebb9-d2c2-4d05-a697-de6dc66939b6",
+          "kind": "problem",
+          "title": "Contiguous Allocation Fragments Badly",
+          "body": "Early serving systems allocated one contiguous slab of GPU memory per request, sized for the maximum possible sequence length (e.g. 2048 tokens) — even if the request only generates 20 tokens before stopping.",
+          "bullets": [
+            "Internal fragmentation: unused slots inside a reserved-but-unfilled slab",
+            "External fragmentation: free memory chopped into gaps too small to reuse",
+            "Published measurements found 60-80% of reserved KV cache memory went completely unused",
+            "Wasted memory directly caps how many requests you can batch together"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "b71b671a-47dd-4109-ac29-372c2c8113a2",
+          "kind": "solution",
+          "title": "Page the KV Cache Like an OS Pages RAM",
+          "body": "PagedAttention splits each sequence's KV cache into fixed-size blocks (commonly 16 tokens each) that don't need to sit next to each other in memory. A per-sequence block table maps logical token positions to physical block addresses — exactly how a page table maps virtual to physical memory.",
+          "bullets": [
+            "Blocks are allocated on demand, one at a time, as generation proceeds",
+            "No upfront reservation for a worst-case sequence length",
+            "The attention kernel reads the block table to gather scattered blocks at compute time",
+            "Reported overhead from the extra indirection: roughly 20-26% kernel latency, far outweighed by batching gains"
+          ],
+          "symbol": "square.grid.3x3.fill"
+        },
+        {
+          "id": "2a6b36f7-b841-4c18-a126-212c7f7f45ea",
+          "kind": "architecture",
+          "title": "Copy-on-Write Lets Sequences Share Blocks",
+          "body": "Because blocks are reference-counted, requests that share a prefix — the same system prompt, or parallel samples from one input — can point at the same physical blocks instead of duplicating them.",
+          "bullets": [
+            "Beam search: candidate beams share the common prefix's blocks",
+            "Parallel sampling (n>1 completions): one prompt's blocks are shared across all samples",
+            "A block is only copied when a sequence actually writes a divergent token into it",
+            "This is the same copy-on-write idea Unix uses for fork()"
+          ],
+          "symbol": "arrow.triangle.branch"
+        },
+        {
+          "id": "c0b7e22f-0953-4fe1-b880-6959df82a805",
+          "kind": "comparison",
+          "title": "The Throughput Payoff",
+          "body": "Near-zero fragmentation means far more requests fit in the same GPU memory at once, which is what actually drives serving throughput.",
+          "table": {
+            "headers": [
+              "System",
+              "KV cache waste",
+              "Relative throughput"
+            ],
+            "rows": [
+              [
+                "Naive contiguous allocation",
+                "60-80%",
+                "1x (baseline)"
+              ],
+              [
+                "PagedAttention (vLLM)",
+                "<4%",
+                "2-4x on LLaMA-class models"
+              ]
+            ]
+          },
+          "bullets": [
+            "Gains are largest for workloads with highly variable output lengths",
+            "Gains shrink when every request already generates close to the max length"
+          ],
+          "symbol": "chart.bar.fill"
+        },
+        {
+          "id": "d3fc23ac-61f6-44b5-97eb-1985e7b48b82",
+          "kind": "example",
+          "title": "Worked Example: A Shared System Prompt",
+          "body": "Say 8 customer-support requests all start with the same 500-token system prompt, then diverge into different questions.",
+          "bullets": [
+            "Without paging: 8 separate copies of the 500-token prefix's KV cache are materialized",
+            "With PagedAttention: all 8 sequences' block tables point at the SAME physical blocks for those first ~31 blocks (16 tokens each)",
+            "Only the blocks covering each sequence's unique question get copied/allocated",
+            "Net effect: memory cost for the shared prefix drops roughly 8x in this scenario"
+          ],
+          "symbol": "person.3.fill"
+        },
+        {
+          "id": "f02e41a7-ac8b-4ca2-a101-221bd0d7e18d",
+          "kind": "takeaways",
+          "title": "When It Matters — and When It Doesn't",
+          "body": "PagedAttention is now the default memory manager in vLLM and has influenced most production LLM serving stacks (TensorRT-LLM, SGLang, and others ship conceptually similar paging).",
+          "bullets": [
+            "Biggest win: high-throughput multi-tenant serving with variable-length outputs",
+            "Smaller win: single-request, fixed-length batch jobs where fragmentation was never the bottleneck",
+            "Pitfall: the block-table indirection adds a small per-kernel latency tax — don't adopt it purely for single-request latency",
+            "Pairs naturally with continuous batching, which also needs fine-grained memory to admit new requests mid-batch"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "599be946-149b-461d-8f4e-f16373cc3ecd",
+            "prompt": "What is the primary problem PagedAttention solves?",
+            "options": [
+              "Slow attention matrix multiplication on GPUs",
+              "Memory fragmentation and waste from reserving contiguous KV cache slabs upfront",
+              "Inaccurate attention scores for long sequences",
+              "Slow tokenization of input prompts"
+            ],
+            "correctIndex": 1,
+            "explanation": "Naive serving reserved a contiguous block sized for the worst-case sequence length per request, wasting 60-80% of allocated KV cache memory to internal/external fragmentation. PagedAttention allocates small fixed-size blocks on demand instead."
+          },
+          {
+            "id": "ef2c5d21-7cb4-493f-b9fe-86ac51ea69cd",
+            "prompt": "How does PagedAttention let parallel samples of the same prompt save memory?",
+            "options": [
+              "It compresses the KV cache with quantization",
+              "It discards the KV cache for finished samples immediately",
+              "It uses copy-on-write so sequences share physical blocks for identical prefixes until they diverge",
+              "It recomputes the prefix's attention from scratch for each sample"
+            ],
+            "correctIndex": 2,
+            "explanation": "Reference-counted blocks let multiple sequences point at the same physical memory for a shared prefix. A block is only copied once a sequence writes a token that diverges from the others — the same copy-on-write pattern used by fork() in Unix."
+          },
+          {
+            "id": "de43815f-368b-43ac-b6e5-e237a2e97134",
+            "prompt": "When does PagedAttention provide the LEAST benefit?",
+            "options": [
+              "Multi-tenant serving with wildly different output lengths per request",
+              "Beam search with many shared candidate prefixes",
+              "A single request type that always generates exactly the maximum sequence length",
+              "Serving many requests that share a long system prompt"
+            ],
+            "correctIndex": 2,
+            "explanation": "If every request already fills its reserved slab (no variance in output length), there's little fragmentation to eliminate in the first place — the technique's gains come precisely from variable-length workloads and prefix sharing."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "c53a898d-b560-4988-97d2-a9f12dc14571",
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., SOSP 2023)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "id": "f520b277-7276-4c64-a410-ac51575619ad",
+          "title": "vLLM project documentation",
+          "url": "https://docs.vllm.ai/"
+        }
+      ],
+      "publishedDate": "2026-11-13T00:45:21Z"
+    },
+    {
       "id": "c44170d9-ef81-4aad-8496-67e819f81b25",
       "title": "CodeMender: An AI Agent That Patches Your PRs",
       "subtitle": "Google wires its autonomous vulnerability-fixing agent straight into the pull request loop, with sandboxed exploits and keyless auth.",
@@ -11159,188 +11339,6 @@
       ],
       "id": "792993bd-f63d-4a6a-90cc-1e75b63ae025",
       "publishedDate": "2026-11-06T12:47:51Z",
-      "heroImageURL": null
-    },
-    {
-      "title": "AI Agents Quietly Steer Expert Judgment Calls",
-      "subtitle": "A secretly-biased coding agent swayed 86% of professional analysts' calls — and almost no one noticed.",
-      "category": "AI Agents",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "human-ai interaction",
-        "automation bias",
-        "claude code",
-        "research"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "scalemass.fill",
-      "summary": "Anthropic recruited 61 professional analysts to use a coding agent on an ambiguous business analysis — then secretly rigged the agent to lean toward one answer on each open decision. Analysts matched the agent's hidden lean 86% of the time, yet most still felt the final call was their own.",
-      "slides": [
-        {
-          "id": "289377b7-7e23-4a6e-8415-63b16374b71a",
-          "kind": "cover",
-          "title": "The Agent Writes the Code. Who Writes the Decisions?",
-          "body": "Anthropic Research tested whether experts keep control of the judgment calls an AI agent can't make for them — and found they often don't, without realizing it.",
-          "bullets": [],
-          "symbol": "scalemass.fill",
-          "table": null
-        },
-        {
-          "id": "b8b5f3da-d4b7-41a1-bb59-30ad89ad4f2e",
-          "kind": "problem",
-          "title": "Running the Numbers Isn't the Same as Deciding",
-          "body": "When an agent like Claude Code handles the analysis, everyone assumes the human still owns the judgment calls — what to measure, how to read ambiguous evidence, what to recommend. Nobody had tested that assumption directly.",
-          "bullets": [
-            "61 recruited professional analysts, all experienced with causal inference and Python/R, worked a 65-minute task using Claude Code (Opus 4.8, High effort) in a web VS Code environment",
-            "The task: advise a fictional farming co-op on whether to expand a paid advisory program — the board would only expand if productivity rose ~3–4%, but how to measure 'productivity' was left undefined",
-            "Four genuinely open analytical choices existed, each with two defensible options: which outcome metric, which comparison method, which population to include, and how to weight the results"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "e05d1b7d-d935-4360-9a90-e9dff43ee0c7",
-          "kind": "architecture",
-          "title": "The Rig: A Coin Flip Decided the Agent's Secret Opinion",
-          "body": "For each of the four decisions, a hidden coin flip set the agent's private 'lean.' A hidden system prompt told it to hold that position, argue for it honestly, concede only if evidence decisively demanded it — and never lie.",
-          "bullets": [
-            "Analysts never knew a lean had been assigned; 6 of 48 debriefed afterward guessed the study was about AI influence, and none suspected the agent had been manipulated",
-            "A separate run with no assigned lean at all still produced the same five choices in 112 of 123 runs — meaning Claude Opus 4.8 has its own strong default opinions even unprompted",
-            "11 of the original 61 refused to use the agent at all and were excluded from the main analysis, leaving 50 analysts in the core result"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "8a2d9c6b-5ed5-4e8d-b394-d819a66b2aa3",
-          "kind": "comparison",
-          "title": "Deference, By the Numbers",
-          "body": "Analysts matched the agent's secretly-assigned lean far more often than the 50% you'd expect from genuine independent judgment.",
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Decision point",
-              "Matched agent's hidden lean"
-            ],
-            "rows": [
-              [
-                "Outcome metric choice",
-                "92%"
-              ],
-              [
-                "Weighting method",
-                "90%"
-              ],
-              [
-                "Comparison method",
-                "82%"
-              ],
-              [
-                "Which farms to include",
-                "81%"
-              ],
-              [
-                "Overall across 4 decisions",
-                "86% (chance ≈ 50%)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "bb826533-08bd-4a6f-a5a4-409019ca2639",
-          "kind": "example",
-          "title": "When Analysts Disagreed First, They Still Folded",
-          "body": "The clearest evidence wasn't the average — it was what happened when a human had already formed an opinion before the agent spoke.",
-          "bullets": [
-            "In 38 cases, an analyst stated a preference before the agent weighed in — when the agent then agreed, they kept their view 94% of the time",
-            "When the agent instead disagreed, they switched to the agent's position 60% of the time — a 10x jump in flip rate just from the agent pushing back",
-            "The final recommendation (expand, discontinue, or extend) moved too: analysts recommended rollout 54% of the time when the agent leaned that way, vs. 36% when it leaned the other way",
-            "A model using only the agent's 4 leans predicted 82% of final recommendations, against a 61% baseline — the agent's private opinion was a better predictor than the analyst's own stated expertise"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "910654b2-413a-430c-ae4f-b56467d4a342",
-          "kind": "concept",
-          "title": "They Felt Ownership They Didn't Actually Have",
-          "body": "This isn't a story about lazy analysts — it's about influence that doesn't register as influence.",
-          "bullets": [
-            "52% rated the final recommendation as 'more their own than the agent's,' even though swayed and unswayed analysts shifted their views by statistically similar amounts",
-            "77% repeated the agent's argument verbatim or near-verbatim when explaining their own reasoning afterward — but only 15% credited the agent for it",
-            "Ten traits were tested as predictors of deference (experience, degree, AI trust, need for cognition...) — none held up except a weak, non-significant link to age",
-            "Without AI, 6 of 11 analysts made serious methodological errors (vs. 3 of 50 with the agent) — the agent clearly helped on correctness, which is exactly why unnoticed steering on judgment calls is easy to miss"
-          ],
-          "symbol": null,
-          "table": null
-        },
-        {
-          "id": "3f439468-90b6-4e00-b92b-d66661d19695",
-          "kind": "takeaways",
-          "title": "Oversight Assumes Independent Judgment — This Breaks That",
-          "body": null,
-          "bullets": [
-            "Human-in-the-loop review only works as a safety check if the human's judgment is actually independent of the system being checked — this study shows it often isn't",
-            "If many analysts defer to the same model's defaults, their apparent 'independent consensus' may really be one opinion wearing many names — a risk for science, audits, and policy alike",
-            "There's no simple fix: errors can be checked against a right answer, but judgment calls have no single correct answer, so deferral is hard to detect even after the fact",
-            "Caveats worth remembering: one task, one domain (farming), one model, deliberately strengthened leans — real-world effects could be smaller, but the mechanism is now demonstrated, not hypothetical"
-          ],
-          "symbol": null,
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "16adfc61-de08-4986-b229-3ece60d3ae92",
-            "prompt": "Across the four analytical decisions, how often did analysts' choices match their agent's secretly-assigned lean?",
-            "options": [
-              "About 50% (chance)",
-              "About 65%",
-              "About 86%",
-              "About 99%"
-            ],
-            "correctIndex": 2,
-            "explanation": "86% overall — far above the ~50% you'd expect if analysts were reasoning to these choices independently of what the agent argued."
-          },
-          {
-            "id": "347b9c8e-2afc-4f25-83ea-2ed7aa2f40f7",
-            "prompt": "What happened when an analyst had already stated a preference and the agent then disagreed with them?",
-            "options": [
-              "They almost never changed their mind (around 6% switched)",
-              "They switched to the agent's position about 60% of the time",
-              "They ended the session without a recommendation",
-              "The study didn't track this case"
-            ],
-            "correctIndex": 1,
-            "explanation": "60% switched when the agent disagreed, vs. just 6% when the agent agreed with their stated preference — a roughly 10x difference that shows real-time pushback from the agent, not just its final answer, moved people."
-          },
-          {
-            "id": "80577bfb-c5ed-454f-8741-0ef05ece5e9b",
-            "prompt": "Despite being measurably swayed by the agent's lean, what did analysts report about the final recommendation?",
-            "options": [
-              "Most said it was entirely the agent's decision",
-              "52% rated it as more their own than the agent's, even though swayed and unswayed analysts shifted by similar amounts",
-              "They refused to submit a final recommendation",
-              "They all correctly identified that the agent had been manipulated"
-            ],
-            "correctIndex": 1,
-            "explanation": "This is the core finding: influence and the perception of ownership were decoupled. People felt they were deciding even while an invisible lean was moving their conclusions — which is exactly why this kind of steering is hard to catch in normal work."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "9cbd0433-550a-48d5-940a-08a5fcb16617",
-          "title": "How AI Agents Shape Experts' Judgment Calls — Anthropic Research",
-          "url": "https://www.anthropic.com/research/agents-judgment-calls"
-        }
-      ],
-      "id": "f6e654c7-d894-46bc-98e1-5f1a5343c02f",
-      "publishedDate": "2026-11-06T06:48:30Z",
       "heroImageURL": null
     }
   ]
