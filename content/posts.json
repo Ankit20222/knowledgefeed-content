@@ -1,6 +1,204 @@
 {
   "posts": [
     {
+      "id": "707d32f6-768f-4287-81eb-5230a1acafea",
+      "title": "Mamba: State Space Models Trade Attention for Speed",
+      "subtitle": "A linear-time sequence architecture that skips self-attention entirely — and still keeps up with Transformers",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mamba",
+        "state-space-models",
+        "architecture",
+        "attention",
+        "long-context",
+        "inference optimization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "waveform",
+      "summary": "Mamba replaces self-attention with a selective state space model: a recurrence whose update parameters are computed from the current token, so it can choose what to remember or forget as it reads. The payoff is constant per-token compute and a fixed-size hidden state instead of a KV cache that grows with context length — at the cost of exact long-range recall, which is why many production systems hybridize it with a few attention layers.",
+      "slides": [
+        {
+          "id": "51f38938-896c-4327-9b36-49572c0791d1",
+          "kind": "cover",
+          "title": "What If You Never Needed a KV Cache?",
+          "body": "Every Transformer pays a growing tax as context gets longer: self-attention recomputes a weighted sum over every previous token, and the key/value cache it needs to do that grows linearly with sequence length. Mamba is a different architecture family — state space models — built to avoid that tax entirely.",
+          "bullets": [
+            "No attention layers at all — a recurrent state replaces them",
+            "Constant memory and compute per generated token, regardless of context length"
+          ],
+          "symbol": "waveform"
+        },
+        {
+          "id": "16ea5a62-461d-462b-b1c4-467a326beaaf",
+          "kind": "problem",
+          "title": "Attention's Bill Grows With Every Token",
+          "body": "Self-attention computes relevance between every pair of tokens, so compute scales quadratically with sequence length and the KV cache scales linearly — it has to be stored and re-read at every generation step.",
+          "bullets": [
+            "Doubling context length roughly quadruples attention's compute cost",
+            "KV cache size scales directly with context length and batch size, often dwarfing model weights for long conversations",
+            "Classic (non-selective) recurrent models avoid this but historically lagged Transformers in quality",
+            "The question Mamba answers: can a recurrence match attention's quality without attention's cost?"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "85ebe6b2-b81a-4363-a8d4-2587e0a8882c",
+          "kind": "solution",
+          "title": "Make the Recurrence Selective",
+          "body": "A state space model keeps a hidden state h and updates it each step: h_t = A·h_(t-1) + B·x_t, then reads out y_t = C·h_t. Classic SSMs fix A, B, and C for every input (linear time-invariant), which makes them fast but unable to decide what's important token by token.",
+          "bullets": [
+            "Mamba's fix: compute B, C, and the discretization step size Δ as functions of the CURRENT input token",
+            "This 'selection mechanism' lets the model dynamically choose what to let into the state and what to forget",
+            "It closes much of the quality gap with attention, which also does content-based routing (just via pairwise comparison instead of a running state)",
+            "The state itself stays a fixed size — it's a compressed summary, not a growing list of past tokens"
+          ],
+          "symbol": "wand.and.stars"
+        },
+        {
+          "id": "09ee3f3a-8aa5-4121-bf9d-9165e18b088b",
+          "kind": "architecture",
+          "title": "Why It Still Trains Fast on GPUs",
+          "body": "A recurrence looks inherently sequential — bad news for GPUs built on parallelism. Mamba's practical trick is a hardware-aware parallel scan: the recurrence is restructured and computed with fused CUDA kernels that keep the expanded state in fast on-chip memory and recompute activations during the backward pass instead of storing them.",
+          "bullets": [
+            "A Mamba block stacks a linear projection, a short causal convolution, the selective SSM, and a gating path — one homogeneous block, no separate attention + MLP",
+            "The parallel scan algorithm avoids materializing the full expanded state in slow GPU memory",
+            "Recomputation (not storage) of intermediate states during backprop trades extra compute for much lower memory traffic",
+            "Net result: training throughput competitive with Transformers of similar parameter count"
+          ],
+          "symbol": "square.stack.3d.up"
+        },
+        {
+          "id": "77fe3285-28f1-431a-acf2-9998d75d86dd",
+          "kind": "comparison",
+          "title": "Attention vs. Selective SSM",
+          "body": "The two architectures make opposite bets: attention keeps exact access to every past token at growing cost; Mamba keeps cost flat by compressing the past into a fixed-size state.",
+          "table": {
+            "headers": [
+              "Dimension",
+              "Self-Attention (Transformer)",
+              "Selective SSM (Mamba)"
+            ],
+            "rows": [
+              [
+                "Per-token generation compute",
+                "Grows with context (reads full KV cache)",
+                "Constant — one state update"
+              ],
+              [
+                "Memory for context",
+                "KV cache grows linearly with tokens",
+                "Fixed-size hidden state"
+              ],
+              [
+                "Reported generation throughput (Mamba paper, similar size)",
+                "Baseline",
+                "~5x higher"
+              ],
+              [
+                "Exact long-range recall",
+                "Strong — direct lookup of any past token",
+                "Weaker — state is a lossy summary"
+              ]
+            ]
+          },
+          "bullets": [
+            "The throughput gap widens as sequences get longer — it's smallest at short context",
+            "Quality parity was demonstrated up to a few billion parameters in the original paper, not yet at frontier model scale"
+          ],
+          "symbol": "chart.bar.fill"
+        },
+        {
+          "id": "e723a0e0-89b3-47dc-9a7f-d5c1681388b3",
+          "kind": "example",
+          "title": "Worked Example: A Million-Token Sequence",
+          "body": "Say you're processing a 1,000,000-token sequence (a genome, a codebase, a long audio transcript).",
+          "bullets": [
+            "Transformer: KV cache size scales directly with those 1,000,000 positions — at 1,000 tokens vs. 1,000,000 tokens, the cache is roughly 1,000x larger",
+            "Mamba: the hidden state's size is fixed by the model's dimensions, not by sequence length — it costs the same whether the input is 1,000 or 1,000,000 tokens",
+            "This is exactly why the original Mamba paper highlighted genomics and raw audio waveforms as strong use cases — domains with extremely long sequences where attention's growing cache becomes impractical",
+            "The tradeoff: that fixed state must compress everything seen so far, so very specific details from a million tokens back aren't guaranteed to survive"
+          ],
+          "symbol": "atom"
+        },
+        {
+          "id": "acf936f0-6a07-4b44-9de6-9cafbd8d6abf",
+          "kind": "concept",
+          "title": "When Mamba Loses to Attention",
+          "body": "A fixed-size state is a double-edged sword: it's cheap, but it's also a lossy summary rather than an exact record.",
+          "bullets": [
+            "Weak spot: tasks needing exact random-access recall or copying of one specific token far back in the input — attention can look it up directly, a pure SSM has to have kept it in its compressed state",
+            "At short context lengths, attention's simpler training dynamics and mature tooling (flash attention kernels, quantization support, established scaling recipes) often still win on practical grounds",
+            "Common production answer: hybrid architectures that interleave a handful of attention layers among many SSM layers — getting most of the linear-time efficiency plus a few layers of exact long-range lookup",
+            "Don't reach for a pure SSM just because context is long — check whether the task actually needs precise far-back recall first"
+          ],
+          "symbol": "scalemass.fill"
+        },
+        {
+          "id": "7818024f-09ef-4c61-89ca-0b76ea18ed0d",
+          "kind": "takeaways",
+          "title": "The Core Trade, in One Line",
+          "body": "Mamba swaps attention's exact-but-growing memory for a state space model's cheap-but-compressed memory, using an input-dependent 'selection' mechanism to make that compression smart rather than generic.",
+          "bullets": [
+            "Biggest win: very long sequences (genomics, audio, long documents) where KV cache growth would otherwise dominate cost",
+            "Smaller win: short-context tasks where attention's overhead was never the bottleneck",
+            "Pitfall: don't expect pure SSMs to match attention on exact far-back recall — that's what hybrid Mamba/attention stacks are for",
+            "The selection mechanism (input-dependent B, C, Δ) is the real innovation — classic LTI state space models existed long before and couldn't compete on quality"
+          ],
+          "symbol": "checkmark.seal.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "5c0269a9-0e52-4591-8942-71dccb3a0dfa",
+            "prompt": "How does per-token generation compute scale with context length for self-attention versus Mamba's selective SSM?",
+            "options": [
+              "Both scale linearly with context length",
+              "Self-attention scales with context length (reads the KV cache); Mamba's state update is constant-time",
+              "Both are constant-time regardless of context length",
+              "Self-attention is constant-time; Mamba scales with context length"
+            ],
+            "correctIndex": 1,
+            "explanation": "Self-attention must read the full KV cache of past tokens to compute attention scores, so its per-step cost grows with context. Mamba updates a fixed-size hidden state once per token, so its per-step cost stays constant no matter how long the sequence gets."
+          },
+          {
+            "id": "960cae39-0f6f-435b-8306-dfeca4a3d191",
+            "prompt": "What specifically makes Mamba's state space model 'selective' compared to a classical linear time-invariant (LTI) SSM?",
+            "options": [
+              "It adds more attention heads to the recurrence",
+              "Its B, C, and step-size parameters are computed as functions of the current input token, instead of being fixed",
+              "It removes the hidden state and stores raw tokens instead",
+              "It only processes text, never audio or DNA"
+            ],
+            "correctIndex": 1,
+            "explanation": "Classical SSMs use the same A, B, C matrices for every input, which makes them fast but unable to prioritize different information for different inputs. Mamba computes B, C, and the discretization step Δ from the current token, letting the model decide per-token what to keep or discard in its state."
+          },
+          {
+            "id": "89c6b4eb-56b1-4cd1-829d-8fb088eb95e5",
+            "prompt": "A pure Mamba model is most likely to underperform a Transformer on which kind of task?",
+            "options": [
+              "Modeling a 1,000,000-token DNA sequence",
+              "Exactly copying or looking up one specific token from far back in a long context",
+              "Streaming generation with low memory overhead",
+              "Processing raw audio waveforms"
+            ],
+            "correctIndex": 1,
+            "explanation": "Mamba's hidden state is a fixed-size, lossy compression of everything seen so far, not an exact record. Attention can directly look up any specific past token, so tasks that need precise far-back recall (like exact copying) tend to favor attention — which is why many real systems hybridize the two."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "6da4d087-bbdb-498f-896f-1d22baaebc62",
+          "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao)",
+          "url": "https://arxiv.org/abs/2312.00752"
+        }
+      ],
+      "publishedDate": "2026-11-13T06:47:38Z"
+    },
+    {
       "id": "d19c06ea-ba41-43f3-8322-5b1bd97bb324",
       "title": "PagedAttention: OS Memory Tricks for LLM Serving",
       "subtitle": "How vLLM stopped wasting 70% of your GPU's KV cache",
@@ -11145,199 +11343,6 @@
         }
       ],
       "id": "48cb2cb6-6fbd-4004-96e7-7788d59a41b6",
-      "publishedDate": "2026-11-06T12:47:51Z",
-      "heroImageURL": null
-    },
-    {
-      "title": "Contextual Retrieval: RAG Chunks That Remember Context",
-      "subtitle": "Prepend a few sentences of context, cut retrieval failures by 67%.",
-      "category": "RAG",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "rag",
-        "retrieval",
-        "embeddings",
-        "bm25",
-        "reranking"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "doc.text.magnifyingglass",
-      "summary": "Standard RAG embeds chunks in isolation, so a chunk like 'revenue grew 3%' loses the company and quarter it's about. Contextual Retrieval prepends a short, chunk-specific blurb before embedding and indexing — cutting Anthropic's reported retrieval failure rate from 5.7% to 1.9% once reranking is added.",
-      "slides": [
-        {
-          "id": "cc7f57a7-76ee-40dc-9bbd-23dbf74648e8",
-          "kind": "cover",
-          "title": "The Chunk That Forgot What Document It Came From",
-          "body": "Splitting documents into chunks for RAG strips away exactly the context that search queries rely on.",
-          "bullets": [
-            "\"The company's revenue grew by 3% over the previous quarter\" — but which company? Which quarter?"
-          ],
-          "symbol": "doc.questionmark",
-          "table": null
-        },
-        {
-          "id": "8253c633-0eb4-4bae-bd34-892ba8734a0c",
-          "kind": "problem",
-          "title": "Why Isolated Chunks Fail Retrieval",
-          "body": "A query about a specific entity or time period often can't match a chunk that never names either.",
-          "bullets": [
-            "Anthropic's baseline top-20 retrieval failure rate: 5.7% (measured as 1 − recall@20, Gemini embeddings)",
-            "The failure is silent — the right chunk exists in the index, it just never surfaces"
-          ],
-          "symbol": "exclamationmark.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "9a663a5a-843e-44ac-b3f9-7fb05af6d8c7",
-          "kind": "solution",
-          "title": "The Fix: Prepend Context Before You Index",
-          "body": "Generate a short, chunk-specific explanation from the full document, then attach it before both indexing steps.",
-          "bullets": [
-            "Contextual Embeddings: the blurb is prepended before creating the vector embedding",
-            "Contextual BM25: the same blurb is prepended before building the keyword index",
-            "Claude Haiku reads the whole document once and writes a 50–100 token context blurb per chunk"
-          ],
-          "symbol": "text.insert",
-          "table": null
-        },
-        {
-          "id": "00481008-d9a2-4275-9538-2eb7e89217b8",
-          "kind": "example",
-          "title": "Before and After, on One Chunk",
-          "body": "The underlying sentence doesn't change — only what's prepended to it before indexing.",
-          "bullets": [
-            "Before: \"The company's revenue grew by 3% over the previous quarter.\"",
-            "After: \"This chunk is from an SEC filing on ACME Corp's Q2 2023 performance; the previous quarter's revenue was $314M. The company's revenue grew by 3% over the previous quarter.\""
-          ],
-          "symbol": "arrow.right.doc.on.clipboard",
-          "table": null
-        },
-        {
-          "id": "dd0b5950-8deb-4a69-9044-1c7f121b1aff",
-          "kind": "comparison",
-          "title": "Stacking the Techniques",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Stage",
-              "Failure rate",
-              "Reduction vs. baseline"
-            ],
-            "rows": [
-              [
-                "Baseline",
-                "5.7%",
-                "—"
-              ],
-              [
-                "+ Contextual Embeddings",
-                "3.7%",
-                "35%"
-              ],
-              [
-                "+ Contextual BM25",
-                "2.9%",
-                "49%"
-              ],
-              [
-                "+ Reranking (150 → top 20)",
-                "1.9%",
-                "67%"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "90e6493e-3bdc-44fb-83cf-ebae11083842",
-          "kind": "concept",
-          "title": "Why Caching Keeps This Affordable",
-          "body": "Contextualizing every chunk sounds expensive — prompt caching is what makes it practical.",
-          "bullets": [
-            "The full document is cached once and reused for every chunk's context generation, not resent each time",
-            "One-time cost to contextualize: about $1.02 per million document tokens",
-            "Caching cuts latency by more than 2x and cost by up to 90% versus resending the document"
-          ],
-          "symbol": "bolt.badge.clock.fill",
-          "table": null
-        },
-        {
-          "id": "bce992b0-89ce-4908-b79e-c077efa237b4",
-          "kind": "problem",
-          "title": "When to Skip It",
-          "body": "Contextual Retrieval isn't free, and it isn't always necessary.",
-          "bullets": [
-            "Knowledge base under ~200K tokens (~500 pages)? Skip RAG entirely and put it all in the prompt",
-            "Passing only the top 5–10 chunks underperforms passing 20 — don't over-trim after reranking",
-            "Reranking adds a real pipeline step: retrieve 150 candidates, then rerank down to the 20 you actually use"
-          ],
-          "symbol": "arrow.uturn.left",
-          "table": null
-        },
-        {
-          "id": "ce2d7008-fed1-448c-a578-85dd51e52ec7",
-          "kind": "takeaways",
-          "title": "Context Lost at Chunking Time Is the Fixable Bug",
-          "body": null,
-          "bullets": [
-            "Most bad RAG recall traces back to context stripped out when the document was chunked, not a weak embedding model",
-            "Stack contextual embeddings + contextual BM25 + reranking for a combined 67% cut in retrieval failures",
-            "Prompt caching is the detail that makes the extra context-generation pass cheap enough to run on every chunk"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "9ff25ac4-fd57-42bb-bafd-e89756d7c0a1",
-            "prompt": "What does Contextual Retrieval prepend to each chunk before indexing?",
-            "options": [
-              "A random chunk ID",
-              "A short, chunk-specific context generated from the whole document",
-              "The entire original document",
-              "A summary of the user's query"
-            ],
-            "correctIndex": 1,
-            "explanation": "A model reads the full document once and writes a 50–100 token blurb naming the entities/dates/context the chunk is missing, which gets prepended before embedding and indexing."
-          },
-          {
-            "id": "ddf325ad-0bfe-4230-8b58-3c1a7c6d8a05",
-            "prompt": "In Anthropic's reported results, what was the top-20 retrieval failure rate after combining contextual embeddings, contextual BM25, and reranking?",
-            "options": [
-              "5.7%",
-              "3.7%",
-              "2.9%",
-              "1.9%"
-            ],
-            "correctIndex": 3,
-            "explanation": "Stacking all three techniques dropped the failure rate from a 5.7% baseline to 1.9% — a 67% relative reduction."
-          },
-          {
-            "id": "430bc34e-f3a9-49f6-b194-4442a5b73f55",
-            "prompt": "Why doesn't contextualizing every chunk become expensive at scale?",
-            "options": [
-              "It only runs once a year",
-              "Documents are compressed before contextualizing",
-              "The whole document is prompt-cached once and reused across every chunk's context generation",
-              "Claude skips chunks under 100 tokens"
-            ],
-            "correctIndex": 2,
-            "explanation": "Because the document is cached rather than resent per chunk, the one-time contextualization cost stays around $1.02 per million document tokens, with caching also cutting latency over 2x."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "e322d1dd-e54d-442b-a488-4cf3dc7667d6",
-          "title": "Introducing Contextual Retrieval",
-          "url": "https://www.anthropic.com/news/contextual-retrieval"
-        }
-      ],
-      "id": "792993bd-f63d-4a6a-90cc-1e75b63ae025",
       "publishedDate": "2026-11-06T12:47:51Z",
       "heroImageURL": null
     }
