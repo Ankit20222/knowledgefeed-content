@@ -1,6 +1,363 @@
 {
   "posts": [
     {
+      "title": "Disaggregated Serving: Splitting Prefill From Decode",
+      "subtitle": "Prefill wants raw compute. Decode wants memory bandwidth. Giving them separate hardware is why production LLM serving works the way it does.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "llm-serving",
+        "kv-cache",
+        "inference-optimization",
+        "system-design",
+        "throughput"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.split.2x1.fill",
+      "summary": "Prefill (processing the prompt) is compute-bound; decode (generating tokens) is memory-bandwidth-bound. Disaggregated serving puts each phase on hardware tuned for its actual bottleneck, shipping the computed KV cache between them — a pattern now standard in vLLM, SGLang, NVIDIA Dynamo, and DeepSeek's Mooncake.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "Serving an LLM Is Secretly Two Different Jobs",
+          "body": "Every request to a running LLM passes through two phases with opposite performance profiles, even though most serving stacks run them on the same hardware.",
+          "bullets": [
+            "Prefill: one huge, parallel pass over the whole prompt — bottlenecked by raw compute (FLOPs)",
+            "Decode: one new token at a time, repeatedly reading the growing KV cache — bottlenecked by memory bandwidth",
+            "Disaggregated serving puts each phase on hardware built for its own bottleneck"
+          ],
+          "symbol": "rectangle.split.2x1.fill",
+          "table": null,
+          "id": "2955bcca-0e71-4a71-aa63-fb8b29c6243a"
+        },
+        {
+          "kind": "problem",
+          "title": "One GPU Pool, Two Conflicting Workloads",
+          "body": "Running prefill and decode on the same machines forces compromises in both directions.",
+          "bullets": [
+            "A long prompt's prefill burst can stall every other user's decode steps queued on the same GPU ('prefill interference')",
+            "Decode doesn't need more FLOPs — it needs more GPUs with fast interconnect to hold KV cache capacity for many concurrent sessions",
+            "Sizing one GPU type to satisfy both means over-provisioning compute for decode or memory bandwidth for prefill"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "e71452d1-d73a-4366-a814-7b326d78bb87"
+        },
+        {
+          "kind": "solution",
+          "title": "Split Them Onto Separate Pools",
+          "body": "Disaggregated serving runs prefill and decode on hardware pools tuned for each, connected by a transfer layer.",
+          "bullets": [
+            "Prefill-optimized nodes process the full prompt and produce that request's KV cache in one compute-heavy pass",
+            "The computed KV cache is shipped over the network from the prefill node to a decode node",
+            "Decode nodes focus on batching many concurrent sequences' token generation, bottlenecked by memory bandwidth, not FLOPs",
+            "Each pool now scales independently: add prefill capacity if time-to-first-token lags, add decode capacity if throughput lags"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null,
+          "id": "6f6f7756-62be-4881-941f-f54ef0bc3f03"
+        },
+        {
+          "kind": "example",
+          "title": "A Chat Request, Hop by Hop",
+          "body": "Trace a single 50K-token prompt through a disaggregated stack.",
+          "bullets": [
+            "A router sends the prompt to a prefill-optimized node, which runs the full forward pass and builds that request's KV cache",
+            "The prefill node streams the KV cache host-to-host to a decode node that's already serving other users' sessions",
+            "The decode node appends the new KV blocks and starts generating tokens one at a time, batched alongside unrelated requests",
+            "If that transfer isn't fast and overlapped with compute, the hop itself becomes the new bottleneck — which is exactly the gap purpose-built transfer libraries target"
+          ],
+          "symbol": "arrow.right.circle.fill",
+          "table": null,
+          "id": "60a47a4c-6af5-46dd-b819-f5d0114f9f40"
+        },
+        {
+          "kind": "comparison",
+          "title": "Who's Actually Running This Pattern",
+          "body": "Disaggregation shows up across most serious serving stacks, each with its own transfer mechanism.",
+          "bullets": [],
+          "symbol": "tablecells.fill",
+          "table": {
+            "headers": [
+              "System",
+              "Approach"
+            ],
+            "rows": [
+              [
+                "vLLM (disaggregated mode)",
+                "KVConnector interface streams KV cache between dedicated prefill and decode workers"
+              ],
+              [
+                "NVIDIA Dynamo",
+                "Disaggregates prefill/decode across GPU pools with a dedicated low-latency KV transfer library"
+              ],
+              [
+                "DeepSeek Mooncake",
+                "KV-cache-centric scheduler designed from the ground up around prefill/decode separation"
+              ],
+              [
+                "Monolithic serving (single GPU pool)",
+                "Simpler to operate; both phases share the same hardware tradeoffs"
+              ]
+            ]
+          },
+          "id": "bfaf49e6-c092-4e2f-a2b4-0fe1d18b8336"
+        },
+        {
+          "kind": "concept",
+          "title": "When NOT to Disaggregate",
+          "body": "Splitting prefill from decode isn't free — it trades one bottleneck for another kind of cost.",
+          "bullets": [
+            "Moving the KV cache over the network costs bandwidth and latency; if that transfer isn't fast and overlapped, you've just relocated the contention instead of removing it",
+            "Two fleets to capacity-plan, a transfer layer to keep healthy, and routing logic that needs a free prefill node and a free decode node at once",
+            "For short prompts or low-traffic services, the extra network hop can cost more than it saves — monolithic serving is simpler and often good enough"
+          ],
+          "symbol": "scalemass.fill",
+          "table": null,
+          "id": "9ced576e-c304-4892-999e-bc97edd262ef"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Match the Hardware to the Bottleneck",
+          "body": "Disaggregation is a direct answer to a simple observation: prefill and decode don't want the same thing from hardware.",
+          "bullets": [
+            "Compute-bound prefill and memory-bandwidth-bound decode benefit from different hardware profiles and different scaling knobs",
+            "It only pays off once the KV-cache handoff between the two pools is fast enough to not become the new bottleneck",
+            "It's the default production pattern at agent/long-context scale (vLLM, SGLang, NVIDIA Dynamo, DeepSeek Mooncake), not a niche optimization"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "b14eaa3d-0c18-4790-90d8-f92e08fd3f37"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "Why is the decode phase considered memory-bandwidth-bound rather than compute-bound?",
+            "options": [
+              "It performs large parallel matrix multiplications over the whole prompt",
+              "It generates one new token at a time, repeatedly re-reading the growing KV cache rather than doing big parallel compute",
+              "It requires no access to the KV cache at all",
+              "It only ever runs on CPUs, which have no GPUs available"
+            ],
+            "correctIndex": 1,
+            "explanation": "Decode produces tokens sequentially, one per step, so each step mostly pays the cost of reading the accumulated KV cache from memory rather than doing the large, parallelizable compute that prefill does over the full prompt at once.",
+            "id": "1be1d913-84cd-4560-a2c0-f290045e9318"
+          },
+          {
+            "prompt": "What is the main new operational cost that disaggregated serving introduces?",
+            "options": [
+              "Needing twice as much disk storage for model weights",
+              "Shipping the computed KV cache from the prefill node to the decode node over the network",
+              "Having to retrain the model on each new prompt",
+              "Losing the ability to batch requests at all"
+            ],
+            "correctIndex": 1,
+            "explanation": "Prefill and decode now run on separate machines, so the KV cache that prefill computes has to be transferred to wherever decode will run — a real network and latency cost that has to stay fast enough to not erase the benefit of splitting the work.",
+            "id": "3218d1ea-5399-4bd3-bcd5-59b7e75346e1"
+          },
+          {
+            "prompt": "In which scenario is disaggregated serving LEAST likely to be worth it?",
+            "options": [
+              "A coding agent holding a 500K-token session across a full codebase",
+              "A high-traffic chat service with many long concurrent conversations",
+              "A low-traffic service handling mostly short prompts",
+              "A service that needs to scale prefill and decode capacity independently"
+            ],
+            "correctIndex": 2,
+            "explanation": "With short prompts and low traffic, the extra network hop to ship a small KV cache between separate prefill and decode pools can cost more than it saves — the benefits of disaggregation grow with context length and concurrent load, not shrink.",
+            "id": "5012852c-be8b-4af0-9f22-d3d0664dd465"
+          }
+        ]
+      },
+      "references": [],
+      "id": "b4b80954-e344-4c5b-9645-b418fa3e13d2",
+      "publishedDate": "2026-11-15T18:47:45Z"
+    },
+    {
+      "title": "TPU Sync: Google's Fix for the KV Cache Traffic Jam",
+      "subtitle": "An open-source memory layer that moves LLM state fast enough to make disaggregated serving actually pay off.",
+      "category": "AI Innovations",
+      "difficulty": "Advanced",
+      "postKind": "release",
+      "tags": [
+        "llm-serving",
+        "kv-cache",
+        "tpu",
+        "inference-optimization",
+        "google-cloud"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "arrow.triangle.2.circlepath",
+      "summary": "On November 9, 2026, Google Cloud open-sourced TPU Sync, a C++/Python library that tiers KV caches and streams RL weights across TPU HBM, host DRAM, storage, and the datacenter network using direct DMA. In internal benchmarks it cut KV transfer overhead by over 90% and time-to-first-token by up to 90% for large MoE models under disaggregated prefill/decode serving.",
+      "slides": [
+        {
+          "kind": "cover",
+          "title": "When Serving an LLM Means Moving Gigabytes, Not Just Computing",
+          "body": "Google Cloud open-sourced TPU Sync on November 9, 2026 — a library built to move live model state (KV caches, RL weights) across memory tiers fast enough that it stops being the bottleneck.",
+          "bullets": [
+            "Open source at github.com/google/tpu-sync, with PyTorch and JAX wheels",
+            "Targets long-context agents, disaggregated prefill/decode serving, and RL weight sync",
+            "Already wired into vLLM-TorchTPU, SGLang-TorchTPU, and llm-d on GKE"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null,
+          "id": "55f3ceb7-d2ce-46c4-9235-d793bf55f5d3"
+        },
+        {
+          "kind": "problem",
+          "title": "KV Caches Have Outgrown a Single Chip's Memory",
+          "body": "Long-context agents can push a KV cache past what one chip's HBM holds, and disaggregated serving requires shipping that cache between machines over the network.",
+          "bullets": [
+            "A 256K–1M+ token agent session builds a KV cache far bigger than one accelerator's HBM",
+            "Disaggregated prefill/decode serving needs the prefill node's KV cache handed to a separate decode node",
+            "Without a fast path, chips either sit idle waiting on transfers or discard prepped KV state and recompute it"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null,
+          "id": "7b244b5f-31bb-4400-9198-09fbf6872df9"
+        },
+        {
+          "kind": "solution",
+          "title": "Treat HBM, DRAM, Storage, and the Network as One Memory System",
+          "body": "Instead of bolting a cache onto existing serving code, TPU Sync co-designs the whole hierarchy and moves data with direct hardware DMA.",
+          "bullets": [
+            "Layout-preserving DMA moves TPU-tiled tensors in place — no Python serialization, no layout conversion",
+            "Transfers run outside the compiled XLA graph, so moving KV blocks never triggers recompilation",
+            "Compute-overlapped: transfers share the bus with running kernels instead of blocking them",
+            "Three tiers — TPU HBM, pinned host DRAM, and (experimental) shared storage — linked by the datacenter network"
+          ],
+          "symbol": "cpu.fill",
+          "table": null,
+          "id": "7b1734dc-0c72-4ca3-8712-9d2c435b4bd4"
+        },
+        {
+          "kind": "comparison",
+          "title": "The Numbers: Up to 223 GB/s, Over 90% Less KV Overhead",
+          "body": "Internal benchmarks (July 2026, TPU v7x 2x2x1, PCIe Gen5) show the biggest wins on large MoE models under disaggregated serving.",
+          "bullets": [
+            "Qwen3 235B median KV transfer latency: several seconds → ~230 ms",
+            "Results come from Google's own controlled benchmarks, not an independent third party"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "Metric",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Aggregate DMA throughput",
+                "up to 223 GB/s per host (256 GB/s PCIe Gen5 ceiling)"
+              ],
+              [
+                "KV transfer overhead",
+                "cut over 90% (disaggregated P/D serving)"
+              ],
+              [
+                "Avg. time-to-first-token",
+                "-60% for Qwen3 235B, -90% for a 480B MoE model"
+              ],
+              [
+                "Decode throughput under traffic spikes",
+                "+30% to +70%"
+              ]
+            ]
+          },
+          "id": "f41751c7-df9e-4fa5-ba41-547bb3c02b75"
+        },
+        {
+          "kind": "example",
+          "title": "A Long Coding-Agent Session, Hop by Hop",
+          "body": "Picture an agent working across a full codebase with a 1M-token session.",
+          "bullets": [
+            "As the session grows past HBM capacity, TPU Sync tiers older KV blocks down to pinned host DRAM instead of discarding them",
+            "A later request sharing the same prompt prefix hits the global KV store's hash lookup and reuses those blocks instead of recomputing them",
+            "In disaggregated serving, the prefill node streams the fresh KV cache host-to-host straight to a decode node, overlapped with that node ingesting it into HBM"
+          ],
+          "symbol": "bolt.fill",
+          "table": null,
+          "id": "5692941b-18c8-4476-93c2-ffa6d1c84660"
+        },
+        {
+          "kind": "concept",
+          "title": "Read the Fine Print Before You Adopt It",
+          "body": "The benchmarks are real, but they come with caveats worth weighing.",
+          "bullets": [
+            "The storage tier (Tier 3) is explicitly experimental and POSIX-only — not production-hardened yet",
+            "Gains concentrate on long-context, disaggregated, or RL workloads; short-context single-host serving sees little benefit",
+            "All headline numbers are Google's own internal tests on one specific topology (TPU v7x, 2x2x1), not independently reproduced",
+            "Named adopters (Meta, Wayfair) are described as 'evaluating' it — not yet confirmed in production"
+          ],
+          "symbol": "scalemass.fill",
+          "table": null,
+          "id": "8a58e809-c00a-439d-85f4-37c4ce444c1d"
+        },
+        {
+          "kind": "takeaways",
+          "title": "Moving State, Not Just Computing, Is the New Bottleneck",
+          "body": "TPU Sync is a bet that as serving shifts to million-token agents and disaggregated architectures, memory movement — not matrix multiplication — decides throughput.",
+          "bullets": [
+            "KV cache and RL weight transfer, done with direct DMA across a unified memory hierarchy, can cut that overhead by over 90% in Google's tests",
+            "It's open source and already integrated with vLLM, SGLang, and llm-d — worth tracking even outside Google Cloud",
+            "Treat the specific percentages as directional until workloads outside Google's own benchmarks confirm them"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null,
+          "id": "7fec21b6-c905-4d5b-a0b0-ba1b8a07c2d4"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "prompt": "What bottleneck is TPU Sync primarily built to fix?",
+            "options": [
+              "Slow matrix-multiplication throughput on TPU chips",
+              "Moving KV caches and weights across memory tiers (HBM, host DRAM, storage, network) fast enough to not stall serving",
+              "Training instability in large mixture-of-experts models",
+              "Tokenizer latency in the serving pipeline"
+            ],
+            "correctIndex": 1,
+            "explanation": "TPU Sync doesn't speed up compute — it speeds up moving live model state (KV caches during long-context/disaggregated serving, weights during RL) across a tiered memory hierarchy using direct DMA, so chips aren't left idle waiting on transfers.",
+            "id": "edb17370-26d0-4330-92f9-da987d1ec769"
+          },
+          {
+            "prompt": "In Google's benchmarks, which model size saw the full 90% average time-to-first-token reduction?",
+            "options": [
+              "A 235B-parameter model (which saw a 60% reduction instead)",
+              "A 480B-parameter MoE model",
+              "Every model size tested, uniformly",
+              "Only models under 10B parameters"
+            ],
+            "correctIndex": 1,
+            "explanation": "The headline '90% TTFT reduction' applies specifically to the 480B MoE model; the 235B model's reported average reduction was 60%. It's worth reading benchmark headlines against the specific configuration they were measured on.",
+            "id": "0db637f1-5a80-4e50-a11e-096e64bdceae"
+          },
+          {
+            "prompt": "Which part of TPU Sync does the announcement itself flag as not production-ready?",
+            "options": [
+              "The host DRAM tier",
+              "The vLLM integration",
+              "The experimental, POSIX-only shared-storage tier (Tier 3)",
+              "The DMA pacing logic"
+            ],
+            "correctIndex": 2,
+            "explanation": "The blog post explicitly labels the storage backend (Tier 3) as experimental, unlike the HBM and host-DRAM tiers, which are the ones carrying the headline performance numbers.",
+            "id": "980a2b43-0f94-435b-b438-27e82c3f0787"
+          }
+        ]
+      },
+      "references": [
+        {
+          "title": "Introducing TPU Sync: Fast KV cache and weight transfer for inference and RL on TPU — Google Cloud",
+          "url": "https://cloud.google.com/blog/topics/ai-infrastructure/introducing-tpu-sync-fast-kv-cache-and-weight-transfer-on-tpu",
+          "id": "e793a8e2-b4b3-4d38-9d93-70f50eee17f5"
+        }
+      ],
+      "id": "74d10e4c-74e0-4aee-8114-8f7063774efe",
+      "publishedDate": "2026-11-15T18:47:45Z"
+    },
+    {
       "title": "Mythos 5.2: One Weight, Two Safety Tiers",
       "subtitle": "Anthropic shipped the same model twice — once guarded, once not.",
       "category": "AI News",
@@ -10829,384 +11186,6 @@
       },
       "references": [],
       "publishedDate": "2026-11-08T18:47:33Z"
-    },
-    {
-      "id": "9dddf0a2-3620-4ff3-b6f9-98897595b862",
-      "title": "Claude + Robots: 1,010 Antibody Variants in 10 Weeks",
-      "subtitle": "Inside BigHat Biosciences' self-driving lab, where Claude didn't just design molecules — it caught a flawed metric.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "ai agents",
-        "drug discovery",
-        "automated labs",
-        "claude",
-        "biotech"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "testtube.2",
-      "summary": "BigHat Biosciences ran Claude inside a closed-loop automated lab for 10 weeks, cycling through 1,010 antibody variants to optimize a drug lead. The best versions bound over 10x more tightly, stayed stable 18°C higher, and aggregated 100x more slowly — and Claude also helped catch a flawed success metric in the raw data.",
-      "slides": [
-        {
-          "id": "1c0dea1e-9e40-4555-bb68-2563ca5a8cc6",
-          "kind": "cover",
-          "title": "A robot lab, a language model, and 1,010 tries",
-          "body": "BigHat Biosciences paired an automated wet lab with Claude to optimize a drug candidate — not by guessing once, but by iterating hundreds of times with a model in the decision loop.",
-          "bullets": [
-            "Reported by Anthropic, Oct 27, 2026",
-            "One of six drug-development partners in the same program",
-            "10 weeks, ~1,010 antibody variants tested"
-          ],
-          "symbol": "testtube.2"
-        },
-        {
-          "id": "4497e562-4e92-419e-ba47-e8148e452932",
-          "kind": "problem",
-          "title": "Lead optimization is slow trial-and-error",
-          "body": "A promising antibody usually binds its target too weakly, degrades too fast, or clumps together in solution. Fixing one property often breaks another, and each lab cycle (design → make → test) can take days.",
-          "bullets": [
-            "Three properties to balance: binding strength, thermal stability, aggregation",
-            "Classic approach: a scientist manually picks the next few mutations to try",
-            "Search space of possible mutations is enormous relative to lab throughput"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "e0d6545c-d7de-4745-b93d-6a3a9cce8cfd",
-          "kind": "solution",
-          "title": "Claude sits inside the design-make-test loop",
-          "body": "Instead of a human choosing each round's variants, Claude proposed designs, the automated lab synthesized and assayed them, and the results fed straight back into Claude's next proposal — on repeat for 10 weeks.",
-          "bullets": [
-            "Claude: proposes next-round variant designs from prior assay results",
-            "Automated lab: synthesizes and tests variants without manual handling",
-            "Loop repeats continuously instead of waiting on scientist review each cycle"
-          ],
-          "symbol": "arrow.triangle.2.circlepath"
-        },
-        {
-          "id": "46e3f731-c7ab-4a73-a070-7591f3b7c5f7",
-          "kind": "concept",
-          "title": "The twist: Claude also fixed how success was measured",
-          "body": "Claude and an Anthropic researcher reanalyzed the lab's raw assay data and proposed better metrics than the ones the team had been optimizing against — a reminder that the biggest gain can be fixing the question, not just answering it faster.",
-          "bullets": [
-            "Flawed or noisy metrics quietly misdirect every downstream optimization round",
-            "A model reading raw data can spot systematic measurement issues a dashboard hides",
-            "This kind of catch compounds: every later variant benefits from the fix"
-          ],
-          "symbol": "lightbulb.fill"
-        },
-        {
-          "id": "b257268c-2e61-49a1-a984-4d306c0e2a51",
-          "kind": "example",
-          "title": "The numbers after 1,010 variants",
-          "body": "Across the 10-week run, the best resulting variants beat the starting antibody on every axis BigHat was optimizing for.",
-          "bullets": [
-            "Binding affinity: best variants bound the target >10x more tightly",
-            "Thermal stability: one lead stayed in solution at 18°C higher temperature",
-            "Aggregation: another variant clumped together >100x more slowly"
-          ],
-          "symbol": "chart.line.uptrend.xyaxis"
-        },
-        {
-          "id": "c814a413-118a-4781-aec3-734048d80e17",
-          "kind": "comparison",
-          "title": "What changed, round to round",
-          "body": null,
-          "bullets": [],
-          "table": {
-            "headers": [
-              "Property",
-              "Reported improvement"
-            ],
-            "rows": [
-              [
-                "Binding strength",
-                ">10x tighter than starting antibody"
-              ],
-              [
-                "Thermal stability",
-                "+18°C before degrading in solution"
-              ],
-              [
-                "Aggregation rate",
-                ">100x slower clumping"
-              ],
-              [
-                "Experiment scale",
-                "~1,010 variants across ~10 weeks"
-              ]
-            ]
-          },
-          "symbol": "tablecells"
-        },
-        {
-          "id": "fa9277db-e7e6-4c89-a917-6aad27297d42",
-          "kind": "takeaways",
-          "title": "Why this is bigger than one antibody",
-          "body": null,
-          "bullets": [
-            "Early signal that LLM-in-the-loop design can meaningfully speed up wet-lab iteration",
-            "The metric-correction step shows value beyond generation: critique and re-framing",
-            "Part of a wider Anthropic drug-development push across 6 partner companies",
-            "Still early-stage lab optimization — not a clinical result"
-          ],
-          "symbol": "flag.checkered"
-        },
-        {
-          "id": "f819cda7-24df-4801-8968-c595b64a9e38",
-          "kind": "problem",
-          "title": "Where this doesn't (yet) prove much",
-          "body": "It's one partner's internal automated lab, reported by the company providing the model — not an independently peer-reviewed study, and lead optimization is still far upstream of a working drug.",
-          "bullets": [
-            "No published paper or raw dataset to independently verify the numbers",
-            "Improved binding/stability in vitro doesn't guarantee clinical safety or efficacy",
-            "Automated 'self-driving labs' are expensive infrastructure most labs don't have",
-            "Don't treat vendor case studies as a substitute for peer review"
-          ],
-          "symbol": "magnifyingglass"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "e1c8d442-3b0d-4aae-b1da-b4f8254e6074",
-            "prompt": "In BigHat's automated loop, what role did Claude primarily play?",
-            "options": [
-              "Running the physical lab robots directly",
-              "Proposing the next round's antibody variants from prior assay results",
-              "Replacing the need for any lab experiments",
-              "Only summarizing the final report for scientists"
-            ],
-            "correctIndex": 1,
-            "explanation": "Claude's role was analysis and design proposal — reading assay results and proposing what to try next — while the automated lab handled the physical synthesis and testing."
-          },
-          {
-            "id": "60777e34-b2bb-4a4b-a0f0-4324f81a16bf",
-            "prompt": "Besides proposing variants, what other contribution did Claude make?",
-            "options": [
-              "It discovered a new antibody target unrelated to the project",
-              "It helped reanalyze raw data and propose better success metrics",
-              "It wrote the regulatory filing for the drug",
-              "It reduced the number of lab cycles to one"
-            ],
-            "correctIndex": 1,
-            "explanation": "Claude and an Anthropic researcher reanalyzed the raw assay data and proposed improved metrics — catching a measurement issue, not just generating more candidate designs."
-          },
-          {
-            "id": "8e0076e9-64af-415d-acd1-eecf25302afc",
-            "prompt": "What's the key limitation to keep in mind about this result?",
-            "options": [
-              "It has already been replicated by three independent labs",
-              "It's a vendor-reported case study of lab-stage optimization, not a peer-reviewed or clinical result",
-              "The antibody is already approved for human use",
-              "It required no automated lab equipment at all"
-            ],
-            "correctIndex": 1,
-            "explanation": "This is a company case study reported by the AI vendor itself, describing in vitro lead optimization — promising, but well short of independent verification or clinical proof."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "b032e109-b9eb-4e28-ad40-4f85d04bd041",
-          "title": "Early progress on accelerating drug development with Claude — Anthropic",
-          "url": "https://www.anthropic.com/research/early-progress-drug-development"
-        }
-      ],
-      "publishedDate": "2026-11-08T12:48:49Z"
-    },
-    {
-      "id": "e7c73392-dc7c-4e6c-8dc2-a52a73c9ba5d",
-      "title": "RLHF: Teaching Language Models What Humans Actually Want",
-      "subtitle": "The three-stage pipeline that turned next-token predictors into assistants that follow instructions.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "rlhf",
-        "llm training",
-        "reward model",
-        "alignment",
-        "ppo"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "hand.thumbsup.fill",
-      "summary": "RLHF (Reinforcement Learning from Human Feedback) trains a reward model on human preference comparisons, then fine-tunes the LLM with RL to maximize that reward — with a KL penalty keeping it close to its original behavior. It's how base models become instruction-following assistants, and it comes with real failure modes like reward hacking.",
-      "slides": [
-        {
-          "id": "acdd1e75-39e3-432f-a6b8-d29a12d03325",
-          "kind": "cover",
-          "title": "A base model predicts tokens. It doesn't know what you want.",
-          "body": "A pretrained LLM is very good at continuing text plausibly. It has no built-in notion of 'helpful,' 'honest,' or 'follow this instruction, not that one.' RLHF is the training step that bridges that gap.",
-          "bullets": [
-            "Pretraining objective: predict the next token",
-            "What we actually want: follow instructions, be truthful, refuse harmful requests",
-            "Those two objectives are not the same loss function"
-          ],
-          "symbol": "brain.head.profile"
-        },
-        {
-          "id": "55f67aa5-751e-4144-a643-ebdfc3858a0d",
-          "kind": "problem",
-          "title": "You can't write a loss function for 'good response'",
-          "body": "Quality and helpfulness are subjective and context-dependent — there's no ground-truth label to backprop against directly. RLHF's workaround: get humans to compare outputs, then train a model to predict those comparisons.",
-          "bullets": [
-            "No single 'correct' response exists for most prompts",
-            "Humans are much better at ranking two answers than scoring one in isolation",
-            "Need a differentiable signal that approximates human judgment"
-          ],
-          "symbol": "exclamationmark.triangle.fill"
-        },
-        {
-          "id": "492b563d-1bad-4deb-98d4-5ccbdce385b3",
-          "kind": "solution",
-          "title": "Three stages: SFT, reward model, then RL",
-          "body": "RLHF (popularized by OpenAI's InstructGPT) runs in three steps, each building on the last.",
-          "bullets": [
-            "1) Supervised fine-tuning (SFT): train on human-written demonstration responses",
-            "2) Reward model: train on human pairwise comparisons of model outputs (Bradley-Terry preference model)",
-            "3) RL fine-tuning: optimize the SFT policy to maximize the reward model's score, usually with PPO"
-          ],
-          "symbol": "list.number"
-        },
-        {
-          "id": "dd0a6945-6043-4942-8662-b345b6dd8ead",
-          "kind": "architecture",
-          "title": "The RL loop, and why it needs a leash",
-          "body": "The policy generates a response, the reward model scores it, and PPO nudges the policy toward higher-scoring outputs — but unconstrained optimization against a learned reward model goes off the rails fast.",
-          "bullets": [
-            "A KL-divergence penalty keeps the policy close to the SFT reference model",
-            "Without it, the policy drifts into reward-model blind spots (gibberish that scores high)",
-            "Needs 4 models in memory at once: policy, reference, reward model, value model",
-            "This is why RLHF training is notoriously expensive and finicky to stabilize"
-          ],
-          "symbol": "arrow.triangle.branch"
-        },
-        {
-          "id": "0741c5ce-ee73-4b2a-8bf4-930eb5f0c993",
-          "kind": "example",
-          "title": "The result that made it famous",
-          "body": "OpenAI's InstructGPT paper (Ouyang et al., 2022) found that human labelers preferred outputs from a 1.3B-parameter RLHF-tuned model over outputs from the raw 175B-parameter GPT-3 base model — a 100x smaller model, preferred because it was tuned to actually follow instructions.",
-          "bullets": [
-            "Scale alone didn't win — alignment to instructions did",
-            "This result is widely credited with popularizing RLHF for production LLMs",
-            "Same recipe (SFT + reward model + RL) underlies the first generation of chat assistants"
-          ],
-          "symbol": "chart.bar.fill"
-        },
-        {
-          "id": "734b9848-7fb7-4615-861b-52ab004d8470",
-          "kind": "comparison",
-          "title": "RLHF vs. DPO",
-          "body": "Direct Preference Optimization (DPO) is a newer alternative that skips the separate reward model and RL loop entirely, trading some flexibility for stability.",
-          "bullets": [],
-          "table": {
-            "headers": [
-              "",
-              "RLHF (PPO)",
-              "DPO"
-            ],
-            "rows": [
-              [
-                "Separate reward model?",
-                "Yes — trained first",
-                "No — folded into one loss"
-              ],
-              [
-                "Training stability",
-                "Sensitive to PPO hyperparameters",
-                "Closed-form loss, simpler to train"
-              ],
-              [
-                "Compute footprint",
-                "4 models in memory",
-                "2 models (policy + reference)"
-              ],
-              [
-                "Flexibility",
-                "Reward model can be reused/inspected",
-                "Preferences baked directly into policy"
-              ]
-            ]
-          },
-          "symbol": "arrow.left.arrow.right"
-        },
-        {
-          "id": "b7c4fdd5-c8f6-4c2d-aba9-b988c1045199",
-          "kind": "problem",
-          "title": "Reward hacking: optimizing the proxy, not the goal",
-          "body": "PPO will happily exploit any weakness in the reward model, since the reward model — not actual human judgment — is what it's being scored against during training.",
-          "bullets": [
-            "Verbosity bias: reward models often score longer answers higher, so policies learn to ramble",
-            "Sycophancy: policies learn to agree with the user's stated view rather than be accurate",
-            "Mitigations: KL penalty, reward model ensembling, periodic human re-evaluation",
-            "When NOT to reach for full RLHF: narrow-domain fine-tuning or scarce preference data — SFT alone or DPO is usually cheaper and more stable"
-          ],
-          "symbol": "exclamationmark.bubble.fill"
-        },
-        {
-          "id": "12f2dcc8-8bd6-4734-81a6-7e65f5836d02",
-          "kind": "takeaways",
-          "title": "The pipeline, in one breath",
-          "body": null,
-          "bullets": [
-            "RLHF = SFT, then a reward model trained on human comparisons, then RL (usually PPO) against that reward",
-            "The KL penalty against the reference model is what keeps optimization from degenerating",
-            "It's expensive and unstable to tune — which is exactly why DPO and other direct-preference methods emerged",
-            "Still foundational: most production assistants trace their post-training lineage back to this pipeline"
-          ],
-          "symbol": "checkmark.seal.fill"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "cff92a28-0e1f-4e7a-b125-9b37e46e1f92",
-            "prompt": "What problem does the reward model solve in RLHF?",
-            "options": [
-              "It replaces the need for any human involvement",
-              "It converts human pairwise preference judgments into a differentiable training signal",
-              "It generates the training prompts automatically",
-              "It compresses the model to run faster"
-            ],
-            "correctIndex": 1,
-            "explanation": "Humans are good at comparing two responses but there's no direct loss for 'quality.' The reward model learns from those comparisons so RL has a score to optimize against."
-          },
-          {
-            "id": "8d528b38-2a41-408a-a728-bf6a4c5c18a5",
-            "prompt": "Why does RLHF use a KL-divergence penalty during the RL stage?",
-            "options": [
-              "To make training faster by skipping gradient updates",
-              "To keep the policy close to its reference (SFT) model and prevent reward hacking",
-              "To increase the size of the reward model",
-              "To remove the need for a value model"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without a constraint, the policy can drift toward outputs that exploit blind spots in the learned reward model (gibberish that scores well) rather than genuinely better responses."
-          },
-          {
-            "id": "9e6eab4e-a643-41b3-9de3-a5edb6cd5285",
-            "prompt": "How does DPO differ from classic RLHF (PPO)?",
-            "options": [
-              "DPO requires no preference data at all",
-              "DPO trains a much larger reward model than RLHF",
-              "DPO optimizes the policy directly on preference pairs via a closed-form loss, without a separate reward model or RL loop",
-              "DPO only works on vision models"
-            ],
-            "correctIndex": 2,
-            "explanation": "DPO derives a loss directly from the same preference objective RLHF's reward model targets, letting you skip the separate reward model and unstable RL optimization step."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "7f425b05-b1cb-448f-b79e-b1562cec4a71",
-          "title": "Training language models to follow instructions with human feedback (InstructGPT) — Ouyang et al., 2022",
-          "url": "https://arxiv.org/abs/2203.02155"
-        }
-      ],
-      "publishedDate": "2026-11-08T12:48:49Z"
     }
   ]
 }
