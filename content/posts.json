@@ -1,6 +1,367 @@
 {
   "posts": [
     {
+      "id": "3978883d-f657-4afc-b12d-f1366f2d2596",
+      "title": "vLLM 0.34 Lets the KV Cache Size Itself After Boot",
+      "subtitle": "Memory is measured after warmup, not guessed before it.",
+      "category": "AI Innovations",
+      "difficulty": "Intermediate",
+      "postKind": "release",
+      "tags": [
+        "vllm",
+        "kv-cache",
+        "llm-serving",
+        "inference",
+        "gpu-memory"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "memorychip.fill",
+      "summary": "vLLM 0.34 turns on 'extensible KV cache' by default, sizing the cache from memory that is actually free after CUDA graph capture and warmup instead of a conservative pre-warmup estimate. On MiniMax-M3 on H200 that grew usable KV cache from 433k to 672k tokens, at the cost of 6-18% higher per-token decode latency at high concurrency.",
+      "publishedDate": "2026-11-18T18:45:51Z",
+      "slides": [
+        {
+          "id": "6ae5ac0a-570f-4104-bb93-15f606c9c07b",
+          "kind": "cover",
+          "title": "The KV Cache Now Grows Into Whatever Memory Is Left",
+          "body": "vLLM 0.34, released November 16, flips on 'extensible KV cache' by default: the cache is sized from memory that is actually free after warmup, not a cautious estimate made before the model ever ran.",
+          "bullets": [
+            "On MiniMax-M3 on H200, usable KV cache capacity grew from 433k to 672k tokens — a ~55% jump with zero hardware change",
+            "The release ships 1,061 commits from 412 contributors and adds 10 new supported models, including Mistral Large 4"
+          ],
+          "symbol": "memorychip.fill",
+          "table": null
+        },
+        {
+          "id": "e0074fb3-a93f-4248-8a43-529efcf85bf3",
+          "kind": "problem",
+          "title": "Old Sizing Left Real Memory on the Table",
+          "body": "Before this release, vLLM sized the KV cache from an estimate of free GPU memory computed before CUDA graphs were captured and before warmup ran — a conservative number that didn't reflect what was actually available once the server was live.",
+          "bullets": [
+            "CUDA graph capture and warmup both consume and then release memory in ways a pre-warmup estimate can't see",
+            "That gap meant servers were running with smaller max-context and lower concurrency than the hardware actually supported",
+            "The fix required either overriding --gpu-memory-utilization by hand per model, or just losing the free capacity"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "85058aca-3b57-4393-a7c0-05ba55f637dc",
+          "kind": "solution",
+          "title": "Measure After Warmup, Not Before",
+          "body": "Extensible KV cache defers sizing until after the model has actually finished its startup sequence, then allocates the cache from whatever memory is genuinely free at that point.",
+          "bullets": [
+            "Sequence: load weights -> capture CUDA graphs -> run warmup -> measure real free memory -> size the KV cache pool",
+            "On by default in 0.34; it's a sizing-time change, not a new data structure, so existing serving code and APIs are unaffected",
+            "Two escape hatches ship alongside it: a fixed --gpu-memory-utilization 0.9, or fully opting out with --no-enable-extensible-kv-cache"
+          ],
+          "symbol": "gearshape.2.fill",
+          "table": null
+        },
+        {
+          "id": "a7c0b132-6227-471a-977f-62a45fd18243",
+          "kind": "comparison",
+          "title": "More Context Capacity, Slightly Slower Decode",
+          "body": "The gain isn't free: packing more tokens into the same GPU means more contention for memory bandwidth during decode.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Metric",
+              "Before (static estimate)",
+              "After (extensible, 0.34)"
+            ],
+            "rows": [
+              [
+                "MiniMax-M3 KV cache on H200",
+                "433k tokens",
+                "672k tokens"
+              ],
+              [
+                "Per-token decode latency (TPOT) at concurrency 128",
+                "baseline",
+                "+6% to +18% on some H200 models"
+              ],
+              [
+                "Default block size",
+                "16",
+                "64 (breaking change)"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "90039c67-7148-4947-8aea-7eeb872b2f1e",
+          "kind": "example",
+          "title": "A Team Serving MiniMax-M3 Gets Headroom They Didn't Ask For",
+          "body": "A platform team running MiniMax-M3 on a fixed H200 fleet upgrades to 0.34 and, without changing any config, can now hold 55% more concurrent context per GPU — meaning fewer requests get rejected for exceeding max context during traffic spikes.",
+          "bullets": [
+            "Under light load, nothing changes for end users — just more headroom sitting idle",
+            "Under concurrency 128+, p50 latency per generated token creeps up 6-18%; a latency-sensitive chat product notices this in its dashboards",
+            "The team pins --gpu-memory-utilization 0.9 on their latency-critical pool and leaves extensible KV cache on for their batch/throughput pool"
+          ],
+          "symbol": "chart.bar.fill",
+          "table": null
+        },
+        {
+          "id": "4ce0c9a3-e3cc-4175-a417-e3b0282176aa",
+          "kind": "concept",
+          "title": "When Not to Take the Default",
+          "body": "Extensible KV cache trades a latency tax for capacity headroom — the right call only if capacity, not tail latency, is your bottleneck.",
+          "bullets": [
+            "Skip it (use --no-enable-extensible-kv-cache) for strict low-latency SLAs where even an 18% TPOT bump at high concurrency breaks a budget",
+            "Skip it if you already tune --gpu-memory-utilization precisely per model — the new default sizing can shift your known-good headroom",
+            "Remember the block-size default also moved from 16 to 64; pass --block-size 16 explicitly if your deployment depends on the old value",
+            "ROCm users on versions below 10.0 can't take this release at all — ROCm 7.2 support was dropped"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "58383ad9-31d5-4d4e-a791-974c96e24dea",
+          "kind": "takeaways",
+          "title": "Capacity You Didn't Have to Ask For — With a Catch",
+          "body": "vLLM 0.34 reclaims memory that static pre-warmup estimates were leaving unused, turning it into extra KV cache capacity by default.",
+          "bullets": [
+            "+~55% KV cache tokens on MiniMax-M3/H200 in the release's own example, for +6-18% decode latency at high concurrency",
+            "Two flags let you opt out per-deployment: --gpu-memory-utilization 0.9 or --no-enable-extensible-kv-cache",
+            "Check the breaking changes before upgrading: block-size default (16->64), ROCm 10.0 requirement, huggingface_hub >= 2.0.0"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "2d28f0d8-c53c-4dfe-8a35-23fd01dbed1d",
+            "prompt": "What changed in how vLLM 0.34 sizes the KV cache by default?",
+            "options": [
+              "It now uses a fixed cache size for every GPU model",
+              "It measures free memory after CUDA graph capture and warmup, instead of estimating before them",
+              "It moves the KV cache entirely to CPU RAM",
+              "It removes the KV cache and recomputes attention every step"
+            ],
+            "correctIndex": 1,
+            "explanation": "Extensible KV cache defers sizing until after warmup and graph capture finish, so it allocates from memory that is genuinely free rather than a conservative pre-warmup guess."
+          },
+          {
+            "id": "29198692-8b20-4894-8020-53822627146c",
+            "prompt": "On MiniMax-M3 on H200, what was the tradeoff of the new default at concurrency 128?",
+            "options": [
+              "KV cache capacity dropped 55% but latency improved",
+              "KV cache capacity grew from 433k to 672k tokens, but per-token decode latency rose 6-18%",
+              "Throughput and latency both improved with no downside",
+              "The model stopped supporting long context entirely"
+            ],
+            "correctIndex": 1,
+            "explanation": "The release notes report a capacity gain (433k -> 672k tokens) paired with a 6-18% TPOT increase on some H200 models at concurrency 128 — more room, slightly slower per token under load."
+          },
+          {
+            "id": "e07d8aa0-6bc6-4a45-b3b3-347212255b4c",
+            "prompt": "A team needs the old, more conservative KV cache sizing back for a strict-latency deployment. What should they do?",
+            "options": [
+              "Downgrade GPU drivers",
+              "Pass --gpu-memory-utilization 0.9 or --no-enable-extensible-kv-cache",
+              "Switch the block size to 64",
+              "There is no way to disable it"
+            ],
+            "correctIndex": 1,
+            "explanation": "vLLM 0.34 ships explicit opt-outs for the new default: a fixed memory-utilization target, or fully disabling extensible KV cache."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "b68338fc-1e7f-4180-af50-1beedce731ec",
+          "title": "vLLM v0.34.0 Release Notes — GitHub",
+          "url": "https://github.com/vllm-project/vllm/releases/tag/v0.34.0"
+        }
+      ]
+    },
+    {
+      "id": "9fbccb96-341b-4bac-86c0-bd5002600fd8",
+      "title": "LoRA: Fine-Tuning Giant Models by Training a Sliver of Them",
+      "subtitle": "Freeze the model, train two tiny matrices instead.",
+      "category": "AI Concepts",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "lora",
+        "fine-tuning",
+        "llms",
+        "parameter-efficient",
+        "adapters"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "slider.horizontal.3",
+      "summary": "LoRA (Low-Rank Adaptation) freezes a pretrained model's weights and trains only a pair of small low-rank matrices inserted into each layer. For GPT-3 175B, the original paper reports roughly 10,000x fewer trainable parameters and 3x less GPU memory than full fine-tuning, with no added inference latency once the adapter is merged.",
+      "publishedDate": "2026-11-18T18:45:51Z",
+      "slides": [
+        {
+          "id": "ab63c847-916f-4747-8633-cbfd6b0eca97",
+          "kind": "cover",
+          "title": "Why Retrain 175 Billion Parameters to Teach a Model One New Skill?",
+          "body": "LoRA's answer: don't. Freeze every original weight and train a tiny low-rank add-on instead — on GPT-3 175B the paper reports about 10,000x fewer trainable parameters than full fine-tuning.",
+          "bullets": [
+            "Same technique scales down to small models too — it's a general recipe for adapting any large pretrained network cheaply",
+            "Multiple LoRA adapters can target the same base model, each a few megabytes instead of a full multi-hundred-gigabyte checkpoint"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "84b3a5d1-a205-4178-a0ec-2050bbf7ccce",
+          "kind": "problem",
+          "title": "Full Fine-Tuning Means a Full Copy, Per Task",
+          "body": "Full fine-tuning updates every weight, which means storing a full optimizer state (gradients + momentum) sized to the entire model — and a brand-new full checkpoint for every downstream task you adapt it to.",
+          "bullets": [
+            "For a 175B-parameter model, the optimizer state alone can dwarf the weights themselves in memory",
+            "Ten fine-tuned variants of the same base model means ten full-sized checkpoints to store and serve",
+            "Switching between tasks at serving time means swapping an entire multi-hundred-gigabyte model in and out"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "2e15e584-dca1-4dfc-9122-c47ab41aff41",
+          "kind": "solution",
+          "title": "Inject a Low-Rank Detour Around Each Weight Matrix",
+          "body": "For a frozen pretrained weight matrix W, LoRA adds a trainable update ΔW = B·A, where A and B are small matrices of rank r (often 4-64) — far smaller than W's own dimensions.",
+          "bullets": [
+            "Only A and B are trained; W itself never moves, so pretrained knowledge stays intact by construction",
+            "The update is scaled by alpha/r and added to W's output: fewer parameters to learn, but the same output dimensions",
+            "Typically applied to the attention projection matrices (query/value), where the authors found the biggest gains per parameter spent"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "068ebb14-b1b1-478c-9196-5bf170519839",
+          "kind": "comparison",
+          "title": "Full Fine-Tuning vs. LoRA, on GPT-3 175B",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Metric",
+              "Full fine-tuning",
+              "LoRA (per the original paper)"
+            ],
+            "rows": [
+              [
+                "Trainable parameters",
+                "175B (100%)",
+                "~10,000x fewer"
+              ],
+              [
+                "GPU memory during training",
+                "baseline",
+                "~3x less"
+              ],
+              [
+                "Per-task checkpoint size",
+                "full model copy",
+                "a few MB (just A and B)"
+              ],
+              [
+                "Extra inference latency after merging",
+                "n/a",
+                "none — W + BA collapses back into one matrix"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "9caa5d30-ba81-4c09-baf7-c2c642984bee",
+          "kind": "example",
+          "title": "One Base Model, a Dozen Customers, a Dozen Adapters",
+          "body": "A platform serving fine-tuned variants for a dozen enterprise customers keeps exactly one copy of the base model loaded in GPU memory, then swaps in a customer-specific LoRA adapter — a few megabytes each — per request.",
+          "bullets": [
+            "Storage cost: a dozen multi-hundred-GB full checkpoints becomes one base model plus a dozen tiny adapter files",
+            "Switching customers at request time becomes a lightweight weight-add instead of a full model reload",
+            "New customer onboarding means training a new adapter against the frozen base, not a full retraining run"
+          ],
+          "symbol": "person.3.fill",
+          "table": null
+        },
+        {
+          "id": "c9b45d1a-816e-4bc7-9855-c2f57d217f77",
+          "kind": "concept",
+          "title": "Where LoRA Falls Short",
+          "body": "Low-rank updates are an approximation, not a free lunch — the rank you pick is a real tradeoff.",
+          "bullets": [
+            "Too small a rank underfits tasks that need a large shift from the base model's behavior (e.g., a big domain or language shift)",
+            "If adapters aren't merged into W before serving, you pay a small extra matrix-multiply at inference — negligible for one adapter, additive if you stack many",
+            "LoRA adapts behavior within what the base model already knows; it's not a substitute for pretraining when the base model lacks the underlying knowledge entirely",
+            "Picking which layers to adapt (just attention? also MLP blocks?) and the alpha/r scaling ratio both need tuning per task"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "f11795bb-597b-4b3a-9e16-360df2842bcf",
+          "kind": "takeaways",
+          "title": "Freeze the Giant, Train the Sliver",
+          "body": "LoRA's core move — freeze pretrained weights, train a small low-rank add-on — turns fine-tuning from a full-model problem into a few-megabyte problem.",
+          "bullets": [
+            "~10,000x fewer trainable parameters and ~3x less training memory than full fine-tuning on GPT-3 175B, per the original paper",
+            "Merged adapters add zero inference latency; unmerged ones add a small, stackable cost",
+            "Pick rank r and target layers based on how far the task pulls from the base model's existing behavior"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4bf56557-7642-416e-b75f-4009f98980bb",
+            "prompt": "What does LoRA actually train?",
+            "options": [
+              "Every weight in the original model, at a lower learning rate",
+              "A pair of small low-rank matrices (A and B) added to selected weight matrices, while the original weights stay frozen",
+              "A separate small model that post-processes the output",
+              "Only the embedding layer"
+            ],
+            "correctIndex": 1,
+            "explanation": "LoRA freezes the pretrained weight matrix W and learns a low-rank update ΔW = B·A on top of it — the original weights never change."
+          },
+          {
+            "id": "d1154edc-b3ad-4ff4-ac60-21a9adaeaf99",
+            "prompt": "Why does a merged LoRA adapter add no extra inference latency?",
+            "options": [
+              "Because the adapter runs on a separate GPU in parallel",
+              "Because B·A can be added directly into W, collapsing back into a single matrix of the original size",
+              "Because LoRA removes layers from the model entirely",
+              "Because inference always uses the frozen weights and ignores the adapter"
+            ],
+            "correctIndex": 1,
+            "explanation": "Once training is done, W + B·A is just another matrix of the same shape as W — there's no separate computation left to run at serving time."
+          },
+          {
+            "id": "0c7fe1e0-71c9-4b9b-938f-31306bbfae2a",
+            "prompt": "What's the main risk of picking too small a rank r for a LoRA adapter?",
+            "options": [
+              "Training becomes slower than full fine-tuning",
+              "The adapter can underfit tasks that need a large behavioral shift from the base model",
+              "The base model's weights get corrupted",
+              "Inference latency increases sharply"
+            ],
+            "correctIndex": 1,
+            "explanation": "Rank r caps how much the update matrix can express; too small a rank limits how far the adapted behavior can move from the frozen base model."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "708e93b1-1837-4523-9b3c-10f439c7f684",
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models — Hu et al.",
+          "url": "https://arxiv.org/abs/2106.09685"
+        }
+      ]
+    },
+    {
       "id": "43c5dc33-af35-472f-aa0b-d794b2833db0",
       "title": "Claude Beat the Best Published Quantum Circuits—All Eight",
       "subtitle": "In one case, by 17x fewer gates.",
@@ -10798,376 +11159,6 @@
           "url": "https://arxiv.org/abs/2610.01447"
         }
       ],
-      "publishedDate": "2026-11-11T18:50:21Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "a826b024-c711-49b3-b636-a66647db2ef9",
-      "title": "Gemini Agent: Google's Pitch for One Universal Work Agent",
-      "subtitle": "It routes jobs to Gemini or Claude, keeps four kinds of memory, and keeps running after you close your laptop.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "ai agents",
-        "multi-agent orchestration",
-        "enterprise ai",
-        "model routing",
-        "agent memory"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "wand.and.stars",
-      "summary": "At Gemini at Work 2026, Google introduced the Gemini agent: a single agent meant to replace per-tool bots with one interface that chats, executes multi-day jobs, spawns sub-agents, and routes each task to whichever model — Gemini or Anthropic's Claude — fits best. The announcement is heavy on vendor-reported ROI numbers, so the real capabilities are worth separating from the marketing.",
-      "slides": [
-        {
-          "id": "719faf6b-d975-42ea-a998-0d56ff53b749",
-          "kind": "cover",
-          "title": "One Prompt Box for Chat, Execution, and Scheduled Work",
-          "body": "Google's Gemini at Work 2026 keynote introduced the Gemini agent: a universal agent that answers questions, executes assigned objectives autonomously, runs scheduled tasks, and reacts to events — all from one interface, across web, mobile, desktop, CLI, and third-party apps.",
-          "bullets": [
-            "Published October 8, 2026, adapted from Thomas Kurian's keynote",
-            "Users give it objectives, not step-by-step instructions",
-            "Work can keep running for hours or days after you close your laptop"
-          ],
-          "symbol": "wand.and.stars",
-          "table": null
-        },
-        {
-          "id": "81bc3693-4101-4850-8e55-81ada11c8748",
-          "kind": "problem",
-          "title": "The Problem: Siloed Bots, No Shared Memory",
-          "body": "Most enterprise AI deployments today are a patchwork — a chatbot in Slack, a separate coding assistant, a separate data-analysis tool — each with its own context that resets between sessions and no shared identity or audit trail.",
-          "bullets": [
-            "Switching tools means re-explaining context every time",
-            "No consistent way to grant an agent least-privilege access to company systems, or audit what it did",
-            "No persistent execution: close the laptop, lose the in-progress work"
-          ],
-          "symbol": "square.stack.3d.down.right",
-          "table": null
-        },
-        {
-          "id": "62d31b14-f1c9-4acf-a5ea-d65771d8fa63",
-          "kind": "architecture",
-          "title": "How It's Built: Orchestration, Four Memory Types, Model Choice",
-          "body": "The Gemini agent can spin up temporary, job-specific sub-agents, coordinate them in parallel or in sequence, and act as a persistent \"coworker agent\" with its own identity.",
-          "bullets": [
-            "Coworker agents get their own storage and an address like name@agents.company.com",
-            "Four memory types: session, semantic, procedural (skills it writes for itself), and episodic",
-            "A routing layer sends each job to whichever model fits — Gemini or Anthropic's Claude models today, with other models planned",
-            "Connects to Confluence, Microsoft Office, Teams, Slack, Workspace, Git, Jira, Salesforce, ServiceNow, BigQuery, Databricks, Postgres, Snowflake, local files, and any MCP server"
-          ],
-          "symbol": "point.3.connected.trianglepath.dotted",
-          "table": null
-        },
-        {
-          "id": "be5336d1-23c0-41a2-813d-81a661074362",
-          "kind": "architecture",
-          "title": "Governance: Treating Agents Like Employees With Badges",
-          "body": "Because a coworker agent can act on company data unattended, Google built identity and spend controls around it rather than bolting them on later.",
-          "bullets": [
-            "Each agent gets a cryptographically attested identity with least-privilege, OAuth-propagated permissions",
-            "Agents run inside an \"Agent Sandbox\" with its own network boundary; all traffic passes through Agent Gateway, an AI network firewall enforcing org-wide policy",
-            "Real-time spend caps are set in the Cloud Billing Console — when a cap triggers, that project's agent pauses until a human resumes it",
-            "Audit trails are attributed to the specific agent, not a shared service account"
-          ],
-          "symbol": "lock.shield.fill",
-          "table": null
-        },
-        {
-          "id": "9dc677fc-1c45-408d-aad0-d61fd2f8a231",
-          "kind": "comparison",
-          "title": "The Infrastructure Behind It",
-          "bullets": [],
-          "symbol": "cpu",
-          "table": {
-            "headers": [
-              "Component",
-              "What Google claims"
-            ],
-            "rows": [
-              [
-                "TPU 8i",
-                "80% better price-performance than the prior generation"
-              ],
-              [
-                "Model lineup",
-                "Argon (frontier reasoning), Flash (speed/volume), Omni (generative media), Gemma (open-weight, edge)"
-              ],
-              [
-                "Per-token pricing",
-                "Down ~98% since 2024 (per a linked external source)"
-              ],
-              [
-                "Platform scale",
-                "~500 Google Cloud customers each processed over 1 trillion tokens in the past year"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "c7eda62e-fcdf-4600-b6f0-417e39ce414d",
-          "kind": "example",
-          "title": "A Concrete Workflow: The Coworker Agent That Doesn't Clock Out",
-          "body": "Picture a finance team's coworker agent, tagged in a Google Docs comment to validate a quarterly model against live data.",
-          "bullets": [
-            "It pulls figures through the BigQuery connector, cross-checks them against a saved operational report (which runs without extra token cost once saved)",
-            "It flags a discrepancy, drafts a comment back in the doc, and — per the announcement's \"proactive delegation\" feature — suggests which follow-up emails a human should personally send versus which it can draft itself",
-            "The job keeps running in Google's cloud after the analyst logs off for the day, and picks back up with full context the next morning across whichever device they open"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "a6669a4a-3d39-405a-bcad-c6a1c2ed0e20",
-          "kind": "problem",
-          "title": "Read the ROI Numbers Skeptically",
-          "body": "The announcement is also, candidly, a sales pitch — dozens of customer-reported wins (\"document review cut from 1 hour to 5 minutes,\" \"conversion tripled\") are stacked throughout.",
-          "bullets": [
-            "Those figures are vendor- and customer-self-reported, with no disclosed measurement methodology",
-            "No GA dates, regions, or pricing/SKUs are given for the core Gemini agent itself — only that industry-specific versions (Financial Services, Legal) are in preview, others \"coming soon\"",
-            "A platform promising this much surface area (chat, execution, scheduling, sub-agents, memory, governance) is also a lot of attack surface and a lot that can go wrong operationally before it matures",
-            "Model-routing across two different vendors' models (Gemini and Claude) is novel, but means debugging behavior differences across providers inside one \"agent\""
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "7129a963-db54-4808-adbd-0c2918e3abac",
-          "kind": "takeaways",
-          "title": "What's Actually New Here",
-          "bullets": [
-            "A single agent interface meant to replace per-tool bots, with persistent cross-device memory and execution that survives closing your laptop",
-            "Multi-vendor model routing — Gemini and Claude today — baked into one orchestration layer, not a one-model product",
-            "Governance built in from the start: cryptographic agent identity, a dedicated network firewall for agent traffic, and billing-level spend caps that can pause a runaway agent",
-            "Treat the specific ROI percentages as marketing claims, not independently verified benchmarks, until third parties test them"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "b94e3060-2184-426a-97d7-db3160c28409",
-            "prompt": "What's notable about how the Gemini agent picks a model to run a given job?",
-            "options": [
-              "It only ever uses Google's own Gemini models",
-              "It routes each job to whichever model fits best — Gemini or Anthropic's Claude models today, with more planned",
-              "It always uses the largest, most expensive model available",
-              "Model choice is fixed per customer and can't change per job"
-            ],
-            "correctIndex": 1,
-            "explanation": "The announcement describes a routing layer that can send a job to Gemini or to Anthropic's Claude models — multi-vendor routing inside one orchestration layer, rather than a single-model product."
-          },
-          {
-            "id": "0df9c7c7-f7c1-413b-99ba-d75420a232e9",
-            "prompt": "What are the four memory types the Gemini agent is described as maintaining?",
-            "options": [
-              "Short-term, long-term, working, and sensory",
-              "Session, semantic, procedural, and episodic",
-              "Local, cloud, cached, and archived",
-              "Public, private, shared, and encrypted"
-            ],
-            "correctIndex": 1,
-            "explanation": "Google describes session, semantic, procedural (skills the agent writes for itself), and episodic memory — a taxonomy meant to let the agent retain context across devices and over time, not just within one chat."
-          },
-          {
-            "id": "2086688e-c837-4a76-b200-c5f4be966fb0",
-            "prompt": "Why should the customer ROI figures in this announcement (e.g., \"document review cut from 1 hour to 5 minutes\") be read with caution?",
-            "options": [
-              "They were independently audited by a third party",
-              "They're vendor- and customer-self-reported, with no disclosed measurement methodology",
-              "They only apply to Google's internal teams",
-              "They were generated entirely by the Gemini agent itself"
-            ],
-            "correctIndex": 1,
-            "explanation": "These are customer-supplied testimonials in a product launch post, not benchmarks run under disclosed, controlled conditions. They illustrate possible outcomes, not guaranteed or independently verified results."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "ee7a8bf1-3309-4bd5-83cc-4823d76a8624",
-          "title": "Welcome to Gemini at Work 2026: Introducing the Gemini agent",
-          "url": "https://cloud.google.com/blog/products/ai-machine-learning/welcome-to-gemini-at-work-2026"
-        }
-      ],
-      "publishedDate": "2026-11-11T18:50:21Z",
-      "heroImageURL": null
-    },
-    {
-      "id": "7bb69a94-3b60-4a7c-9c9d-f905042ae6e8",
-      "title": "Speculative Decoding: Guessing Tokens to Go Faster",
-      "subtitle": "A cheap draft model guesses ahead; the expensive model just checks the guesses, exactly.",
-      "category": "LLMs",
-      "difficulty": "Intermediate",
-      "postKind": "concept",
-      "tags": [
-        "inference optimization",
-        "llm serving",
-        "decoding",
-        "latency",
-        "model architecture"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "hare.fill",
-      "summary": "Autoregressive LLMs normally spend one full, expensive forward pass to produce a single token. Speculative decoding has a small draft model guess several tokens ahead, then lets the big model verify all of them in one pass — accepting the ones it agrees with and provably producing the exact same output distribution as if it had generated every token itself.",
-      "slides": [
-        {
-          "id": "cd9b0f8d-5431-4380-a78b-4c56fa597729",
-          "kind": "cover",
-          "title": "One Token Per Expensive Pass Is Wasteful",
-          "body": "Every token an LLM generates normally costs one full forward pass through every layer of the network — even though, at typical serving batch sizes, most of the GPU's compute sits idle waiting on memory.",
-          "bullets": [
-            "Autoregressive generation: 1 forward pass → 1 token, every time",
-            "Speculative decoding verifies several guessed tokens in that same one pass",
-            "The trick: guessing is cheap, verifying several guesses at once is almost as cheap as verifying one"
-          ],
-          "symbol": "hare.fill",
-          "table": null
-        },
-        {
-          "id": "70e54533-bc72-404c-aeee-9a1aa397f718",
-          "kind": "problem",
-          "title": "Why Decoding Is Memory-Bound, Not Compute-Bound",
-          "body": "Generating text one token at a time means the GPU reloads and streams through every weight in the model just to compute a single next-token distribution.",
-          "bullets": [
-            "At small batch sizes, that forward pass is bottlenecked on memory bandwidth — moving weights from GPU memory to compute units — not on raw FLOPs",
-            "Most of the chip's arithmetic capacity sits unused during a batch-of-1 decode step",
-            "That's the gap speculative decoding exploits: if the pass is underutilized anyway, score multiple candidate tokens in it for nearly the same cost as scoring one"
-          ],
-          "symbol": "memorychip.fill",
-          "table": null
-        },
-        {
-          "id": "758d52d2-3b19-4b86-91c7-8869302c5150",
-          "kind": "solution",
-          "title": "How It Actually Works",
-          "body": "A small, fast \"draft\" model generates a handful of candidate tokens on its own, cheaply and sequentially. The big \"target\" model then scores all of them in a single forward pass.",
-          "bullets": [
-            "Draft model proposes K tokens ahead (commonly 4–8) using its own fast autoregressive generation",
-            "Target model runs one pass over the draft sequence, producing its own probability for each position — this is scoring, not generating, so it parallelizes across positions",
-            "Rejection sampling walks the K tokens left to right: accept each one the target model would plausibly have chosen too; at the first mismatch, reject it and resample that position directly from the target's own distribution",
-            "This rejection-sampling step is what makes the output provably identical in distribution to plain token-by-token decoding — it's an exact method, not a lossy shortcut"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        },
-        {
-          "id": "270e3e1f-23d2-4640-8e2e-404a0ecbfe4d",
-          "kind": "example",
-          "title": "Worked Example: Accept Four, Reject One",
-          "body": "Draft model proposes: \"The capital of France is Paris and\" (5 tokens). The target model verifies all 5 in one pass.",
-          "bullets": [
-            "Target agrees with the first 4 tokens — they match what it would have sampled",
-            "Target disagrees on token 5 (the draft guessed differently than the target's own distribution would have)",
-            "Result: accept the first 4 tokens for free, discard token 5, and resample that position directly from the target model — net gain of 4 extra tokens for the price of 1 target pass plus cheap draft generation",
-            "If the draft and target disagreed immediately on token 1, the speedup for that step would be zero — you still always get at least 1 correct token"
-          ],
-          "symbol": "text.cursor",
-          "table": null
-        },
-        {
-          "id": "194cd550-2322-442d-95c2-41e962f71c86",
-          "kind": "comparison",
-          "title": "Vanilla vs. Speculative vs. Other Sampling Tricks",
-          "bullets": [],
-          "symbol": "chart.bar.fill",
-          "table": {
-            "headers": [
-              "Approach",
-              "Tokens scored per expensive pass",
-              "Output distribution"
-            ],
-            "rows": [
-              [
-                "Vanilla autoregressive decoding",
-                "1",
-                "Exact target distribution"
-              ],
-              [
-                "Speculative decoding",
-                "K draft tokens (typically 4–8)",
-                "Exact target distribution (via rejection sampling)"
-              ],
-              [
-                "Beam search / nucleus sampling tricks",
-                "1, still sequential",
-                "A different distribution — these change what gets picked, not how fast each pick happens"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "14b5978c-d8a6-4c4c-994c-9b3d881ce307",
-          "kind": "problem",
-          "title": "When It Doesn't Help — or Actively Hurts",
-          "body": "Speculative decoding's payoff is entirely a function of how often the draft and target models agree.",
-          "bullets": [
-            "Too weak a draft model → low acceptance rate → you're paying for draft generation that mostly gets thrown away",
-            "Too slow or large a draft model → its own overhead eats into the savings from skipping target passes",
-            "Highly predictable text (boilerplate, code completion) sees high acceptance and big wins; novel, creative, or highly uncertain generation sees low acceptance and small wins",
-            "It reduces wall-clock latency and the number of sequential passes — it does NOT reduce total FLOPs, since the target model still scores every position it's shown",
-            "Adds serving complexity: two models to deploy, keep in sync, and often share a compatible tokenizer"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "cd7fd859-c84d-46a9-8866-3e9f3bc514fe",
-          "kind": "takeaways",
-          "title": "The Core Trade",
-          "bullets": [
-            "Speculative decoding swaps some cheap draft-model guessing for fewer expensive sequential passes through the big model",
-            "It's mathematically exact, not approximate — rejection sampling guarantees the same output distribution as plain decoding",
-            "Gains depend entirely on draft/target agreement (\"acceptance rate\") — there's no guaranteed speedup, only an expected one",
-            "It composes with other serving optimizations like continuous batching and KV caching, which is why most production LLM-serving stacks ship it as a standard option rather than a novelty"
-          ],
-          "symbol": "lightbulb.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "f057953a-9cec-4149-b66e-085bea49e04a",
-            "prompt": "Why is plain, one-token-at-a-time LLM decoding typically bottlenecked on memory bandwidth rather than raw compute?",
-            "options": [
-              "GPUs cannot do floating point math fast enough for language models",
-              "At small batch sizes, each forward pass spends most of its time moving weights from memory rather than using available compute",
-              "Tokenizers are the slowest part of the pipeline",
-              "LLMs always run on CPUs, which lack parallelism"
-            ],
-            "correctIndex": 1,
-            "explanation": "At low batch sizes, a decode step is dominated by streaming model weights from memory, leaving most of the chip's arithmetic capacity idle. That underutilized capacity is exactly what speculative decoding puts to work by scoring multiple candidate tokens in the same pass."
-          },
-          {
-            "id": "c3ec6fc6-7c97-4585-aa30-336e15a0d255",
-            "prompt": "What guarantees that speculative decoding produces the exact same output distribution as plain autoregressive decoding?",
-            "options": [
-              "The draft model is always more accurate than the target model",
-              "Rejection sampling: tokens matching the target's own distribution are accepted, and the first mismatch is resampled directly from the target model",
-              "The two models are trained to produce identical outputs",
-              "Averaging the draft and target model's probabilities together"
-            ],
-            "correctIndex": 1,
-            "explanation": "The rejection-sampling step is the key correctness guarantee: every accepted token is one the target model itself would plausibly produce, and any mismatch is immediately corrected by sampling from the target's own distribution — so the method is exact, not an approximation."
-          },
-          {
-            "id": "91fdf18f-3a1c-47be-b4b0-13669a9f0230",
-            "prompt": "When does speculative decoding give the smallest speedup?",
-            "options": [
-              "When generating highly predictable, repetitive text like boilerplate code",
-              "When the draft and target models frequently disagree, such as on novel or highly creative text",
-              "When the draft model is extremely fast",
-              "When batch size is very large"
-            ],
-            "correctIndex": 1,
-            "explanation": "The speedup comes from the target model accepting the draft's guesses. When draft and target frequently disagree — common on novel or highly uncertain generation — fewer tokens get accepted per round, shrinking the benefit."
-          }
-        ]
-      },
-      "references": [],
       "publishedDate": "2026-11-11T18:50:21Z",
       "heroImageURL": null
     }
