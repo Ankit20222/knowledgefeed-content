@@ -1,6 +1,198 @@
 {
   "posts": [
     {
+      "title": "FlashAttention: The Kernel That Stopped Writing the Matrix",
+      "subtitle": "Attention was never short on math — it was drowning in memory traffic. One fused kernel fixed that without changing a single number in the output.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "flash-attention",
+        "gpu-optimization",
+        "transformers",
+        "attention",
+        "llm-training",
+        "inference"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "bolt.horizontal.circle.fill",
+      "summary": "FlashAttention restructures self-attention into a single fused GPU kernel that never materializes the full N×N score matrix in slow memory, cutting memory use from O(N²) to O(N) while producing the exact same output. It's the reason today's long-context models are computationally feasible, and it solves a different problem than PagedAttention — compute, not cache storage.",
+      "slides": [
+        {
+          "id": "18a694a8-88ae-485d-9d93-5a269c095b3d",
+          "kind": "cover",
+          "title": "The Matmul Wasn't the Bottleneck — Memory Traffic Was",
+          "body": null,
+          "bullets": [
+            "FlashAttention (Tri Dao et al., Stanford, 2022) rewrote self-attention as one fused GPU kernel instead of a chain of separate ops",
+            "It computes the exact same output as standard softmax attention — zero approximation, pure systems optimization",
+            "Now the default attention kernel behind PyTorch's scaled_dot_product_attention, vLLM, SGLang, and Hugging Face Transformers"
+          ],
+          "symbol": "bolt.horizontal.circle.fill",
+          "table": null
+        },
+        {
+          "id": "600da6c6-1957-49c1-86ce-e90f5c91df89",
+          "kind": "problem",
+          "title": "Standard Attention Is Bottlenecked by HBM, Not FLOPs",
+          "body": "A GPU has two memory tiers with wildly different speeds: a small on-chip SRAM cache and a much larger, much slower HBM (the 'VRAM' everyone quotes in GB). Naive attention spends most of its time moving data between the two, not multiplying matrices.",
+          "bullets": [
+            "Self-attention needs O(N²) compute and memory for N tokens — double the sequence length, and the work quadruples",
+            "A naive implementation writes the full N×N score matrix (QKᵗ) to HBM, reads it back for softmax, writes the result, then reads it again for the weighted sum with V",
+            "On-chip SRAM moves data an order of magnitude faster than HBM but holds only tens of megabytes, versus tens of gigabytes in HBM",
+            "The GPU's math units end up idle, waiting on memory transfers — attention is 'memory-bound,' not 'compute-bound'"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "04f213ba-a37e-4464-80b6-3759da4f1749",
+          "kind": "solution",
+          "title": "Tiling Plus Online Softmax: Never Write the Full Matrix",
+          "body": "FlashAttention fuses the whole computation into one kernel that keeps small blocks of Q, K, and V in fast on-chip memory and never lets the full N×N matrix touch HBM.",
+          "bullets": [
+            "Splits Q, K, V into blocks small enough to fit in on-chip SRAM, and loads each block from HBM exactly once",
+            "Computes attention block-by-block, using a running 'online softmax' — a running max and running sum — to combine partial results correctly without ever seeing a full row at once",
+            "During training's backward pass, it recomputes intermediate values on the fly instead of storing them, trading a little extra compute for far less memory traffic",
+            "Net effect: identical math, O(N) memory instead of O(N²), and dramatically fewer HBM round-trips"
+          ],
+          "symbol": "rectangle.3.group.fill",
+          "table": null
+        },
+        {
+          "id": "3e2ab194-bb50-4260-b568-cc50bfcb93b6",
+          "kind": "comparison",
+          "title": "Same Math, Different Memory Footprint",
+          "body": null,
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Approach",
+              "Memory for attention scores",
+              "Why it's fast or slow"
+            ],
+            "rows": [
+              [
+                "Standard attention (eager PyTorch)",
+                "O(N²) — full matrix materialized in HBM",
+                "Memory-bandwidth bound: dominated by repeated HBM reads/writes"
+              ],
+              [
+                "FlashAttention",
+                "O(N) — full matrix never materialized",
+                "Compute stays busy; exact output, fewer HBM round-trips"
+              ],
+              [
+                "FlashAttention-2",
+                "O(N), with better work partitioning across GPU streaming multiprocessors",
+                "Improves GPU occupancy over FlashAttention on the same hardware"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "68896efd-d1d1-44fc-9966-0297406ba212",
+          "kind": "example",
+          "title": "Why 32K-Token Context Used to Be a Memory Problem",
+          "body": "Take a single attention head processing a 32,768-token sequence.",
+          "bullets": [
+            "The score matrix is 32,768 × 32,768 ≈ 1.07 billion entries — at 2 bytes each (fp16), that's roughly 2.1GB if fully materialized, for one head, in one layer",
+            "A real model stacks dozens of heads across dozens of layers — naive attention would need many times the GPU's total memory just to hold intermediate score matrices",
+            "FlashAttention never forms that matrix: it processes it in small tiles (e.g. 128×128 blocks), so peak extra memory for scores stays in the kilobytes, not gigabytes",
+            "This is a direct, mechanical reason long-context models became computationally practical, not just theoretically possible"
+          ],
+          "symbol": "number.circle.fill",
+          "table": null
+        },
+        {
+          "id": "91e381b6-58b8-4da6-952d-7c346ab605bf",
+          "kind": "architecture",
+          "title": "Not the Same Thing as PagedAttention",
+          "body": "The two are easy to conflate because both target 'attention is expensive,' but they solve different problems at different moments.",
+          "bullets": [
+            "FlashAttention speeds up computing attention scores — the matrix math itself, during training or a single inference pass",
+            "PagedAttention solves a separate serving-time problem: how the already-computed KV cache is stored and shared in memory across many concurrent requests",
+            "They operate at different layers and compose cleanly: a kernel computes attention fast, a cache manager stores the results efficiently",
+            "Most modern inference engines (vLLM, SGLang) use a FlashAttention-style kernel for compute and a PagedAttention-style allocator for the cache, simultaneously"
+          ],
+          "symbol": "square.grid.3x3.fill",
+          "table": null
+        },
+        {
+          "id": "d35e6672-54eb-4621-8806-85930258f7fd",
+          "kind": "concept",
+          "title": "When It Doesn't Help — or Doesn't Apply",
+          "body": "FlashAttention is a systems optimization, not a modeling change, and that cuts both ways.",
+          "bullets": [
+            "It's exact, so it never improves model quality — don't reach for it expecting better outputs, only faster/cheaper ones",
+            "The benefit shrinks for short sequences, where the N×N matrix was already small enough that HBM traffic was never the real bottleneck",
+            "Needs a kernel path that matches the attention variant in use (causal masks, custom biases, sliding windows); unusual variants can fall back to a slower implementation until support is added",
+            "Gains are tied to a specific GPU's memory hierarchy (SRAM size, warp scheduling); they don't automatically carry over to a different accelerator without reimplementation"
+          ],
+          "symbol": "hand.raised.fill",
+          "table": null
+        },
+        {
+          "id": "59fb8345-1aec-44e4-8662-fb0b6622d8e9",
+          "kind": "takeaways",
+          "title": "What to Remember About FlashAttention",
+          "body": null,
+          "bullets": [
+            "FlashAttention fuses attention into one kernel that never writes the full N×N score matrix to slow GPU memory",
+            "It's exact math reorganized: tiling plus online softmax cuts memory from O(N²) to O(N) with identical output",
+            "This is a core, mechanical reason today's tens-of-thousands-of-tokens context windows are computationally affordable",
+            "It optimizes computing attention; PagedAttention optimizes storing the KV cache — production stacks lean on both at once"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "7b927595-5ca7-42d9-8bc6-2faca472a880",
+            "prompt": "What makes standard attention 'memory-bound' rather than 'compute-bound' on a GPU?",
+            "options": [
+              "The softmax function requires more FLOPs than the matrix multiplications",
+              "Repeatedly writing and reading the full N×N score matrix between fast on-chip memory and slow HBM dominates wall-clock time",
+              "GPUs cannot execute matrix multiplications in parallel",
+              "Attention requires double-precision floating point"
+            ],
+            "correctIndex": 1,
+            "explanation": "Materializing the full attention matrix forces repeated round-trips to slow HBM, so the GPU's math units sit idle waiting on memory transfers instead of being saturated with computation."
+          },
+          {
+            "id": "4eb821af-c4eb-44b2-ba9e-4ded90a27837",
+            "prompt": "What technique lets FlashAttention compute softmax correctly while only ever looking at small blocks of the attention matrix at a time?",
+            "options": [
+              "Approximating softmax with a linear function",
+              "Online softmax, which keeps a running max and running sum while processing blocks sequentially",
+              "Precomputing softmax offline before training starts",
+              "Skipping softmax for sequences longer than 1,024 tokens"
+            ],
+            "correctIndex": 1,
+            "explanation": "Online softmax rescales partial running sums as each new block arrives, so the exact softmax is reconstructed incrementally — no need to ever hold a full row of the matrix in memory."
+          },
+          {
+            "id": "c9c4bcb0-2505-421b-9033-3d0f1a17a68a",
+            "prompt": "FlashAttention and PagedAttention are often confused. What's the actual difference between them?",
+            "options": [
+              "They are the same algorithm marketed under two different names",
+              "FlashAttention speeds up computing attention scores; PagedAttention manages how the KV cache is stored and shared during serving",
+              "FlashAttention only runs on CPUs, while PagedAttention only runs on GPUs",
+              "PagedAttention made FlashAttention obsolete in modern inference engines"
+            ],
+            "correctIndex": 1,
+            "explanation": "They solve different problems at different layers — one is a compute-kernel optimization for the attention math itself, the other is a memory-management scheme for the serving-time KV cache — and production engines typically use both together."
+          }
+        ]
+      },
+      "references": [],
+      "id": "9a5faa8d-adc9-4f9d-b50a-74300c820930",
+      "publishedDate": "2026-11-23T18:46:38Z"
+    },
+    {
       "id": "75c81ed6-94b3-4840-9f46-92ee6b1dbefe",
       "title": "Claude Meetings: An AI Teammate Joins Your Video Calls",
       "subtitle": "Beta on Google Meet lets Claude take notes, build docs, and answer questions live — without recording audio.",
@@ -11056,184 +11248,6 @@
       "references": [],
       "id": "02d8c2ab-fca5-4d3b-be09-68ddb50c5e29",
       "publishedDate": "2026-11-16T19:02:25Z"
-    },
-    {
-      "title": "WikiTrace: Why Agent Memory Can Backfire",
-      "subtitle": "A stored 'lesson' that sounds right can make an agent fail a task it would've nailed with no memory at all.",
-      "category": "AI Innovations",
-      "difficulty": "Advanced",
-      "postKind": "paper",
-      "tags": [
-        "agent memory",
-        "llm agents",
-        "memory degradation",
-        "evidence-linked memory",
-        "benchmarks"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "link.circle.fill",
-      "summary": "KAIST and DeepAuto.ai's WikiTrace links every memory 'insight' an agent stores to the raw trajectory it came from, so the agent can check a shaky lesson instead of blindly trusting it. Across five agentic benchmark suites, this cut the rate at which memory makes agents worse (vs. no memory at all) to the lowest of any method tested.",
-      "slides": [
-        {
-          "id": "40c6c857-aa55-4366-8d16-bb592598f659",
-          "kind": "cover",
-          "title": "Memory Was Supposed to Help. Sometimes It Doesn't.",
-          "body": "KAIST and DeepAuto.ai show that giving an LLM agent memory of past attempts can make it fail tasks it would've handled fine with zero memory — unless each lesson is tied back to proof of where it came from.",
-          "bullets": [],
-          "symbol": "link.circle.fill",
-          "table": null
-        },
-        {
-          "id": "b4735b65-f061-451a-99f6-5b203743c682",
-          "kind": "problem",
-          "title": "A 'Lesson' Is Just a Compressed Guess",
-          "body": "Agents that learn from past runs usually store short text 'insights' — distilled lessons like 'check inventory before restocking.' Compression drops context: an insight can be vague, drawn from a run that actually failed, or flatly contradict another stored insight.",
-          "bullets": [
-            "Each insight is a summary of one past trajectory — the supporting detail is gone",
-            "A vague or wrong insight looks identical to a good one at a glance",
-            "The paper's core finding: this causes 'memory-induced degradation' — worse performance WITH memory than with none"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "4e13fe6d-7256-4df1-a417-98441779b07b",
-          "kind": "solution",
-          "title": "WikiTrace Links Every Lesson to Its Receipt",
-          "body": "Instead of handing the agent bare insights, WikiTrace keeps each one wired to the raw trajectory and outcome it was distilled from. The agent gets all insights upfront — but when one looks thin, comes from a failed run, or conflicts with another, it can open the original run with terminal tools before trusting it.",
-          "bullets": [
-            "Insights ship with provenance: which run produced them, and what happened",
-            "The agent — not a fixed rule — decides when a lesson needs checking",
-            "Verification happens in a sandboxed, network-isolated environment"
-          ],
-          "symbol": "magnifyingglass",
-          "table": null
-        },
-        {
-          "id": "e3322299-5575-4eda-b0e8-63af0f14c69a",
-          "kind": "comparison",
-          "title": "Evidence-Linking Beats Just Dumping Insights In Context",
-          "body": "The paper compares no memory at all, 'Knowledge Injection' (every insight plus the 3 most similar past runs stuffed into the prompt, with no way to verify them), and WikiTrace.",
-          "bullets": [
-            "Gain = tasks memory fixes that no-memory failed. Regression = tasks memory breaks that no-memory solved."
-          ],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Method",
-              "What the agent sees",
-              "Result vs. no-memory baseline"
-            ],
-            "rows": [
-              [
-                "No Memory",
-                "Nothing from past runs",
-                "Reference baseline"
-              ],
-              [
-                "Knowledge Injection",
-                "All insights + 3 similar runs, unverifiable",
-                "Helps some tasks, regresses others"
-              ],
-              [
-                "WikiTrace",
-                "All insights, each traceable to its source run on demand",
-                "Beat best prior memory method by 8.5 pts avg; lowest regression (4.5%)"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "33f934ea-6c77-4916-afbd-259bb92101a2",
-          "kind": "example",
-          "title": "Illustrating the Failure Mode",
-          "body": "Picture an agent that learned 'skip the confirmation step for small transfers' from a run where that happened not to cause trouble. Fed that insight directly, a new run applies it to a task where confirmation actually mattered — and fails something it would've passed with zero memory. This is exactly the kind of case WikiTrace's trajectory-checking is built to catch before the agent acts on it.",
-          "bullets": [],
-          "symbol": "arrow.uturn.backward",
-          "table": null
-        },
-        {
-          "id": "4135d476-86ce-4181-b24b-53c54e7b23b9",
-          "kind": "concept",
-          "title": "The Catch: Verification Isn't Free",
-          "body": "WikiTrace's gains come from letting the agent spend extra steps opening trajectories — more tool calls and tokens per decision than just trusting a cached insight. The published results don't include a cost/latency comparison against the simpler baselines.",
-          "bullets": [
-            "Only as good as the trajectories it links to — a bad run in, a bad receipt out",
-            "The agent decides when to verify; an overconfident model can skip checks it needed",
-            "Tested on agentic tasks (ALFWorld, ScienceWorld, PlanCraft, τ³-bench Retail, AppWorld) — gains may not transfer to plain conversational memory"
-          ],
-          "symbol": "scalemass",
-          "table": null
-        },
-        {
-          "id": "2f2bc9d4-a9ab-4318-8c6e-9f817890ee2c",
-          "kind": "takeaways",
-          "title": "Don't Just Trust Your Memory",
-          "body": null,
-          "bullets": [
-            "Compressed 'lessons' from past runs can measurably hurt an agent, not just fail to help",
-            "Tying every insight to its source trajectory lets the agent self-correct bad lessons instead of blindly applying them",
-            "WikiTrace beat the best prior memory method by 8.5 points on average and had the lowest regression rate (4.5%) across 5 benchmark suites",
-            "If you're building agent memory, measure Regression (what memory breaks) — not just Gain (what it fixes)"
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "62cf52d2-d1ed-4e8b-8ed8-e8e6f1fc2798",
-            "prompt": "What is 'memory-induced degradation' in this paper?",
-            "options": [
-              "When an agent's memory file becomes corrupted over time",
-              "When access to past-run insights causes the agent to fail tasks it would've solved with no memory at all",
-              "When the agent forgets old lessons after too many updates",
-              "When memory retrieval becomes too slow to be useful"
-            ],
-            "correctIndex": 1,
-            "explanation": "The paper's central finding is behavioral: insights that look reasonable can be vague, wrong, or contradictory, and an agent that trusts them blindly can perform worse than one with no memory at all on some tasks."
-          },
-          {
-            "id": "841c0957-472c-48c2-bf4a-7036209db8e7",
-            "prompt": "What does WikiTrace link each stored insight to?",
-            "options": [
-              "A vector embedding of the insight text",
-              "The raw trajectory and outcome of the run the insight was distilled from",
-              "A human reviewer's approval",
-              "A separate LLM that rewrites the wording"
-            ],
-            "correctIndex": 1,
-            "explanation": "WikiTrace's distinguishing idea is provenance: every insight stays wired to the actual run it came from, so the agent can go verify it rather than just trusting the compressed text."
-          },
-          {
-            "id": "4c505fde-4858-441f-bae9-312e711f5242",
-            "prompt": "In WikiTrace's evaluation, what does 'Regression' measure?",
-            "options": [
-              "How much slower the agent runs with memory enabled",
-              "The percentage of tasks where API costs increased",
-              "The share of tasks the no-memory agent solved but the memory-equipped agent failed",
-              "How many insights were discarded as outdated"
-            ],
-            "correctIndex": 2,
-            "explanation": "Regression captures memory's downside: tasks the agent could already do without memory but now fails because of a bad or misapplied lesson. WikiTrace had the lowest Regression (4.5%) of the methods compared."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "7b4c14e1-3120-489f-8886-06ad5d9c5a29",
-          "title": "Don't Just Trust Your Memory: Evidence-Linked Memory Reduces Memory-Induced Degradation in LLM Agents (arXiv:2611.14320)",
-          "url": "https://arxiv.org/abs/2611.14320"
-        },
-        {
-          "id": "78a96084-9a2c-4653-8f29-8d6072f41598",
-          "title": "WikiTrace code repository",
-          "url": "https://github.com/yukyeongleee/wikitrace"
-        }
-      ],
-      "id": "6fd0b0ef-bded-46fb-acb9-2227307ae8a5",
-      "publishedDate": "2026-11-16T12:50:51Z"
     }
   ]
 }
