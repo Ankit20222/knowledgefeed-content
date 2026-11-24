@@ -1,6 +1,205 @@
 {
   "posts": [
     {
+      "id": "71edb573-cfba-494c-bfdf-4fc3334299ad",
+      "title": "Mamba: The State Space Model Trying to Replace Attention",
+      "subtitle": "Constant-size memory, linear-time generation, and the trick that makes a recurrence fast",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "mamba",
+        "state-space-models",
+        "attention",
+        "llm-architecture",
+        "inference",
+        "long-context"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "waveform.path.ecg",
+      "summary": "Mamba swaps self-attention for a selective state space model: a fixed-size hidden state updated by a recurrence whose own parameters depend on the current input. That buys constant memory and per-token cost regardless of context length, at the price of weaker exact long-range recall — which is why production systems increasingly mix SSM layers with a few attention layers rather than choosing one or the other.",
+      "publishedDate": "2026-11-24T00:46:12Z",
+      "slides": [
+        {
+          "id": "d5f18c8a-598f-4660-a026-a6a278d9a8f3",
+          "kind": "cover",
+          "title": "Attention Has a Quadratic Problem",
+          "body": null,
+          "bullets": [
+            "Self-attention costs O(n²) time and its KV cache grows O(n) in memory as context length n increases",
+            "Mamba replaces attention with a state space model (SSM): a recurrence that runs in constant time and constant memory per generated token",
+            "The original paper reported roughly 5x higher inference throughput than same-size Transformers, with language-modeling quality matching or beating them up to the 3B scale"
+          ],
+          "symbol": "waveform.path.ecg",
+          "table": null
+        },
+        {
+          "id": "cae16286-6d2a-4626-ba9e-823a63eace53",
+          "kind": "problem",
+          "title": "Why Transformers Get Expensive at Long Context",
+          "body": null,
+          "bullets": [
+            "Self-attention compares every token to every other token: doubling context length roughly quadruples attention compute",
+            "The KV cache — keys and values stored per layer, per past token — grows linearly with context, so a long chat or document can eat gigabytes of GPU memory just to hold history",
+            "Classic RNNs fixed the memory-growth problem with a fixed-size hidden state, but their plain, input-independent recurrence made them hard to parallelize and weaker at long-range recall"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "d7fe886a-bcb6-457a-83bb-bd16c55dd436",
+          "kind": "solution",
+          "title": "Mamba's Fix: a Selective, Hardware-Aware State Space Model",
+          "body": null,
+          "bullets": [
+            "An SSM compresses the whole sequence history into one fixed-size hidden state, updated by a linear recurrence — no cache that grows with context",
+            "Mamba's key idea is 'selection': the recurrence's own parameters are computed from the current input, so the model decides, token by token, what to keep and what to overwrite — plain SSMs used fixed, input-independent parameters for every token",
+            "A naive step-by-step recurrence can't use a GPU efficiently, so Mamba runs it as a hardware-aware parallel scan during training instead of looping one token at a time"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "e191a78e-9eb3-47c1-99f8-dbabc41c791a",
+          "kind": "concept",
+          "title": "What 'Selective' Actually Means",
+          "body": null,
+          "bullets": [
+            "In a non-selective SSM, the same decay rate applies to every token — the model can't choose to 'hold onto' something important like a name or a number",
+            "Mamba makes the update step size a function of the current input: a token that looks important produces a larger step, letting it overwrite more of the old state; a filler token produces a tiny step, so the state barely changes",
+            "That's conceptually close to LSTM/GRU gating, but expressed in a form that still admits a fast parallel scan instead of a strictly sequential loop"
+          ],
+          "symbol": "function",
+          "table": null
+        },
+        {
+          "id": "d73574be-fdb7-43be-a1c2-47b59632b13a",
+          "kind": "comparison",
+          "title": "Transformer vs. Mamba, Token by Token",
+          "body": "Figures are from the original Mamba paper (Gu & Dao, 2023); real-world speedups vary with hardware, batch size, and sequence length.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Property",
+              "Transformer (attention)",
+              "Mamba (SSM)"
+            ],
+            "rows": [
+              [
+                "Generation memory",
+                "Grows with context (KV cache)",
+                "Fixed-size hidden state"
+              ],
+              [
+                "Compute per generated token",
+                "Scales with cached context length",
+                "Constant, independent of context"
+              ],
+              [
+                "Training-time parallelism",
+                "Fully parallel across the sequence",
+                "Parallel via hardware-aware scan"
+              ],
+              [
+                "Reported inference throughput",
+                "1x baseline",
+                "~5x higher at matched size"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "ff3123c2-73c2-4a5c-a39b-26a4107aa7a4",
+          "kind": "example",
+          "title": "Serving a 100K-Token Document Chat",
+          "body": null,
+          "bullets": [
+            "A support bot reading a 100K-token manual: a Transformer must keep that entire history as cached keys/values in GPU memory, and every new reply re-attends across all of it",
+            "A pure SSM keeps one fixed-size state vector no matter how long the manual gets — memory footprint and per-token latency stay flat as the conversation grows",
+            "That flatness is exactly why SSMs are attractive for very long-context, streaming, or on-device serving, where KV-cache memory is the bottleneck rather than raw model quality"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "9c4bcb56-615d-4d91-be8e-216705a7760b",
+          "kind": "problem",
+          "title": "When NOT to Reach for a Pure SSM",
+          "body": null,
+          "bullets": [
+            "A fixed-size state must compress the whole history, so tasks needing exact, verbatim recall of something far back — 'repeat the ID mentioned 50 pages ago' — can suffer; attention can always look directly at that token",
+            "This gap showed up repeatedly in follow-up research on long-context copying and retrieval tasks, and it's the main reason production systems rarely ship a pure SSM alone",
+            "The practical compromise used by hybrid models like Jamba and Zamba: mostly SSM layers for cheap long-range mixing, with a handful of attention layers kept for exact lookup",
+            "Tooling is also younger — fewer pretrained checkpoints, less mature kernels, and far less community debugging experience than Transformers"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "ffdf3490-8462-4ced-b582-690c56b1ea90",
+          "kind": "takeaways",
+          "title": "The Core Idea to Remember",
+          "body": null,
+          "bullets": [
+            "Attention is powerful but pays for it with O(n²) compute and a KV cache that grows with context",
+            "Mamba replaces attention with a selective state space recurrence: fixed-size state, input-dependent 'what to keep' gating, and a parallel scan to stay trainable at scale",
+            "Constant memory and per-token cost make SSMs attractive for long-context, latency-sensitive serving — but exact long-range recall is still attention's strength",
+            "Hybrid architectures (mostly SSM + a few attention layers) are today's practical answer, not a strict either/or"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "4068f6e6-4bca-469f-a722-72b223834ff6",
+            "prompt": "What happens to a Transformer's KV cache as conversation context grows?",
+            "options": [
+              "It stays a constant size regardless of context",
+              "It grows linearly with the number of cached tokens",
+              "It shrinks automatically via compression",
+              "It is only used during training, not generation"
+            ],
+            "correctIndex": 1,
+            "explanation": "Every attended-to token's key and value vectors are cached per layer, so cache size scales directly with context length — this is exactly the memory pressure that state space models are designed to avoid."
+          },
+          {
+            "id": "33554c00-9aa6-4717-b8e8-b53d225829ec",
+            "prompt": "What is the core idea behind Mamba's 'selection mechanism'?",
+            "options": [
+              "Randomly dropping tokens during training to save compute",
+              "Computing the SSM's recurrence parameters from the current input, so the model decides what to keep or forget per token",
+              "Replacing the recurrence with a lookup table of cached answers",
+              "Using a larger fixed hidden state than classic RNNs used"
+            ],
+            "correctIndex": 1,
+            "explanation": "Plain state space models used fixed, input-independent parameters for every step. Mamba's contribution is making those parameters depend on the input itself, giving the recurrence content-aware memory control similar in spirit to LSTM gating."
+          },
+          {
+            "id": "1d4d3b7b-602d-40ac-935f-f1081fb17d93",
+            "prompt": "Why do many long-context production systems combine SSM layers with a few attention layers instead of using a pure SSM?",
+            "options": [
+              "Pure SSMs are too slow to train on GPUs",
+              "Attention layers are needed for exact, verbatim long-range recall that a compressed fixed-size state can struggle to preserve",
+              "SSMs cannot be run during inference at all",
+              "Attention layers use strictly less memory than SSM layers"
+            ],
+            "correctIndex": 1,
+            "explanation": "A fixed-size state must compress the whole history, so tasks requiring precise recall of something said far back can suffer. Hybrid models like Jamba keep a handful of attention layers for exactly that kind of lookup while using cheap SSM layers everywhere else."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "61c83743-a10b-4288-9cc4-22d545d341eb",
+          "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao, 2023)",
+          "url": "https://arxiv.org/abs/2312.00752"
+        }
+      ]
+    },
+    {
       "title": "FlashAttention: The Kernel That Stopped Writing the Matrix",
       "subtitle": "Attention was never short on math — it was drowning in memory traffic. One fused kernel fixed that without changing a single number in the output.",
       "category": "LLMs",
@@ -11065,188 +11264,6 @@
         }
       ],
       "id": "a1c415fc-a55f-449e-8e54-79094d51be61",
-      "publishedDate": "2026-11-16T19:02:25Z"
-    },
-    {
-      "title": "Continuous Batching: Why LLM Servers Don't Wait to Fill Up",
-      "subtitle": "One slow request used to stall a whole batch of fast ones — here's the scheduling trick that keeps every GPU slot busy instead.",
-      "category": "LLMs",
-      "difficulty": "Advanced",
-      "postKind": "concept",
-      "tags": [
-        "llm serving",
-        "continuous batching",
-        "inference optimization",
-        "gpu utilization",
-        "scheduling"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "rectangle.3.offgrid.fill",
-      "summary": "Static batching locks a group of LLM requests together until the slowest one finishes, wasting GPU slots on requests that are already done. Continuous batching re-decides the batch at every single decoding step, filling a freed slot with a new request immediately — the core trick behind modern serving engines like vLLM and SGLang.",
-      "slides": [
-        {
-          "id": "99594f1c-4f04-4504-a632-b03f638c296f",
-          "kind": "cover",
-          "title": "The Trick Every Modern LLM Server Relies On",
-          "body": null,
-          "bullets": [
-            "Request-level ('static') batching groups requests together and waits for the entire batch to finish before starting a new one.",
-            "LLM output lengths vary wildly — a short answer might take 10 tokens, a long one 2,000 — so static batching leaves GPU slots idle for however long the slowest request in the batch keeps running."
-          ],
-          "symbol": "rectangle.3.offgrid.fill",
-          "table": null
-        },
-        {
-          "id": "d3797f22-fbe3-41cd-b749-88b5c11076fd",
-          "kind": "problem",
-          "title": "One Slow Request Holds the Whole Batch Hostage",
-          "body": "In static batching, the GPU processes a fixed group of requests together, one decoding step at a time, and the batch's slots aren't released for new work until every request in it has finished generating.",
-          "bullets": [
-            "A finished request's GPU slot can't be reused until the whole batch completes — it just sits idle.",
-            "The longer the gap between the shortest and longest output in a batch, the more GPU capacity gets wasted on nothing."
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null
-        },
-        {
-          "id": "d71abac2-303e-486d-b29c-c74e97cf2c46",
-          "kind": "solution",
-          "title": "Decide the Batch Again at Every Single Step",
-          "body": "Continuous batching (also called in-flight batching) breaks the batch-is-fixed assumption: a scheduler re-decides which requests occupy the batch at every decoding step, not just at batch boundaries. The moment one sequence finishes, its slot is immediately handed to a new waiting request on the very next step.",
-          "bullets": [
-            "The GPU batch stays 'full' of active work continuously, instead of shrinking as requests finish and only refilling once everything wraps up.",
-            "This is the scheduling approach behind modern serving engines like vLLM and SGLang — it's largely why they can serve high-concurrency chat traffic efficiently at all."
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null
-        },
-        {
-          "id": "92c4d42a-a2de-4e4d-bc5d-0af573d9ff8f",
-          "kind": "architecture",
-          "title": "Why It Needs Flexible, Paged Memory",
-          "body": "Continuous batching only works smoothly if memory can keep up with constant churn: sequences enter and exit the batch at different times and run to different lengths, so you can't pre-reserve one fixed memory block per sequence for a whole batch's lifetime the way static batching can.",
-          "bullets": [
-            "This is why continuous batching is almost always paired with paged KV-cache memory management — allocating and freeing memory in small, flexible chunks as sequences come and go.",
-            "Without that pairing, a scheduler that wants to swap requests in and out every step has nowhere efficient to put their changing memory footprints."
-          ],
-          "symbol": "square.grid.3x3.fill",
-          "table": null
-        },
-        {
-          "id": "786add2b-a60f-40ad-b692-cb25b2a29cb7",
-          "kind": "example",
-          "title": "Four Chats, One Very Different Outcome",
-          "body": "Picture four concurrent requests: three are short questions like 'what's 2+2' that finish in about 5 tokens, and one asks for a 2,000-word essay. Under static batching, all four requests share one batch — so the three finished slots sit idle for the entire time it takes the essay to finish generating, before any new request can be admitted. Under continuous batching, the instant each short request finishes, a new waiting request gets admitted into that freed slot on the very next decoding step — no idle time, no waiting for the essay.",
-          "bullets": [],
-          "symbol": "person.3.fill",
-          "table": null
-        },
-        {
-          "id": "a3c5a205-b886-4364-9cf2-2e0a2b6f198c",
-          "kind": "comparison",
-          "title": "Static Batching vs. Continuous Batching",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "",
-              "Static batching",
-              "Continuous batching"
-            ],
-            "rows": [
-              [
-                "Batch composition decided",
-                "Once, at batch start",
-                "Every decoding step"
-              ],
-              [
-                "Finished request's slot",
-                "Idle until whole batch ends",
-                "Reused on the very next step"
-              ],
-              [
-                "Memory allocation",
-                "Fixed block per sequence",
-                "Flexible, typically paged"
-              ],
-              [
-                "Best fit",
-                "Uniform, predictable output lengths",
-                "Mixed, unpredictable output lengths at high concurrency"
-              ]
-            ]
-          }
-        },
-        {
-          "id": "29b879ae-4e0a-4490-bc93-2a19205ed017",
-          "kind": "concept",
-          "title": "When the Extra Complexity Isn't Worth It",
-          "body": "Continuous batching isn't free — re-deciding batch composition every step means more scheduling overhead per step, and churn-friendly memory management is more complex to implement than one fixed allocation per batch.",
-          "bullets": [
-            "For workloads with uniform, predictable output lengths — say, a fixed-length classification or scoring job — static batching can already keep the GPU nearly as busy, without the added scheduling complexity.",
-            "The bigger the spread between your shortest and longest typical outputs, and the higher your concurrent request volume, the more continuous batching's throughput gain is worth the added complexity."
-          ],
-          "symbol": "xmark.octagon.fill",
-          "table": null
-        },
-        {
-          "id": "3f4490f4-e484-4068-9b81-27cfc6b188c2",
-          "kind": "takeaways",
-          "title": "The Core Idea, Compressed",
-          "body": null,
-          "bullets": [
-            "Static batching wastes GPU capacity because it locks a batch's slots until its single slowest request finishes.",
-            "Continuous batching re-decides the batch at every decoding step, so a freed slot gets reused immediately instead of sitting idle.",
-            "It depends on flexible, paged memory management to handle sequences constantly entering and exiting the batch at different lengths.",
-            "It's the default assumption in modern LLM serving engines — but for uniform, predictable-length workloads, simpler static batching can still be the right call."
-          ],
-          "symbol": "checkmark.seal.fill",
-          "table": null
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "39a26c9a-2550-478c-9d34-54c558167f7d",
-            "prompt": "In static (request-level) batching, what determines when a batch's GPU slots become available for new requests?",
-            "options": [
-              "The first request to finish",
-              "The average output length across the batch",
-              "The single longest-running request in the batch — all slots stay locked until it finishes",
-              "A fixed timer, regardless of request status"
-            ],
-            "correctIndex": 2,
-            "explanation": "Static batching holds a group of requests together as one unit. Even if some finish early, their slots can't be reused until every request in that batch has completed — the slowest request sets the pace for everyone."
-          },
-          {
-            "id": "e7834590-cd6b-47d1-a926-53b391730afd",
-            "prompt": "What does continuous batching change compared to static batching?",
-            "options": [
-              "It runs requests sequentially instead of in parallel",
-              "It re-decides which requests occupy the batch at every decoding step, filling freed slots immediately",
-              "It requires all requests to have the same output length",
-              "It eliminates the need for a GPU scheduler"
-            ],
-            "correctIndex": 1,
-            "explanation": "Continuous batching reconsiders batch composition at every single decoding step rather than only at batch boundaries, so the instant one sequence finishes, a new request can be admitted into its slot on the very next step."
-          },
-          {
-            "id": "ac0afd7e-84d4-4361-a496-fe1ffa39f956",
-            "prompt": "Why is continuous batching typically paired with paged (flexible) KV-cache memory management rather than one fixed memory block per sequence?",
-            "options": [
-              "Paged memory is required by GPU vendors",
-              "Because sequences constantly enter and exit the batch at different lengths, so memory needs to be allocated and freed in flexible chunks, not reserved as one block for a whole batch's lifetime",
-              "It has nothing to do with memory management",
-              "Fixed memory blocks are actually faster, so this is a tradeoff against speed"
-            ],
-            "correctIndex": 1,
-            "explanation": "Since continuous batching swaps requests in and out of the batch constantly, a scheduler needs memory that can be allocated and freed in small, flexible chunks — which is exactly what paged KV-cache management provides."
-          }
-        ]
-      },
-      "references": [],
-      "id": "02d8c2ab-fca5-4d3b-be09-68ddb50c5e29",
       "publishedDate": "2026-11-16T19:02:25Z"
     }
   ]
