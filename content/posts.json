@@ -1,6 +1,184 @@
 {
   "posts": [
     {
+      "title": "Continuous Batching: How LLM Servers Stop Wasting GPUs",
+      "subtitle": "A finished request shouldn't have to wait for its slower batch-mates to leave.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "continuous-batching",
+        "llm-inference",
+        "throughput",
+        "gpu-utilization",
+        "model-serving"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "rectangle.stack.fill",
+      "summary": "Static, request-level batching locks in which requests share a GPU batch until every single one finishes — so a request that only needed 20 tokens still occupies a slot while a batch-mate grinds out 2,000. Continuous batching fixes this by re-deciding batch membership at every decode step, evicting finished sequences and admitting queued ones immediately, which keeps GPU utilization near peak instead of decaying as a batch's longest sequence runs alone.",
+      "slides": [
+        {
+          "id": "ec918244-9867-47a6-b526-8f9609ec52e8",
+          "kind": "cover",
+          "title": "Your GPU Is Idle Between Requests",
+          "body": "LLM servers process many users' requests together in a batch to use the GPU efficiently. But *how* a batch is managed over time — not just its size — decides whether that GPU stays busy or spends half its time waiting on stragglers.",
+          "bullets": [
+            "A batch formed once and run to completion wastes compute the moment any sequence inside it finishes early",
+            "Continuous batching reshapes the batch on every single forward pass instead of once per batch"
+          ],
+          "symbol": "rectangle.stack.fill",
+          "table": null
+        },
+        {
+          "id": "04b80628-b71b-490b-8fbd-7b3b03ca23e1",
+          "kind": "problem",
+          "title": "Static Batching Punishes the Fast Ones",
+          "body": "In request-level (static) batching, a batch's membership is fixed when it starts and the server waits for every sequence in it to finish before forming the next batch.",
+          "bullets": [
+            "A batch is locked in at creation: new requests queue behind the whole batch, even while the GPU has free capacity",
+            "If one sequence needs 2,000 output tokens and the rest need only 50, every short sequence's slot sits idle (or padded) for the remaining ~1,950 steps",
+            "Overall throughput is dragged down to the pace of the single longest sequence in each batch — classic head-of-line blocking"
+          ],
+          "symbol": "hourglass",
+          "table": null
+        },
+        {
+          "id": "9bb86c10-fc16-445a-9ef6-d05957013db1",
+          "kind": "solution",
+          "title": "Decide the Batch Every Single Step",
+          "body": "Continuous batching — also called iteration-level scheduling, a term from the Orca serving system — re-evaluates batch membership at every decode step rather than once per batch.",
+          "bullets": [
+            "At each iteration, the scheduler evicts any sequence that just emitted its end-of-sequence token and immediately admits a waiting request into that freed slot",
+            "Requests at completely different stages of generation (fresh prompt vs. token 1,500) can share the same step, since the batch is just 'whichever sequences are active right now'",
+            "This only works cleanly with a KV cache that can grow and shrink per-sequence without fragmenting — which is why continuous batching is almost always paired with a paged, non-contiguous KV-cache allocator (the idea behind vLLM's PagedAttention)"
+          ],
+          "symbol": "arrow.triangle.2.circlepath",
+          "table": null
+        },
+        {
+          "id": "28cd7f46-06b1-405d-aee5-1c0140d43a6f",
+          "kind": "example",
+          "title": "A Worked Timeline: Four Requests, One Changing Batch",
+          "body": "Request A needs 20 output tokens, Request B needs 200, and Requests C and D arrive mid-stream while A and B are already decoding.",
+          "bullets": [
+            "Step 1: the batch holds A and B; both decode one token each in the same forward pass",
+            "Step 20: A emits its end-of-sequence token and is evicted from the batch in that very iteration — not at some later batch boundary",
+            "Step 21: C, which had been sitting in the queue, is admitted into A's now-free slot; its prompt is processed (prefill) in the same step B continues decoding",
+            "The batch's active size stays near its target capacity the whole time, instead of shrinking to 1 (just B) and leaving the rest of the GPU's batch slots idle"
+          ],
+          "symbol": "clock.fill",
+          "table": null
+        },
+        {
+          "id": "e825340e-fb8c-4ede-9d08-2e32f055f4b0",
+          "kind": "comparison",
+          "title": "Static vs. Continuous, Slot by Slot",
+          "body": "The difference isn't batch size — it's how often the server is allowed to change who's in the batch.",
+          "bullets": [],
+          "symbol": "chart.bar.fill",
+          "table": {
+            "headers": [
+              "",
+              "Static (request-level) batching",
+              "Continuous (iteration-level) batching"
+            ],
+            "rows": [
+              [
+                "When a new request can join",
+                "Only at the next full batch boundary",
+                "Any decode step, as soon as a slot frees up"
+              ],
+              [
+                "GPU utilization near the batch's tail",
+                "Decays as finished sequences sit idle or padded",
+                "Stays close to peak — freed slots are refilled immediately"
+              ],
+              [
+                "KV-cache memory layout needed",
+                "A simple contiguous block per slot is enough",
+                "Needs a paged/non-contiguous allocator to resize safely"
+              ],
+              [
+                "Reported effect in the systems that introduced it",
+                "Baseline",
+                "Large measured throughput gains over batching-unaware serving in the original Orca and vLLM benchmarks"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "b6778a8c-40d3-4345-8ddf-03cde62b2395",
+          "kind": "concept",
+          "title": "Where Continuous Batching Can Bite You",
+          "body": "The technique trades one bottleneck for a few sharper-edged ones.",
+          "bullets": [
+            "Admitting a new request mid-stream means running its prefill (compute-heavy, processes the whole prompt at once) alongside ongoing decodes (memory-bandwidth-bound, one token each) — mixed naively, that prefill can stall every other sequence's latency for that step, which is why production servers add 'chunked prefill' to split big prompts into smaller pieces",
+            "A purely first-come-first-served admission policy can let a flood of long prompts starve short requests of GPU time, so real schedulers layer fairness or priority rules on top",
+            "It needs a KV-cache allocator built for per-sequence growth and eviction — bolting continuous batching onto a naive fixed contiguous buffer mostly hands the fragmentation problem right back to you",
+            "For single-request or very low-concurrency serving, there's no batch to reshape in the first place — the technique has nothing to optimize"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "d5573ef3-1aca-4847-8085-0174aa9cf6e2",
+          "kind": "takeaways",
+          "title": "Reshape the Batch, Not Just Its Size",
+          "body": "Continuous batching moves the unit of scheduling from 'once per batch' down to 'once per step', so compute freed by a finished request doesn't sit unused.",
+          "bullets": [
+            "Core idea: re-decide who's in the batch at every single forward pass, evicting finished sequences and admitting queued ones immediately",
+            "It depends on a flexible, per-sequence KV cache (usually paged) to admit and evict requests without fragmenting memory",
+            "It's a scheduling optimization that stacks with — not replaces — quantization, speculative decoding, and PagedAttention itself"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "b93f11ce-0f6e-4ec7-8062-b64d18363552",
+            "prompt": "What's the main limitation of static (request-level) batching that continuous batching fixes?",
+            "options": [
+              "It uses too much disk space for model weights",
+              "A finished sequence's slot sits unused until every other sequence in the batch also finishes, and new requests can't join until then",
+              "It can only run on CPUs, not GPUs",
+              "It requires retraining the model between batches"
+            ],
+            "correctIndex": 1,
+            "explanation": "Static batching locks in batch membership at creation, so a fast-finishing request's slot stays tied up until the whole batch completes — new work queues at the door the entire time."
+          },
+          {
+            "id": "85e434ba-003d-493c-8a14-10f07c20d06a",
+            "prompt": "What does 'iteration-level scheduling' mean in continuous batching?",
+            "options": [
+              "The model architecture is redesigned on every training iteration",
+              "The scheduler decides which requests are in the batch fresh at every single forward pass, admitting and evicting as needed",
+              "Requests are grouped into one batch per day to save compute",
+              "Each request is assigned its own dedicated GPU for the whole session"
+            ],
+            "correctIndex": 1,
+            "explanation": "Instead of fixing batch membership for a request's entire lifetime, the scheduler re-evaluates it every decode step, so a slot freed by a finished sequence can be reused on the very next step."
+          },
+          {
+            "id": "bade6d8b-fba2-483a-bbdf-2a64f51062fa",
+            "prompt": "Why is continuous batching usually paired with a paged (non-contiguous) KV cache?",
+            "options": [
+              "Paging makes the model's predictions more accurate",
+              "Admitting and evicting sequences on the fly requires growing and shrinking per-sequence memory without fragmenting a shared buffer",
+              "It's a mathematical requirement of the attention mechanism itself",
+              "It reduces the total number of parameters the model needs to store"
+            ],
+            "correctIndex": 1,
+            "explanation": "Constant sequence churn needs memory that can be allocated and freed in flexible, per-sequence chunks — a fixed contiguous buffer per batch slot fragments quickly under that churn, which is exactly what paged KV-cache allocation (as used in vLLM's PagedAttention) is built to avoid."
+          }
+        ]
+      },
+      "references": [],
+      "id": "4629c423-63b5-46ec-95c9-6e1b71b765a2",
+      "publishedDate": "2026-11-24T12:46:42Z"
+    },
+    {
       "title": "Vault Particles: Claude Solves a 40-Year Biology Mystery",
       "subtitle": "Claude Science ran sequence search, expression screening, and cryo-EM to reveal the first 3D structure of a prokaryotic vault particle.",
       "category": "AI Innovations",
@@ -11101,196 +11279,6 @@
         }
       ],
       "id": "b0c54fc8-c2f5-46d9-b202-774aa5b873f6"
-    },
-    {
-      "title": "Message Threads: Stop Resending the Whole Conversation",
-      "subtitle": "A new Messages API mode cuts first-token latency ~35% on long agent sessions — but not the token bill.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "release",
-      "tags": [
-        "anthropic",
-        "messages api",
-        "ai agents",
-        "latency",
-        "llm serving"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "speedometer",
-      "summary": "On November 2, 2026, Anthropic opened a public beta called message threads for the Claude Messages API: after the first request, you send only new messages plus a response ID instead of the whole conversation. For 500K–1M-token agent sessions it cuts median time-to-first-token by about 35% — though token usage and cost stay exactly the same.",
-      "publishedDate": "2026-11-16T18:49:15Z",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Your Agent Has Been Resending Everything, Every Turn",
-          "body": "A long-running coding agent at 800K tokens of context was re-uploading all 800K tokens on every single request — just to add one more message.",
-          "bullets": [],
-          "symbol": "speedometer",
-          "table": null,
-          "id": "08b73fa1-349e-4181-9873-15cbdccc61b5"
-        },
-        {
-          "kind": "problem",
-          "title": "Stateless APIs Don't Scale With Context",
-          "body": "The Messages API is stateless by design: every request carries the full conversation, including every past tool result and screenshot.",
-          "bullets": [
-            "That's fine at 10K tokens — it's slow once an agent accumulates hundreds of thousands of tokens of history",
-            "Re-sending and re-reading the full conversation on every turn adds delay before Claude can even start responding",
-            "The problem compounds specifically for long-running coding agents, computer-use agents (which accumulate screenshots), and document-heavy workflows"
-          ],
-          "symbol": null,
-          "table": null,
-          "id": "6564f187-8cec-49c0-9981-53b7290994e5"
-        },
-        {
-          "kind": "solution",
-          "title": "The Fix: Send a Thread ID, Not the Whole History",
-          "body": "Message threads add a `thread` parameter that lets the server hold the conversation between turns.",
-          "bullets": [
-            "First request: client sends the full conversation and opens a thread via the `thread` parameter",
-            "Every later request: client sends only the new messages plus the ID of the previous response",
-            "The thread is held server-side in encrypted memory — not written to disk",
-            "A thread expires 5 minutes after its last request; after that, the client must resend the full conversation to start a new one"
-          ],
-          "symbol": null,
-          "table": null,
-          "id": "b37cb0c6-280b-4515-aa06-73d1f531a0b4"
-        },
-        {
-          "kind": "comparison",
-          "title": "What Actually Changes",
-          "body": null,
-          "bullets": [],
-          "symbol": null,
-          "table": {
-            "headers": [
-              "Without threads",
-              "With threads"
-            ],
-            "rows": [
-              [
-                "Full conversation sent every request",
-                "Only new messages + previous response ID sent"
-              ],
-              [
-                "TTFT grows with context size",
-                "~35% lower median TTFT at 500K–1M tokens"
-              ],
-              [
-                "Full conversation billed every turn",
-                "Full conversation still billed every turn — no change"
-              ],
-              [
-                "Works indefinitely",
-                "Expires 5 min after last request"
-              ]
-            ]
-          },
-          "id": "f7560fcb-9d93-4b9f-a8b4-d076594ddb23"
-        },
-        {
-          "kind": "example",
-          "title": "Where the ~35% Actually Shows Up",
-          "body": "Anthropic reports the 500K–1M-token benefit specifically for Claude Code, where message threads is already on by default.",
-          "bullets": [
-            "A coding agent mid-session with hundreds of thousands of tokens of file reads and diffs: smaller requests, faster first response",
-            "A computer-use agent carrying a growing stack of screenshots across many turns",
-            "The article states the benefit grows with how much context the agent is already carrying — it's not a flat speedup for short chats"
-          ],
-          "symbol": null,
-          "table": null,
-          "id": "424123d8-3223-4f93-a3e4-cba02f11da33"
-        },
-        {
-          "kind": "architecture",
-          "title": "Rollout: Public Beta, Multi-Cloud",
-          "body": null,
-          "bullets": [
-            "Available now in public beta on the native Claude Platform, Claude Platform on AWS, Claude in Microsoft Foundry, and Claude Models on Google Cloud",
-            "Direct API callers opt in with the beta header `message-threads-2026-08-12`",
-            "Claude Code has it on by default for most users already"
-          ],
-          "symbol": null,
-          "table": null,
-          "id": "b93f7a63-2c5e-42f0-843f-4957a2dda7b7"
-        },
-        {
-          "kind": "problem",
-          "title": "What It Doesn't Fix",
-          "body": "This is a latency optimization, not a cost or context-window optimization — don't expect it to do either.",
-          "bullets": [
-            "Token usage and billing are unchanged: Claude still processes the full conversation every turn under the hood",
-            "It doesn't shrink your effective context window — long conversations still eventually hit the same limits",
-            "5-minute idle expiry means a thread isn't a substitute for your own conversation storage — you still need to keep your own copy to resend if it lapses",
-            "The announcement doesn't address zero-data-retention or HIPAA-configuration details; check Anthropic's docs before relying on threads in a regulated workflow"
-          ],
-          "symbol": null,
-          "table": null,
-          "id": "3a1c33c4-e85a-4ac2-8532-acc4185df6e2"
-        },
-        {
-          "kind": "takeaways",
-          "title": "A Narrow Fix for a Specific Pain Point",
-          "body": null,
-          "bullets": [
-            "Message threads trade a bigger request body for a server-held conversation state, cutting time-to-first-token on big-context agent sessions",
-            "It's a latency win, not a cost win — budget and context-window planning don't change",
-            "Best fit: long-running coding agents, computer-use agents, and document-heavy multi-turn workflows, not short chats",
-            "5-minute expiry means your client still needs to hold the real conversation history as a fallback"
-          ],
-          "symbol": null,
-          "table": null,
-          "id": "665f4a39-875f-491b-b4b9-97dfffa840c9"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "id": "3212049d-8b3d-49a7-aff3-7d7a1a686e92",
-            "prompt": "What does the message threads beta actually reduce?",
-            "options": [
-              "Token usage and billing",
-              "The size of the model's context window",
-              "Time to first token on long, high-context requests",
-              "The number of tool calls an agent can make"
-            ],
-            "correctIndex": 2,
-            "explanation": "Anthropic reports about a 35% drop in median time-to-first-token for 500K–1M-token requests. Token usage and cost are explicitly unchanged — Claude still reads the full conversation every turn."
-          },
-          {
-            "id": "519d214b-7034-47a3-b782-26d9fab79c04",
-            "prompt": "What happens if 6 minutes pass between requests in the same thread?",
-            "options": [
-              "Nothing — threads never expire",
-              "The thread has expired, and the client must resend the full conversation to start a new one",
-              "Anthropic automatically bills a cancellation fee",
-              "The thread pauses and resumes exactly where it left off"
-            ],
-            "correctIndex": 1,
-            "explanation": "Threads expire 5 minutes after their last request. Past that window, the server no longer holds the state, so the client is back to sending the complete conversation to open a fresh thread."
-          },
-          {
-            "id": "7151be2d-81d5-470f-8e23-3e5dedcd4391",
-            "prompt": "Which workload benefits most from message threads?",
-            "options": [
-              "A single short question-and-answer exchange",
-              "A long-running coding agent or computer-use agent with hundreds of thousands of tokens of accumulated context",
-              "A batch job that never reuses context",
-              "A request that doesn't use the Messages API"
-            ],
-            "correctIndex": 1,
-            "explanation": "The benefit scales with how much context an agent is already carrying — it's aimed squarely at long-running agents (coding, computer-use, document-heavy) where resending the full history was the bottleneck."
-          }
-        ]
-      },
-      "references": [
-        {
-          "id": "2f263861-6865-4692-bf91-6153b57f3791",
-          "title": "Make long-running agents faster with message threads — Anthropic",
-          "url": "https://claude.com/resources/articles/message-threads"
-        }
-      ],
-      "id": "d51141b7-18b3-452a-8bc6-3dc66bd236b4"
     }
   ]
 }
