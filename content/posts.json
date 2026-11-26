@@ -1,6 +1,211 @@
 {
   "posts": [
     {
+      "title": "Mixture of Experts: Scaling Params Without Scaling Compute",
+      "subtitle": "Sparse routing lets a model hold huge capacity while touching only a sliver of it per token",
+      "category": "LLMs",
+      "difficulty": "Intermediate",
+      "postKind": "concept",
+      "tags": [
+        "mixture-of-experts",
+        "sparse-models",
+        "llm-architecture",
+        "routing",
+        "inference",
+        "scaling"
+      ],
+      "estimatedMinutes": 4,
+      "heroSymbol": "arrow.triangle.branch",
+      "summary": "Mixture of Experts replaces a transformer's single feed-forward block with many smaller expert FFNs plus a learned router that activates only a few per token. That decouples total parameter count from per-token compute, letting models like DeepSeek-V3 hold 671B parameters while spending only ~37B worth of compute on any given token — at the cost of needing every expert resident in memory and a load-balancing problem that doesn't exist in dense models.",
+      "slides": [
+        {
+          "id": "84412d48-714a-4b9d-a1df-877588414aed",
+          "kind": "cover",
+          "title": "One Model, Many Specialists",
+          "body": null,
+          "bullets": [
+            "Dense transformers run every parameter on every token — a 70B model does 70B-parameters worth of math per token, always, easy tokens included",
+            "Mixture of Experts (MoE) swaps the feed-forward block for dozens of smaller 'expert' feed-forwards plus a router that picks only a few per token",
+            "DeepSeek-V3 holds 671B total parameters but activates only about 37B per token — most of the model sits idle for any single piece of text"
+          ],
+          "symbol": "arrow.triangle.branch",
+          "table": null
+        },
+        {
+          "id": "21a5856c-a5fa-4cef-a0d8-515fe86d4237",
+          "kind": "problem",
+          "title": "Dense Scaling Ties Compute to Capacity",
+          "body": null,
+          "bullets": [
+            "In a standard transformer, FLOPs per token are tied directly to total parameter count — want a smarter model, you pay for it on every token, including trivial ones",
+            "Pretraining compute and serving cost both scale with that same number, so growing capacity and keeping inference cheap pull in opposite directions",
+            "But not every token needs the full network: punctuation, common words, and easy continuations don't need the same depth of computation as a hard reasoning step"
+          ],
+          "symbol": "chart.line.uptrend.xyaxis",
+          "table": null
+        },
+        {
+          "id": "3602be76-4d41-4154-bd39-c5317be26274",
+          "kind": "solution",
+          "title": "Route Each Token to a Handful of Experts",
+          "body": null,
+          "bullets": [
+            "Replace one big feed-forward network per layer with N smaller expert feed-forwards (commonly 8 to 256), each the same shape as a normal FFN",
+            "A tiny router — one linear layer plus a softmax over experts — scores every token, and only the top-k highest-scoring experts (commonly top-1 or top-2) actually run",
+            "The chosen experts' outputs are combined using the router's own scores as weights, so routing is differentiable and trained end-to-end rather than a hard switch"
+          ],
+          "symbol": "slider.horizontal.3",
+          "table": null
+        },
+        {
+          "id": "e4336d2d-e3b6-49c6-8fd9-b40c2a466c13",
+          "kind": "architecture",
+          "title": "Why Routing Needs a Balancing Act",
+          "body": null,
+          "bullets": [
+            "Without correction, the router tends to collapse: a few experts get most of the traffic and keep improving, while the rest barely train — a rich-get-richer dynamic",
+            "The classic fix is an auxiliary load-balancing loss that penalizes uneven expert usage across a batch, nudging the router to spread tokens roughly evenly",
+            "DeepSeek-V3 instead uses an auxiliary-loss-free scheme: a per-expert bias term added only to the routing decision (not the training loss), adjusted up or down after each batch based on how overloaded or underused that expert was",
+            "Some designs also add always-on 'shared experts' that process every token alongside the routed ones, so common patterns don't need to be re-learned redundantly by every specialist"
+          ],
+          "symbol": "scalemass.fill",
+          "table": null
+        },
+        {
+          "id": "9ba1afa3-140b-4049-8f81-08d3ea7629a1",
+          "kind": "comparison",
+          "title": "Total Parameters vs. What Actually Runs",
+          "body": "Figures are from each model's public technical report; 'active params' is the portion actually computed per token, not counting always-on layers like attention.",
+          "bullets": [],
+          "symbol": "tablecells",
+          "table": {
+            "headers": [
+              "Model",
+              "Total params",
+              "Active params/token",
+              "Routing"
+            ],
+            "rows": [
+              [
+                "Switch Transformer (Switch-C)",
+                "~1.6T",
+                "a single expert's worth",
+                "Top-1 of 2048 experts"
+              ],
+              [
+                "Mixtral 8x7B",
+                "~47B",
+                "~13B",
+                "Top-2 of 8 experts per layer"
+              ],
+              [
+                "DeepSeek-V3",
+                "671B",
+                "~37B",
+                "Learned subset of 256 routed experts + 1 shared expert"
+              ]
+            ]
+          }
+        },
+        {
+          "id": "feedd3ba-ff5f-43eb-a0f1-ec70a08b64c3",
+          "kind": "example",
+          "title": "Tracing a Single Token Through an MoE Layer",
+          "body": null,
+          "bullets": [
+            "A token's hidden vector reaches an MoE layer with 8 experts; the router computes 8 scores and keeps only the top 2 — say expert #3 (weight 0.61) and expert #6 (weight 0.29), zeroing the rest",
+            "Only experts #3 and #6 run their feed-forward math on this token; the other 6 experts do zero work for it, even though their weights are sitting in accelerator memory the whole time",
+            "The two outputs are blended as a weighted sum using the renormalized router weights, and that becomes the layer's output for this one token — the very next token in the same sequence can route to a completely different pair of experts",
+            "Routing analyses of models like Mixtral have found experts often specialize by surface pattern — certain experts handling punctuation- or whitespace-heavy tokens — more than by clean topic boundaries; specialization is real but not always the intuitive kind"
+          ],
+          "symbol": "doc.text.magnifyingglass",
+          "table": null
+        },
+        {
+          "id": "1fc6bb68-39bb-46e2-8311-5575462691b6",
+          "kind": "problem",
+          "title": "The Catch: Sparse Compute, Dense Memory",
+          "body": null,
+          "bullets": [
+            "Every expert's weights must sit in accelerator memory even though only a couple run per token — Mixtral needs roughly the memory footprint of a 47B dense model despite only ~13B active compute",
+            "Load balancing is a real tuning headache: too weak and routing collapses onto a few favorite experts; too strong and it hurts quality by forcing unnatural token-to-expert assignments",
+            "Distributed training and serving typically split experts across devices ('expert parallelism'), adding all-to-all communication overhead whenever tokens route to an expert living on another GPU",
+            "Skip MoE when: the dense equivalent already fits comfortably in memory, you're serving on a single GPU where the memory overhead can't be amortized across enough traffic, or your team lacks the infrastructure for expert-parallel training and serving"
+          ],
+          "symbol": "exclamationmark.triangle.fill",
+          "table": null
+        },
+        {
+          "id": "3809673e-ad32-40a5-85c8-469517680be3",
+          "kind": "takeaways",
+          "title": "The Core Idea to Remember",
+          "body": null,
+          "bullets": [
+            "MoE decouples total parameter count from per-token compute: a model can hold huge capacity while only a small, learned slice fires for any given token",
+            "The router and its load-balancing mechanism — not the expert layers themselves — is where the real engineering difficulty lives",
+            "Memory, not compute, becomes the new bottleneck: every expert must stay resident even when idle",
+            "MoE is now the default architecture for the largest open-weight frontier models (Mixtral, DeepSeek-V3, and others), because it's the most practical way to keep adding capacity without a proportional rise in inference cost"
+          ],
+          "symbol": "checkmark.seal.fill",
+          "table": null
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "db4c2b6b-f3c1-4506-be65-7ff20da71759",
+            "prompt": "What does adding a Mixture-of-Experts layer actually change compared to a dense feed-forward layer?",
+            "options": [
+              "It replaces one FFN with several smaller FFNs plus a router that activates only a few per token",
+              "It makes every parameter run on every token, just spread across more layers",
+              "It removes the feed-forward network entirely and relies only on attention",
+              "It compresses all the experts into a single shared matrix"
+            ],
+            "correctIndex": 0,
+            "explanation": "MoE's whole point is sparse activation: instead of one dense FFN doing all the work, N expert FFNs sit side by side and a learned router sends each token to only a few of them, so most of the model's parameters are idle for any given token."
+          },
+          {
+            "id": "93436a67-58b4-4f94-8faa-3186c3500908",
+            "prompt": "Mixtral 8x7B has about 47B total parameters. Roughly how many are actually used to process a single token?",
+            "options": [
+              "All 47B, since routing only affects training",
+              "About 13B, since the router picks the top-2 of 8 experts per layer",
+              "About 7B, exactly one expert's worth",
+              "About 24B, roughly half the model"
+            ],
+            "correctIndex": 1,
+            "explanation": "Mixtral routes each token to 2 of its 8 experts per layer (top-2 routing), so only a fraction of the total 47B parameters actually computes on any given token — roughly 13B active — which is why it runs like a much smaller dense model despite its larger total size."
+          },
+          {
+            "id": "b2f0f38d-579e-4e40-bb41-d0c0f415b5ef",
+            "prompt": "What's the main memory-related tradeoff that comes with Mixture-of-Experts models?",
+            "options": [
+              "They use less memory than a dense model of the same active-compute size, since unused experts are swapped to disk automatically",
+              "All experts' weights must stay resident in accelerator memory even though only a few run per token, so memory footprint tracks total parameters, not active compute",
+              "MoE models don't require a KV cache at all",
+              "Memory usage is identical across MoE models regardless of expert count"
+            ],
+            "correctIndex": 1,
+            "explanation": "Because any token could be routed to any expert, every expert's weights need to be loaded and ready — so despite sparse compute per token, MoE models have a memory footprint closer to their dense-equivalent size, which is why Mixtral needs roughly as much memory as a 47B dense model despite only ~13B active parameters doing work per token."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "eba0ce4e-dc3a-4b4c-9405-c3b995cc48ec",
+          "title": "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer (Shazeer et al., 2017)",
+          "url": "https://arxiv.org/abs/1701.06538"
+        },
+        {
+          "id": "7dba0216-8ea1-4036-bba8-5e96109030be",
+          "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity (Fedus et al., 2021)",
+          "url": "https://arxiv.org/abs/2101.03961"
+        }
+      ],
+      "id": "cc04c947-316e-4bc3-8cf6-c7325aa705b4",
+      "publishedDate": "2026-11-26T06:46:13Z"
+    },
+    {
       "id": "eb9daa04-e932-4e66-8f4f-e6950942d63a",
       "title": "Claude Haiku 5.5: A Small Model That Scores Like a Big One",
       "subtitle": "Anthropic's cheapest, fastest small model yet closes most of the gap to frontier models",
@@ -11076,180 +11281,6 @@
           "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
         }
       ]
-    },
-    {
-      "title": "Claude Designed Three Working PCBs, End to End",
-      "subtitle": "Schematic to enclosure to firmware — almost no hand-holding required.",
-      "category": "AI Innovations",
-      "difficulty": "Intermediate",
-      "postKind": "paper",
-      "tags": [
-        "hardware",
-        "pcb-design",
-        "agentic-workflows",
-        "benchmarks",
-        "claude"
-      ],
-      "estimatedMinutes": 5,
-      "heroSymbol": "cpu.fill",
-      "summary": "Anthropic and circuit-board company Diode Computers tested whether Claude could design real hardware end to end. Claude produced schematics, routed copper, wrote a custom router when KiCad's was too slow, designed enclosures, and wrote firmware for three prototype devices — all of which worked after weeks of use, with no electrical fixes needed.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Claude Designed Three Working PCBs, End to End",
-          "body": "Anthropic partnered with circuit-board company Diode Computers to test whether Claude could take hardware from a one-line prompt to a working prototype — schematic, layout, enclosure, and firmware.",
-          "bullets": [
-            "Three devices: a USB-C speakerphone, a voice-assistant hub, a handheld virtual pet",
-            "Diode's prompting was minimal: short directives like 'clean up the schematic' and 'continue'",
-            "Claude was never connected to test equipment — humans still built and tested the boards"
-          ],
-          "symbol": "cpu.fill",
-          "table": null,
-          "id": "beab9d02-9467-466a-8ad7-f52498bf62d7"
-        },
-        {
-          "kind": "problem",
-          "title": "PCB design punishes anything less than exact reasoning",
-          "body": "A year earlier, Anthropic says models couldn't reliably make components fit together on a board. Circuit design means satisfying electrical, mechanical, and manufacturing constraints all at once — there's no partial credit.",
-          "bullets": [
-            "Trace routing must respect impedance, length-matching, and noise isolation simultaneously",
-            "A single wrong footprint or shorted rail can brick an entire physical build",
-            "Manufacturability (DFM) rules — like solder mask slivers — are easy to violate without noticing"
-          ],
-          "symbol": "exclamationmark.triangle.fill",
-          "table": null,
-          "id": "d53fd766-a81d-49c1-b24a-ee16d00e1174"
-        },
-        {
-          "kind": "solution",
-          "title": "Claude ran the whole pipeline, including writing its own router",
-          "body": "Claude handled specs, schematics, component placement, copper routing, 3D-printable enclosures, firmware, and the parts list. Diode engineers only assembled and physically tested what Claude designed.",
-          "bullets": [
-            "When KiCad's built-in autorouter was too slow for the hub's long, 100-pin-connector traces, Claude wrote its own grid-search router in about 30 minutes",
-            "That custom router could lay a long track in roughly a second, then was tuned to keep an audio clock trace away from Ethernet lines",
-            "Claude routed high-speed, high-current, and noise-sensitive connections first, then length-matched and added tuning zigzags to USB and Ethernet pairs"
-          ],
-          "symbol": "wrench.and.screwdriver.fill",
-          "table": null,
-          "id": "b4ec7b19-2ccd-4c19-a1df-8a1bcb22cb7c"
-        },
-        {
-          "kind": "comparison",
-          "title": "The score jump versus the previous model",
-          "body": "On Diode's internal PCB Gym benchmark — testing component placement and rerouting — Claude Fable 5.2 nearly tripled the score of Claude Fable 5.1. On BenchCAD 2.1, a public benchmark for rebuilding 3D parts and boards from drawings, Fable 5.2 scored 83.5%, which Anthropic says is nearly double its predecessor.",
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Benchmark",
-              "Fable 5.2",
-              "Fable 5.1"
-            ],
-            "rows": [
-              [
-                "Diode PCB Gym",
-                "69%",
-                "25%"
-              ],
-              [
-                "BenchCAD 2.1",
-                "83.5%",
-                "~half of 5.2's score"
-              ]
-            ]
-          },
-          "id": "52d5084c-e2d5-4d17-b2af-eac8e9393d08"
-        },
-        {
-          "kind": "example",
-          "title": "Worked example: fixing an acoustic problem with geometry, not code",
-          "body": "On the voice-assistant hub, a straight 25mm microphone port would resonate near 3.4 kHz — directly in the voice band, which would color recorded audio. Claude redesigned the enclosure as a wedge shape to shorten the port to about 10mm.",
-          "bullets": [
-            "Shortening the port moved its resonance up to about 8.9 kHz — safely out of the voice band",
-            "On the speakerphone, the board couldn't drop straight into its enclosure because the mute switch hit the back wall — Claude found that tilting it ~25 degrees during assembly solved it, and added that step to the build instructions",
-            "Claude also flagged six overly thin solder-mask slivers that would have failed manufacturing and widened them — but left one 'wrong' ground connection alone, correctly judging it intentional"
-          ],
-          "symbol": "waveform",
-          "table": null,
-          "id": "364bcc40-55f6-4061-8668-1a13afa762f7"
-        },
-        {
-          "kind": "concept",
-          "title": "Prototype, not production",
-          "body": "Anthropic is explicit about what this result doesn't show. Treat it as an encouraging case study, not proof that AI-designed hardware is ready to ship.",
-          "bullets": [
-            "No electrical validation, antenna tuning, thermal testing, or certification was performed on any device",
-            "None of the three devices were designed for mass production",
-            "This is a company-run case study of three devices with one vendor — not an independent or peer-reviewed benchmark",
-            "Claude never touched test equipment or fabrication machinery; a human still has to build and physically verify the result"
-          ],
-          "symbol": "flask.fill",
-          "table": null,
-          "id": "c61bd453-7c30-4e77-8b83-c8136511a6e9"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Takeaways",
-          "body": "The interesting part isn't that Claude drew a schematic — it's that it reasoned about physical tradeoffs (acoustics, mechanical fit, manufacturability) well enough to act on them without being told.",
-          "bullets": [
-            "69% vs 25% on PCB Gym is a real jump in a narrow, concrete skill — component placement and rerouting",
-            "The most impressive moments were tool-building (writing a faster router) and physical reasoning (port acoustics, mechanical tilt), not just schematic generation",
-            "Anthropic's next step: denser, faster boards, simulation-based verification, and learning from measurements of finished devices"
-          ],
-          "symbol": "flag.checkered",
-          "table": null,
-          "id": "1ce3f2d7-888a-4f8f-bb12-1ad24c701a7c"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What specifically did Claude do when KiCad's built-in autorouter proved too slow for the voice-assistant hub?",
-            "options": [
-              "It gave up and asked Diode engineers to route the board manually",
-              "It wrote its own grid-search router in about 30 minutes, which could lay a long track in about a second",
-              "It simplified the board to remove the 100-pin connector entirely",
-              "It switched to a different CAD program with a faster router"
-            ],
-            "correctIndex": 1,
-            "explanation": "Claude wrote a custom grid-search router from scratch in roughly half an hour because KiCad's router couldn't handle the hub's long traces from a 100-pin connector fast enough — then kept tuning it, e.g. to keep an audio clock trace away from Ethernet lines.",
-            "id": "f50498c6-0db4-4890-a4a1-530e40a4d6fb"
-          },
-          {
-            "prompt": "On Diode's PCB Gym benchmark for component placement and rerouting, how did Claude Fable 5.2 compare to Fable 5.1?",
-            "options": [
-              "Scored about the same (no meaningful improvement)",
-              "Scored slightly lower due to added safety constraints",
-              "Scored 69% versus Fable 5.1's 25%",
-              "The benchmark wasn't run on Fable 5.1"
-            ],
-            "correctIndex": 2,
-            "explanation": "Fable 5.2 scored 69% on Diode's internal PCB Gym benchmark, compared with 25% for Fable 5.1 — nearly a 3x jump in this specific hardware-layout skill.",
-            "id": "bb443748-c9cc-44bd-8a28-0a8b714a2040"
-          },
-          {
-            "prompt": "Why does Anthropic call these three devices 'prototypes' rather than finished products?",
-            "options": [
-              "Because Claude refused to finish the firmware",
-              "Because none of them have undergone electrical validation, antenna tuning, thermal testing, or certification, and weren't designed for mass production",
-              "Because the boards failed after a few days of use",
-              "Because Diode Computers hasn't approved the designs yet"
-            ],
-            "correctIndex": 1,
-            "explanation": "Anthropic is explicit that despite all three devices working after weeks of use, none have gone through electrical validation, antenna tuning, thermal testing, or certification, and none were designed for mass production — this is a promising case study, not a production-ready result.",
-            "id": "149907a3-338c-48b2-93fe-52833da23683"
-          }
-        ]
-      },
-      "references": [
-        {
-          "title": "Claude designed three working circuit boards — Anthropic Research",
-          "url": "https://www.anthropic.com/research/claude-electronics-design",
-          "id": "79972455-993b-46a4-bde6-d0da966b93e1"
-        }
-      ],
-      "id": "c44a1934-f2a1-4586-bbd6-c3f8d4648a8d",
-      "publishedDate": "2026-11-18T06:46:53Z"
     }
   ]
 }
