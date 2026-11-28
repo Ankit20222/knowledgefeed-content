@@ -1,6 +1,186 @@
 {
   "posts": [
     {
+      "title": "Direct Preference Optimization: Skip the Reward Model",
+      "subtitle": "RLHF's two-stage reward-model-plus-PPO pipeline collapses into one closed-form loss.",
+      "category": "LLMs",
+      "difficulty": "Advanced",
+      "postKind": "concept",
+      "tags": [
+        "dpo",
+        "rlhf",
+        "fine-tuning",
+        "alignment",
+        "preference-optimization"
+      ],
+      "estimatedMinutes": 5,
+      "heroSymbol": "hand.thumbsup.fill",
+      "summary": "Direct Preference Optimization (DPO) exploits a closed-form relationship between the optimal KL-constrained policy and its implicit reward to turn RLHF's reward-model-plus-PPO pipeline into a single supervised-style loss over preference pairs. It trains more simply and stably than PPO, but it's strictly offline and still bounded by the quality of its preference data.",
+      "slides": [
+        {
+          "id": "904dc18d-bb0e-4d19-968c-15dffc7c4b07",
+          "kind": "cover",
+          "title": "One Loss Function Instead of Two Training Loops",
+          "body": "Classic RLHF trains a reward model, then runs reinforcement learning against it. DPO skips the middle step entirely.",
+          "bullets": [
+            "RLHF needs a reward model AND a PPO loop — two separate training stages, four models in memory",
+            "DPO (Rafailov et al., 2023) reduces this to one loss, computed directly from log-probabilities",
+            "It now underlies alignment recipes across many open and closed models"
+          ],
+          "symbol": "hand.thumbsup.fill"
+        },
+        {
+          "id": "7253f3a1-59dc-4440-a342-597f53df155e",
+          "kind": "problem",
+          "title": "RLHF Works, but the Pipeline Is Brutal",
+          "body": "Standard RLHF is accurate but operationally expensive and fragile.",
+          "bullets": [
+            "Stage 1: train a reward model on (prompt, chosen, rejected) human preference pairs",
+            "Stage 2: run PPO — an actor-critic RL loop — to maximize that reward, needing policy, reference, reward, AND value models in memory at once",
+            "PPO is hyperparameter-sensitive: too little KL control and the policy 'reward-hacks', drifting into degenerate outputs the reward model rates highly but humans don't",
+            "Any change to the reward model means re-running the entire costly RL loop from scratch"
+          ],
+          "symbol": "exclamationmark.triangle.fill"
+        },
+        {
+          "id": "d088e730-b3f4-4c11-8fa2-29db32d1d071",
+          "kind": "solution",
+          "title": "The Trick: the RL Optimum Has a Known Closed Form",
+          "body": "For a KL-constrained reward-maximization objective, the optimal policy has an analytic solution — so you never need to solve the RL problem at all.",
+          "bullets": [
+            "Preferences follow a Bradley-Terry model: P(chosen beats rejected) = sigmoid(r(chosen) − r(rejected))",
+            "The optimal policy under a KL-regularized reward objective is known in closed form: reward ∝ β·log(π(y|x) / π_ref(y|x)) + constant",
+            "Substituting that expression back into the Bradley-Terry loss eliminates the reward term entirely — what's left is a loss over the policy's own log-probabilities on chosen vs. rejected completions",
+            "Result: a single backprop pass that looks like supervised fine-tuning, with no reward model and no sampled rollouts"
+          ],
+          "symbol": "function"
+        },
+        {
+          "id": "0a0417d3-56f6-436e-acd4-ca2279f258fa",
+          "kind": "comparison",
+          "title": "RLHF+PPO vs. DPO, Side by Side",
+          "bullets": [],
+          "table": {
+            "headers": [
+              "",
+              "RLHF (reward model + PPO)",
+              "DPO"
+            ],
+            "rows": [
+              [
+                "Models in memory",
+                "4: policy, reference, reward, value",
+                "2: policy, reference"
+              ],
+              [
+                "Training signal",
+                "Online rollouts scored by reward model",
+                "Fixed preference pairs, computed upfront"
+              ],
+              [
+                "Stability",
+                "Fragile — reward hacking, KL blowups, tuning-heavy",
+                "Stable — resembles ordinary supervised fine-tuning"
+              ],
+              [
+                "Can discover novel responses?",
+                "Yes, via exploration",
+                "No — purely offline reweighting of given pairs"
+              ]
+            ]
+          },
+          "symbol": "chart.bar.xaxis"
+        },
+        {
+          "id": "9ef3913b-e2ba-4597-9d16-f8c8f5a58740",
+          "kind": "example",
+          "title": "Worked Example: What the Loss Actually Pushes",
+          "body": "Given a (chosen, rejected) pair for the same prompt, the DPO loss compares how much each response's probability has moved relative to the frozen reference model.",
+          "bullets": [
+            "If the policy already strongly prefers the chosen response over the rejected one, the gradient is small — there's little left to fix",
+            "If the policy currently prefers the rejected response, the gradient is large, pushing probability mass from rejected toward chosen",
+            "β (commonly 0.1–0.5) sets the leash length: small β lets the policy drift further from the reference to chase preferences; large β keeps it closer to original behavior",
+            "Zephyr-7B, an early widely-cited open alignment recipe, used DPO directly on preference pairs as its primary fine-tuning step instead of running PPO"
+          ],
+          "symbol": "arrow.up.arrow.down.circle.fill"
+        },
+        {
+          "id": "f4c2bbf0-8ff7-4d5d-9efd-9ad093467419",
+          "kind": "problem",
+          "title": "Where DPO Falls Short",
+          "body": "Removing the RL loop doesn't remove every limitation.",
+          "bullets": [
+            "It's strictly offline: DPO can only reweight completions that already exist in the dataset — it never explores to find a response better than either option in a pair",
+            "Quality is capped by the preference labels — mislabeled or inconsistent (chosen, rejected) pairs teach the model the wrong thing just as surely as a bad reward model would",
+            "Known failure mode: length bias — if longer answers tend to 'win' in the training data, DPO will learn to just write longer answers",
+            "Still needs a frozen copy of the reference model resident in memory for every training step, so it isn't free of RLHF's memory overhead, just lighter than 4 models"
+          ],
+          "symbol": "hand.raised.fill"
+        },
+        {
+          "id": "e3aabbe8-257a-4c09-8b00-3dc5af9429e4",
+          "kind": "takeaways",
+          "title": "The Core Idea, Compressed",
+          "bullets": [
+            "DPO substitutes the closed-form optimum of KL-regularized RL directly into the Bradley-Terry preference loss, removing the need for an explicit reward model or PPO",
+            "It trades RL's online exploration for a simpler, more stable offline loss — practically, a supervised-style objective over paired comparisons",
+            "The real cost moves to data: results are only as good as the preference pairs you start with",
+            "Later methods (IPO, KTO, SimPO) build directly on this idea of folding preference signal into a closed-form loss, each tweaking a different part of DPO's assumptions"
+          ],
+          "symbol": "lightbulb.fill"
+        }
+      ],
+      "quiz": {
+        "questions": [
+          {
+            "id": "524bd1f0-f8c0-4faa-ac88-06dfe7ee6f15",
+            "prompt": "What mathematical fact does DPO exploit to avoid training a separate reward model?",
+            "options": [
+              "It assumes every preference pair is equally strong",
+              "The KL-regularized RL optimum has a closed-form solution relating reward to the log-ratio of policy to reference probabilities",
+              "It replaces PPO with a larger batch size",
+              "It uses a genetic algorithm instead of gradient descent"
+            ],
+            "correctIndex": 1,
+            "explanation": "DPO substitutes the known closed-form relationship between the optimal KL-constrained policy and its implicit reward directly into the Bradley-Terry preference loss, so a reward model never has to be materialized."
+          },
+          {
+            "id": "dc440f85-733e-416e-80fe-7dd71a09251b",
+            "prompt": "What does the β hyperparameter in DPO control?",
+            "options": [
+              "The learning rate of the reference model",
+              "How many preference pairs are needed before training can start",
+              "How strongly the trained policy is allowed to diverge from the reference model",
+              "The number of PPO rollout steps per update"
+            ],
+            "correctIndex": 2,
+            "explanation": "β scales the implicit KL penalty inherited from the RL objective: a small β lets the policy move further from the reference to chase preferences, a large β anchors it closer to the reference's original behavior."
+          },
+          {
+            "id": "fe03a896-a2bb-4836-af41-60cb0c6f87b1",
+            "prompt": "Which of these is a genuine limitation of DPO compared to online RLHF?",
+            "options": [
+              "It cannot be applied to transformer-based models",
+              "It requires more GPU memory than a full PPO setup",
+              "It never samples new completions, so it can't discover a response better than what's already in the training pairs",
+              "It only works for code-generation tasks"
+            ],
+            "correctIndex": 2,
+            "explanation": "DPO is purely offline: it reweights probability mass between completions already present in the dataset. Online RL can explore and occasionally stumble onto better responses than any sample it started with; DPO structurally cannot."
+          }
+        ]
+      },
+      "references": [
+        {
+          "id": "765252d7-c7f7-4ebb-a559-3db3204fa8ca",
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model",
+          "url": "https://arxiv.org/abs/2305.18290"
+        }
+      ],
+      "id": "9c7f1487-c341-44c4-94f4-c26c480e652f",
+      "publishedDate": "2026-11-28T06:46:43Z"
+    },
+    {
       "id": "f873827b-1a29-4c1e-8418-8fe016b1b253",
       "title": "LoRA: Fine-Tuning Billion-Parameter Models on One GPU",
       "subtitle": "Freeze the weights, train a low-rank patch, and get 10,000x fewer trainable parameters.",
@@ -11106,180 +11286,6 @@
         }
       ],
       "id": "9bfe64fe-4b4b-4036-9aac-3f8a926ea5e3",
-      "publishedDate": "2026-11-20T12:47:20Z"
-    },
-    {
-      "title": "ReAct: Why Agents Think Out Loud Before Acting",
-      "subtitle": "Interleaving reasoning with tool calls turns a one-shot answer into a plan that can correct itself.",
-      "category": "AI Agents",
-      "difficulty": "Beginner",
-      "postKind": "concept",
-      "tags": [
-        "ai-agents",
-        "react-pattern",
-        "reasoning",
-        "tool-use",
-        "llm"
-      ],
-      "estimatedMinutes": 4,
-      "heroSymbol": "arrow.triangle.2.circlepath",
-      "summary": "ReAct interleaves short reasoning steps ('Thoughts') with tool calls ('Actions') and their results ('Observations'), letting an agent revise its plan mid-task instead of committing to one answer up front. It's the ancestor pattern behind most modern tool-using agents — powerful for multi-step lookups, wasteful for simple ones.",
-      "slides": [
-        {
-          "kind": "cover",
-          "title": "Thought, Action, Observation — Repeat",
-          "body": "ReAct (Reasoning + Acting) has the model narrate why it's about to do something, do it, then read the result before deciding what's next.",
-          "bullets": [
-            "Introduced by Yao et al. in 2022 as a prompting pattern, not a new model architecture",
-            "Now the backbone loop inside most tool-calling agent frameworks"
-          ],
-          "symbol": "arrow.triangle.2.circlepath",
-          "table": null,
-          "id": "889d7ead-807c-4568-be24-e061abd54ca4"
-        },
-        {
-          "kind": "problem",
-          "title": "Plain Chain-of-Thought Can't Check Itself",
-          "body": "A model that reasons step-by-step in one uninterrupted pass commits to an answer without ever touching the real world.",
-          "bullets": [
-            "If an early assumption is wrong, nothing forces a correction — the model just reasons forward from a false premise",
-            "There's no way to look something up mid-thought if the model's training data is stale or wrong"
-          ],
-          "symbol": "doc.text.magnifyingglass",
-          "table": null,
-          "id": "3a4a5fb0-5712-4fc4-a032-e24a3a6ac37e"
-        },
-        {
-          "kind": "solution",
-          "title": "The Loop: Thought → Action → Observation",
-          "body": "At each step the model emits a short Thought (its reasoning), takes an Action (a tool call), then receives an Observation (the tool's result) before thinking again.",
-          "bullets": [
-            "The accumulating trace of Thoughts and Observations becomes the agent's working memory for the rest of the task",
-            "Because each Thought is written after seeing the latest Observation, the plan can change mid-task",
-            "The loop ends when a Thought decides the task is done and emits a final answer instead of another Action"
-          ],
-          "symbol": "sparkles",
-          "table": null,
-          "id": "2d747453-d1d4-4c09-ace5-6fa357093b45"
-        },
-        {
-          "kind": "example",
-          "title": "A Worked Trace",
-          "body": "Task: 'What's the latest stable version of library X, and does it support feature Y?'",
-          "bullets": [
-            "Thought: I don't know the current version — training data may be stale. → Action: search('library X latest stable version')",
-            "Observation: 'X 4.2.0, released last month.' → Thought: Now I need to check if 4.2.0 supports feature Y. → Action: search('library X 4.2.0 feature Y support')",
-            "Observation: 'Feature Y added in 4.1.0 changelog.' → Thought: 4.2.0 is newer than 4.1.0, so it's supported. → Final answer: '4.2.0, yes.'"
-          ],
-          "symbol": "lightbulb",
-          "table": null,
-          "id": "abfd79a6-7b95-4c4d-99b3-64ad6433da01"
-        },
-        {
-          "kind": "comparison",
-          "title": "ReAct vs. the Alternatives",
-          "body": null,
-          "bullets": [],
-          "symbol": "tablecells",
-          "table": {
-            "headers": [
-              "Approach",
-              "Uses tools",
-              "Explains itself",
-              "Recovers from bad results"
-            ],
-            "rows": [
-              [
-                "Plain chain-of-thought",
-                "No",
-                "Yes",
-                "No"
-              ],
-              [
-                "Act-only (no reasoning)",
-                "Yes",
-                "No",
-                "Poorly"
-              ],
-              [
-                "ReAct",
-                "Yes",
-                "Yes",
-                "Yes — at extra token cost"
-              ]
-            ]
-          },
-          "id": "0a7d734f-04d4-422a-b79b-ab5cc4b65840"
-        },
-        {
-          "kind": "problem",
-          "title": "When ReAct Hurts More Than It Helps",
-          "body": null,
-          "bullets": [
-            "A single simple lookup doesn't need a Thought every step — the reasoning tokens are pure overhead",
-            "A fluent-sounding Thought doesn't guarantee a correct Action — models can rationalize a bad tool call just as convincingly as a good one",
-            "Without a step budget or loop-detection, an agent can wander: repeating a failed search with slightly different wording forever"
-          ],
-          "symbol": "exclamationmark.triangle",
-          "table": null,
-          "id": "6c20bad8-e3e1-4e04-ad7b-80986361b085"
-        },
-        {
-          "kind": "takeaways",
-          "title": "Where It Fits",
-          "body": null,
-          "bullets": [
-            "Reach for ReAct when a task needs multiple pieces of external information that depend on each other — not for single fact lookups",
-            "Always pair it with a max-step limit and a way to notice repeated failed Actions",
-            "Its Thought/Action/Observation loop is the ancestor pattern inside most tool-using agents shipping today"
-          ],
-          "symbol": "checkmark.seal",
-          "table": null,
-          "id": "342ebdd8-da5a-4b25-9c4d-c11f5ea5af5d"
-        }
-      ],
-      "quiz": {
-        "questions": [
-          {
-            "prompt": "What three parts repeat in the ReAct loop?",
-            "options": [
-              "Plan, Execute, Reflect",
-              "Thought, Action, Observation",
-              "Encode, Decode, Rank",
-              "Query, Retrieve, Generate"
-            ],
-            "correctIndex": 1,
-            "explanation": "Each cycle: the model reasons (Thought), calls a tool (Action), and reads the result (Observation) before reasoning again.",
-            "id": "c3fe5475-3d62-453c-8c52-31e5544c6f03"
-          },
-          {
-            "prompt": "What's the core weakness of plain chain-of-thought for tasks that need current information?",
-            "options": [
-              "It makes too many tool calls",
-              "It never touches the real world mid-reasoning, so it can't catch or correct a wrong assumption partway through",
-              "It's too slow compared to ReAct",
-              "It can't produce a final answer"
-            ],
-            "correctIndex": 1,
-            "explanation": "Without an Action/Observation step, the model has no mechanism to verify a fact or revise a plan — it just reasons forward from whatever it assumed at the start.",
-            "id": "9e16ea5b-cabf-4d13-b083-631742e8f9b4"
-          },
-          {
-            "prompt": "When does ReAct's extra reasoning step mainly become wasted overhead?",
-            "options": [
-              "On multi-hop tasks where later steps depend on earlier tool results",
-              "On a single, simple tool lookup where a direct call would have worked just as well",
-              "On tasks where the model has no tools available at all",
-              "On tasks longer than 10 steps"
-            ],
-            "correctIndex": 1,
-            "explanation": "If there's no branching decision to make and no result to react to, narrating a Thought before the one obvious Action just adds tokens and latency.",
-            "id": "ddf82555-6d7b-43d2-a5fa-adc8b662776d"
-          }
-        ]
-      },
-      "references": [],
-      "id": "ff3daffb-ee03-407e-ba24-a9567ddf634c",
       "publishedDate": "2026-11-20T12:47:20Z"
     }
   ]
